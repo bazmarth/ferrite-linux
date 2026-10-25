@@ -1,0 +1,13 @@
+[Unit]
+Description=Enable Wi-Fi radio for the Ferrite live session
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/rfkill unblock wifi
+ExecStart=/usr/bin/nmcli radio wifi on
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

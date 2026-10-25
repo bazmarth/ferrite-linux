@@ -1,0 +1,76 @@
+#!/bin/sh
+# Vérifications matérielles de la phase 1 (voir docs/TEST-THINKBOOK.md).
+# Lecture seule : ce script ne modifie rien. Rapport aussi écrit dans /tmp/ferrite-check.txt.
+set -u
+
+report=/tmp/ferrite-check.txt
+failures=0
+
+check() {
+    # check NOM COMMANDE... : affiche OK ou ÉCHEC selon le code de retour de la commande.
+    name=$1
+    shift
+    if output=$("$@" 2>&1); then
+        printf '\033[32mOK   \033[0m %s\n' "$name"
+    else
+        printf '\033[31mÉCHEC\033[0m %s\n' "$name"
+        failures=$((failures + 1))
+    fi
+    [ -n "$output" ] && printf '%s\n' "$output" | sed 's/^/        /' | head -n 12
+}
+
+wifi_driver() {
+    lsmod | grep -E '^rtw89' || return 1
+    ls /lib/firmware/rtw89/*8852b*
+}
+
+wifi_device() {
+    nmcli -t -f DEVICE,TYPE,STATE device | grep ':wifi:'
+}
+
+sound_sink() {
+    wpctl status | sed -n '/Sinks:/,/Sources:/p' | grep -E '[0-9]+\.'
+}
+
+keyboard_fr() {
+    localectl status | grep -i 'X11 Layout: fr' || grep -q 'XKBLAYOUT="fr"' /etc/default/keyboard
+}
+
+touchpad() {
+    sudo libinput list-devices | grep -i -B1 -A3 touchpad | grep -E 'Device|Kernel'
+}
+
+battery() {
+    for bat in /sys/class/power_supply/BAT*; do
+        [ -r "$bat/capacity" ] || return 1
+        printf '%s : %s %% (%s)\n' "${bat##*/}" "$(cat "$bat/capacity")" "$(cat "$bat/status")"
+    done
+}
+
+# Le SSD interne (NVMe/SATA) ne doit avoir aucune partition montée.
+internal_disk_untouched() {
+    # Colonnes : nom, type, amovible (la clé USB live est amovible), points de montage.
+    lsblk -rno NAME,TYPE,RM,MOUNTPOINTS |
+        awk '$2 == "part" && $3 == "0" && $4 != "" { print "monté :", $0; bad = 1 } END { exit bad }' || return 1
+    lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL,RM,RO,MOUNTPOINTS
+}
+
+boot_time() {
+    systemd-analyze | head -n 1
+}
+
+{
+    printf 'Ferrite — vérifications de la phase 1, %s\n' "$(date '+%Y-%m-%d %H:%M')"
+    printf 'Noyau %s, machine %s\n\n' "$(uname -r)" "$(cat /sys/class/dmi/id/product_version 2>/dev/null)"
+    check "Démarrage" boot_time
+    check "Pilote Wi-Fi rtw89 et firmware RTL8852B" wifi_driver
+    check "Interface Wi-Fi vue par NetworkManager" wifi_device
+    check "Sortie son PipeWire" sound_sink
+    check "Clavier AZERTY (fr)" keyboard_fr
+    check "Pavé tactile détecté" touchpad
+    check "Batterie" battery
+    check "SSD interne non monté (Windows intact)" internal_disk_untouched
+    printf '\n%s échec(s). Wi-Fi : « nmcli dev wifi connect NOM --ask ». Son : « speaker-test -c 2 -t wav -l 1 ».\n' "$failures"
+    printf "En cas d'échec Wi-Fi : sudo dmesg | grep -i rtw89\n"
+} 2>&1 | tee "$report"
+printf 'Rapport : %s\n' "$report"

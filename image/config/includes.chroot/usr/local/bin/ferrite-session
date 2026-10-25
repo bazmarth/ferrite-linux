@@ -1,0 +1,15 @@
+#!/bin/sh
+# Session Ferrite. Phase 1 : accueil en console puis shell. En phase 2, ce script lancera
+# « dbus-run-session ferrite-shell ».
+set -u
+export FERRITE_SESSION=1
+export XDG_CURRENT_DESKTOP=Ferrite
+
+printf '\n  \033[1mFerrite OS\033[0m — système live Debian %s, noyau %s\n\n' \
+    "$(cat /etc/debian_version)" "$(uname -r)"
+printf '  Wi-Fi      nmcli dev wifi list   ·   nmcli dev wifi connect NOM --ask\n'
+printf '  Son        wpctl status          ·   speaker-test -c 2 -t wav -l 1\n'
+printf '  Matériel   ferrite-check         (vérifications de la phase 1)\n'
+printf '  Éteindre   systemctl poweroff\n\n'
+
+exec bash -l

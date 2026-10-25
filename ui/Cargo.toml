@@ -1,0 +1,12 @@
+[package]
+name = "ferrite-ui"
+description = "Boîte à outils graphique de Ferrite : charte visuelle, puis widgets"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

@@ -1,0 +1,20 @@
+#!/bin/sh
+# Configuration live-build de l'image Ferrite (Debian 13 « trixie », amd64).
+# Appelé par « lb config » ; voir tools/usb.sh.
+set -eu
+
+lb config noauto \
+    --distribution trixie \
+    --architectures amd64 \
+    --archive-areas "main contrib non-free non-free-firmware" \
+    --apt-recommends false \
+    --binary-images iso-hybrid \
+    --bootloaders "grub-efi grub-pc" \
+    --uefi-secure-boot auto \
+    --debian-installer none \
+    --memtest none \
+    --iso-application "Ferrite OS" \
+    --iso-publisher "Ferrite OS" \
+    --iso-volume FERRITE \
+    --bootappend-live "boot=live components quiet username=ferrite user-fullname=Ferrite hostname=ferrite locales=fr_FR.UTF-8 keyboard-layouts=fr timezone=Africa/Ouagadougou console=tty0 console=ttyS0,115200" \
+    "$@"

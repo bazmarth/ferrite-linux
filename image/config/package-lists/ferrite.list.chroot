@@ -1,0 +1,63 @@
+# Système live
+live-boot
+live-config
+live-config-systemd
+systemd-sysv
+user-setup
+sudo
+locales
+console-setup
+keyboard-configuration
+tzdata
+ca-certificates
+dbus-user-session
+
+# Noyau et micrologiciels du ThinkBook (Wi-Fi RTL8852BE → rtw89, Intel Iris Xe, son SOF)
+linux-image-amd64
+intel-microcode
+firmware-realtek
+firmware-iwlwifi
+firmware-intel-graphics
+firmware-intel-misc
+firmware-intel-sound
+firmware-sof-signed
+firmware-misc-nonfree
+
+# Graphisme (pour le compositeur ferrite-shell, phase 2)
+libgl1-mesa-dri
+libegl1
+libgles2
+mesa-vulkan-drivers
+intel-media-va-driver
+xwayland
+
+# Services système utilisés par le bureau
+network-manager
+wpasupplicant
+rfkill
+iw
+pipewire
+pipewire-pulse
+pipewire-alsa
+pipewire-bin
+wireplumber
+alsa-ucm-conf
+bluez
+upower
+udisks2
+packagekit
+flatpak
+polkitd
+accountsservice
+
+# Polices
+fonts-noto-core
+fonts-noto-color-emoji
+
+# Outils de diagnostic (critères de la phase 1)
+libinput-tools
+pciutils
+usbutils
+alsa-utils
+less
+nano

@@ -1,0 +1,7 @@
+# Tout le texte en fin de ligne LF : les scripts sont exécutés sous Linux (WSL, image live).
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.ttf binary
+*.png binary
+*.jpg binary
+*.ogg binary

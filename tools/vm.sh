@@ -36,7 +36,7 @@ fi
 set -- qemu-system-x86_64 -machine q35 $accel -m 4G -smp 4 \
     -drive "if=pflash,format=raw,readonly=on,file=$code" \
     -drive "if=pflash,format=raw,file=$vars" \
-    -drive "file=$iso,media=cdrom,readonly=on" -boot d \
+    -drive "id=cd,if=none,media=cdrom,readonly=on,file=$iso" -device ide-cd,drive=cd,bootindex=0 \
     -device virtio-vga -device qemu-xhci -device usb-tablet \
     -nic user,model=virtio-net-pci \
     -audiodev none,id=son -device intel-hda -device hda-duplex,audiodev=son
@@ -47,7 +47,8 @@ fi
 
 log="$BUILD/vm-serie.log"
 shot="$BUILD/vm-ecran.png"
-monitor="$BUILD/vm-moniteur.sock"
+# Socket hors de /mnt/d : le disque Windows ne gère pas les sockets Unix.
+monitor="${TMPDIR:-/tmp}/ferrite-vm-$$.sock"
 rm -f "$log" "$shot" "$monitor"
 "$@" -display none -serial "file:$log" -monitor "unix:$monitor,server,nowait" &
 qemu=$!

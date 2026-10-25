@@ -18,5 +18,8 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
 - **2026-10-25 — Persistance désactivée par défaut.** L'option `persistence` ferait chercher
   à live-boot une partition sur tous les disques, SSD compris ; on préfère l'activer à la main
   au démarrage (procédure dans `docs/TEST-THINKBOOK.md`).
+- **2026-10-25 — Modèles GRUB de live-build copiés dans `image/config/bootloaders/grub-pc`.**
+  Seul `config.cfg` est modifié (délai de 5 s, plus de bip) : sans délai, l'image attendait
+  une touche au menu. Le thème graphique Ferrite de GRUB viendra plus tard.
 - **2026-10-25 — `--apt-recommends false`** dans l'image : seuls les paquets listés sont
   installés, pour éviter qu'un environnement de bureau complet n'arrive par dépendance.

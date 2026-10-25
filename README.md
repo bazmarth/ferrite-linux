@@ -35,6 +35,15 @@ tools/setup-wsl.sh         # Rust stable via rustup (une fois)
 tools/ci.sh                # format, lints, tests — avant chaque commit
 ```
 
+## Lancer le bureau en fenêtre (WSLg)
+
+```sh
+tools/shell-dev.sh                 # ferrite-shell avec le terminal foot
+tools/shell-dev.sh -- weston-terminal
+```
+
+Ctrl+Alt+Retour arrière quitte ferrite-shell. Options : `ferrite-shell --help`.
+
 ## Construire et essayer l'image live
 
 ```sh

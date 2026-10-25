@@ -38,6 +38,23 @@ pub const FONT_SERIF: &str = "Source Serif 4";
 pub const ANIMATION_SHORT: Duration = Duration::from_millis(200);
 pub const ANIMATION_NORMAL: Duration = Duration::from_millis(280);
 
+/// Fond d'écran par défaut : dégradé vertical du bureau Ferrite d'origine (haut, milieu, bas).
+pub const WALLPAPER_GRADIENT: [Color; 3] = [Color::rgb(0x1A2A6C), Color::rgb(0x6A3FA6), Color::rgb(0xF29A7E)];
+
+/// Couleur d'un dégradé vertical à la hauteur relative `t` (0 en haut, 1 en bas), les
+/// couleurs étant réparties à intervalles égaux.
+pub fn gradient_at(stops: &[Color], t: f32) -> Color {
+    match stops {
+        [] => Color::TRANSPARENT,
+        [only] => *only,
+        _ => {
+            let position = t.clamp(0.0, 1.0) * (stops.len() - 1) as f32;
+            let index = (position.floor() as usize).min(stops.len() - 2);
+            stops[index].mix(stops[index + 1], position - index as f32)
+        }
+    }
+}
+
 /// Couleur RVBA non prémultipliée, 8 bits par canal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Color {
@@ -288,6 +305,17 @@ mod tests {
         assert_eq!(Color::TRANSPARENT.to_argb8888_premultiplied(), 0);
         assert_eq!(Color::BLACK.mix(Color::WHITE, 0.5), Color::rgb(0x808080));
         assert_eq!(Palette::for_mode(ThemeMode::Dark), Palette::DARK);
+    }
+
+    #[test]
+    fn degrade_du_fond() {
+        let [top, middle, bottom] = WALLPAPER_GRADIENT;
+        assert_eq!(gradient_at(&WALLPAPER_GRADIENT, 0.0), top);
+        assert_eq!(gradient_at(&WALLPAPER_GRADIENT, 0.5), middle);
+        assert_eq!(gradient_at(&WALLPAPER_GRADIENT, 1.0), bottom);
+        assert_eq!(gradient_at(&WALLPAPER_GRADIENT, 0.25), top.mix(middle, 0.5));
+        assert_eq!(gradient_at(&[], 0.5), Color::TRANSPARENT);
+        assert_eq!(gradient_at(&[top], 0.9), top);
     }
 
     #[test]

@@ -41,3 +41,36 @@ Reste :
   documentée mais non essayée.
 - L'utilisateur `baz` est dans le groupe `kvm` après un `wsl --shutdown` ; d'ici là,
   `tools/vm.sh` doit être lancé avec sudo pour profiter de KVM.
+
+## 2026-10-25 — Phase 2 : squelette de ferrite-shell (mode fenêtre)
+
+Fait :
+- Crate `ferrite-shell` (Smithay 0.7.0), organisée comme le plan le demande : `backend/winit.rs`,
+  `protocols/` (compositor + shm, xdg-shell, seat + data-device, output + xdg-output),
+  `wm/` (placement en cascade sous la barre de menus, focus au clic, déplacement,
+  redimensionnement, agrandir/restaurer), `render/` (fond d'écran en dégradé Ferrite,
+  capture PNG), `input.rs`, `options.rs`. Base : l'exemple `smallvil` de Smithay.
+- Clavier `fr` (xkbcommon), répétition 300 ms / 30 par seconde ; Ctrl+Alt+Retour arrière
+  quitte le compositeur.
+- Option `--scale` (échelle fractionnaire de l'écran), `--capture FICHIER` pour les
+  vérifications automatiques, client lancé après `--`.
+- `ferrite-ui` : dégradé du fond d'écran (`WALLPAPER_GRADIENT`, `gradient_at`).
+- `tools/shell-dev.sh` : compile et lance ferrite-shell + foot dans WSLg.
+
+Vérifié :
+- `tools/ci.sh` réussit (clippy `-D warnings`, 14 tests).
+- Dans WSLg : ferrite-shell s'ouvre, `foot` s'y connecte et s'affiche à la position de la
+  cascade, sur le dégradé, à l'échelle 1 et 1,5 (captures `build/shell-foot.png`).
+
+Non vérifié :
+- Déplacement, redimensionnement, agrandissement et saisie au clavier n'ont pas été
+  essayés à la main (code repris de smallvil, testé seulement par compilation).
+- Critères de la phase 2 sur le ThinkBook : rien (pas encore de backend DRM).
+
+Problème rencontré : le Weston de WSLg plante (signal 11) quand la fenêtre de
+ferrite-shell s'ouvre en Wayland ; `tools/shell-dev.sh` la fait passer par X11.
+
+Reste pour la phase 2 : décorations serveur (barre de titre Ferrite, feux tricolores),
+coins arrondis et ombres, backend DRM/KMS + libinput, XWayland, protocoles restants
+(dmabuf, fractional-scale, viewporter, xdg-activation, primary-selection…), session
+`ferrite-session` qui lance le compositeur.

@@ -5,10 +5,14 @@ Chaque dépendance avec sa licence et la raison de sa présence. Les versions ex
 
 ## Crates Rust
 
-Aucune pour l'instant : `ferrite-ui` n'utilise que la bibliothèque standard.
+`ferrite-ui` n'utilise que la bibliothèque standard.
 
 | Crate | Utilisée par | Licence | Raison |
 |---|---|---|---|
+| `smithay` 0.7 | ferrite-shell | MIT | compositeur Wayland (imposé par le plan) ; fonctions `backend_winit`, `desktop`, `renderer_gl`, `wayland_frontend` |
+| `bitflags` 2 | ferrite-shell | MIT/Apache-2.0 | bords de redimensionnement |
+| `png` 0.18 | ferrite-shell | MIT/Apache-2.0 | écriture des captures (`--capture`) |
+| `tracing`, `tracing-subscriber` | ferrite-shell | MIT | journal (celui de Smithay) ; niveau réglable par `RUST_LOG` |
 
 ## Paquets de l'image live
 

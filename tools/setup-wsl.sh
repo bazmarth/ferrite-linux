@@ -17,6 +17,7 @@ if [ "$(id -u)" -eq 0 ]; then
         libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
         libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
         libfontconfig-dev libfreetype-dev \
+        libxkbcommon-x11-0 libx11-xcb1 libxcursor1 libxrandr2 libxi6 \
         live-build debootstrap xorriso squashfs-tools mtools dosfstools \
         grub-pc-bin grub-efi-amd64-bin \
         qemu-system-x86 qemu-utils ovmf socat \

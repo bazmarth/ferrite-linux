@@ -21,5 +21,14 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
 - **2026-10-25 — Modèles GRUB de live-build copiés dans `image/config/bootloaders/grub-pc`.**
   Seul `config.cfg` est modifié (délai de 5 s, plus de bip) : sans délai, l'image attendait
   une touche au menu. Le thème graphique Ferrite de GRUB viendra plus tard.
+- **2026-10-25 — ferrite-shell part de l'exemple `smallvil` de Smithay 0.7.** C'est la base
+  minimale maintenue avec la bibliothèque ; on la découpe selon l'organisation du plan.
+- **2026-10-25 — Fenêtre de ferrite-shell en X11 sous WSLg.** Le Weston de WSLg plante
+  (signal 11) à l'ouverture de la fenêtre winit en Wayland. `tools/shell-dev.sh` retire
+  `WAYLAND_DISPLAY` pour ferrite-shell seul ; les clients restent en Wayland.
+- **2026-10-25 — Rendu écrit pour `GlesRenderer` uniquement**, pas générique : c'est le
+  moteur de rendu des deux backends prévus (winit et DRM). On généralisera si besoin.
+- **2026-10-25 — Capture intégrée (`--capture`)** par lecture du tampon OpenGL : permet de
+  vérifier le rendu sans intervention, en attendant `screencopy` (`tools/screenshot.sh`).
 - **2026-10-25 — `--apt-recommends false`** dans l'image : seuls les paquets listés sont
   installés, pour éviter qu'un environnement de bureau complet n'arrive par dépendance.

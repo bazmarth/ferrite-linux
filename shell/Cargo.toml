@@ -1,0 +1,22 @@
+[package]
+name = "ferrite-shell"
+description = "Compositeur Wayland et bureau de Ferrite"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+ferrite-ui = { path = "../ui" }
+bitflags = "2"
+png = "0.18"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dependencies.smithay]
+version = "0.7"
+default-features = false
+features = ["backend_winit", "desktop", "renderer_gl", "wayland_frontend"]
+
+[lints]
+workspace = true

@@ -15,7 +15,7 @@ Debian 13         noyau Linux, Mesa, micrologiciels
 | Composant | État |
 |---|---|
 | `ferrite-ui` | charte visuelle (`theme.rs`) : mesures, palettes, échelle, animations |
-| `ferrite-shell` | pas commencé (phase 2) |
+| `ferrite-shell` | squelette en fenêtre (winit) : protocoles de base, cascade, déplacement, redimensionnement, agrandissement, fond d'écran, capture |
 | Image live | Debian 13 console, utilisateur `ferrite`, connexion automatique, `ferrite-session` (shell), `ferrite-check` |
 
 ## Démarrage de l'image live

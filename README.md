@@ -42,7 +42,8 @@ tools/shell-dev.sh                 # ferrite-shell avec le terminal foot
 tools/shell-dev.sh -- weston-terminal
 ```
 
-Ctrl+Alt+Retour arrière quitte ferrite-shell. Options : `ferrite-shell --help`.
+Ctrl+Alt+Retour arrière quitte ferrite-shell ; Ctrl+Alt+M remet la dernière fenêtre
+réduite. Options : `ferrite-shell --help`.
 
 ## Construire et essayer l'image live
 

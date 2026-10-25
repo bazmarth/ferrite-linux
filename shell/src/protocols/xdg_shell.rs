@@ -5,10 +5,7 @@ use std::cell::RefCell;
 use smithay::{
     delegate_xdg_shell,
     desktop::{PopupKind, PopupManager, Space, Window, find_popup_root_surface, get_popup_toplevel_coords},
-    input::{
-        Seat,
-        pointer::{Focus, GrabStartData as PointerGrabStartData},
-    },
+    input::{Seat, pointer::GrabStartData as PointerGrabStartData},
     reexports::{
         wayland_protocols::xdg::shell::server::xdg_toplevel,
         wayland_server::{
@@ -16,7 +13,7 @@ use smithay::{
             protocol::{wl_seat, wl_surface::WlSurface},
         },
     },
-    utils::{Logical, Rectangle, Serial, Size},
+    utils::{Logical, Point, Rectangle, Serial, Size},
     wayland::{
         compositor::with_states,
         shell::xdg::{
@@ -27,10 +24,9 @@ use smithay::{
 };
 use tracing::debug;
 
-use crate::{
-    state::Ferrite,
-    wm::{self, MoveSurfaceGrab, ResizeSurfaceGrab},
-};
+use ferrite_ui::theme::TITLEBAR_HEIGHT;
+
+use crate::{state::Ferrite, wm};
 
 /// Taille supposée d'une nouvelle fenêtre pour le placement (sa vraie taille n'est connue
 /// qu'après son premier tampon).
@@ -50,12 +46,20 @@ impl XdgShellHandler for Ferrite {
         let area = self
             .usable_area()
             .unwrap_or_else(|| Rectangle::from_size(Size::from(NEW_WINDOW_SIZE)));
-        let position = self.placement.next_position(area, Size::from(NEW_WINDOW_SIZE));
-        self.space.map_element(window.clone(), position, true);
+        // Le cadre est placé en cascade ; le contenu est posé sous la barre de titre (la
+        // place est gardée même si le client choisit ensuite ses propres décorations).
+        let frame = self.placement.next_position(area, Size::from(NEW_WINDOW_SIZE));
+        let content = frame + Point::from((0, TITLEBAR_HEIGHT as i32));
+        self.space.map_element(window.clone(), content, true);
         self.focus_window(Some(window));
     }
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
+        self.minimized.retain(|m| {
+            m.window
+                .toplevel()
+                .is_some_and(|t| t.wl_surface() != surface.wl_surface())
+        });
         // Le clavier passe à la fenêtre du dessus restante.
         let next = self
             .space
@@ -95,16 +99,7 @@ impl XdgShellHandler for Ferrite {
         let Some(window) = self.window_for_surface(surface.wl_surface()) else {
             return;
         };
-        let Some(initial_window_location) = self.space.element_location(&window) else {
-            return;
-        };
-        let Some(pointer) = seat.get_pointer() else { return };
-        let grab = MoveSurfaceGrab {
-            start_data,
-            window,
-            initial_window_location,
-        };
-        pointer.set_grab(self, grab, serial, Focus::Clear);
+        self.start_move(window, start_data, serial);
     }
 
     fn resize_request(
@@ -123,24 +118,7 @@ impl XdgShellHandler for Ferrite {
         let Some(window) = self.window_for_surface(surface.wl_surface()) else {
             return;
         };
-        let Some(initial_window_location) = self.space.element_location(&window) else {
-            return;
-        };
-        let Some(pointer) = seat.get_pointer() else { return };
-        let initial_window_size = window.geometry().size;
-
-        surface.with_pending_state(|state| {
-            state.states.set(xdg_toplevel::State::Resizing);
-        });
-        surface.send_pending_configure();
-
-        let grab = ResizeSurfaceGrab::start(
-            start_data,
-            window,
-            edges.into(),
-            Rectangle::new(initial_window_location, initial_window_size),
-        );
-        pointer.set_grab(self, grab, serial, Focus::Clear);
+        self.start_resize(window, edges.into(), start_data, serial);
     }
 
     fn maximize_request(&mut self, surface: ToplevelSurface) {
@@ -148,6 +126,7 @@ impl XdgShellHandler for Ferrite {
             return;
         };
         let Some(area) = self.usable_area() else { return };
+        let area = wm::maximized_content(area, wm::is_server_decorated(&window));
         if let Some(location) = self.space.element_location(&window) {
             let previous = Rectangle::new(location, window.geometry().size);
             with_restore_geometry(surface.wl_surface(), |saved| *saved = Some(previous));

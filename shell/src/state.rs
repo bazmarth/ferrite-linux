@@ -3,7 +3,7 @@
 use std::{ffi::OsString, sync::Arc, time::Instant};
 
 use smithay::{
-    desktop::{PopupManager, Space, Window, WindowSurfaceType},
+    desktop::{PopupManager, Space, Window},
     input::{Seat, SeatState, keyboard::XkbConfig},
     reexports::{
         calloop::{EventLoop, Interest, LoopSignal, Mode, PostAction, generic::Generic},
@@ -18,14 +18,14 @@ use smithay::{
         compositor::{CompositorClientState, CompositorState},
         output::OutputManagerState,
         selection::data_device::DataDeviceState,
-        shell::xdg::XdgShellState,
+        shell::xdg::{XdgShellState, decoration::XdgDecorationState},
         shm::ShmState,
         socket::ListeningSocketSource,
     },
 };
 use tracing::warn;
 
-use crate::wm::Placement;
+use crate::wm::{Hit, Minimized, Placement, decoration::TrafficLight};
 
 /// Disposition du clavier par défaut (AZERTY français, voir `docs/PLAN.md` §1.2).
 const KEYBOARD_LAYOUT: &str = "fr";
@@ -43,9 +43,18 @@ pub struct Ferrite {
     pub space: Space<Window>,
     pub popups: PopupManager,
     pub placement: Placement,
+    /// Fenêtres réduites (la plus récente en dernier).
+    pub minimized: Vec<Minimized>,
+    /// Dernier clic sur une barre de titre, pour reconnaître le double-clic.
+    pub last_titlebar_click: Option<(Instant, Window)>,
+    /// Feu tricolore enfoncé : l'action a lieu au relâchement, s'il est toujours dessus.
+    pub pressed_light: Option<(Window, TrafficLight)>,
 
     pub compositor_state: CompositorState,
     pub xdg_shell_state: XdgShellState,
+    /// Jamais lu, mais porte le global `xdg-decoration`.
+    #[allow(dead_code)]
+    pub xdg_decoration_state: XdgDecorationState,
     pub shm_state: ShmState,
     /// Jamais lu, mais doit vivre aussi longtemps que le compositeur : il porte le global
     /// `xdg-output`.
@@ -65,6 +74,7 @@ impl Ferrite {
 
         let compositor_state = CompositorState::new::<Self>(&dh);
         let xdg_shell_state = XdgShellState::new::<Self>(&dh);
+        let xdg_decoration_state = XdgDecorationState::new::<Self>(&dh);
         let shm_state = ShmState::new::<Self>(&dh, vec![]);
         let output_manager_state = OutputManagerState::new_with_xdg_output::<Self>(&dh);
         let data_device_state = DataDeviceState::new::<Self>(&dh);
@@ -91,8 +101,12 @@ impl Ferrite {
             space: Space::default(),
             popups: PopupManager::default(),
             placement: Placement::default(),
+            minimized: Vec::new(),
+            last_titlebar_click: None,
+            pressed_light: None,
             compositor_state,
             xdg_shell_state,
+            xdg_decoration_state,
             shm_state,
             output_manager_state,
             seat_state,
@@ -101,13 +115,13 @@ impl Ferrite {
         })
     }
 
-    /// Surface sous un point de l'espace, avec la position de son origine.
+    /// Surface sous un point de l'espace, avec la position de son origine (aucune si le
+    /// point est sur une décoration).
     pub fn surface_under(&self, pos: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
-        self.space.element_under(pos).and_then(|(window, location)| {
-            window
-                .surface_under(pos - location.to_f64(), WindowSurfaceType::ALL)
-                .map(|(surface, point)| (surface, (point + location).to_f64()))
-        })
+        match self.hit_test(pos)? {
+            Hit::Surface(_, surface, location) => Some((surface, location)),
+            Hit::Decoration(..) => None,
+        }
     }
 
     /// Fenêtre dont la surface principale est `surface`.

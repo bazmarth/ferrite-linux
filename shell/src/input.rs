@@ -7,19 +7,24 @@ use smithay::{
     },
     input::{
         keyboard::{FilterResult, Keysym},
-        pointer::{AxisFrame, ButtonEvent, MotionEvent},
+        pointer::{AxisFrame, ButtonEvent, GrabStartData, MotionEvent},
     },
-    utils::SERIAL_COUNTER,
+    utils::{Logical, Point, SERIAL_COUNTER, Serial},
 };
 use tracing::info;
 
-use crate::state::Ferrite;
+use crate::{
+    state::Ferrite,
+    wm::{BTN_LEFT, Hit, decoration::Part},
+};
 
 /// Raccourcis gérés par le compositeur lui-même (non transmis aux applications).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Action {
     /// Ctrl+Alt+Retour arrière : quitte ferrite-shell.
     Quit,
+    /// Ctrl+Alt+M : remet à l'écran la dernière fenêtre réduite (en attendant le Dock).
+    RestoreMinimized,
 }
 
 impl Ferrite {
@@ -47,27 +52,13 @@ impl Ferrite {
                 pointer.frame(self);
             }
             InputEvent::PointerButton { event } => {
-                let Some(pointer) = self.seat.get_pointer() else {
-                    return;
-                };
-                let serial = SERIAL_COUNTER.next_serial();
-                let state = event.state();
-                if state == ButtonState::Pressed && !pointer.is_grabbed() {
-                    // Clic : la fenêtre sous le pointeur passe au premier plan.
-                    let window = self
-                        .space
-                        .element_under(pointer.current_location())
-                        .map(|(w, _)| w.clone());
-                    self.focus_window(window);
-                }
                 let button = ButtonEvent {
                     button: event.button_code(),
-                    state,
-                    serial,
+                    state: event.state(),
+                    serial: SERIAL_COUNTER.next_serial(),
                     time: event.time_msec(),
                 };
-                pointer.button(self, &button);
-                pointer.frame(self);
+                self.on_button(button);
             }
             InputEvent::PointerAxis { event } => self.on_axis::<I>(event),
             _ => {}
@@ -86,16 +77,96 @@ impl Ferrite {
             SERIAL_COUNTER.next_serial(),
             event.time_msec(),
             |_, modifiers, keysym| {
-                if pressed && modifiers.ctrl && modifiers.alt && keysym.modified_sym() == Keysym::BackSpace {
-                    FilterResult::Intercept(Action::Quit)
-                } else {
-                    FilterResult::Forward
+                if !(pressed && modifiers.ctrl && modifiers.alt) {
+                    return FilterResult::Forward;
+                }
+                match keysym.modified_sym() {
+                    Keysym::BackSpace => FilterResult::Intercept(Action::Quit),
+                    Keysym::m | Keysym::M => FilterResult::Intercept(Action::RestoreMinimized),
+                    _ => FilterResult::Forward,
                 }
             },
         );
-        if action == Some(Action::Quit) {
-            info!("Ctrl+Alt+Retour arrière : arrêt de ferrite-shell");
-            self.loop_signal.stop();
+        match action {
+            Some(Action::Quit) => {
+                info!("Ctrl+Alt+Retour arrière : arrêt de ferrite-shell");
+                self.loop_signal.stop();
+            }
+            Some(Action::RestoreMinimized) => self.restore_minimized(),
+            None => {}
+        }
+    }
+
+    /// Clic de souris : décorations (feux, barre de titre, bords) gérées ici, le reste
+    /// transmis au client sous le pointeur.
+    fn on_button(&mut self, button: ButtonEvent) {
+        let Some(pointer) = self.seat.get_pointer() else {
+            return;
+        };
+        let location = pointer.current_location();
+
+        if button.state == ButtonState::Released {
+            // Un feu agit au relâchement, si le pointeur est toujours dessus.
+            if let Some((window, light)) = self.pressed_light.take() {
+                if let Some(Hit::Decoration(under, Part::Light(now))) = self.hit_test(location) {
+                    if under == window && now == light {
+                        self.activate_light(&window, light);
+                    }
+                }
+                return;
+            }
+        } else if !pointer.is_grabbed() {
+            match self.hit_test(location) {
+                Some(Hit::Decoration(window, part)) => {
+                    self.focus_window(Some(window.clone()));
+                    if button.button == BTN_LEFT
+                        && self.on_decoration_press(window, part, location, button.serial)
+                    {
+                        // Le clic est entièrement géré par ferrite-shell.
+                        return;
+                    }
+                }
+                Some(Hit::Surface(window, ..)) => self.focus_window(Some(window)),
+                None => self.focus_window(None),
+            }
+        }
+
+        pointer.button(self, &button);
+        pointer.frame(self);
+    }
+
+    /// Appui du bouton gauche sur une décoration. Renvoie vrai si l'événement ne doit pas
+    /// être transmis plus loin.
+    fn on_decoration_press(
+        &mut self,
+        window: smithay::desktop::Window,
+        part: Part,
+        location: Point<f64, Logical>,
+        serial: Serial,
+    ) -> bool {
+        let start_data = GrabStartData {
+            focus: None,
+            button: BTN_LEFT,
+            location,
+        };
+        match part {
+            Part::Light(light) => {
+                self.pressed_light = Some((window, light));
+                true
+            }
+            Part::Titlebar => {
+                if self.titlebar_click(&window) {
+                    self.toggle_maximize(&window);
+                    return true;
+                }
+                // Le bouton est ensuite transmis à la saisie, qui finit au relâchement.
+                self.start_move(window, start_data, serial);
+                false
+            }
+            Part::Border(edges) => {
+                self.start_resize(window, edges, start_data, serial);
+                false
+            }
         }
     }
 

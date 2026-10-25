@@ -74,3 +74,33 @@ Reste pour la phase 2 : décorations serveur (barre de titre Ferrite, feux trico
 coins arrondis et ombres, backend DRM/KMS + libinput, XWayland, protocoles restants
 (dmabuf, fractional-scale, viewporter, xdg-activation, primary-selection…), session
 `ferrite-session` qui lance le compositeur.
+
+## 2026-10-25 — Phase 2 : décorations serveur Ferrite
+
+Fait :
+- Protocole `xdg-decoration` : ferrite-shell propose ses décorations ; un client qui veut
+  dessiner les siennes est respecté (pas de barre Ferrite, pas d'ombre, pas d'arrondi).
+- Barre de titre de 30 px dessinée par un shader GLES : coins du haut arrondis (11 px),
+  séparateur d'un pixel physique, feux tricolores (gris si la fenêtre est inactive, symboles
+  ×, −, + au survol), couleurs et mesures injectées depuis `ferrite_ui::theme`.
+- Titre centré en Inter demi-gras 13 px (fontdue), raccourci par « … » si trop long.
+- Coins du bas du contenu arrondis par un shader de texture (`render/rounded.rs`).
+- Ombre douce sous tout le cadre (shader, rectangle arrondi flou, décalée vers le bas,
+  plus légère pour les fenêtres inactives).
+- Clics : glisser la barre de titre déplace, double-clic agrandit/restaure, bords de 6 px
+  pour redimensionner, feu rouge ferme, jaune réduit, vert agrandit ; les feux agissent au
+  relâchement. Ctrl+Alt+M remet la dernière fenêtre réduite (en attendant le Dock).
+- La recherche sous le pointeur suit l'empilement : une barre de titre masque le contenu
+  des fenêtres placées dessous.
+
+Vérifié :
+- `tools/ci.sh` réussit (21 tests, dont géométrie et zones de clic des décorations,
+  rendu du titre, source des shaders).
+- Captures dans WSLg à l'échelle 1 et 2 (`build/deco-foot.png`, `build/deco-foot-x2.png`) :
+  barre, feux, titre net, coins arrondis anticrénelés, ombre.
+
+Non vérifié :
+- Survol, clics sur les feux, déplacement, double-clic et redimensionnement par les bords :
+  testés seulement par les tests unitaires de géométrie, pas à la souris (la fenêtre WSLg
+  n'a pas pu être pilotée).
+- Rendu des menus contextuels et des sous-surfaces dans une fenêtre décorée.

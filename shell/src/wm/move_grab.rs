@@ -1,6 +1,6 @@
-//! Déplacement d'une fenêtre à la souris (demandé par le client via `xdg_toplevel.move`).
+//! Déplacement d'une fenêtre à la souris (barre de titre, ou demande du client via
+//! `xdg_toplevel.move`).
 
-use ferrite_ui::theme::MENUBAR_HEIGHT;
 use smithay::{
     desktop::Window,
     input::pointer::{
@@ -22,6 +22,8 @@ pub struct MoveSurfaceGrab {
     pub start_data: PointerGrabStartData<Ferrite>,
     pub window: Window,
     pub initial_window_location: Point<i32, Logical>,
+    /// Ordonnée minimale du contenu : la barre de titre ne passe pas sous la barre de menus.
+    pub min_y: i32,
 }
 
 impl PointerGrab<Ferrite> for MoveSurfaceGrab {
@@ -37,8 +39,7 @@ impl PointerGrab<Ferrite> for MoveSurfaceGrab {
         let delta = event.location - self.start_data.location;
         let mut location: Point<i32, Logical> =
             (self.initial_window_location.to_f64() + delta).to_i32_round();
-        // La barre de titre ne passe jamais sous la barre de menus.
-        location.y = location.y.max(MENUBAR_HEIGHT as i32);
+        location.y = location.y.max(self.min_y);
         data.space.map_element(self.window.clone(), location, true);
     }
 

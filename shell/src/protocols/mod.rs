@@ -2,10 +2,12 @@
 //!
 //! - `compositor` : `wl_compositor`, `wl_subcompositor`, `wl_shm`
 //! - `xdg_shell` : fenêtres et menus contextuels
+//! - `decoration` : décorations côté serveur (`xdg-decoration`)
 //! - `seat` : clavier, pointeur, presse-papiers et glisser-déposer (`wl_data_device`)
 //! - `output` : `wl_output` et `xdg-output`
 
 mod compositor;
+mod decoration;
 mod output;
 mod seat;
 mod xdg_shell;

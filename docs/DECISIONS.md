@@ -30,5 +30,14 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
   moteur de rendu des deux backends prévus (winit et DRM). On généralisera si besoin.
 - **2026-10-25 — Capture intégrée (`--capture`)** par lecture du tampon OpenGL : permet de
   vérifier le rendu sans intervention, en attendant `screencopy` (`tools/screenshot.sh`).
+- **2026-10-25 — Décorations dessinées par shaders GLES**, pas par des images : nettes à
+  toute échelle et sans texture à recalculer quand la fenêtre change de taille. Seul le
+  titre est une image (fontdue), recalculée quand le titre, l'échelle ou l'état changent.
+- **2026-10-25 — Choix du client respecté pour les décorations** : ferrite-shell propose
+  les siennes, mais un client qui demande le mode client (GTK) dessine sa propre barre.
+- **2026-10-25 — Bouton jaune : réduction sans Dock.** La fenêtre disparaît et revient par
+  Ctrl+Alt+M ; le Dock (phase 3) remplacera ce raccourci.
+- **2026-10-25 — Bouton vert : agrandir**, pas plein écran : le protocole plein écran et la
+  sortie du plein écran viendront avec les raccourcis globaux.
 - **2026-10-25 — `--apt-recommends false`** dans l'image : seuls les paquets listés sont
   installés, pour éviter qu'un environnement de bureau complet n'arrive par dépendance.

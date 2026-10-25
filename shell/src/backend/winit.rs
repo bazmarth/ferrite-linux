@@ -17,7 +17,7 @@ use tracing::{error, info, warn};
 
 use crate::{
     options::Options,
-    render::{self, Wallpaper, capture},
+    render::{self, RenderAssets, capture},
     state::Ferrite,
 };
 
@@ -63,7 +63,7 @@ pub fn init(
     info!(size = ?mode.size, scale = options.scale, "écran virtuel");
 
     let mut damage_tracker = OutputDamageTracker::from_output(&output);
-    let wallpaper = Wallpaper::gradient();
+    let assets = RenderAssets::new(backend.renderer())?;
     let mut pending_capture = options.capture.clone().map(|path| PendingCapture {
         path,
         at: options.capture_delay,
@@ -90,7 +90,7 @@ pub fn init(
                     state,
                     &output,
                     &mut damage_tracker,
-                    &wallpaper,
+                    &assets,
                     &mut pending_capture,
                 );
             }
@@ -106,7 +106,7 @@ fn redraw(
     state: &mut Ferrite,
     output: &Output,
     damage_tracker: &mut OutputDamageTracker,
-    wallpaper: &Wallpaper,
+    assets: &RenderAssets,
     pending_capture: &mut Option<PendingCapture>,
 ) {
     let size = backend.window_size();
@@ -122,7 +122,7 @@ fn redraw(
                 return;
             }
         };
-        let elements = render::output_elements(renderer, state, wallpaper, output);
+        let elements = render::output_elements(renderer, state, assets, output);
         let result =
             damage_tracker.render_output(renderer, &mut framebuffer, 0, &elements, [0.0, 0.0, 0.0, 1.0]);
         let damage = match result {

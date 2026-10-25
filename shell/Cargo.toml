@@ -9,6 +9,7 @@ license.workspace = true
 [dependencies]
 ferrite-ui = { path = "../ui" }
 bitflags = "2"
+fontdue = "0.9"
 png = "0.18"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

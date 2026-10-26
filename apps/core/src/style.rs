@@ -21,6 +21,8 @@ pub const TEXT_SECONDARY: Color32 = color(PALETTE.text_secondary);
 pub const SEPARATOR: Color32 = color(PALETTE.separator);
 pub const ACCENT: Color32 = Color32::from_rgb(0x36, 0x89, 0xE6);
 pub const SELECTION: Color32 = Color32::from_rgb(0xD9, 0xE8, 0xFA);
+/// Ligne choisie d'une barre latérale : gris neutre, comme macOS et elementary OS.
+pub const SIDEBAR_SELECTED: Color32 = Color32::from_rgb(0xDD, 0xDD, 0xE2);
 pub const ERROR: Color32 = Color32::from_rgb(0xC6, 0x26, 0x2E);
 
 const fn color(color: Color) -> Color32 {
@@ -76,6 +78,9 @@ pub fn apply(context: &egui::Context) {
         style.spacing.item_spacing = egui::vec2(8.0, 6.0);
         style.spacing.button_padding = egui::vec2(12.0, 5.0);
         style.spacing.interact_size.y = 28.0;
+        // Les libellés sont du texte d'interface, pas du contenu : ni sélection ni capture
+        // du clic (le clic doit atteindre la ligne ou le bouton dessous).
+        style.interaction.selectable_labels = false;
 
         let visuals = &mut style.visuals;
         visuals.panel_fill = BACKGROUND;
@@ -200,10 +205,12 @@ icons![
     "app-video",
     "file-generic",
     "file-text",
+    "app-calendar",
     "app-clock",
     "app-settings",
     "status-bluetooth-on",
     "status-display",
+    "status-download",
     "status-keyboard",
     "status-lock",
     "status-storage",
@@ -212,10 +219,19 @@ icons![
     "status-wifi-4",
 ];
 
+/// Rendu d'une icône : couleurs d'origine, teinte unique (symbolique), ou symbole blanc
+/// sur une pastille colorée arrondie (comme les Réglages de macOS).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum IconStyle {
+    Color,
+    Tinted(Color32),
+    Tile(Color32),
+}
+
 /// Icônes SVG rasterisées à la demande et gardées en texture.
 #[derive(Default)]
 pub struct Icons {
-    textures: HashMap<(&'static str, u32), Option<TextureHandle>>,
+    textures: HashMap<(&'static str, u32, IconStyle), Option<TextureHandle>>,
 }
 
 impl std::fmt::Debug for Icons {
@@ -227,28 +243,117 @@ impl std::fmt::Debug for Icons {
 }
 
 impl Icons {
+    fn texture(
+        &mut self,
+        ctx: &egui::Context,
+        name: &'static str,
+        size: f32,
+        style: IconStyle,
+    ) -> Option<TextureHandle> {
+        let pixels = (size * ctx.pixels_per_point()).round().max(1.0) as u32;
+        self.textures
+            .entry((name, pixels, style))
+            .or_insert_with(|| {
+                let image = match style {
+                    IconStyle::Color => rasterize(name, pixels, None)?,
+                    IconStyle::Tinted(ink) => rasterize(name, pixels, Some(ink))?,
+                    IconStyle::Tile(_) => rasterize(name, pixels, Some(Color32::WHITE))?,
+                };
+                Some(ctx.load_texture(name, image, TextureOptions::LINEAR))
+            })
+            .clone()
+    }
+
     /// Affiche l'icône `name` en carré de `size` points.
     pub fn show(&mut self, ui: &mut egui::Ui, name: &'static str, size: f32) -> egui::Response {
-        let pixels = (size * ui.ctx().pixels_per_point()).round().max(1.0) as u32;
-        let texture = self
-            .textures
-            .entry((name, pixels))
-            .or_insert_with(|| {
-                let image = rasterize(name, pixels)?;
-                Some(ui.ctx().load_texture(name, image, TextureOptions::LINEAR))
-            })
-            .clone();
-        match texture {
-            Some(texture) => ui.add(egui::Image::new((texture.id(), egui::vec2(size, size)))),
-            None => ui.allocate_response(egui::vec2(size, size), egui::Sense::hover()),
+        let (rect, response) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
+        self.paint(ui, name, rect, IconStyle::Color);
+        response
+    }
+
+    /// Dessine l'icône dans `rect`, sans créer de widget (donc sans capter la souris).
+    pub fn paint(&mut self, ui: &egui::Ui, name: &'static str, rect: egui::Rect, style: IconStyle) {
+        if let IconStyle::Tile(color) = style {
+            ui.painter().rect_filled(rect, rect.width() * 0.24, color);
+            let inner = rect.shrink(rect.width() * 0.1);
+            if let Some(texture) = self.texture(ui.ctx(), name, inner.width(), style) {
+                paint_texture(ui, &texture, inner);
+            }
+            return;
+        }
+        if let Some(texture) = self.texture(ui.ctx(), name, rect.width(), style) {
+            paint_texture(ui, &texture, rect);
         }
     }
 }
 
-fn rasterize(name: &str, side: u32) -> Option<egui::ColorImage> {
+fn paint_texture(ui: &egui::Ui, texture: &TextureHandle, rect: egui::Rect) {
+    let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+    ui.painter().image(texture.id(), rect, uv, Color32::WHITE);
+}
+
+/// Ligne de barre latérale : icône et texte dessinés, toute la ligne est cliquable.
+pub fn sidebar_item(
+    ui: &mut egui::Ui,
+    icons: &mut Icons,
+    icon: &'static str,
+    icon_style: IconStyle,
+    text: &str,
+    selected: bool,
+) -> egui::Response {
+    let height = 32.0;
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), height), egui::Sense::click());
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    if selected {
+        ui.painter().rect_filled(rect, 8.0, SIDEBAR_SELECTED);
+    } else if response.hovered() {
+        ui.painter().rect_filled(rect, 8.0, Color32::from_black_alpha(9));
+    }
+    let icon_size = 20.0;
+    let icon_rect = egui::Rect::from_center_size(
+        egui::pos2(rect.left() + 10.0 + icon_size / 2.0, rect.center().y),
+        egui::vec2(icon_size, icon_size),
+    );
+    icons.paint(ui, icon, icon_rect, icon_style);
+    let font = if selected {
+        FontId::new(13.5, strong_family())
+    } else {
+        FontId::proportional(13.5)
+    };
+    ui.painter().text(
+        egui::pos2(icon_rect.right() + 10.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        text,
+        font,
+        TEXT,
+    );
+    response
+}
+
+/// Titre de groupe d'une barre latérale (« Favoris », « Appareils »…).
+pub fn sidebar_heading(ui: &mut egui::Ui, text: &str) {
+    ui.add_space(6.0);
+    ui.label(
+        egui::RichText::new(text)
+            .size(11.5)
+            .family(strong_family())
+            .color(TEXT_SECONDARY),
+    );
+    ui.add_space(2.0);
+}
+
+fn rasterize(name: &str, side: u32, ink: Option<Color32>) -> Option<egui::ColorImage> {
     use resvg::{tiny_skia, usvg};
     let (_, source) = SOURCES.iter().find(|(candidate, _)| *candidate == name)?;
-    let tree = usvg::Tree::from_str(source, &usvg::Options::default()).ok()?;
+    let source = match ink {
+        Some(ink) => ferrite_ui::icons::symbolic(
+            source,
+            Color::rgb(u32::from_be_bytes([0, ink.r(), ink.g(), ink.b()])),
+        ),
+        None => (*source).to_owned(),
+    };
+    let tree = usvg::Tree::from_str(&source, &usvg::Options::default()).ok()?;
     let mut pixmap = tiny_skia::Pixmap::new(side, side)?;
     let factor = side as f32 / tree.size().width().max(tree.size().height());
     resvg::render(
@@ -269,7 +374,7 @@ mod tests {
     #[test]
     fn les_icones_des_applications_sont_lisibles() {
         for (name, _) in SOURCES {
-            let image = rasterize(name, 24).unwrap_or_else(|| panic!("{name} illisible"));
+            let image = rasterize(name, 24, None).unwrap_or_else(|| panic!("{name} illisible"));
             assert!(
                 image.pixels.iter().any(|pixel| pixel.a() > 200),
                 "{name} est vide"

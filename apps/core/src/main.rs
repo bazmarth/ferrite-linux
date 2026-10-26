@@ -111,6 +111,12 @@ impl FerriteApp {
 
 impl eframe::App for FerriteApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // F11 : plein écran, comme dans les navigateurs.
+        if ui.input(|input| input.key_pressed(egui::Key::F11)) {
+            let fullscreen = ui.input(|input| input.viewport().fullscreen.unwrap_or(false));
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::Fullscreen(!fullscreen));
+        }
         // Le client est rendu dans une surface Wayland translucide : peindre son
         // fond explicitement évite que le bureau transparaisse.
         ui.painter()

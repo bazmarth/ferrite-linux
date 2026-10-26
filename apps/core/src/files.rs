@@ -242,48 +242,41 @@ impl FilesState {
     }
 
     fn sidebar(&mut self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("Emplacements").small().color(style::TEXT_SECONDARY));
-        ui.add_space(2.0);
         let home = home();
-        let mut places = vec![("Dossier personnel", home.clone(), "status-user")];
-        for (name, folder) in [
-            ("Bureau", "Bureau"),
-            ("Documents", "Documents"),
-            ("Téléchargements", "Téléchargements"),
-            ("Images", "Images"),
-            ("Musique", "Musique"),
-            ("Vidéos", "Vidéos"),
+        let mut favorites = vec![("Accueil", home.clone(), "status-user")];
+        for (name, folder, icon) in [
+            ("Bureau", "Bureau", "status-display"),
+            ("Documents", "Documents", "file-text"),
+            ("Téléchargements", "Téléchargements", "status-download"),
+            ("Images", "Images", "app-photos"),
+            ("Musique", "Musique", "app-music"),
+            ("Vidéos", "Vidéos", "app-video"),
         ] {
             let path = home.join(folder);
             if path.is_dir() {
-                places.push((name, path, "app-files"));
+                favorites.push((name, path, icon));
             }
         }
-        places.push(("Système de fichiers", PathBuf::from("/"), "status-storage"));
+        let devices = [("Ordinateur", PathBuf::from("/"), "status-storage")];
 
         let mut target = None;
-        for (name, path, icon) in places {
-            let selected = self.current == path;
-            let (rect, response) =
-                ui.allocate_exact_size(egui::vec2(ui.available_width(), 30.0), Sense::click());
-            if selected || response.hovered() {
-                let fill = if selected {
-                    style::SELECTION
-                } else {
-                    egui::Color32::from_black_alpha(10)
-                };
-                ui.painter().rect_filled(rect, 6.0, fill);
+        for (title, places) in [("Favoris", favorites.as_slice()), ("Appareils", &devices[..])] {
+            style::sidebar_heading(ui, title);
+            for (name, path, icon) in places {
+                let selected = self.current == *path;
+                let response = style::sidebar_item(
+                    ui,
+                    &mut self.icons,
+                    icon,
+                    style::IconStyle::Tinted(style::ACCENT),
+                    name,
+                    selected,
+                );
+                if response.clicked() {
+                    target = Some(path.clone());
+                }
             }
-            let mut row = ui.new_child(
-                egui::UiBuilder::new()
-                    .max_rect(rect.shrink2(egui::vec2(8.0, 0.0)))
-                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
-            );
-            self.icons.show(&mut row, icon, 18.0);
-            row.label(name);
-            if response.clicked() {
-                target = Some(path);
-            }
+            ui.add_space(8.0);
         }
         if let Some(target) = target {
             self.navigate(target);

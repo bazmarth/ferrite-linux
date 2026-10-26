@@ -18,9 +18,6 @@ use resvg::{
     usvg::{Options, Tree},
 };
 
-/// Opacité des parties « éteintes » d'une icône symbolique.
-const DIM_OPACITY: f32 = 0.35;
-
 macro_rules! icons {
     ($($name:literal),* $(,)?) => {
         /// Icônes embarquées dans le binaire : (nom, source SVG).
@@ -223,7 +220,7 @@ fn rasterize(name: &str, side: u32, style: Style) -> Option<Pixmap> {
     };
     let source = match style {
         Style::Color => (*source).to_owned(),
-        Style::Symbolic(ink) => symbolic(source, ink),
+        Style::Symbolic(ink) => ferrite_ui::icons::symbolic(source, ink),
     };
     let tree = Tree::from_str(&source, &Options::default())
         .inspect_err(|err| tracing::warn!(name, %err, "icône SVG illisible"))
@@ -233,61 +230,6 @@ fn rasterize(name: &str, side: u32, style: Style) -> Option<Pixmap> {
     let factor = side as f32 / view.width().max(view.height());
     resvg::render(&tree, Transform::from_scale(factor, factor), &mut pixmap.as_mut());
     Some(pixmap)
-}
-
-/// Version monochrome d'une icône : chaque couleur devient `ink`, pleine ou estompée
-/// selon qu'elle est vive (partie active) ou claire et grise (partie éteinte). Les
-/// fonds argentés disparaissent pour ne garder que les contours.
-fn symbolic(source: &str, ink: Color) -> String {
-    let body_start = source.find("</defs>").map_or(0, |index| index + "</defs>".len());
-    let (defs, body) = source.split_at(body_start);
-    let full = format!("rgba({},{},{},1)", ink.r, ink.g, ink.b);
-    let dim = format!("rgba({},{},{},{DIM_OPACITY})", ink.r, ink.g, ink.b);
-    let body = body.replace("url(#silver)", "none");
-    let mut out = String::with_capacity(source.len() + 256);
-    out.push_str(defs);
-    let mut rest = body.as_str();
-    while let Some(index) = rest.find(['#', 'u']) {
-        out.push_str(&rest[..index]);
-        rest = &rest[index..];
-        if let Some(gradient) = rest.strip_prefix("url(#") {
-            // Dégradé coloré : partie active.
-            let end = gradient.find(')').map_or(gradient.len(), |end| end + 1);
-            out.push_str(&full);
-            rest = &gradient[end..];
-        } else if let Some((color, length)) = rest.strip_prefix('#').and_then(hex_color) {
-            out.push_str(if is_inactive(color) { &dim } else { &full });
-            rest = &rest[1 + length..];
-        } else {
-            out.push_str(&rest[..1]);
-            rest = &rest[1..];
-        }
-    }
-    out.push_str(rest);
-    out
-}
-
-/// Couleur hexadécimale `RRGGBB` ou `RGB` en tête de `text`, avec sa longueur.
-fn hex_color(text: &str) -> Option<(u32, usize)> {
-    let length = text.bytes().take_while(u8::is_ascii_hexdigit).count();
-    let value = u32::from_str_radix(&text[..length], 16).ok()?;
-    match length {
-        6 => Some((value, 6)),
-        3 => {
-            let [r, g, b] = [(value >> 8) & 0xF, (value >> 4) & 0xF, value & 0xF].map(|c| c * 0x11);
-            Some(((r << 16) | (g << 8) | b, 3))
-        }
-        _ => None,
-    }
-}
-
-/// Couleur claire et peu saturée : partie « éteinte » d'une icône d'état.
-fn is_inactive(rgb: u32) -> bool {
-    let [r, g, b] = [(rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF].map(|c| c as f32 / 255.0);
-    let max = r.max(g).max(b);
-    let min = r.min(g).min(b);
-    let luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-    luminance > 0.72 && max - min < 0.2
 }
 
 /// Pose `pixmap` (RVBA prémultiplié) sur le tampon BGRA prémultiplié, par-dessus.

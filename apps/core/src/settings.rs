@@ -6,15 +6,19 @@
 use std::{
     sync::mpsc::{self, Receiver, Sender},
     thread,
+    time::{Duration, Instant},
 };
 
-use eframe::egui::{self, Frame, Margin, RichText, Sense};
+/// Durée pendant laquelle un curseur réglé à la main n'est pas remplacé par une relecture.
+const HOLD: Duration = Duration::from_secs(2);
+
+use eframe::egui::{self, Frame, Margin, RichText};
 use ferrite_system::{
     Snapshot,
     about::{self, About},
     audio::{self, Sink},
     bluetooth,
-    config::{KEYBOARD_LAYOUTS, Settings},
+    config::{DockHiding, DockSize, KEYBOARD_LAYOUTS, Settings},
     display,
     network::{self, WifiNetwork},
     time,
@@ -28,17 +32,19 @@ enum Page {
     Bluetooth,
     Sound,
     Display,
+    Desktop,
     Keyboard,
     DateTime,
     About,
 }
 
 impl Page {
-    const ALL: [Page; 7] = [
+    const ALL: [Page; 8] = [
         Page::Network,
         Page::Bluetooth,
         Page::Sound,
         Page::Display,
+        Page::Desktop,
         Page::Keyboard,
         Page::DateTime,
         Page::About,
@@ -50,10 +56,27 @@ impl Page {
             Page::Bluetooth => "Bluetooth",
             Page::Sound => "Son",
             Page::Display => "Écran",
+            Page::Desktop => "Bureau et Dock",
             Page::Keyboard => "Clavier",
             Page::DateTime => "Date et heure",
             Page::About => "À propos",
         }
+    }
+
+    /// Couleur de la pastille de la rubrique.
+    fn color(self) -> egui::Color32 {
+        let hex: u32 = match self {
+            Page::Network => 0x3689E6,
+            Page::Bluetooth => 0x366FD9,
+            Page::Sound => 0xE54B6B,
+            Page::Display => 0x489D5A,
+            Page::Desktop => 0xE08A2C,
+            Page::Keyboard => 0x8E939E,
+            Page::DateTime => 0x9B59D6,
+            Page::About => 0x8E939E,
+        };
+        let [_, r, g, b] = hex.to_be_bytes();
+        egui::Color32::from_rgb(r, g, b)
     }
 
     fn icon(self) -> &'static str {
@@ -62,8 +85,9 @@ impl Page {
             Page::Bluetooth => "status-bluetooth-on",
             Page::Sound => "status-volume-4",
             Page::Display => "status-display",
+            Page::Desktop => "app-files",
             Page::Keyboard => "status-keyboard",
-            Page::DateTime => "app-clock",
+            Page::DateTime => "app-calendar",
             Page::About => "app-settings",
         }
     }
@@ -105,6 +129,8 @@ pub struct SettingsState {
     sinks: Vec<Sink>,
     keyboard: String,
     keyboard_sample: String,
+    /// Dernier mouvement d'un curseur (volume, luminosité).
+    touched: Option<Instant>,
     timezone: Option<String>,
     ntp: Option<bool>,
     timezones: Vec<String>,
@@ -140,6 +166,7 @@ impl Default for SettingsState {
             sinks: Vec::new(),
             keyboard: Settings::load().keyboard_layout().to_owned(),
             keyboard_sample: String::new(),
+            touched: None,
             timezone: None,
             ntp: None,
             timezones: Vec::new(),
@@ -183,10 +210,15 @@ impl SettingsState {
         while let Ok(update) = self.receiver.try_recv() {
             match update {
                 Update::Snapshot(snapshot) => {
-                    if let Some(volume) = snapshot.volume {
-                        self.volume = if volume.muted { 0 } else { volume.level };
+                    // Une relecture plus ancienne que le dernier réglage ne fait pas sauter
+                    // le curseur en arrière.
+                    let settled = self.touched.is_none_or(|at| at.elapsed() >= HOLD);
+                    if settled {
+                        if let Some(volume) = snapshot.volume {
+                            self.volume = if volume.muted { 0 } else { volume.level };
+                        }
+                        self.brightness = snapshot.brightness.unwrap_or(self.brightness);
                     }
-                    self.brightness = snapshot.brightness.unwrap_or(self.brightness);
                     self.snapshot = Some(snapshot);
                 }
                 // Sans carte Wi-Fi ou sans NetworkManager, les listes restent vides : la page
@@ -238,7 +270,7 @@ impl SettingsState {
                 ]
             }),
             Page::About => self.spawn(ctx, || vec![Update::About(Box::new(about::read()))]),
-            Page::Display | Page::Keyboard => {}
+            Page::Display | Page::Desktop | Page::Keyboard => {}
         }
     }
 
@@ -306,6 +338,7 @@ impl SettingsState {
                         Page::Bluetooth => self.bluetooth_page(ui, &ctx),
                         Page::Sound => self.sound_page(ui, &ctx),
                         Page::Display => self.display_page(ui, &ctx),
+                        Page::Desktop => self.desktop_page(ui),
                         Page::Keyboard => self.keyboard_page(ui),
                         Page::DateTime => self.datetime_page(ui, &ctx),
                         Page::About => self.about_page(ui),
@@ -315,25 +348,16 @@ impl SettingsState {
     }
 
     fn sidebar(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(4.0);
         for page in Page::ALL {
-            let selected = self.page == page;
-            let (rect, response) =
-                ui.allocate_exact_size(egui::vec2(ui.available_width(), 34.0), Sense::click());
-            if selected || response.hovered() {
-                let fill = if selected {
-                    style::SELECTION
-                } else {
-                    egui::Color32::from_black_alpha(10)
-                };
-                ui.painter().rect_filled(rect, 7.0, fill);
-            }
-            let mut row = ui.new_child(
-                egui::UiBuilder::new()
-                    .max_rect(rect.shrink2(egui::vec2(8.0, 0.0)))
-                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
+            let response = style::sidebar_item(
+                ui,
+                &mut self.icons,
+                page.icon(),
+                style::IconStyle::Tile(page.color()),
+                page.title(),
+                self.page == page,
             );
-            self.icons.show(&mut row, page.icon(), 22.0);
-            row.label(page.title());
             if response.clicked() {
                 self.page = page;
                 self.message = None;
@@ -570,7 +594,11 @@ impl SettingsState {
         };
         group(ui, |ui| {
             row(ui, "Volume", &format!("{} %", self.volume), |ui| {
+                ui.spacing_mut().slider_width = 240.0;
                 let response = ui.add(egui::Slider::new(&mut self.volume, 0..=100).show_value(false));
+                if response.changed() {
+                    self.touched = Some(Instant::now());
+                }
                 if response.drag_stopped() || (response.changed() && !response.dragged()) {
                     let level = self.volume;
                     self.act(ctx, "", move || audio::set_volume(level));
@@ -608,7 +636,11 @@ impl SettingsState {
         group(ui, |ui| {
             if available {
                 row(ui, "Luminosité", &format!("{} %", self.brightness), |ui| {
+                    ui.spacing_mut().slider_width = 240.0;
                     let response = ui.add(egui::Slider::new(&mut self.brightness, 5..=100).show_value(false));
+                    if response.changed() {
+                        self.touched = Some(Instant::now());
+                    }
                     if response.drag_stopped() || (response.changed() && !response.dragged()) {
                         let level = self.brightness;
                         self.act(ctx, "", move || display::set_brightness(level));
@@ -620,6 +652,56 @@ impl SettingsState {
             let scale = ui.ctx().pixels_per_point();
             row(ui, "Échelle", &format!("{:.0} %", scale * 100.0), |_| {});
         });
+    }
+
+    // ---- Bureau et Dock ---------------------------------------------------------------
+
+    fn desktop_page(&mut self, ui: &mut egui::Ui) {
+        let mut settings = Settings::load();
+        let (size, hiding) = (settings.dock_size(), settings.dock_hiding());
+        let (mut new_size, mut new_hiding) = (size, hiding);
+        section(ui, "Dock");
+        group(ui, |ui| {
+            row(ui, "Taille des icônes", "", |ui| {
+                for choice in DockSize::ALL.into_iter().rev() {
+                    ui.selectable_value(&mut new_size, choice, choice.label());
+                }
+            });
+            row(
+                ui,
+                "Masquer le Dock",
+                "Il revient quand la souris touche le bas de l'écran, ou avec la touche Super",
+                |_| {},
+            );
+            for choice in DockHiding::ALL {
+                ui.horizontal(|ui| {
+                    ui.add_space(4.0);
+                    ui.radio_value(&mut new_hiding, choice, choice.label());
+                });
+            }
+            ui.add_space(6.0);
+        });
+        section(ui, "Plein écran");
+        group(ui, |ui| {
+            row(
+                ui,
+                "Barre du haut et Dock masqués",
+                "Ils reviennent quand la souris touche le bord de l'écran",
+                |ui| {
+                    ui.label(RichText::new("Automatique").color(style::TEXT_SECONDARY));
+                },
+            );
+        });
+        if (new_size, new_hiding) != (size, hiding) {
+            settings.set("dock_taille", new_size.key());
+            settings.set("dock_masquage", new_hiding.key());
+            self.message = Some(
+                settings
+                    .save()
+                    .map(|()| "Réglage du Dock appliqué".to_owned())
+                    .map_err(|error| format!("Enregistrement impossible : {error}")),
+            );
+        }
     }
 
     // ---- Clavier ----------------------------------------------------------------------

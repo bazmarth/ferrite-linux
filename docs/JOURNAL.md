@@ -263,3 +263,55 @@ Vérifié :
   pas par un parcours à la souris ;
 - la boîte de confirmation d'arrêt n'a pas été capturée.
 
+## 2026-10-26 — Stabilité du bureau et Paramètres
+
+Problème constaté dans l'image live (QEMU) : un clic sur Bluetooth figeait tout le
+bureau. `bluetoothctl power off` attend indéfiniment quand il n'y a ni adaptateur ni
+démon, et le compositeur l'attendait dans sa boucle principale.
+
+Fait :
+- Nouvelle crate `ferrite-system` (`services/system`) : appels de `nmcli`,
+  `bluetoothctl`, `wpctl`, `brightnessctl` et `timedatectl` avec un délai maximal
+  (processus tué au-delà), lecture de l'état réel et réglages de l'utilisateur
+  (`~/.config/ferrite/reglages`).
+- Les réglages du compositeur passent par un fil d'exécution à part
+  (`shell/src/system.rs`), qui relit l'état du système toutes les 8 s.
+- Le matériel absent n'est plus proposé : l'indicateur disparaît de la barre et le
+  réglage est grisé (« Aucun adaptateur », « Luminosité non réglable »). Un refus du
+  système s'affiche dans les réglages rapides.
+- Les applications lancées sont attendues par un fil, pour ne plus laisser de processus
+  zombies.
+- Raccourcis clavier : Échap ferme un menu ou la confirmation, Super ouvre le menu
+  Applications.
+- `ferrite-session` relance le bureau après un arrêt sur erreur, au plus 3 fois en
+  2 minutes.
+- Nouvelle application **Paramètres** (`ferrite-apps settings`), accessible depuis le
+  Dock, le menu Applications et les réglages rapides :
+  - Wi-Fi et réseau : liste des réseaux, connexion avec mot de passe ;
+  - Bluetooth : recherche, appairage et connexion des appareils ;
+  - Son : volume, muet, choix de la sortie ;
+  - Écran : luminosité ;
+  - Clavier : disposition appliquée aussitôt, QWERTY américain par défaut ;
+  - Date et heure : fuseau, mise à l'heure automatique ;
+  - À propos.
+- Nouvel outil `tools/vm-test.sh` : il rejoue un scénario de clics dans l'ISO sous QEMU,
+  avec des captures (`tools/scenarios/stabilite.txt`).
+
+Vérifié :
+- `tools/ci.sh` passe : formatage, clippy sans avertissement, ShellCheck et **56 tests**
+  (35 pour ferrite-shell, 9 pour ferrite-apps, 7 pour ferrite-system, 5 pour ferrite-ui).
+- ISO reconstruite, puis `tools/vm-test.sh tools/scenarios/stabilite.txt` dans QEMU UEFI :
+  - le Terminal s'ouvre depuis le Dock ;
+  - le clic sur Bluetooth sans adaptateur n'a aucun effet, et le bureau reste réactif
+    (un clic extérieur ferme le menu) ;
+  - Paramètres s'ouvre depuis le Dock.
+- Paramètres et les réglages rapides ont aussi été capturés dans WSLg, sans matériel.
+
+À vérifier :
+- sur le ThinkBook : Wi-Fi réel (connexion avec mot de passe), Bluetooth réel,
+  luminosité et changement de fuseau (`timedatectl` passe par `sudo -n` faute d'agent
+  polkit) ;
+- le redémarrage automatique du bureau n'a pas été provoqué par un vrai plantage ;
+- dans cette ISO, sans carte Wi-Fi, la page Réseau affichait encore une erreur de liste.
+  Le correctif qui la masque est postérieur à la construction de l'ISO.
+

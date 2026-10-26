@@ -54,3 +54,21 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
   recentrée à son premier tampon, quand sa taille réelle est connue.
 - **2026-10-26 — Barre de titre sans trait de séparation** : elle se prolonge dans
   l'en-tête des applications Ferrite, peint de la même teinte (`Palette::LIGHT.titlebar`).
+- **2026-10-26 — Commandes système hors de la boucle du compositeur.** `bluetoothctl`
+  attend indéfiniment un démon absent, ce qui figeait tout le bureau. Les réglages passent
+  désormais par un fil d'exécution à part (`shell/src/system.rs`) ; chaque commande a un
+  délai maximal et le processus est tué au-delà (`ferrite-system`).
+- **2026-10-26 — Crate `ferrite-system`** (`services/system`), partagée par le compositeur
+  et Paramètres : appels de `nmcli`, `bluetoothctl`, `wpctl`, `brightnessctl` et
+  `timedatectl`, avec des analyses de sortie testées sans le matériel. Le D-Bus direct
+  (`ferrite-settingsd`) viendra plus tard.
+- **2026-10-26 — Réglages absents grisés** : sans carte Wi-Fi, adaptateur Bluetooth, sortie
+  audio ou rétroéclairage, l'indicateur disparaît de la barre et le réglage est grisé, au
+  lieu d'échouer au clic.
+- **2026-10-26 — Clavier QWERTY américain par défaut** (`docs/PLAN.md` §1.2), modifiable
+  dans Paramètres. Le choix est écrit dans `~/.config/ferrite/reglages` ; le compositeur
+  le relit et l'applique sans redémarrer.
+- **2026-10-26 — Redémarrage automatique du bureau** par `ferrite-session` après un arrêt
+  sur erreur, au plus 3 fois en 2 minutes ; le journal précédent est gardé
+  (`ferrite-shell.log.precedent`).
+

@@ -1,0 +1,23 @@
+# Bureau qui ne doit jamais se figer : Terminal, Bluetooth sans adaptateur, Paramètres.
+sleep 75
+shot test-1-bureau
+# Terminal depuis le Dock.
+click 640 756
+sleep 6
+shot test-2-terminal
+# Réglages rapides (indicateur réseau), puis Bluetooth (sans adaptateur dans QEMU).
+click 1215 15
+sleep 2
+click 1124 116
+sleep 2
+shot test-3-bluetooth
+# Le bureau répond toujours : clic ailleurs, le menu se ferme.
+click 640 420
+sleep 2
+shot test-4-reactif
+# Paramètres depuis le Dock, page À propos.
+click 755 756
+sleep 8
+click 290 335
+sleep 4
+shot test-5-parametres

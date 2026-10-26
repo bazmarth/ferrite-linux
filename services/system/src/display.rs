@@ -1,32 +1,128 @@
 //! Écran : luminosité du rétroéclairage.
+//!
+//! Un portable expose souvent plusieurs rétroéclairages (`acpi_video0` et
+//! `intel_backlight` sur Intel), dont un seul agit vraiment : on les règle donc tous, à la
+//! même proportion. Pour chacun, trois moyens sont essayés dans l'ordre : écriture directe
+//! dans `/sys` (règle udev de `brightnessctl`, groupe `video`), `SetBrightness` de logind
+//! (session active), puis `brightnessctl`.
 
 use std::{fs, path::PathBuf};
 
 use crate::command::{self, Error};
 
-fn backlight() -> Option<PathBuf> {
-    let mut entries: Vec<PathBuf> = fs::read_dir("/sys/class/backlight")
-        .ok()?
+/// Rétroéclairages, le plus fiable d'abord : `raw` (pilote graphique) avant `platform`
+/// et `firmware` (ACPI).
+fn backlights() -> Vec<PathBuf> {
+    let Ok(entries) = fs::read_dir("/sys/class/backlight") else {
+        return Vec::new();
+    };
+    let mut devices: Vec<(u8, PathBuf)> = entries
         .filter_map(Result::ok)
         .map(|entry| entry.path())
+        .map(|path| {
+            let kind = fs::read_to_string(path.join("type")).unwrap_or_default();
+            (type_rank(kind.trim()), path)
+        })
         .collect();
-    entries.sort();
-    entries.into_iter().next()
+    devices.sort();
+    devices.into_iter().map(|(_, path)| path).collect()
+}
+
+fn type_rank(kind: &str) -> u8 {
+    match kind {
+        "raw" => 0,
+        "platform" => 1,
+        "firmware" => 2,
+        _ => 3,
+    }
+}
+
+fn read(dir: &std::path::Path, name: &str) -> Option<u64> {
+    fs::read_to_string(dir.join(name)).ok()?.trim().parse().ok()
 }
 
 /// Luminosité en pour cent ; `None` sans rétroéclairage réglable (écran externe, VM).
 pub fn brightness() -> Option<u8> {
-    let dir = backlight()?;
-    let read = |name: &str| -> Option<u64> { fs::read_to_string(dir.join(name)).ok()?.trim().parse().ok() };
-    let max = read("max_brightness")?.max(1);
-    Some(((read("brightness")? * 100 + max / 2) / max).min(100) as u8)
+    let dir = backlights().into_iter().next()?;
+    let max = read(&dir, "max_brightness")?.max(1);
+    Some(((read(&dir, "brightness")? * 100 + max / 2) / max).min(100) as u8)
 }
 
-/// Règle la luminosité (au moins 5 % : un écran noir semblerait éteint).
+/// Valeur brute pour `percent` d'un maximum `max` (jamais 0 : un écran noir semblerait éteint).
+pub fn raw_value(percent: u8, max: u64) -> u64 {
+    (max * percent.min(100) as u64).div_ceil(100).max(1)
+}
+
+/// Règle la luminosité de tous les rétroéclairages (au moins 5 %).
 pub fn set_brightness(percent: u8) -> Result<(), Error> {
-    if backlight().is_none() {
+    let devices = backlights();
+    if devices.is_empty() {
         return Err("Luminosité non réglable sur cet écran".into());
     }
     let percent = percent.clamp(5, 100);
-    command::run("brightnessctl", &["--quiet", "set", &format!("{percent}%")]).map(drop)
+    let mut first_error = None;
+    let mut done = false;
+    for dir in devices {
+        let Some(max) = read(&dir, "max_brightness") else {
+            continue;
+        };
+        let value = raw_value(percent, max);
+        match set_device(&dir, value) {
+            Ok(()) => done = true,
+            Err(error) => {
+                first_error.get_or_insert(error);
+            }
+        }
+    }
+    if done {
+        Ok(())
+    } else {
+        Err(first_error.unwrap_or_else(|| "Luminosité non réglable".into()))
+    }
+}
+
+fn set_device(dir: &std::path::Path, value: u64) -> Result<(), Error> {
+    if fs::write(dir.join("brightness"), value.to_string()).is_ok() {
+        return Ok(());
+    }
+    let name = dir
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let logind = command::run(
+        "busctl",
+        &[
+            "call",
+            "org.freedesktop.login1",
+            "/org/freedesktop/login1/session/auto",
+            "org.freedesktop.login1.Session",
+            "SetBrightness",
+            "ssu",
+            "backlight",
+            &name,
+            &value.to_string(),
+        ],
+    );
+    if logind.is_ok() {
+        return Ok(());
+    }
+    command::run(
+        "brightnessctl",
+        &["--quiet", "--device", &name, "set", &value.to_string()],
+    )
+    .map(drop)
+    .map_err(|error| format!("Luminosité refusée ({name}) : {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn valeurs_brutes_et_ordre_des_retroeclairages() {
+        assert_eq!(raw_value(50, 96000), 48000);
+        assert_eq!(raw_value(5, 10), 1);
+        assert_eq!(raw_value(0, 255), 1);
+        assert!(type_rank("raw") < type_rank("firmware"));
+    }
 }

@@ -66,6 +66,8 @@ pub struct Ferrite {
     /// Recherche tapée dans le menu Applications.
     pub launcher_query: String,
     pub launcher_page: usize,
+    /// Curseur des réglages rapides en cours de glissement.
+    pub slider_drag: Option<crate::desktop::panels::Slider>,
     /// Dernier état connu du réseau, du Bluetooth, du son et de l'écran.
     pub system: Snapshot,
     /// Dernier refus d'un réglage système, montré dans les réglages rapides.
@@ -170,6 +172,7 @@ impl Ferrite {
             applications: Vec::new(),
             launcher_query: String::new(),
             launcher_page: 0,
+            slider_drag: None,
             system: Snapshot::default(),
             system_error: None,
             system_link: None,

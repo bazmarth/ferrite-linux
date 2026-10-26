@@ -16,7 +16,7 @@ use tracing::info;
 use crate::{
     desktop::{
         dock,
-        panels::{self, DesktopAction, LAUNCHER_PAGE_SIZE, Popover},
+        panels::{self, DesktopAction, LAUNCHER_PAGE_SIZE, Popover, Slider},
     },
     state::Ferrite,
     system::Change,
@@ -188,6 +188,27 @@ impl Ferrite {
         }
     }
 
+    /// Nouvelle valeur d'un curseur glissé, envoyée seulement si elle change.
+    fn drag_slider(&mut self, slider: Slider, location: Point<f64, Logical>) {
+        let Some(output_geo) = self
+            .space
+            .outputs()
+            .next()
+            .and_then(|output| self.space.output_geometry(output))
+        else {
+            return;
+        };
+        let view = crate::render::desktop_view(self);
+        let value = panels::slider_value(output_geo, &view, slider, location);
+        let (current, action) = match slider {
+            Slider::Volume => (view.volume, DesktopAction::SetVolume(value)),
+            Slider::Brightness => (view.brightness, DesktopAction::SetBrightness(value)),
+        };
+        if current != Some(value) {
+            self.handle_desktop_action(action);
+        }
+    }
+
     /// Place le pointeur en `location` et prévient le client sous le pointeur.
     fn move_pointer(
         &mut self,
@@ -198,7 +219,15 @@ impl Ferrite {
         let Some(pointer) = self.seat.get_pointer() else {
             return;
         };
-        let under = self.surface_under(location);
+        // Glissement d'un curseur des réglages rapides : la valeur suit le pointeur.
+        if let Some(slider) = self.slider_drag {
+            self.drag_slider(slider, location);
+        }
+        let under = if self.slider_drag.is_some() {
+            None
+        } else {
+            self.surface_under(location)
+        };
         let motion = MotionEvent {
             location,
             serial: SERIAL_COUNTER.next_serial(),
@@ -219,6 +248,9 @@ impl Ferrite {
         };
         let location = pointer.current_location();
 
+        if button.state == ButtonState::Released && self.slider_drag.take().is_some() {
+            return;
+        }
         if button.state == ButtonState::Released {
             // Un feu agit au relâchement, si le pointeur est toujours dessus.
             if let Some((window, light)) = self.pressed_light.take() {
@@ -249,6 +281,11 @@ impl Ferrite {
             if button.button == BTN_LEFT
                 && let Some(action) = desktop_action
             {
+                self.slider_drag = match action {
+                    DesktopAction::SetVolume(_) => Some(Slider::Volume),
+                    DesktopAction::SetBrightness(_) => Some(Slider::Brightness),
+                    _ => None,
+                };
                 self.handle_desktop_action(action);
                 return;
             }

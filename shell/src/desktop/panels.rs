@@ -625,6 +625,31 @@ pub fn action_at(
     Some(action)
 }
 
+/// Curseur des réglages rapides que l'on peut faire glisser.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Slider {
+    Volume,
+    Brightness,
+}
+
+/// Valeur (0 à 100) d'un curseur des réglages rapides pour le pointeur en `pos`, même
+/// hors du curseur pendant un glissement.
+pub fn slider_value(
+    output: Rectangle<i32, Logical>,
+    view: &DesktopView,
+    slider: Slider,
+    pos: Point<f64, Logical>,
+) -> u8 {
+    let layout = Layout::new(output.size.w as f64, output.size.h as f64, view);
+    let control = match slider {
+        Slider::Volume => Control::Volume,
+        Slider::Brightness => Control::Brightness,
+    };
+    layout
+        .slider_track(control)
+        .percent_at(pos.x - output.loc.x as f64)
+}
+
 /// Indicateurs de la barre, de gauche à droite.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Indicator {

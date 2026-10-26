@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 100 100" role="img" aria-label="Mode avion">
+<defs>
+ <linearGradient id="silver" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#DDE3EA"/></linearGradient>
+ <linearGradient id="blue" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8BD0FF"/><stop offset="1" stop-color="#3687DB"/></linearGradient>
+ <linearGradient id="green" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#B9F27B"/><stop offset="1" stop-color="#4CAF62"/></linearGradient>
+ <linearGradient id="yellow" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFE58B"/><stop offset="1" stop-color="#E6A51A"/></linearGradient>
+ <linearGradient id="red" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FF8989"/><stop offset="1" stop-color="#D94150"/></linearGradient>
+ <linearGradient id="purple" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#E9C6FF"/><stop offset="1" stop-color="#9254CB"/></linearGradient>
+ <linearGradient id="dark" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#56616D"/><stop offset="1" stop-color="#202833"/></linearGradient>
+</defs><g><path d="M50 15L59 45 81 58 80 66 56 59 56 77 65 83 65 88 50 82 35 88 35 83 44 77 44 59 20 66 19 58 41 45z" fill="#5F83D7"/></g></svg>

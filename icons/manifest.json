@@ -1,0 +1,560 @@
+[
+  {
+    "name": "app-music",
+    "label": "Musique",
+    "category": "Applications",
+    "description": ""
+  },
+  {
+    "name": "app-web",
+    "label": "Web",
+    "category": "Applications",
+    "description": ""
+  },
+  {
+    "name": "app-mail",
+    "label": "Messagerie",
+    "category": "Applications",
+    "description": ""
+  },
+  {
+    "name": "app-photos",
+    "label": "Photos",
+    "category": "Applications",
+    "description": ""
+  },
+  {
+    "name": "app-video",
+    "label": "Vidéos",
+    "category": "Applications",
+    "description": ""
+  },
+  {
+    "name": "app-calendar",
+    "label": "Calendrier",
+    "category": "Applications",
+    "description": ""
+  },
+  {
+    "name": "app-files",
+    "label": "Fichiers",
+    "category": "Applications",
+    "description": ""
+  },
+  {
+    "name": "app-terminal",
+    "label": "Terminal",
+    "category": "Applications",
+    "description": ""
+  },
+  {
+    "name": "app-code",
+    "label": "Code",
+    "category": "Applications",
+    "description": ""
+  },
+  {
+    "name": "app-camera",
+    "label": "Caméra",
+    "category": "Applications",
+    "description": ""
+  },
+  {
+    "name": "app-store",
+    "label": "Boutique d’apps",
+    "category": "Applications",
+    "description": ""
+  },
+  {
+    "name": "app-settings",
+    "label": "Paramètres",
+    "category": "Applications",
+    "description": ""
+  },
+  {
+    "name": "app-search",
+    "label": "Recherche",
+    "category": "Applications",
+    "description": ""
+  },
+  {
+    "name": "app-clock",
+    "label": "Horloge",
+    "category": "Applications",
+    "description": ""
+  },
+  {
+    "name": "app-text-editor",
+    "label": "Éditeur de texte",
+    "category": "Applications",
+    "description": ""
+  },
+  {
+    "name": "app-calculator",
+    "label": "Calculatrice",
+    "category": "Applications",
+    "description": ""
+  },
+  {
+    "name": "status-battery-000",
+    "label": "Batterie 0 %",
+    "category": "Niveaux et états",
+    "description": "Batterie au niveau indiqué"
+  },
+  {
+    "name": "status-battery-charging-000",
+    "label": "Batterie en charge 0 %",
+    "category": "Niveaux et états",
+    "description": "Batterie en charge au niveau indiqué"
+  },
+  {
+    "name": "status-battery-010",
+    "label": "Batterie 10 %",
+    "category": "Niveaux et états",
+    "description": "Batterie au niveau indiqué"
+  },
+  {
+    "name": "status-battery-charging-010",
+    "label": "Batterie en charge 10 %",
+    "category": "Niveaux et états",
+    "description": "Batterie en charge au niveau indiqué"
+  },
+  {
+    "name": "status-battery-020",
+    "label": "Batterie 20 %",
+    "category": "Niveaux et états",
+    "description": "Batterie au niveau indiqué"
+  },
+  {
+    "name": "status-battery-charging-020",
+    "label": "Batterie en charge 20 %",
+    "category": "Niveaux et états",
+    "description": "Batterie en charge au niveau indiqué"
+  },
+  {
+    "name": "status-battery-030",
+    "label": "Batterie 30 %",
+    "category": "Niveaux et états",
+    "description": "Batterie au niveau indiqué"
+  },
+  {
+    "name": "status-battery-charging-030",
+    "label": "Batterie en charge 30 %",
+    "category": "Niveaux et états",
+    "description": "Batterie en charge au niveau indiqué"
+  },
+  {
+    "name": "status-battery-040",
+    "label": "Batterie 40 %",
+    "category": "Niveaux et états",
+    "description": "Batterie au niveau indiqué"
+  },
+  {
+    "name": "status-battery-charging-040",
+    "label": "Batterie en charge 40 %",
+    "category": "Niveaux et états",
+    "description": "Batterie en charge au niveau indiqué"
+  },
+  {
+    "name": "status-battery-050",
+    "label": "Batterie 50 %",
+    "category": "Niveaux et états",
+    "description": "Batterie au niveau indiqué"
+  },
+  {
+    "name": "status-battery-charging-050",
+    "label": "Batterie en charge 50 %",
+    "category": "Niveaux et états",
+    "description": "Batterie en charge au niveau indiqué"
+  },
+  {
+    "name": "status-battery-060",
+    "label": "Batterie 60 %",
+    "category": "Niveaux et états",
+    "description": "Batterie au niveau indiqué"
+  },
+  {
+    "name": "status-battery-charging-060",
+    "label": "Batterie en charge 60 %",
+    "category": "Niveaux et états",
+    "description": "Batterie en charge au niveau indiqué"
+  },
+  {
+    "name": "status-battery-070",
+    "label": "Batterie 70 %",
+    "category": "Niveaux et états",
+    "description": "Batterie au niveau indiqué"
+  },
+  {
+    "name": "status-battery-charging-070",
+    "label": "Batterie en charge 70 %",
+    "category": "Niveaux et états",
+    "description": "Batterie en charge au niveau indiqué"
+  },
+  {
+    "name": "status-battery-080",
+    "label": "Batterie 80 %",
+    "category": "Niveaux et états",
+    "description": "Batterie au niveau indiqué"
+  },
+  {
+    "name": "status-battery-charging-080",
+    "label": "Batterie en charge 80 %",
+    "category": "Niveaux et états",
+    "description": "Batterie en charge au niveau indiqué"
+  },
+  {
+    "name": "status-battery-090",
+    "label": "Batterie 90 %",
+    "category": "Niveaux et états",
+    "description": "Batterie au niveau indiqué"
+  },
+  {
+    "name": "status-battery-charging-090",
+    "label": "Batterie en charge 90 %",
+    "category": "Niveaux et états",
+    "description": "Batterie en charge au niveau indiqué"
+  },
+  {
+    "name": "status-battery-100",
+    "label": "Batterie 100 %",
+    "category": "Niveaux et états",
+    "description": "Batterie au niveau indiqué"
+  },
+  {
+    "name": "status-battery-charging-100",
+    "label": "Batterie en charge 100 %",
+    "category": "Niveaux et états",
+    "description": "Batterie en charge au niveau indiqué"
+  },
+  {
+    "name": "status-wifi-0",
+    "label": "Wi-Fi niveau 0",
+    "category": "Niveaux et états",
+    "description": "Niveau de signal Wi-Fi"
+  },
+  {
+    "name": "status-wifi-1",
+    "label": "Wi-Fi niveau 1",
+    "category": "Niveaux et états",
+    "description": "Niveau de signal Wi-Fi"
+  },
+  {
+    "name": "status-wifi-2",
+    "label": "Wi-Fi niveau 2",
+    "category": "Niveaux et états",
+    "description": "Niveau de signal Wi-Fi"
+  },
+  {
+    "name": "status-wifi-3",
+    "label": "Wi-Fi niveau 3",
+    "category": "Niveaux et états",
+    "description": "Niveau de signal Wi-Fi"
+  },
+  {
+    "name": "status-wifi-4",
+    "label": "Wi-Fi niveau 4",
+    "category": "Niveaux et états",
+    "description": "Niveau de signal Wi-Fi"
+  },
+  {
+    "name": "status-ethernet-0",
+    "label": "Ethernet déconnecté",
+    "category": "Niveaux et états",
+    "description": ""
+  },
+  {
+    "name": "status-ethernet-1",
+    "label": "Ethernet faible",
+    "category": "Niveaux et états",
+    "description": ""
+  },
+  {
+    "name": "status-ethernet-2",
+    "label": "Ethernet moyen",
+    "category": "Niveaux et états",
+    "description": ""
+  },
+  {
+    "name": "status-ethernet-3",
+    "label": "Ethernet bon",
+    "category": "Niveaux et états",
+    "description": ""
+  },
+  {
+    "name": "status-ethernet-4",
+    "label": "Ethernet excellent",
+    "category": "Niveaux et états",
+    "description": ""
+  },
+  {
+    "name": "status-bluetooth-off",
+    "label": "Bluetooth désactivé",
+    "category": "Niveaux et états",
+    "description": ""
+  },
+  {
+    "name": "status-bluetooth-on",
+    "label": "Bluetooth activé",
+    "category": "Niveaux et états",
+    "description": ""
+  },
+  {
+    "name": "status-bluetooth-connected",
+    "label": "Bluetooth connecté",
+    "category": "Niveaux et états",
+    "description": ""
+  },
+  {
+    "name": "status-bluetooth-searching",
+    "label": "Bluetooth recherche",
+    "category": "Niveaux et états",
+    "description": ""
+  },
+  {
+    "name": "status-volume-0",
+    "label": "Muet",
+    "category": "Niveaux et états",
+    "description": ""
+  },
+  {
+    "name": "status-volume-1",
+    "label": "Volume niveau 1",
+    "category": "Niveaux et états",
+    "description": ""
+  },
+  {
+    "name": "status-volume-2",
+    "label": "Volume niveau 2",
+    "category": "Niveaux et états",
+    "description": ""
+  },
+  {
+    "name": "status-volume-3",
+    "label": "Volume niveau 3",
+    "category": "Niveaux et états",
+    "description": ""
+  },
+  {
+    "name": "status-volume-4",
+    "label": "Volume niveau 4",
+    "category": "Niveaux et états",
+    "description": ""
+  },
+  {
+    "name": "status-volume-5",
+    "label": "Volume niveau 5",
+    "category": "Niveaux et états",
+    "description": ""
+  },
+  {
+    "name": "status-brightness-0",
+    "label": "Luminosité niveau 0",
+    "category": "Niveaux et états",
+    "description": ""
+  },
+  {
+    "name": "status-brightness-1",
+    "label": "Luminosité niveau 1",
+    "category": "Niveaux et états",
+    "description": ""
+  },
+  {
+    "name": "status-brightness-2",
+    "label": "Luminosité niveau 2",
+    "category": "Niveaux et états",
+    "description": ""
+  },
+  {
+    "name": "status-brightness-3",
+    "label": "Luminosité niveau 3",
+    "category": "Niveaux et états",
+    "description": ""
+  },
+  {
+    "name": "status-brightness-4",
+    "label": "Luminosité niveau 4",
+    "category": "Niveaux et états",
+    "description": ""
+  },
+  {
+    "name": "status-brightness-5",
+    "label": "Luminosité niveau 5",
+    "category": "Niveaux et états",
+    "description": ""
+  },
+  {
+    "name": "status-cellular-0",
+    "label": "Réseau mobile niveau 0",
+    "category": "Niveaux et états",
+    "description": ""
+  },
+  {
+    "name": "status-cellular-1",
+    "label": "Réseau mobile niveau 1",
+    "category": "Niveaux et états",
+    "description": ""
+  },
+  {
+    "name": "status-cellular-2",
+    "label": "Réseau mobile niveau 2",
+    "category": "Niveaux et états",
+    "description": ""
+  },
+  {
+    "name": "status-cellular-3",
+    "label": "Réseau mobile niveau 3",
+    "category": "Niveaux et états",
+    "description": ""
+  },
+  {
+    "name": "status-cellular-4",
+    "label": "Réseau mobile niveau 4",
+    "category": "Niveaux et états",
+    "description": ""
+  },
+  {
+    "name": "status-cellular-5",
+    "label": "Réseau mobile niveau 5",
+    "category": "Niveaux et états",
+    "description": ""
+  },
+  {
+    "name": "status-airplane",
+    "label": "Mode avion",
+    "category": "Système",
+    "description": ""
+  },
+  {
+    "name": "status-location",
+    "label": "Localisation",
+    "category": "Système",
+    "description": ""
+  },
+  {
+    "name": "status-notifications",
+    "label": "Notifications",
+    "category": "Système",
+    "description": ""
+  },
+  {
+    "name": "status-power",
+    "label": "Alimentation",
+    "category": "Système",
+    "description": ""
+  },
+  {
+    "name": "status-microphone",
+    "label": "Microphone",
+    "category": "Système",
+    "description": ""
+  },
+  {
+    "name": "status-camera",
+    "label": "Caméra active",
+    "category": "Système",
+    "description": ""
+  },
+  {
+    "name": "status-usb",
+    "label": "USB",
+    "category": "Système",
+    "description": ""
+  },
+  {
+    "name": "status-cloud",
+    "label": "Cloud",
+    "category": "Système",
+    "description": ""
+  },
+  {
+    "name": "status-lock",
+    "label": "Verrouillage",
+    "category": "Système",
+    "description": ""
+  },
+  {
+    "name": "status-security",
+    "label": "Sécurité",
+    "category": "Système",
+    "description": ""
+  },
+  {
+    "name": "status-update",
+    "label": "Mises à jour",
+    "category": "Système",
+    "description": ""
+  },
+  {
+    "name": "status-printer",
+    "label": "Imprimante",
+    "category": "Système",
+    "description": ""
+  },
+  {
+    "name": "status-keyboard",
+    "label": "Clavier",
+    "category": "Système",
+    "description": ""
+  },
+  {
+    "name": "status-display",
+    "label": "Écran",
+    "category": "Système",
+    "description": ""
+  },
+  {
+    "name": "status-mouse",
+    "label": "Souris",
+    "category": "Système",
+    "description": ""
+  },
+  {
+    "name": "status-download",
+    "label": "Téléchargement",
+    "category": "Système",
+    "description": ""
+  },
+  {
+    "name": "status-upload",
+    "label": "Envoi",
+    "category": "Système",
+    "description": ""
+  },
+  {
+    "name": "status-warning",
+    "label": "Avertissement",
+    "category": "Système",
+    "description": ""
+  },
+  {
+    "name": "status-user",
+    "label": "Utilisateur",
+    "category": "Système",
+    "description": ""
+  },
+  {
+    "name": "status-network",
+    "label": "Réseau",
+    "category": "Système",
+    "description": ""
+  },
+  {
+    "name": "status-storage",
+    "label": "Stockage",
+    "category": "Système",
+    "description": ""
+  },
+  {
+    "name": "file-generic",
+    "label": "Fichier",
+    "category": "Fichiers",
+    "description": ""
+  },
+  {
+    "name": "file-text",
+    "label": "Document texte",
+    "category": "Fichiers",
+    "description": ""
+  }
+]

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 100 100" role="img" aria-label="Batterie 80 %">
+<defs>
+ <linearGradient id="silver" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#DDE3EA"/></linearGradient>
+ <linearGradient id="blue" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8BD0FF"/><stop offset="1" stop-color="#3687DB"/></linearGradient>
+ <linearGradient id="green" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#B9F27B"/><stop offset="1" stop-color="#4CAF62"/></linearGradient>
+ <linearGradient id="yellow" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFE58B"/><stop offset="1" stop-color="#E6A51A"/></linearGradient>
+ <linearGradient id="red" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FF8989"/><stop offset="1" stop-color="#D94150"/></linearGradient>
+ <linearGradient id="purple" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#E9C6FF"/><stop offset="1" stop-color="#9254CB"/></linearGradient>
+ <linearGradient id="dark" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#56616D"/><stop offset="1" stop-color="#202833"/></linearGradient>
+</defs><g><rect x="18" y="34" width="60" height="32" rx="7" fill="url(#silver)" stroke="#788697" stroke-width="2"/><rect x="78" y="43" width="5" height="14" rx="2" fill="#788697"/><rect x="25" y="40" width="38.40" height="20" rx="3" fill="#62B96C"/></g></svg>

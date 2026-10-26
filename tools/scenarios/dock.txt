@@ -1,0 +1,31 @@
+# Dock : masqué quand une fenêtre le recouvre, retour par le bas de l'écran, réglages,
+# plein écran (barre du haut et Dock masqués).
+sleep 75
+# Paramètres > Bureau et Dock.
+click 40 15
+sleep 2
+type param
+key ret
+sleep 8
+click 327 353
+sleep 2
+move 640 400
+sleep 2
+shot dock-1-reglages
+# TextEdit en plein écran (F11) : barre du haut et Dock disparaissent.
+move 640 799
+sleep 2
+click 583 756
+sleep 6
+key f11
+sleep 3
+move 640 400
+sleep 2
+shot dock-2-plein-ecran
+# La souris en haut rappelle la barre, en bas le Dock.
+move 640 0
+sleep 2
+shot dock-3-barre
+move 640 799
+sleep 2
+shot dock-4-dock

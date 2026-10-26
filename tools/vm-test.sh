@@ -5,7 +5,7 @@
 #   FERRITE_VM_DEV=1 tools/vm-test.sh …   avec les binaires de target/release
 #
 # Une ligne par étape : « sleep SECONDES », « click X Y » (pixels de l'écran 1280×800),
-# « serial LIGNE » (tapée sur la console série, sortie dans build/vm-serie.log),
+# « move X Y » (déplacer le pointeur), « serial LIGNE » (tapée sur la console série, sortie dans build/vm-serie.log),
 # « drag X1 Y1 X2 Y2 » (glisser avec le bouton gauche), « key TOUCHES » (syntaxe sendkey de QEMU, ex. ctrl-alt-backspace), « type TEXTE »
 # (frappe au clavier QWERTY américain, disposition par défaut de Ferrite), « serve FICHIER »
 # (le fichier est servi à la machine virtuelle sur 10.0.2.2:8765, à lire par exemple avec
@@ -156,6 +156,10 @@ while read -r command a b; do
             hmp screendump "$BUILD/$a.png" -f png
             sleep 1
             ok "capture : $BUILD/$a.png"
+            ;;
+        move)
+            # move X Y : déplace le pointeur sans cliquer.
+            move_abs "$a" "$b"
             ;;
         drag)
             # drag X1 Y1 X2 Y2 : appui en (X1, Y1), glissement en 20 pas, relâchement.

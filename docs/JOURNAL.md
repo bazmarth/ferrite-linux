@@ -410,3 +410,46 @@ Vérifié :
 - l'ISO actuelle contient le premier correctif du gel mais pas le second (accrochage) :
   elle est à reconstruire avant de refaire la clé USB.
 
+## 2026-10-26 — Dock masquable, plein écran, finitions des applications
+
+Fait :
+- Barres latérales de Fichiers et Paramètres : un composant commun dessine l'icône et le
+  texte, si bien que toute la ligne est cliquable. Avant, le texte captait la souris et se
+  laissait sélectionner. La sélection du texte des libellés est coupée partout.
+  - Fichiers : groupes « Favoris » et « Appareils », icônes monochromes dans la couleur
+    d'accent.
+  - Paramètres : pastilles colorées, nouvelle rubrique « Bureau et Dock ».
+- Conversion « symbolique » des icônes déplacée dans `ferrite-ui`, partagée avec les
+  applications.
+- Icônes redessinées : Fichiers (proportions carrées), Wi-Fi (arcs épais), réseau filaire
+  (prise Ethernet).
+- Dock :
+  - taille (petit, moyen, grand) et masquage (quand une fenêtre le recouvre, toujours,
+    jamais) réglables ; appliqués en une seconde ;
+  - glissement animé ;
+  - retour quand la souris touche le bas de l'écran, ou avec la touche Super ;
+  - la bande réservée en bas n'existe plus qu'en mode « jamais ».
+- Plein écran :
+  - géré pour les applications Wayland ;
+  - la barre du haut et le Dock s'effacent et reviennent quand la souris touche le bord ;
+  - F11 dans les applications Ferrite.
+- Jauges du volume et de la luminosité : une valeur réglée à la main n'est plus écrasée
+  pendant 2 s par une relecture plus ancienne du système. C'est ce qui faisait trembler
+  le curseur et l'icône.
+- XWayland n'est plus lancé sous WSLg, où `/tmp/.X11-unix` est en lecture seule.
+- `tools/vm-test.sh` : étape `move` ; scénario `tools/scenarios/dock.txt`.
+
+Vérifié (QEMU en mode développement, sans reconstruire l'ISO) :
+- `tools/ci.sh` passe : **64 tests**.
+- la rubrique « Bureau et Dock » s'affiche ;
+- TextEdit en plein écran (F11) : barre du haut et Dock masqués ;
+- la souris en haut rappelle la barre, en bas le Dock ;
+- le Dock se masque quand le Terminal le recouvre.
+
+À vérifier :
+- le changement de taille du Dock depuis Paramètres, testé seulement par les tests
+  unitaires ;
+- les jauges sur le ThinkBook (QEMU n'a ni rétroéclairage ni glissement de curseur
+  réaliste) ;
+- l'ISO n'est pas reconstruite.
+

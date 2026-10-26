@@ -66,8 +66,11 @@ impl PointerGrab<Ferrite> for MoveSurfaceGrab {
     ) {
         handle.button(data, event);
         if !handle.current_pressed().contains(&BTN_LEFT) {
-            if let (Some(pointer), Some(area)) = (data.seat.get_pointer(), data.usable_area()) {
-                if let Some(side) = super::snap_side_at(area, pointer.current_location()) {
+            // La position vient de `handle` : appeler `PointerHandle::current_location()` ici
+            // reprendrait le verrou du pointeur, déjà tenu pendant le déplacement, et figerait
+            // tout le compositeur.
+            if let Some(area) = data.usable_area() {
+                if let Some(side) = super::snap_side_at(area, handle.current_location()) {
                     data.snap_window_to_side(&self.window, side);
                 }
             }

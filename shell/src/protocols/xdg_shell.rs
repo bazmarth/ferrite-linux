@@ -266,9 +266,12 @@ impl Ferrite {
             return;
         };
 
+        // La taille est lue avant : `window.geometry()` reprend le verrou des données de la
+        // surface, déjà tenu dans `with_restore_geometry`, et figerait le compositeur.
+        let previous = Rectangle::new(location, window.geometry().size);
         with_restore_geometry(toplevel.wl_surface(), |saved| {
             if saved.is_none() {
-                *saved = Some(Rectangle::new(location, window.geometry().size));
+                *saved = Some(previous);
             }
         });
         toplevel.with_pending_state(|state| {

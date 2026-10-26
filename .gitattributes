@@ -5,3 +5,5 @@
 *.png binary
 *.jpg binary
 *.ogg binary
+# Scripts Windows : fins de ligne CRLF, attendues par cmd.exe.
+*.cmd text eol=crlf

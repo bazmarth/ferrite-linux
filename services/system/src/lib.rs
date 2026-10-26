@@ -9,6 +9,7 @@
 //! Les analyses de sortie sont des fonctions pures, testées sans le matériel.
 
 pub mod about;
+pub mod applications;
 pub mod audio;
 pub mod bluetooth;
 pub mod command;

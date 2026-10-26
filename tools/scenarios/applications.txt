@@ -1,0 +1,41 @@
+# Applications Linux tierces : installation de VLC (Debian) et Brave (dépôt officiel)
+# depuis le Terminal, apparition dans le menu, puis lancement par la recherche.
+# Demande un accès à Internet depuis QEMU, et une quinzaine de minutes.
+#
+# Le script d'installation est servi par l'hôte (10.0.2.2 vu de QEMU) : taper de longues
+# commandes dans une machine virtuelle chargée finit par répéter des touches.
+serve tools/scenarios/installer-vlc-brave.sh
+sleep 75
+# Terminal depuis le Dock.
+click 640 756
+sleep 6
+type bash -c "$(cat </dev/tcp/10.0.2.2/8765)"
+key ret
+sleep 600
+shot apps-1-installe
+# Menu Applications : les deux applications doivent y figurer.
+click 40 15
+sleep 3
+shot apps-2-menu
+# Recherche « vlc » puis Entrée.
+type vlc
+sleep 2
+shot apps-3-recherche
+key ret
+sleep 40
+shot apps-4-vlc
+# Brave par la recherche.
+click 40 15
+sleep 2
+type brave
+sleep 2
+key ret
+sleep 60
+shot apps-5-brave
+# Journal du compositeur, dans le Terminal.
+click 500 200
+sleep 2
+type tail -n 25 /run/user/1000/ferrite-shell.log
+key ret
+sleep 3
+shot apps-6-journal

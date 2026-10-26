@@ -9,7 +9,7 @@ Chaque dépendance avec sa licence et la raison de sa présence. Les versions ex
 
 | Crate | Utilisée par | Licence | Raison |
 |---|---|---|---|
-| `smithay` 0.7 | ferrite-shell | MIT | compositeur Wayland (imposé par le plan) ; fonctions `backend_winit`, `desktop`, `renderer_gl`, `wayland_frontend` |
+| `smithay` 0.7 | ferrite-shell | MIT | compositeur Wayland (imposé par le plan) ; fonctions `backend_drm`, `backend_libinput`, `backend_winit`, `desktop`, `renderer_gl`, `wayland_frontend`, `xwayland` |
 | `bitflags` 2 | ferrite-shell | MIT/Apache-2.0 | bords de redimensionnement |
 | `fontdue` 0.9 | ferrite-shell | MIT/Apache-2.0/Zlib | rendu du titre des fenêtres (police Inter) ; prévu par le plan |
 | `png` 0.18 | ferrite-shell | MIT/Apache-2.0 | écriture des captures (`--capture`) |
@@ -30,6 +30,8 @@ Liste : `image/config/package-lists/ferrite.list.chroot`. Points notables :
 | `dbus-user-session` | services utilisateur PipeWire/WirePlumber sans environnement de bureau |
 | `libinput-tools`, `alsa-utils`, `pciutils`, `usbutils` | vérifications de la phase 1 (`ferrite-check`) |
 | `xwayland`, `mesa-vulkan-drivers`, `libegl1`, `libgles2` | préparés pour le compositeur (phase 2) |
+| `xdg-desktop-portal`, `xdg-desktop-portal-gtk` | dialogues de fichiers et ouverture de liens des applications (navigateurs, Flatpak) |
+| `dbus-bin` | `dbus-update-activation-environment` : transmet `WAYLAND_DISPLAY` et `DISPLAY` aux services D-Bus |
 | `fonts-jetbrains-mono` | police du terminal `foot` (`/etc/xdg/foot/foot.ini`) |
 
 ## Ressources

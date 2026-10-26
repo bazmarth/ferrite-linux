@@ -71,4 +71,21 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
 - **2026-10-26 — Redémarrage automatique du bureau** par `ferrite-session` après un arrêt
   sur erreur, au plus 3 fois en 2 minutes ; le journal précédent est gardé
   (`ferrite-shell.log.precedent`).
+- **2026-10-26 — XWayland lancé par ferrite-shell** (fonction `xwayland` de Smithay) : les
+  applications X11 (Brave et Chromium par défaut, VLC, jeux) s'affichent comme les autres.
+  Leurs fenêtres reçoivent les décorations Ferrite si elles ne dessinent pas les leurs.
+  Les menus X11 sont posés tels quels. `DISPLAY` est transmis aux applications lancées et
+  à D-Bus (`dbus-update-activation-environment`).
+- **2026-10-26 — `linux-dmabuf` avec retour du périphérique de rendu**, pour que Mesa
+  utilise le GPU dans les clients. L'import réel est fait au rendu : un tampon refusé
+  n'empêche pas les autres fenêtres de s'afficher.
+- **2026-10-26 — Protocoles d'appoint** : viewporter, mise à l'échelle fractionnaire,
+  activation, sélection primaire et pointeur relatif. Les contraintes du pointeur (jeux)
+  et `presentation-time` attendront un vrai besoin, plutôt que d'être annoncés sans être
+  respectés.
+- **2026-10-26 — Menu Applications alimenté par les fichiers `.desktop`** (Debian, Flatpak
+  et utilisateur), relus quand un dossier change : une application installée apparaît
+  sans redémarrer. Recherche au clavier dès l'ouverture du menu, pages de 24.
+- **2026-10-26 — Portails GTK** (`xdg-desktop-portal-gtk`) pour les dialogues de fichiers
+  et l'ouverture de liens des navigateurs et des Flatpak.
 

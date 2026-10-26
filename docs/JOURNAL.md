@@ -315,3 +315,51 @@ Vérifié :
 - dans cette ISO, sans carte Wi-Fi, la page Réseau affichait encore une erreur de liste.
   Le correctif qui la masque est postérieur à la construction de l'ISO.
 
+## 2026-10-26 — Compatibilité avec les applications Linux
+
+Fait :
+- XWayland lancé par ferrite-shell, qui gère les fenêtres X11 :
+  - placement, focus, décorations Ferrite si l'application ne dessine pas les siennes ;
+  - déplacement, redimensionnement, agrandissement, plein écran, réduction ;
+  - menus X11 posés à la position demandée ;
+  - boîtes de dialogue centrées sur leur fenêtre parente et gardées au-dessus d'elle ;
+  - taille limitée à la zone utile.
+- `DISPLAY` est transmis aux applications lancées et à D-Bus.
+- Correctifs trouvés en ajoutant X11 :
+  - un `unwrap()` du redimensionnement aurait planté sur toute fenêtre non Wayland ;
+  - les fenêtres X11 décorées n'étaient pas dessinées du tout.
+- Protocoles ajoutés : `linux-dmabuf` (avec retour du périphérique de rendu),
+  viewporter, mise à l'échelle fractionnaire, activation, sélection primaire et pointeur
+  relatif.
+- Menu Applications alimenté par les fichiers `.desktop` (Debian, Flatpak, utilisateur) :
+  - icônes SVG et PNG du thème hicolor ;
+  - mise à jour dès qu'une application est installée ;
+  - recherche au clavier, pages de 24, molette ;
+  - Entrée lance le premier résultat.
+- Portails GTK (`xdg-desktop-portal-gtk`) dans l'image.
+- `tools/vm-test.sh` :
+  - frappe fiable par QMP (étape `type`) ;
+  - service d'un script à la machine virtuelle (étape `serve`) ;
+  - scénario `tools/scenarios/applications.txt`.
+
+Vérifié :
+- `tools/ci.sh` passe : **60 tests** (36 pour ferrite-shell, 10 pour ferrite-system, 9 pour
+  ferrite-apps, 5 pour ferrite-ui).
+- Dans QEMU, avec l'ISO reconstruite (scénario `applications.txt`) :
+  - VLC (Debian) et Brave (dépôt officiel) s'installent depuis le Terminal ;
+  - les deux apparaissent dans le menu avec leur icône, sans redémarrer ;
+  - la recherche « vlc » puis Entrée ouvre VLC, avec la barre de titre Ferrite ;
+  - la recherche « brave » ouvre Brave, en français, avec son propre cadre.
+- Le scénario de stabilité passe toujours.
+
+À vérifier :
+- les deux derniers correctifs ne sont pas encore dans l'ISO testée :
+  - dialogue de VLC passé derrière sa fenêtre ;
+  - Brave qui se redimensionne sous le Dock ;
+- lecture vidéo, son et accélération GPU (`linux-dmabuf`) sur le ThinkBook ; QEMU n'a pas
+  de GPU ;
+- copier-coller entre applications X11 et Wayland : non relié pour l'instant ;
+- fenêtres X11 à l'échelle 2 du ThinkBook : elles seront agrandies, donc moins nettes ;
+- dans une machine virtuelle très chargée, le relâchement des touches peut arriver en
+  retard et le terminal répète la lettre.
+

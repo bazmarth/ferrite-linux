@@ -3,19 +3,21 @@
 mod calculator;
 mod editor;
 mod files;
+mod settings;
 mod style;
 
 use std::{env, path::PathBuf};
 
 use eframe::egui;
 
-use crate::{calculator::CalculatorState, editor::EditorState, files::FilesState};
+use crate::{calculator::CalculatorState, editor::EditorState, files::FilesState, settings::SettingsState};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AppKind {
     Files,
     TextEdit,
     Calculator,
+    Settings,
 }
 
 impl AppKind {
@@ -24,6 +26,7 @@ impl AppKind {
             "files" => Some(Self::Files),
             "textedit" => Some(Self::TextEdit),
             "calculator" => Some(Self::Calculator),
+            "settings" => Some(Self::Settings),
             _ => None,
         }
     }
@@ -33,6 +36,7 @@ impl AppKind {
             Self::Files => "Fichiers",
             Self::TextEdit => "TextEdit",
             Self::Calculator => "Calculatrice",
+            Self::Settings => "Paramètres",
         }
     }
 
@@ -42,6 +46,7 @@ impl AppKind {
             Self::Files => "ferrite-files",
             Self::TextEdit => "ferrite-textedit",
             Self::Calculator => "ferrite-calculator",
+            Self::Settings => "ferrite-settings",
         }
     }
 
@@ -51,6 +56,7 @@ impl AppKind {
             Self::Files => ([860.0, 520.0], [560.0, 340.0]),
             Self::TextEdit => ([760.0, 540.0], [420.0, 280.0]),
             Self::Calculator => ([320.0, 470.0], [280.0, 420.0]),
+            Self::Settings => ([880.0, 580.0], [680.0, 440.0]),
         }
     }
 }
@@ -58,7 +64,7 @@ impl AppKind {
 fn main() -> eframe::Result {
     let mut args = env::args().skip(1);
     let Some(kind) = args.next().and_then(|arg| AppKind::parse(&arg)) else {
-        eprintln!("Utilisation : ferrite-apps <files|textedit|calculator> [fichier]");
+        eprintln!("Utilisation : ferrite-apps <files|textedit|calculator|settings> [fichier]");
         return Ok(());
     };
     let initial_file = args.next().map(PathBuf::from);
@@ -83,6 +89,7 @@ struct FerriteApp {
     files: Option<FilesState>,
     editor: EditorState,
     calculator: CalculatorState,
+    settings: Option<SettingsState>,
 }
 
 impl FerriteApp {
@@ -97,6 +104,7 @@ impl FerriteApp {
             files: (kind == AppKind::Files).then(FilesState::default),
             editor,
             calculator: CalculatorState::default(),
+            settings: (kind == AppKind::Settings).then(SettingsState::default),
         }
     }
 }
@@ -115,6 +123,11 @@ impl eframe::App for FerriteApp {
             }
             AppKind::TextEdit => self.editor.update(ui),
             AppKind::Calculator => self.calculator.update(ui),
+            AppKind::Settings => {
+                if let Some(settings) = &mut self.settings {
+                    settings.update(ui);
+                }
+            }
         }
     }
 }

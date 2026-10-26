@@ -154,6 +154,35 @@ pub fn tool_button(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Respon
     )
 }
 
+/// Interrupteur à glissière, comme dans les réglages rapides du bureau.
+pub fn switch(ui: &mut egui::Ui, on: &mut bool, enabled: bool) -> egui::Response {
+    let size = egui::vec2(42.0, 24.0);
+    let sense = if enabled {
+        egui::Sense::click()
+    } else {
+        egui::Sense::hover()
+    };
+    let (rect, mut response) = ui.allocate_exact_size(size, sense);
+    if response.clicked() {
+        *on = !*on;
+        response.mark_changed();
+    }
+    let progress = ui.ctx().animate_bool_responsive(response.id, *on);
+    let track = if !enabled {
+        egui::Color32::from_rgb(0xE6, 0xE6, 0xE8)
+    } else if *on {
+        ACCENT
+    } else {
+        egui::Color32::from_rgb(0xCF, 0xCF, 0xD3)
+    };
+    let painter = ui.painter();
+    painter.rect_filled(rect, rect.height() / 2.0, track);
+    let radius = rect.height() / 2.0 - 2.5;
+    let x = egui::lerp(rect.left() + radius + 2.5..=rect.right() - radius - 2.5, progress);
+    painter.circle_filled(egui::pos2(x, rect.center().y), radius, egui::Color32::WHITE);
+    response
+}
+
 macro_rules! icons {
     ($($name:literal),* $(,)?) => {
         const SOURCES: &[(&str, &str)] = &[
@@ -171,8 +200,16 @@ icons![
     "app-video",
     "file-generic",
     "file-text",
+    "app-clock",
+    "app-settings",
+    "status-bluetooth-on",
+    "status-display",
+    "status-keyboard",
+    "status-lock",
     "status-storage",
     "status-user",
+    "status-volume-4",
+    "status-wifi-4",
 ];
 
 /// Icônes SVG rasterisées à la demande et gardées en texture.

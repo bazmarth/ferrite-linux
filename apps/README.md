@@ -10,9 +10,13 @@ Applications du premier ensemble du bureau, en Rust avec eframe/egui :
   utiliser Ctrl+S.
 - **Calculatrice** : opérations `+`, `-`, `*`, `/`, nombres décimaux et parenthèses.
 - **Terminal** : `foot`, lancé par le Dock.
+- **Paramètres** : Wi-Fi et réseau (connexion avec mot de passe), Bluetooth (recherche,
+  appairage, connexion), son (volume, muet, sortie), écran (luminosité), clavier
+  (disposition appliquée aussitôt), date et heure (fuseau, mise à l'heure automatique)
+  et à propos. Les commandes système tournent en arrière-plan (`ferrite-system`).
 
 Lancement : `ferrite-apps files`, `ferrite-apps textedit [fichier]` ou
-`ferrite-apps calculator`.
+`ferrite-apps calculator` ou `ferrite-apps settings`.
 
 Les applications sont des étapes utilisables, pas encore le périmètre complet de la phase
 5 : corbeille, opérations de fichiers avec progression, onglets du terminal, coloration

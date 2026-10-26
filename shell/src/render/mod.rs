@@ -97,9 +97,17 @@ pub fn output_elements(
     }
 
     let running = running_apps(state);
-    assets
-        .dock
-        .push_element(renderer, output, output_geo, scale, &running, &mut elements);
+    let dock_shown = state.dock_shown(output_geo);
+    assets.dock.push_element(
+        renderer,
+        output,
+        output_geo,
+        scale,
+        &running,
+        state.dock_config,
+        dock_shown,
+        &mut elements,
+    );
     let view = desktop_view(state);
     assets
         .panels
@@ -256,6 +264,56 @@ fn push_cursor(
     }
 }
 
+impl Ferrite {
+    /// La fenêtre du dessus est-elle en plein écran ?
+    pub fn top_fullscreen(&self) -> bool {
+        self.space
+            .elements()
+            .rfind(|window| !window.x11_surface().is_some_and(|x11| x11.is_override_redirect()))
+            .is_some_and(wm::is_fullscreen)
+    }
+
+    fn pointer_location(&self) -> Option<Point<f64, Logical>> {
+        self.seat.get_pointer().map(|pointer| pointer.current_location())
+    }
+
+    /// Le Dock doit-il être affiché sur l'écran `output` ?
+    pub fn dock_shown(&self, output: Rectangle<i32, Logical>) -> bool {
+        let frames: Vec<Rectangle<i32, Logical>> = self
+            .space
+            .elements()
+            .filter(|window| !window.x11_surface().is_some_and(|x11| x11.is_override_redirect()))
+            .filter_map(|window| {
+                let content = self.space.element_geometry(window)?;
+                Some(if wm::is_server_decorated(window) {
+                    wm::decoration::frame(content)
+                } else {
+                    content
+                })
+            })
+            .collect();
+        crate::desktop::dock::should_show(crate::desktop::dock::Visibility {
+            config: self.dock_config,
+            output,
+            pointer: self.pointer_location(),
+            windows: &frames,
+            fullscreen: self.top_fullscreen(),
+            launcher_open: self.popover == Some(Popover::Launcher),
+        })
+    }
+
+    /// La barre du haut est-elle affichée ? En plein écran, elle revient quand la souris
+    /// touche le haut de l'écran ou qu'un menu est ouvert.
+    pub fn bar_visible(&self) -> bool {
+        !self.top_fullscreen()
+            || self.popover.is_some()
+            || self.pending_power.is_some()
+            || self
+                .pointer_location()
+                .is_some_and(|pointer| pointer.y < ferrite_ui::theme::MENUBAR_HEIGHT as f64)
+    }
+}
+
 /// État du bureau affiché par les panneaux (et utilisé pour leurs clics).
 pub fn desktop_view(state: &Ferrite) -> DesktopView {
     let system = &state.system;
@@ -269,6 +327,7 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
         brightness: system.brightness,
         power: state.pending_power,
         error: state.system_error.clone(),
+        bar_visible: state.bar_visible(),
         launcher: if state.popover == Some(Popover::Launcher) {
             launcher_view(state)
         } else {

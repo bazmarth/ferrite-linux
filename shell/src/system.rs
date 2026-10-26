@@ -8,7 +8,7 @@
 use std::{
     sync::mpsc::{self, RecvTimeoutError},
     thread,
-    time::{Duration, SystemTime},
+    time::{Duration, Instant, SystemTime},
 };
 
 use ferrite_system::{
@@ -24,10 +24,17 @@ use smithay::reexports::calloop::{
 };
 use tracing::{info, warn};
 
-use crate::state::{Ferrite, PowerAction};
+use crate::{
+    desktop::dock::DockConfig,
+    state::{Ferrite, PowerAction},
+};
 
 /// Relecture périodique de l'état du système.
 const REFRESH: Duration = Duration::from_secs(8);
+/// Durée pendant laquelle une valeur réglée à la main prime sur la relecture du système.
+const HOLD: Duration = Duration::from_secs(2);
+/// Relecture du fichier de réglages (une simple date de modification).
+const SETTINGS_POLL: Duration = Duration::from_secs(1);
 
 /// Changement demandé depuis le bureau.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,6 +59,7 @@ pub enum Event {
     Snapshot(Snapshot),
     Failed(String),
     KeyboardLayout(String),
+    Dock(DockConfig),
     Applications(Vec<DesktopEntry>),
     PowerAccepted,
 }
@@ -90,6 +98,7 @@ pub fn start(handle: &LoopHandle<'static, Ferrite>) -> Result<SystemLink, String
 
 fn worker(receiver: mpsc::Receiver<Change>, events: channel::Sender<Event>) {
     let mut layout_stamp: Option<SystemTime> = None;
+    let mut last_snapshot: Option<Instant> = None;
     let mut layout = String::new();
     let mut applications_stamp = None;
     loop {
@@ -104,23 +113,35 @@ fn worker(receiver: mpsc::Receiver<Change>, events: channel::Sender<Event>) {
                 return;
             }
         }
-        // Clavier : la disposition choisie dans Paramètres s'applique sans redémarrer.
+        // Réglages (clavier, Dock) : appliqués sans redémarrer, une seconde au plus après
+        // leur changement dans Paramètres.
         let stamp = Settings::modified();
         if stamp != layout_stamp {
             layout_stamp = stamp;
-            let current = Settings::load().keyboard_layout().to_owned();
+            let settings = Settings::load();
+            let current = settings.keyboard_layout().to_owned();
             if current != layout {
                 layout.clone_from(&current);
                 if events.send(Event::KeyboardLayout(current)).is_err() {
                     return;
                 }
             }
+            let dock = DockConfig {
+                size: settings.dock_size(),
+                hiding: settings.dock_hiding(),
+            };
+            if events.send(Event::Dock(dock)).is_err() {
+                return;
+            }
         }
-        if events.send(Event::Snapshot(Snapshot::read())).is_err() {
-            return;
+        if last_snapshot.is_none_or(|at: Instant| at.elapsed() >= REFRESH) {
+            last_snapshot = Some(Instant::now());
+            if events.send(Event::Snapshot(Snapshot::read())).is_err() {
+                return;
+            }
         }
 
-        let first = match receiver.recv_timeout(REFRESH) {
+        let first = match receiver.recv_timeout(SETTINGS_POLL) {
             Ok(change) => change,
             Err(RecvTimeoutError::Timeout) => continue,
             Err(RecvTimeoutError::Disconnected) => return,
@@ -131,6 +152,7 @@ fn worker(receiver: mpsc::Receiver<Change>, events: channel::Sender<Event>) {
             changes.retain(|known| !known.same_kind(change));
             changes.push(change);
         }
+        last_snapshot = None;
         for change in changes {
             let result = apply(change);
             let event = match (change, result) {
@@ -168,9 +190,21 @@ fn apply(change: Change) -> Result<(), String> {
 impl Ferrite {
     fn on_system_event(&mut self, event: Event) {
         match event {
-            Event::Snapshot(snapshot) => self.system = snapshot,
+            Event::Snapshot(mut snapshot) => {
+                // Pendant un réglage (curseur glissé), la relecture du système peut dater
+                // d'avant la dernière valeur envoyée : la valeur choisie reste affichée.
+                let now = Instant::now();
+                if self.volume_held_until.is_some_and(|until| now < until) {
+                    snapshot.volume = self.system.volume;
+                }
+                if self.brightness_held_until.is_some_and(|until| now < until) {
+                    snapshot.brightness = self.system.brightness;
+                }
+                self.system = snapshot;
+            }
             Event::Failed(message) => self.system_error = Some(message),
             Event::KeyboardLayout(layout) => self.set_keyboard_layout(&layout),
+            Event::Dock(config) => self.dock_config = config,
             Event::Applications(list) => {
                 info!(nombre = list.len(), "applications installées");
                 self.applications = list;
@@ -191,12 +225,16 @@ impl Ferrite {
             Change::Wifi(enabled) => self.system.wifi = self.system.wifi.map(|_| enabled),
             Change::Bluetooth(enabled) => self.system.bluetooth = self.system.bluetooth.map(|_| enabled),
             Change::Volume(level) => {
+                self.volume_held_until = Some(Instant::now() + HOLD);
                 if let Some(volume) = self.system.volume.as_mut() {
                     volume.level = level;
                     volume.muted = level == 0;
                 }
             }
-            Change::Brightness(level) => self.system.brightness = self.system.brightness.map(|_| level),
+            Change::Brightness(level) => {
+                self.brightness_held_until = Some(Instant::now() + HOLD);
+                self.system.brightness = self.system.brightness.map(|_| level);
+            }
             Change::Power(_) => {}
         }
         match &self.system_link {

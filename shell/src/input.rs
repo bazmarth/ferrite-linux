@@ -269,7 +269,9 @@ impl Ferrite {
                 .and_then(|output| self.space.output_geometry(output));
             if button.button == BTN_LEFT
                 && self.pending_power.is_none()
-                && let Some(app) = output_geo.and_then(|geo| dock::app_at(geo, location))
+                && let Some(app) = output_geo
+                    .filter(|geo| self.dock_shown(*geo))
+                    .and_then(|geo| dock::app_at(geo, self.dock_config, location))
             {
                 self.popover = None;
                 app.launch(&self.client_environment());

@@ -70,6 +70,14 @@ impl Settings {
             .unwrap_or(DEFAULT_KEYBOARD_LAYOUT)
     }
 
+    pub fn dock_size(&self) -> DockSize {
+        DockSize::parse(self.get("dock_taille").unwrap_or_default())
+    }
+
+    pub fn dock_hiding(&self) -> DockHiding {
+        DockHiding::parse(self.get("dock_masquage").unwrap_or_default())
+    }
+
     /// Écrit le fichier entier (via un fichier temporaire, pour ne jamais le laisser à moitié).
     pub fn save(&self) -> std::io::Result<()> {
         let path = Self::path();
@@ -83,6 +91,93 @@ impl Settings {
         let temporary = path.with_extension("tmp");
         fs::write(&temporary, text)?;
         fs::rename(temporary, path)
+    }
+}
+
+/// Taille des icônes du Dock.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DockSize {
+    Small,
+    #[default]
+    Medium,
+    Large,
+}
+
+impl DockSize {
+    pub const ALL: [DockSize; 3] = [DockSize::Small, DockSize::Medium, DockSize::Large];
+
+    fn parse(value: &str) -> Self {
+        match value {
+            "petit" => DockSize::Small,
+            "grand" => DockSize::Large,
+            _ => DockSize::Medium,
+        }
+    }
+
+    /// Valeur écrite dans le fichier de réglages.
+    pub fn key(self) -> &'static str {
+        match self {
+            DockSize::Small => "petit",
+            DockSize::Medium => "moyen",
+            DockSize::Large => "grand",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            DockSize::Small => "Petit",
+            DockSize::Medium => "Moyen",
+            DockSize::Large => "Grand",
+        }
+    }
+
+    /// Côté des icônes, en pixels logiques.
+    pub fn icon(self) -> i32 {
+        match self {
+            DockSize::Small => 42,
+            DockSize::Medium => 52,
+            DockSize::Large => 64,
+        }
+    }
+}
+
+/// Quand le Dock se cache.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DockHiding {
+    /// Caché quand une fenêtre le recouvre ou en plein écran.
+    #[default]
+    Smart,
+    /// Toujours caché, sauf quand la souris touche le bas de l'écran.
+    Always,
+    /// Toujours visible ; les fenêtres s'arrêtent au-dessus de lui.
+    Never,
+}
+
+impl DockHiding {
+    pub const ALL: [DockHiding; 3] = [DockHiding::Smart, DockHiding::Always, DockHiding::Never];
+
+    fn parse(value: &str) -> Self {
+        match value {
+            "toujours" => DockHiding::Always,
+            "jamais" => DockHiding::Never,
+            _ => DockHiding::Smart,
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            DockHiding::Smart => "intelligent",
+            DockHiding::Always => "toujours",
+            DockHiding::Never => "jamais",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            DockHiding::Smart => "Quand une fenêtre le recouvre",
+            DockHiding::Always => "Toujours",
+            DockHiding::Never => "Jamais",
+        }
     }
 }
 
@@ -105,5 +200,14 @@ mod tests {
         assert_eq!(Settings::default().keyboard_layout(), DEFAULT_KEYBOARD_LAYOUT);
         assert_eq!(split_layout("ch(fr)"), ("ch".into(), "fr".into()));
         assert_eq!(split_layout("us"), ("us".into(), String::new()));
+        let dock = Settings::parse(
+            "dock_taille = grand
+dock_masquage = jamais
+",
+        );
+        assert_eq!(dock.dock_size(), DockSize::Large);
+        assert_eq!(dock.dock_hiding(), DockHiding::Never);
+        assert_eq!(Settings::default().dock_hiding(), DockHiding::Smart);
+        assert_eq!(DockSize::parse(DockSize::Small.key()), DockSize::Small);
     }
 }

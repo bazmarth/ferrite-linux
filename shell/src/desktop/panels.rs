@@ -134,6 +134,8 @@ pub struct DesktopView {
     pub power: Option<PowerAction>,
     /// Dernier réglage refusé par le système.
     pub error: Option<String>,
+    /// Barre du haut affichée (masquée quand une application est en plein écran).
+    pub bar_visible: bool,
     pub launcher: LauncherView,
 }
 
@@ -236,7 +238,35 @@ impl Panels {
         let view = &state.view;
         let layout = Layout::new(state.width as f64, state.height as f64, view);
 
-        // Barre du haut.
+        // Barre du haut (sauf en plein écran, tant que la souris ne la rappelle pas).
+        if view.bar_visible {
+            self.draw_bar(&mut canvas, &layout, state);
+        }
+
+        match view.popover {
+            Some(Popover::Launcher) => self.draw_launcher(&mut canvas, &layout, &view.launcher),
+            Some(Popover::Controls) => self.draw_controls(&mut canvas, &layout, view),
+            Some(Popover::Session) => self.draw_session(&mut canvas, &layout),
+            None => {}
+        }
+
+        // Confirmation explicite, pour éviter un arrêt accidentel.
+        if let Some(power) = view.power {
+            self.draw_dialog(&mut canvas, &layout, power);
+        }
+
+        MemoryRenderBuffer::from_slice(
+            &canvas.pixels,
+            Fourcc::Argb8888,
+            (width as i32, height as i32),
+            1,
+            smithay::utils::Transform::Normal,
+            None,
+        )
+    }
+
+    fn draw_bar(&self, canvas: &mut Canvas, layout: &Layout, state: &VisualState) {
+        let view = &state.view;
         canvas.fill(Rect::new(0.0, 0.0, layout.w, BAR), 0.0, BAR_TINT);
         let applications = layout.applications_button();
         canvas.bar_label(&self.bold, "Applications", applications.x + 10.0, 11.5);
@@ -277,27 +307,6 @@ impl Panels {
                 BAR_INK,
             );
         }
-
-        match view.popover {
-            Some(Popover::Launcher) => self.draw_launcher(&mut canvas, &layout, &view.launcher),
-            Some(Popover::Controls) => self.draw_controls(&mut canvas, &layout, view),
-            Some(Popover::Session) => self.draw_session(&mut canvas, &layout),
-            None => {}
-        }
-
-        // Confirmation explicite, pour éviter un arrêt accidentel.
-        if let Some(power) = view.power {
-            self.draw_dialog(&mut canvas, &layout, power);
-        }
-
-        MemoryRenderBuffer::from_slice(
-            &canvas.pixels,
-            Fourcc::Argb8888,
-            (width as i32, height as i32),
-            1,
-            smithay::utils::Transform::Normal,
-            None,
-        )
     }
 
     fn draw_launcher(&self, canvas: &mut Canvas, layout: &Layout, launcher: &LauncherView) {
@@ -546,6 +555,10 @@ pub fn action_at(
 ) -> Option<DesktopAction> {
     let layout = Layout::new(output.size.w as f64, output.size.h as f64, view);
     let (popover, pending_power) = (view.popover, view.power);
+    if !view.bar_visible && pending_power.is_none() && popover.is_none() && pos.y < BAR {
+        // Barre masquée (plein écran) : le clic va à l'application.
+        return None;
+    }
     let pos = Point::from((pos.x - output.loc.x as f64, pos.y - output.loc.y as f64));
 
     if let Some(power) = pending_power {
@@ -1222,6 +1235,7 @@ mod tests {
             bluetooth: Some(false),
             volume: Some(60),
             brightness: Some(70),
+            bar_visible: true,
             ..DesktopView::default()
         }
     }
@@ -1260,7 +1274,10 @@ mod tests {
     #[test]
     fn sans_materiel_les_indicateurs_absents_disparaissent() {
         // Machine virtuelle : ni Wi-Fi, ni Bluetooth, ni son.
-        let bare = DesktopView::default();
+        let bare = DesktopView {
+            bar_visible: true,
+            ..DesktopView::default()
+        };
         let layout = Layout::new(1280.0, 720.0, &bare);
         assert_eq!(layout.indicator(Indicator::Bluetooth).w, 0.0);
         assert_eq!(layout.indicator(Indicator::Volume).w, 0.0);

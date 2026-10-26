@@ -66,6 +66,11 @@ pub struct Ferrite {
     /// Recherche tapée dans le menu Applications.
     pub launcher_query: String,
     pub launcher_page: usize,
+    /// Volume et luminosité réglés à la main récemment : la relecture du système attend.
+    pub volume_held_until: Option<Instant>,
+    pub brightness_held_until: Option<Instant>,
+    /// Taille et masquage du Dock (Paramètres).
+    pub dock_config: crate::desktop::dock::DockConfig,
     /// Curseur des réglages rapides en cours de glissement.
     pub slider_drag: Option<crate::desktop::panels::Slider>,
     /// Dernier état connu du réseau, du Bluetooth, du son et de l'écran.
@@ -173,6 +178,9 @@ impl Ferrite {
             launcher_query: String::new(),
             launcher_page: 0,
             slider_drag: None,
+            dock_config: Default::default(),
+            volume_held_until: None,
+            brightness_held_until: None,
             system: Snapshot::default(),
             system_error: None,
             system_link: None,

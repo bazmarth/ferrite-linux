@@ -10,7 +10,7 @@ use smithay::{
         wayland_protocols::xdg::shell::server::xdg_toplevel,
         wayland_server::{
             Resource,
-            protocol::{wl_seat, wl_surface::WlSurface},
+            protocol::{wl_output, wl_seat, wl_surface::WlSurface},
         },
     },
     utils::{Logical, Point, Rectangle, Serial, Size},
@@ -169,6 +169,55 @@ impl XdgShellHandler for Ferrite {
         }
     }
 
+    /// Plein écran (vidéo, jeu, présentation) : tout l'écran, sans décorations ; la barre
+    /// du haut et le Dock s'effacent tant que la fenêtre est au premier plan.
+    fn fullscreen_request(&mut self, surface: ToplevelSurface, _output: Option<wl_output::WlOutput>) {
+        let Some(window) = self.window_for_surface(surface.wl_surface()) else {
+            return;
+        };
+        let Some(screen) = self
+            .space
+            .outputs()
+            .next()
+            .and_then(|output| self.space.output_geometry(output))
+        else {
+            return;
+        };
+        if let Some(pending) = window.user_data().get::<PendingPlacement>() {
+            pending.0.set(None);
+        }
+        if let Some(location) = self.space.element_location(&window) {
+            let previous = Rectangle::new(location, window.geometry().size);
+            with_restore_geometry(surface.wl_surface(), |saved| {
+                if saved.is_none() {
+                    *saved = Some(previous);
+                }
+            });
+        }
+        surface.with_pending_state(|state| {
+            state.states.set(xdg_toplevel::State::Fullscreen);
+            state.size = Some(screen.size);
+        });
+        surface.send_pending_configure();
+        self.space.map_element(window.clone(), screen.loc, true);
+        self.focus_window(Some(window));
+    }
+
+    fn unfullscreen_request(&mut self, surface: ToplevelSurface) {
+        let Some(window) = self.window_for_surface(surface.wl_surface()) else {
+            return;
+        };
+        let previous = with_restore_geometry(surface.wl_surface(), |saved| saved.take());
+        surface.with_pending_state(|state| {
+            state.states.unset(xdg_toplevel::State::Fullscreen);
+            state.size = previous.map(|rect| rect.size);
+        });
+        surface.send_pending_configure();
+        if let Some(previous) = previous {
+            self.space.map_element(window, previous.loc, true);
+        }
+    }
+
     fn grab(&mut self, _surface: PopupSurface, _seat: wl_seat::WlSeat, _serial: Serial) {
         // Saisie exclusive des menus contextuels : à faire avec les menus (phase 3).
     }
@@ -242,7 +291,9 @@ impl Ferrite {
     /// Zone utile du premier écran (sous la barre de menus).
     pub fn usable_area(&self) -> Option<Rectangle<i32, Logical>> {
         let output = self.space.outputs().next()?;
-        self.space.output_geometry(output).map(wm::usable_area)
+        self.space
+            .output_geometry(output)
+            .map(|geometry| wm::usable_area(geometry, self.dock_config.reserved_height()))
     }
 
     /// Accroche une fenêtre sur une moitié d'écran et garde sa géométrie précédente pour

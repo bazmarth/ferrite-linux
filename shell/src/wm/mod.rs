@@ -27,7 +27,7 @@ use smithay::{
 use tracing::info;
 
 use self::decoration::{Part, TrafficLight};
-use crate::{desktop::dock, state::Ferrite};
+use crate::state::Ferrite;
 
 /// Décalage entre deux fenêtres ouvertes à la suite.
 const CASCADE_STEP: i32 = 30;
@@ -119,16 +119,27 @@ pub fn clamp_frame(
     ))
 }
 
-/// Zone utile d'un écran de taille `output` : tout sauf la barre du haut et le Dock.
-pub fn usable_area(output: Rectangle<i32, Logical>) -> Rectangle<i32, Logical> {
+/// Zone utile d'un écran de taille `output` : tout sauf la barre du haut et la bande
+/// réservée au Dock (`dock_reserved`, nulle quand le Dock se cache).
+pub fn usable_area(output: Rectangle<i32, Logical>, dock_reserved: i32) -> Rectangle<i32, Logical> {
     let menubar = MENUBAR_HEIGHT as i32;
     Rectangle::new(
         output.loc + Point::from((0, menubar)),
-        Size::from((
-            output.size.w,
-            (output.size.h - menubar - dock::RESERVED_HEIGHT).max(0),
-        )),
+        Size::from((output.size.w, (output.size.h - menubar - dock_reserved).max(0))),
     )
+}
+
+/// La fenêtre est-elle en plein écran ?
+pub fn is_fullscreen(window: &Window) -> bool {
+    if let Some(x11) = window.x11_surface() {
+        return x11.is_fullscreen();
+    }
+    window.toplevel().is_some_and(|toplevel| {
+        toplevel
+            .current_state()
+            .states
+            .contains(xdg_toplevel::State::Fullscreen)
+    })
 }
 
 /// Contenu d'une fenêtre agrandie dans `area` : sous la barre de titre si elle est décorée.
@@ -419,7 +430,8 @@ mod tests {
 
     #[test]
     fn zone_utile_sous_la_barre_de_menus() {
-        assert_eq!(usable_area(rect(0, 0, 1440, 900)), rect(0, 30, 1440, 786));
+        assert_eq!(usable_area(rect(0, 0, 1440, 900), 0), rect(0, 30, 1440, 870));
+        assert_eq!(usable_area(rect(0, 0, 1440, 900), 84), rect(0, 30, 1440, 786));
     }
 
     #[test]

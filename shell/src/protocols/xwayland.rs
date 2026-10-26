@@ -36,6 +36,13 @@ struct X11Restore(RefCell<Option<Rectangle<i32, Logical>>>);
 
 /// Démarre XWayland ; les applications X11 pourront se connecter dès qu'il sera prêt.
 pub fn start(handle: &LoopHandle<'static, Ferrite>, state: &mut Ferrite) {
+    // Sous WSLg (développement en fenêtre), le dossier des sockets X11 est en lecture seule
+    // et appartient au serveur X de Windows : XWayland n'y a pas sa place.
+    let sockets = std::path::Path::new("/tmp/.X11-unix");
+    if sockets.exists() && !writable(sockets) {
+        info!("dossier /tmp/.X11-unix en lecture seule : XWayland non démarré");
+        return;
+    }
     let spawned = XWayland::spawn(
         &state.display_handle,
         None,
@@ -374,3 +381,15 @@ impl XWaylandShellHandler for Ferrite {
 }
 
 delegate_xwayland_shell!(Ferrite);
+
+/// Peut-on créer un fichier dans `dir` ?
+fn writable(dir: &std::path::Path) -> bool {
+    let probe = dir.join(format!(".ferrite-{}", std::process::id()));
+    match std::fs::File::create(&probe) {
+        Ok(_) => {
+            let _ = std::fs::remove_file(probe);
+            true
+        }
+        Err(_) => false,
+    }
+}

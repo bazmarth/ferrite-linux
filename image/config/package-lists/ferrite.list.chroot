@@ -61,6 +61,12 @@ flatpak
 polkitd
 accountsservice
 
+# Compatibilité avec les applications Linux : portails (dialogues de fichiers, ouverture
+# de liens, captures) et outil de mise à jour de l'environnement D-Bus
+xdg-desktop-portal
+xdg-desktop-portal-gtk
+dbus-bin
+
 # Terminal lancé dans le bureau (en attendant le Terminal Ferrite, phase 5)
 foot
 

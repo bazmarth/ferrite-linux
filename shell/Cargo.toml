@@ -13,11 +13,24 @@ fontdue = "0.9"
 png = "0.18"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+resvg = { version = "0.49.0", default-features = false }
 
 [dependencies.smithay]
 version = "0.7"
 default-features = false
-features = ["backend_winit", "desktop", "renderer_gl", "wayland_frontend"]
+features = [
+    "backend_drm",
+    "backend_egl",
+    "backend_gbm",
+    "backend_libinput",
+    "backend_session_libseat",
+    "backend_udev",
+    "backend_winit",
+    "desktop",
+    "renderer_gl",
+    "use_system_lib",
+    "wayland_frontend",
+]
 
 [lints]
 workspace = true

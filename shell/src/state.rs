@@ -1,10 +1,15 @@
 //! État global du compositeur.
 
-use std::{ffi::OsString, sync::Arc, time::Instant};
+use std::{
+    ffi::OsString,
+    sync::Arc,
+    thread,
+    time::{Duration, Instant},
+};
 
 use smithay::{
     desktop::{PopupManager, Space, Window},
-    input::{Seat, SeatState, keyboard::XkbConfig},
+    input::{Seat, SeatState, keyboard::XkbConfig, pointer::CursorImageStatus},
     reexports::{
         calloop::{EventLoop, Interest, LoopSignal, Mode, PostAction, generic::Generic},
         wayland_server::{
@@ -25,6 +30,7 @@ use smithay::{
 };
 use tracing::warn;
 
+use crate::desktop::panels::Popover;
 use crate::wm::{Hit, Minimized, Placement, decoration::TrafficLight};
 
 /// Disposition du clavier par défaut (AZERTY français, voir `docs/PLAN.md` §1.2).
@@ -38,6 +44,16 @@ pub struct Ferrite {
     pub socket_name: OsString,
     pub display_handle: DisplayHandle,
     pub loop_signal: LoopSignal,
+    /// Une fermeture explicite a été demandée ; les erreurs tardives du backend winit
+    /// pendant sa destruction ne doivent pas transformer une fermeture normale en crash.
+    pub expected_exit: bool,
+    /// Menu déroulant ouvert depuis la barre du haut.
+    pub popover: Option<Popover>,
+    pub wifi_enabled: bool,
+    pub bluetooth_enabled: bool,
+    pub volume_level: u8,
+    pub brightness_level: u8,
+    pub pending_power: Option<PowerAction>,
 
     /// Plan 2D sur lequel sont posées les fenêtres et les écrans.
     pub space: Space<Window>,
@@ -49,6 +65,11 @@ pub struct Ferrite {
     pub last_titlebar_click: Option<(Instant, Window)>,
     /// Feu tricolore enfoncé : l'action a lieu au relâchement, s'il est toujours dessus.
     pub pressed_light: Option<(Window, TrafficLight)>,
+    /// Curseur demandé par le client sous le pointeur (seul « caché » est respecté pour
+    /// l'instant : sinon, ferrite-shell dessine sa flèche).
+    pub cursor_status: CursorImageStatus,
+    /// Changement de terminal virtuel (Ctrl+Alt+F1…F12), fourni par le backend DRM.
+    pub change_vt: Option<Box<dyn FnMut(i32)>>,
 
     pub compositor_state: CompositorState,
     pub xdg_shell_state: XdgShellState,
@@ -98,12 +119,21 @@ impl Ferrite {
             socket_name,
             display_handle: dh,
             loop_signal: event_loop.get_signal(),
+            expected_exit: false,
+            popover: None,
+            wifi_enabled: true,
+            bluetooth_enabled: false,
+            volume_level: 65,
+            brightness_level: 75,
+            pending_power: None,
             space: Space::default(),
             popups: PopupManager::default(),
             placement: Placement::default(),
             minimized: Vec::new(),
             last_titlebar_click: None,
             pressed_light: None,
+            cursor_status: CursorImageStatus::default_named(),
+            change_vt: None,
             compositor_state,
             xdg_shell_state,
             xdg_decoration_state,
@@ -135,6 +165,27 @@ impl Ferrite {
             })
             .cloned()
     }
+
+    /// Demande aux clients de fermer leurs fenêtres avant l'arrêt du compositeur.
+    pub fn request_exit(&mut self) {
+        self.expected_exit = true;
+        for window in self.space.elements() {
+            if let Some(toplevel) = window.toplevel() {
+                toplevel.send_close();
+            }
+        }
+        if let Err(err) = self.display_handle.flush_clients() {
+            warn!("envoi des demandes de fermeture impossible : {err}");
+        }
+        // Laisser aux clients un court instant pour recevoir le protocole xdg_toplevel.close.
+        thread::sleep(Duration::from_millis(200));
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PowerAction {
+    PowerOff,
+    Restart,
 }
 
 /// Ouvre le socket Wayland (`wayland-N` libre suivant) et branche les clients sur la boucle.

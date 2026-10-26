@@ -41,3 +41,16 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
   sortie du plein écran viendront avec les raccourcis globaux.
 - **2026-10-25 — `--apt-recommends false`** dans l'image : seuls les paquets listés sont
   installés, pour éviter qu'un environnement de bureau complet n'arrive par dépendance.
+- **2026-10-26 — Bureau dans l'esprit d'elementary OS**, à la demande de l'utilisateur : une
+  barre fine (menu Applications, date et heure au centre, indicateurs à droite) remplace la
+  barre de menus façon macOS ; les menus s'ouvrent sous la barre et se ferment au clic
+  extérieur. Le bureau n'a plus d'icônes. Les feux tricolores des fenêtres sont gardés.
+- **2026-10-26 — Icônes SVG rendues par resvg**, à partir du dossier `icons/SVG` embarqué
+  dans les binaires. Les icônes d'état, dessinées en couleur, sont converties à la volée en
+  version monochrome pour la barre et les menus : couleurs vives en teinte pleine, gris
+  clairs (parties « éteintes ») en teinte estompée.
+- **2026-10-26 — Zone du Dock réservée** : les fenêtres placées ou agrandies s'arrêtent
+  au-dessus du Dock, qui ne se masque pas encore automatiquement. Une nouvelle fenêtre est
+  recentrée à son premier tampon, quand sa taille réelle est connue.
+- **2026-10-26 — Barre de titre sans trait de séparation** : elle se prolonge dans
+  l'en-tête des applications Ferrite, peint de la même teinte (`Palette::LIGHT.titlebar`).

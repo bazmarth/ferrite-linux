@@ -1,6 +1,6 @@
 //! `xdg_wm_base` : fenêtres (`xdg_toplevel`) et menus contextuels (`xdg_popup`).
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 use smithay::{
     delegate_xdg_shell,
@@ -30,7 +30,11 @@ use crate::{state::Ferrite, wm};
 
 /// Taille supposée d'une nouvelle fenêtre pour le placement (sa vraie taille n'est connue
 /// qu'après son premier tampon).
-const NEW_WINDOW_SIZE: (i32, i32) = (800, 600);
+const NEW_WINDOW_SIZE: (i32, i32) = (740, 350);
+
+/// Décalage de cascade d'une fenêtre qui attend encore son premier tampon : elle sera
+/// recentrée selon sa vraie taille, en gardant ce décalage.
+struct PendingPlacement(Cell<Option<Point<i32, Logical>>>);
 
 /// Géométrie d'avant l'agrandissement, gardée dans les données de la surface.
 #[derive(Default)]
@@ -48,7 +52,12 @@ impl XdgShellHandler for Ferrite {
             .unwrap_or_else(|| Rectangle::from_size(Size::from(NEW_WINDOW_SIZE)));
         // Le cadre est placé en cascade ; le contenu est posé sous la barre de titre (la
         // place est gardée même si le client choisit ensuite ses propres décorations).
-        let frame = self.placement.next_position(area, Size::from(NEW_WINDOW_SIZE));
+        let estimate = Size::from(NEW_WINDOW_SIZE);
+        let frame = self.placement.next_position(area, estimate);
+        let offset = frame - wm::centered_position(area, estimate);
+        window
+            .user_data()
+            .insert_if_missing(|| PendingPlacement(Cell::new(Some(offset))));
         let content = frame + Point::from((0, TITLEBAR_HEIGHT as i32));
         self.space.map_element(window.clone(), content, true);
         self.focus_window(Some(window));
@@ -126,6 +135,10 @@ impl XdgShellHandler for Ferrite {
             return;
         };
         let Some(area) = self.usable_area() else { return };
+        // Une fenêtre agrandie d'emblée n'est plus à recentrer.
+        if let Some(pending) = window.user_data().get::<PendingPlacement>() {
+            pending.0.set(None);
+        }
         let area = wm::maximized_content(area, wm::is_server_decorated(&window));
         if let Some(location) = self.space.element_location(&window) {
             let previous = Rectangle::new(location, window.geometry().size);
@@ -146,6 +159,8 @@ impl XdgShellHandler for Ferrite {
         let previous = with_restore_geometry(surface.wl_surface(), |saved| saved.take());
         surface.with_pending_state(|state| {
             state.states.unset(xdg_toplevel::State::Maximized);
+            state.states.unset(xdg_toplevel::State::TiledLeft);
+            state.states.unset(xdg_toplevel::State::TiledRight);
             state.size = previous.map(|rect| rect.size);
         });
         surface.send_pending_configure();
@@ -230,6 +245,37 @@ impl Ferrite {
         self.space.output_geometry(output).map(wm::usable_area)
     }
 
+    /// Accroche une fenêtre sur une moitié d'écran et garde sa géométrie précédente pour
+    /// que le double-clic sur la barre de titre puisse la restaurer.
+    pub fn snap_window_to_side(&mut self, window: &Window, side: wm::SnapSide) {
+        let Some(toplevel) = window.toplevel().cloned() else {
+            return;
+        };
+        let Some(area) = self.usable_area() else { return };
+        let target = wm::snapped_content(area, side, wm::is_server_decorated(window));
+        let Some(location) = self.space.element_location(window) else {
+            return;
+        };
+
+        with_restore_geometry(toplevel.wl_surface(), |saved| {
+            if saved.is_none() {
+                *saved = Some(Rectangle::new(location, window.geometry().size));
+            }
+        });
+        toplevel.with_pending_state(|state| {
+            state.states.unset(xdg_toplevel::State::Maximized);
+            state.states.unset(xdg_toplevel::State::TiledLeft);
+            state.states.unset(xdg_toplevel::State::TiledRight);
+            state.states.set(match side {
+                wm::SnapSide::Left => xdg_toplevel::State::TiledLeft,
+                wm::SnapSide::Right => xdg_toplevel::State::TiledRight,
+            });
+            state.size = Some(target.size);
+        });
+        toplevel.send_pending_configure();
+        self.space.map_element(window.clone(), target.loc, true);
+    }
+
     /// Garde un menu contextuel entièrement visible à l'écran.
     fn unconstrain_popup(&self, popup: &PopupSurface) {
         let Ok(root) = find_popup_root_surface(&PopupKind::Xdg(popup.clone())) else {
@@ -255,5 +301,31 @@ impl Ferrite {
         popup.with_pending_state(|state| {
             state.geometry = state.positioner.get_unconstrained_geometry(target);
         });
+    }
+}
+
+impl Ferrite {
+    /// Au premier tampon d'une fenêtre, sa taille réelle est connue : elle est recentrée
+    /// dans la zone utile (en gardant son décalage de cascade).
+    pub fn place_new_window(&mut self, surface: &WlSurface) {
+        let Some(window) = self.window_for_surface(surface) else {
+            return;
+        };
+        let size = window.geometry().size;
+        if size.w <= 0 || size.h <= 0 {
+            return;
+        }
+        let Some(offset) = window
+            .user_data()
+            .get::<PendingPlacement>()
+            .and_then(|pending| pending.0.take())
+        else {
+            return;
+        };
+        let Some(area) = self.usable_area() else { return };
+        let frame_size = Size::from((size.w, size.h + TITLEBAR_HEIGHT as i32));
+        let frame = wm::clamp_frame(area, wm::centered_position(area, frame_size) + offset, frame_size);
+        let content = frame + Point::from((0, TITLEBAR_HEIGHT as i32));
+        self.space.map_element(window, content, true);
     }
 }

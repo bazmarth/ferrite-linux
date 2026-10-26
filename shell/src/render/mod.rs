@@ -2,6 +2,7 @@
 //! Le flou d'arrière-plan viendra ici (`docs/PLAN.md`, phase 2 tâche 7).
 
 pub mod capture;
+mod cursor;
 mod decorations;
 mod rounded;
 mod shaders;
@@ -9,6 +10,7 @@ mod title;
 mod wallpaper;
 
 use ferrite_ui::theme::WINDOW_RADIUS;
+use smithay::wayland::{compositor::with_states, shell::xdg::XdgToplevelSurfaceData};
 use smithay::{
     backend::renderer::{
         element::{
@@ -19,6 +21,7 @@ use smithay::{
         gles::{GlesRenderer, element::PixelShaderElement},
     },
     desktop::{PopupManager, Window},
+    input::pointer::CursorImageStatus,
     output::Output,
     render_elements,
     utils::{Logical, Point, Rectangle},
@@ -26,8 +29,16 @@ use smithay::{
 use tracing::warn;
 
 use self::rounded::RoundedSurface;
-pub use self::{decorations::Decorations, wallpaper::Wallpaper};
-use crate::{state::Ferrite, wm};
+pub use self::{cursor::Cursor, decorations::Decorations, wallpaper::Wallpaper};
+use crate::{
+    desktop::{
+        apps::App,
+        dock::Dock,
+        panels::{DesktopView, Panels},
+    },
+    state::Ferrite,
+    wm,
+};
 
 render_elements! {
     /// Tout ce qui peut être dessiné sur un écran.
@@ -43,29 +54,62 @@ render_elements! {
 pub struct RenderAssets {
     pub wallpaper: Wallpaper,
     pub decorations: Decorations,
+    pub cursor: Cursor,
+    pub dock: Dock,
+    pub panels: Panels,
 }
 
 impl RenderAssets {
     pub fn new(renderer: &mut GlesRenderer) -> Result<RenderAssets, String> {
         Ok(RenderAssets {
-            wallpaper: Wallpaper::gradient(),
+            wallpaper: Wallpaper::landscape(),
             decorations: Decorations::new(renderer)?,
+            cursor: Cursor::default(),
+            dock: Dock::new(),
+            panels: Panels::new()?,
         })
     }
 }
 
-/// Éléments à dessiner sur `output`, du premier plan vers l'arrière-plan.
+/// Éléments à dessiner sur `output`, du premier plan vers l'arrière-plan. Avec
+/// `draw_cursor`, ferrite-shell dessine lui-même le pointeur (backend DRM).
 pub fn output_elements(
     renderer: &mut GlesRenderer,
     state: &Ferrite,
     assets: &RenderAssets,
     output: &Output,
+    draw_cursor: bool,
 ) -> Vec<OutputElement> {
     let mut elements = Vec::new();
     let Some(output_geo) = state.space.output_geometry(output) else {
         return elements;
     };
     let scale = output.current_scale().fractional_scale();
+
+    if draw_cursor && !matches!(state.cursor_status, CursorImageStatus::Hidden) {
+        if let Some(pointer) = state.seat.get_pointer() {
+            let location = pointer.current_location() - output_geo.loc.to_f64();
+            if Rectangle::from_size(output_geo.size).to_f64().contains(location) {
+                push_cursor(renderer, &assets.cursor, location, scale, &mut elements);
+            }
+        }
+    }
+
+    let running = running_apps(state);
+    assets
+        .dock
+        .push_element(renderer, output, output_geo, scale, &running, &mut elements);
+    let view = DesktopView {
+        popover: state.popover,
+        wifi: state.wifi_enabled,
+        bluetooth: state.bluetooth_enabled,
+        volume: state.volume_level,
+        brightness: state.brightness_level,
+        power: state.pending_power,
+    };
+    assets
+        .panels
+        .push_element(renderer, output, output_geo, scale, &view, &mut elements);
 
     // Le survol des feux n'est montré que si aucun déplacement n'est en cours.
     let pointer = state
@@ -181,4 +225,61 @@ fn push_decorated(
         .map(|element| OutputElement::Rounded(RoundedSurface::new(element, program.clone(), clip, radius))),
     );
     out.extend(shadow);
+}
+
+/// Curseur Ferrite, pointe en `location` (logique, repère de l'écran).
+fn push_cursor(
+    renderer: &mut GlesRenderer,
+    cursor: &Cursor,
+    location: Point<f64, Logical>,
+    scale: f64,
+    out: &mut Vec<OutputElement>,
+) {
+    let image = cursor.image(scale);
+    let tip = location.to_physical(scale);
+    let position = Point::from((
+        (tip.x - image.hotspot.0 as f64).round(),
+        (tip.y - image.hotspot.1 as f64).round(),
+    ));
+    // Image en pixels physiques : sa taille logique est divisée par l'échelle.
+    let src = Rectangle::from_size((image.size.0 as f64, image.size.1 as f64).into());
+    let size = (
+        (image.size.0 as f64 / scale).round() as i32,
+        (image.size.1 as f64 / scale).round() as i32,
+    );
+    match MemoryRenderBufferRenderElement::from_buffer(
+        renderer,
+        position,
+        &image.buffer,
+        None,
+        Some(src),
+        Some(size.into()),
+        Kind::Cursor,
+    ) {
+        Ok(element) => out.push(OutputElement::Memory(element)),
+        Err(err) => warn!("curseur non importé : {err:?}"),
+    }
+}
+
+/// Applications du Dock qui ont au moins une fenêtre, visible ou réduite.
+fn running_apps(state: &Ferrite) -> Vec<App> {
+    let windows = state
+        .space
+        .elements()
+        .chain(state.minimized.iter().map(|minimized| &minimized.window));
+    let ids: Vec<String> = windows.filter_map(app_id).collect();
+    App::ALL
+        .into_iter()
+        .filter(|app| ids.iter().any(|id| id == app.app_id()))
+        .collect()
+}
+
+fn app_id(window: &Window) -> Option<String> {
+    let toplevel = window.toplevel()?;
+    with_states(toplevel.wl_surface(), |states| {
+        states
+            .data_map
+            .get::<XdgToplevelSurfaceData>()
+            .and_then(|data| data.lock().ok().and_then(|data| data.app_id.clone()))
+    })
 }

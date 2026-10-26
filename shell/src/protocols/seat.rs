@@ -24,9 +24,9 @@ impl SeatHandler for Ferrite {
         &mut self.seat_state
     }
 
-    // En fenêtre, le curseur est celui du système hôte ; le curseur Ferrite viendra avec
-    // le backend DRM.
-    fn cursor_image(&mut self, _seat: &Seat<Self>, _image: CursorImageStatus) {}
+    fn cursor_image(&mut self, _seat: &Seat<Self>, image: CursorImageStatus) {
+        self.cursor_status = image;
+    }
 
     fn focus_changed(&mut self, seat: &Seat<Self>, focused: Option<&WlSurface>) {
         // Le presse-papiers suit le client qui a le clavier.

@@ -165,7 +165,9 @@ impl Decorations {
             vec![
                 Uniform::new("scale", scale as f32),
                 Uniform::new("background", premultiplied(palette.titlebar)),
-                Uniform::new("separator", premultiplied(palette.separator)),
+                // Sans trait sous la barre : elle se prolonge dans l'en-tête des
+                // applications Ferrite, de la même teinte.
+                Uniform::new("separator", premultiplied(palette.titlebar)),
                 Uniform::new("lit", if active { 1.0f32 } else { 0.0 }),
                 Uniform::new("hover", if hover { 1.0f32 } else { 0.0 }),
             ]

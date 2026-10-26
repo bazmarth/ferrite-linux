@@ -61,6 +61,11 @@ impl PointerGrab<Ferrite> for MoveSurfaceGrab {
     ) {
         handle.button(data, event);
         if !handle.current_pressed().contains(&BTN_LEFT) {
+            if let (Some(pointer), Some(area)) = (data.seat.get_pointer(), data.usable_area()) {
+                if let Some(side) = super::snap_side_at(area, pointer.current_location()) {
+                    data.snap_window_to_side(&self.window, side);
+                }
+            }
             handle.unset_grab(self, data, event.serial, event.time, true);
         }
     }

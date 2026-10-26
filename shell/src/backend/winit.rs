@@ -37,6 +37,7 @@ pub fn init(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (mut backend, winit) = winit::init::<GlesRenderer>()?;
 
+    let scale = options.scale.unwrap_or(1.0);
     let mode = Mode {
         size: backend.window_size(),
         refresh: REFRESH_MHZ,
@@ -55,12 +56,12 @@ pub fn init(
     output.change_current_state(
         Some(mode),
         Some(Transform::Flipped180),
-        Some(Scale::Fractional(options.scale)),
+        Some(Scale::Fractional(scale)),
         Some((0, 0).into()),
     );
     output.set_preferred(mode);
     state.space.map_output(&output, (0, 0));
-    info!(size = ?mode.size, scale = options.scale, "écran virtuel");
+    info!(size = ?mode.size, scale, "écran virtuel");
 
     let mut damage_tracker = OutputDamageTracker::from_output(&output);
     let assets = RenderAssets::new(backend.renderer())?;
@@ -94,7 +95,10 @@ pub fn init(
                     &mut pending_capture,
                 );
             }
-            WinitEvent::CloseRequested => state.loop_signal.stop(),
+            WinitEvent::CloseRequested => {
+                state.request_exit();
+                state.loop_signal.stop();
+            }
             _ => {}
         })?;
 
@@ -122,7 +126,7 @@ fn redraw(
                 return;
             }
         };
-        let elements = render::output_elements(renderer, state, assets, output);
+        let elements = render::output_elements(renderer, state, assets, output, false);
         let result =
             damage_tracker.render_output(renderer, &mut framebuffer, 0, &elements, [0.0, 0.0, 0.0, 1.0]);
         let damage = match result {
@@ -148,6 +152,7 @@ fn redraw(
                     Err(err) => warn!("capture impossible : {err}"),
                 }
                 // Capture faite : on quitte sans présenter l'image (la fenêtre se ferme).
+                state.request_exit();
                 state.loop_signal.stop();
                 return;
             }

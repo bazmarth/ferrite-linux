@@ -6,8 +6,8 @@
 
 use std::time::Duration;
 
-/// Hauteur de la barre de menus.
-pub const MENUBAR_HEIGHT: u32 = 25;
+/// Hauteur de la barre du haut.
+pub const MENUBAR_HEIGHT: u32 = 30;
 /// Hauteur de la barre de titre des fenêtres.
 pub const TITLEBAR_HEIGHT: u32 = 30;
 /// Rayon des coins des fenêtres.
@@ -278,7 +278,7 @@ mod tests {
         assert_eq!(scale.to_physical(1440), 2880);
         assert_eq!(scale.to_physical(900), 1800);
         assert_eq!(scale.to_logical(2880), 1440);
-        assert_eq!(scale.to_physical(MENUBAR_HEIGHT), 50);
+        assert_eq!(scale.to_physical(MENUBAR_HEIGHT), 60);
         assert_eq!(scale.ceil(), 2);
     }
 

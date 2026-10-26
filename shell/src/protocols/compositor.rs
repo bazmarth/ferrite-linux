@@ -43,6 +43,7 @@ impl CompositorHandler for Ferrite {
             }
             if let Some(window) = self.window_for_surface(&root) {
                 window.on_commit();
+                self.place_new_window(&root);
             }
         }
         xdg_shell::handle_commit(&mut self.popups, &self.space, surface);

@@ -27,7 +27,7 @@ use smithay::{
 use tracing::info;
 
 use self::decoration::{Part, TrafficLight};
-use crate::state::Ferrite;
+use crate::{desktop::dock, state::Ferrite};
 
 /// Décalage entre deux fenêtres ouvertes à la suite.
 const CASCADE_STEP: i32 = 30;
@@ -35,6 +35,43 @@ const CASCADE_STEP: i32 = 30;
 const CASCADE_MARGIN: i32 = 40;
 /// Délai maximal entre deux clics pour un double-clic.
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
+/// Distance du bord de l'écran qui déclenche l'accrochage d'une fenêtre.
+const SNAP_EDGE_MARGIN: i32 = 24;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapSide {
+    Left,
+    Right,
+}
+
+/// Côté vers lequel accrocher la fenêtre quand le pointeur est au bord de la zone utile.
+pub fn snap_side_at(area: Rectangle<i32, Logical>, pointer: Point<f64, Logical>) -> Option<SnapSide> {
+    let margin = SNAP_EDGE_MARGIN as f64;
+    if pointer.x < area.loc.x as f64 + margin {
+        Some(SnapSide::Left)
+    } else if pointer.x >= (area.loc.x + area.size.w) as f64 - margin {
+        Some(SnapSide::Right)
+    } else {
+        None
+    }
+}
+
+/// Géométrie d'un demi-écran, avec la barre de titre Ferrite incluse dans la hauteur utile.
+pub fn snapped_content(
+    area: Rectangle<i32, Logical>,
+    side: SnapSide,
+    decorated: bool,
+) -> Rectangle<i32, Logical> {
+    let left_width = area.size.w / 2;
+    let half = match side {
+        SnapSide::Left => Rectangle::new(area.loc, Size::from((left_width, area.size.h))),
+        SnapSide::Right => Rectangle::new(
+            area.loc + Point::from((left_width, 0)),
+            Size::from((area.size.w - left_width, area.size.h)),
+        ),
+    };
+    maximized_content(half, decorated)
+}
 
 /// Placement en cascade des nouvelles fenêtres, comme sur macOS : chaque fenêtre est
 /// décalée vers le bas et la droite ; on repart du coin quand elle sortirait de l'écran.
@@ -51,8 +88,8 @@ impl Placement {
         area: Rectangle<i32, Logical>,
         window: Size<i32, Logical>,
     ) -> Point<i32, Logical> {
-        let origin = area.loc + Point::from((CASCADE_MARGIN, CASCADE_MARGIN));
-        let room = |total: i32, used: i32| (total - 2 * CASCADE_MARGIN - used).max(0) / CASCADE_STEP;
+        let origin = centered_position(area, window);
+        let room = |total: i32, used: i32| (total - 2 * CASCADE_MARGIN - used).max(0) / (CASCADE_STEP * 2);
         let steps = room(area.size.w, window.w).min(room(area.size.h, window.h)) as u32;
         let index = if steps == 0 { 0 } else { self.next % (steps + 1) };
         self.next = self.next.wrapping_add(1);
@@ -61,12 +98,36 @@ impl Placement {
     }
 }
 
-/// Zone utile d'un écran de taille `output` : tout sauf la barre de menus.
+/// Cadre de taille `window` centré dans `area`, en gardant la marge de cascade.
+pub fn centered_position(area: Rectangle<i32, Logical>, window: Size<i32, Logical>) -> Point<i32, Logical> {
+    let centered =
+        |total: i32, used: i32| (CASCADE_MARGIN + (total - 2 * CASCADE_MARGIN - used).max(0) / 2).max(0);
+    area.loc + Point::from((centered(area.size.w, window.w), centered(area.size.h, window.h)))
+}
+
+/// Ramène un cadre dans `area` autant que possible (le haut reste toujours visible).
+pub fn clamp_frame(
+    area: Rectangle<i32, Logical>,
+    frame: Point<i32, Logical>,
+    size: Size<i32, Logical>,
+) -> Point<i32, Logical> {
+    let clamp =
+        |position: i32, start: i32, total: i32, used: i32| position.min(start + total - used).max(start);
+    Point::from((
+        clamp(frame.x, area.loc.x, area.size.w, size.w),
+        clamp(frame.y, area.loc.y, area.size.h, size.h),
+    ))
+}
+
+/// Zone utile d'un écran de taille `output` : tout sauf la barre du haut et le Dock.
 pub fn usable_area(output: Rectangle<i32, Logical>) -> Rectangle<i32, Logical> {
     let menubar = MENUBAR_HEIGHT as i32;
     Rectangle::new(
         output.loc + Point::from((0, menubar)),
-        Size::from((output.size.w, (output.size.h - menubar).max(0))),
+        Size::from((
+            output.size.w,
+            (output.size.h - menubar - dock::RESERVED_HEIGHT).max(0),
+        )),
     )
 }
 
@@ -227,10 +288,10 @@ impl Ferrite {
         let Some(toplevel) = window.toplevel().cloned() else {
             return;
         };
-        if toplevel
-            .current_state()
-            .states
-            .contains(xdg_toplevel::State::Maximized)
+        let states = toplevel.current_state().states;
+        if states.contains(xdg_toplevel::State::Maximized)
+            || states.contains(xdg_toplevel::State::TiledLeft)
+            || states.contains(xdg_toplevel::State::TiledRight)
         {
             self.unmaximize_request(toplevel);
         } else {
@@ -299,28 +360,43 @@ mod tests {
 
     #[test]
     fn zone_utile_sous_la_barre_de_menus() {
-        assert_eq!(usable_area(rect(0, 0, 1440, 900)), rect(0, 25, 1440, 875));
+        assert_eq!(usable_area(rect(0, 0, 1440, 900)), rect(0, 30, 1440, 786));
     }
 
     #[test]
     fn agrandissement_sous_la_barre_de_titre() {
-        let area = rect(0, 25, 1440, 875);
-        assert_eq!(maximized_content(area, true), rect(0, 55, 1440, 845));
+        let area = rect(0, 30, 1440, 870);
+        assert_eq!(maximized_content(area, true), rect(0, 60, 1440, 840));
         assert_eq!(maximized_content(area, false), area);
     }
 
     #[test]
     fn cascade() {
-        let area = rect(0, 25, 1440, 875);
+        let area = rect(0, 30, 1440, 870);
         let mut placement = Placement::default();
         let size = Size::from((800, 600));
-        assert_eq!(placement.next_position(area, size), Point::from((40, 65)));
-        assert_eq!(placement.next_position(area, size), Point::from((70, 95)));
+        assert_eq!(placement.next_position(area, size), Point::from((320, 165)));
+        assert_eq!(placement.next_position(area, size), Point::from((350, 195)));
         // Zone trop petite : toutes les fenêtres au même endroit.
         let mut placement = Placement::default();
         let big = Size::from((1400, 900));
-        assert_eq!(placement.next_position(area, big), Point::from((40, 65)));
-        assert_eq!(placement.next_position(area, big), Point::from((40, 65)));
+        assert_eq!(placement.next_position(area, big), Point::from((40, 70)));
+        assert_eq!(placement.next_position(area, big), Point::from((40, 70)));
+    }
+
+    #[test]
+    fn un_cadre_trop_bas_remonte_dans_la_zone_utile() {
+        let area = rect(0, 30, 1280, 694);
+        let size = Size::from((860, 550));
+        assert_eq!(
+            clamp_frame(area, Point::from((210, 198)), size),
+            Point::from((210, 174))
+        );
+        // Plus grand que la zone : collé en haut, jamais sous la barre.
+        assert_eq!(
+            clamp_frame(area, Point::from((0, 0)), Size::from((900, 900))),
+            Point::from((0, 30))
+        );
     }
 
     #[test]
@@ -333,5 +409,33 @@ mod tests {
             assert!(pos.x + size.w <= area.loc.x + area.size.w - CASCADE_MARGIN);
             assert!(pos.y + size.h <= area.loc.y + area.size.h - CASCADE_MARGIN);
         }
+    }
+
+    #[test]
+    fn accrochage_partage_la_zone_utile_sans_couvrir_la_barre() {
+        let area = rect(0, 30, 1440, 870);
+        assert_eq!(snapped_content(area, SnapSide::Left, true), rect(0, 60, 720, 840));
+        assert_eq!(
+            snapped_content(area, SnapSide::Right, true),
+            rect(720, 60, 720, 840)
+        );
+        assert_eq!(
+            snapped_content(rect(0, 25, 1441, 875), SnapSide::Right, false),
+            rect(720, 25, 721, 875)
+        );
+    }
+
+    #[test]
+    fn accrochage_ne_se_declenche_qu_aux_bords_horizontaux() {
+        let area = rect(0, 30, 1440, 870);
+        assert_eq!(
+            snap_side_at(area, Point::from((0.0, 450.0))),
+            Some(SnapSide::Left)
+        );
+        assert_eq!(
+            snap_side_at(area, Point::from((1439.0, 450.0))),
+            Some(SnapSide::Right)
+        );
+        assert_eq!(snap_side_at(area, Point::from((720.0, 450.0))), None);
     }
 }

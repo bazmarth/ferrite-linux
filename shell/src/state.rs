@@ -28,13 +28,16 @@ use smithay::{
         socket::ListeningSocketSource,
     },
 };
-use tracing::warn;
+use tracing::{info, warn};
 
 use crate::desktop::panels::Popover;
+use crate::system::SystemLink;
 use crate::wm::{Hit, Minimized, Placement, decoration::TrafficLight};
+use ferrite_system::{
+    Snapshot,
+    config::{Settings, split_layout},
+};
 
-/// Disposition du clavier par défaut (AZERTY français, voir `docs/PLAN.md` §1.2).
-const KEYBOARD_LAYOUT: &str = "fr";
 /// Répétition des touches : délai (ms) et fréquence (par seconde).
 const KEY_REPEAT_DELAY: i32 = 300;
 const KEY_REPEAT_RATE: i32 = 30;
@@ -49,10 +52,11 @@ pub struct Ferrite {
     pub expected_exit: bool,
     /// Menu déroulant ouvert depuis la barre du haut.
     pub popover: Option<Popover>,
-    pub wifi_enabled: bool,
-    pub bluetooth_enabled: bool,
-    pub volume_level: u8,
-    pub brightness_level: u8,
+    /// Dernier état connu du réseau, du Bluetooth, du son et de l'écran.
+    pub system: Snapshot,
+    /// Dernier refus d'un réglage système, montré dans les réglages rapides.
+    pub system_error: Option<String>,
+    pub system_link: Option<SystemLink>,
     pub pending_power: Option<PowerAction>,
 
     /// Plan 2D sur lequel sont posées les fenêtres et les écrans.
@@ -102,12 +106,16 @@ impl Ferrite {
 
         let mut seat_state = SeatState::new();
         let mut seat: Seat<Self> = seat_state.new_wl_seat(&dh, "seat0");
+        // Disposition choisie dans Paramètres (QWERTY américain par défaut).
+        let layout = Settings::load().keyboard_layout().to_owned();
+        let (base, variant) = split_layout(&layout);
         let xkb = XkbConfig {
-            layout: KEYBOARD_LAYOUT,
+            layout: &base,
+            variant: &variant,
             ..XkbConfig::default()
         };
         if let Err(err) = seat.add_keyboard(xkb, KEY_REPEAT_DELAY, KEY_REPEAT_RATE) {
-            warn!("disposition « {KEYBOARD_LAYOUT} » indisponible ({err:?}), clavier par défaut");
+            warn!("disposition « {layout} » indisponible ({err:?}), clavier par défaut");
             seat.add_keyboard(XkbConfig::default(), KEY_REPEAT_DELAY, KEY_REPEAT_RATE)?;
         }
         seat.add_pointer();
@@ -121,10 +129,9 @@ impl Ferrite {
             loop_signal: event_loop.get_signal(),
             expected_exit: false,
             popover: None,
-            wifi_enabled: true,
-            bluetooth_enabled: false,
-            volume_level: 65,
-            brightness_level: 75,
+            system: Snapshot::default(),
+            system_error: None,
+            system_link: None,
             pending_power: None,
             space: Space::default(),
             popups: PopupManager::default(),
@@ -164,6 +171,23 @@ impl Ferrite {
                     .is_some_and(|toplevel| toplevel.wl_surface() == surface)
             })
             .cloned()
+    }
+
+    /// Change la disposition du clavier (choisie dans Paramètres).
+    pub fn set_keyboard_layout(&mut self, layout: &str) {
+        let Some(keyboard) = self.seat.get_keyboard() else {
+            return;
+        };
+        let (base, variant) = split_layout(layout);
+        let xkb = XkbConfig {
+            layout: &base,
+            variant: &variant,
+            ..XkbConfig::default()
+        };
+        match keyboard.set_xkb_config(self, xkb) {
+            Ok(()) => info!(layout, "disposition du clavier appliquée"),
+            Err(err) => warn!(layout, ?err, "disposition du clavier refusée"),
+        }
     }
 
     /// Demande aux clients de fermer leurs fenêtres avant l'arrêt du compositeur.

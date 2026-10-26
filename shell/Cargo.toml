@@ -7,6 +7,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+ferrite-system = { path = "../services/system" }
 ferrite-ui = { path = "../ui" }
 bitflags = "2"
 fontdue = "0.9"

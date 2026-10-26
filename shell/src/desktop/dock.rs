@@ -241,8 +241,8 @@ mod tests {
     #[test]
     fn dock_centre_et_laisse_une_marge_en_bas() {
         let dock = dock_rect(output());
-        assert_eq!(dock.size, (246, 68).into());
-        assert_eq!(dock.loc, Point::from((517, 642)));
+        assert_eq!(dock.size, (304, 68).into());
+        assert_eq!(dock.loc, Point::from((488, 642)));
     }
 
     #[test]
@@ -253,6 +253,7 @@ mod tests {
         assert_eq!(at(80.0), Some(App::TextEdit));
         assert_eq!(at(140.0), Some(App::Terminal));
         assert_eq!(at(200.0), Some(App::Calculator));
+        assert_eq!(at(260.0), Some(App::Settings));
         // Entre deux icônes : rien.
         assert_eq!(at(64.0), None);
     }

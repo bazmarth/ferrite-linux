@@ -60,6 +60,7 @@ const TEXT_SECONDARY: Color = Color::rgb(0x7E8087);
 const SEPARATOR: Color = Color::rgb(0xE3E3E3);
 const ACCENT: Color = Color::rgb(0x3689E6);
 const DESTRUCTIVE: Color = Color::rgb(0xC6262E);
+const TEXT_DISABLED: Color = Color::rgb(0xABACAF);
 
 /// Menu déroulant ouvert depuis la barre.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,8 +77,6 @@ pub enum DesktopAction {
     Launch(App),
     ToggleWifi,
     ToggleBluetooth,
-    SetWifi(bool),
-    SetBluetooth(bool),
     SetVolume(u8),
     SetBrightness(u8),
     RequestPower(PowerAction),
@@ -87,15 +86,18 @@ pub enum DesktopAction {
     Consume,
 }
 
-/// État du bureau à afficher, fourni par le compositeur.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// État du bureau à afficher, fourni par le compositeur. `None` : matériel ou service
+/// absent, le réglage est alors grisé.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DesktopView {
     pub popover: Option<Popover>,
-    pub wifi: bool,
-    pub bluetooth: bool,
-    pub volume: u8,
-    pub brightness: u8,
+    pub wifi: Option<bool>,
+    pub bluetooth: Option<bool>,
+    pub volume: Option<u8>,
+    pub brightness: Option<u8>,
     pub power: Option<PowerAction>,
+    /// Dernier réglage refusé par le système.
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -194,8 +196,8 @@ impl Panels {
             bold: &self.bold,
             icons: &self.icons,
         };
-        let layout = Layout::new(state.width as f64, state.height as f64);
         let view = &state.view;
+        let layout = Layout::new(state.width as f64, state.height as f64, view);
 
         // Barre du haut.
         canvas.fill(Rect::new(0.0, 0.0, layout.w, BAR), 0.0, BAR_TINT);
@@ -205,10 +207,13 @@ impl Panels {
         canvas.bar_label(&self.bold, &state.clock, (layout.w - clock_width) / 2.0, 11.5);
         for (indicator, rect) in layout.indicators() {
             let name = match indicator {
-                Indicator::Bluetooth if view.bluetooth => "status-bluetooth-on",
+                Indicator::Bluetooth if view.bluetooth == Some(true) => "status-bluetooth-on",
                 Indicator::Bluetooth => "status-bluetooth-off",
-                Indicator::Wifi => svg::wifi_icon(view.wifi),
-                Indicator::Volume => svg::volume_icon(view.volume),
+                Indicator::Network => match view.wifi {
+                    Some(enabled) => svg::wifi_icon(enabled),
+                    None => "status-network",
+                },
+                Indicator::Volume => svg::volume_icon(view.volume.unwrap_or(0)),
                 Indicator::Battery => match state.battery {
                     Some(battery) => svg::battery_icon(battery.percent, battery.charging),
                     None => continue,
@@ -283,67 +288,99 @@ impl Panels {
     fn draw_controls(&self, canvas: &mut Canvas, layout: &Layout, view: &DesktopView) {
         let card = layout.controls();
         canvas.card(card, 12.0);
+        let status = |state: Option<bool>| match state {
+            Some(true) => "Activé",
+            Some(false) => "Désactivé",
+            None => "Aucun adaptateur",
+        };
         let toggles = [
+            (Control::Wifi, svg::wifi_icon(true), "Wi-Fi", view.wifi),
             (
-                layout.control_row(Control::Wifi),
-                svg::wifi_icon(true),
-                "Wi-Fi",
-                if view.wifi { "Activé" } else { "Désactivé" },
-                view.wifi,
-            ),
-            (
-                layout.control_row(Control::Bluetooth),
+                Control::Bluetooth,
                 "status-bluetooth-on",
                 "Bluetooth",
-                if view.bluetooth { "Activé" } else { "Désactivé" },
                 view.bluetooth,
             ),
         ];
-        for (row, icon, title, status, active) in toggles {
+        for (control, icon, title, state) in toggles {
+            let row = layout.control_row(control);
+            let ink = if state.is_some() { TEXT } else { TEXT_DISABLED };
             canvas.icon(
                 icon,
                 (row.x + 22.0, row.y + row.h / 2.0),
                 30.0,
-                Style::Symbolic(TEXT),
+                Style::Symbolic(ink),
             );
-            canvas.label(&self.bold, title, row.x + 46.0, row.y + 8.0, 11.5, TEXT);
+            canvas.label(&self.bold, title, row.x + 46.0, row.y + 8.0, 11.5, ink);
             canvas.label(
                 &self.regular,
-                status,
+                status(state),
                 row.x + 46.0,
                 row.y + 26.0,
                 10.0,
                 TEXT_SECONDARY,
             );
-            canvas.switch(Rect::new(row.right() - 50.0, row.y + 13.0, 40.0, 22.0), active);
+            canvas.switch(Rect::new(row.right() - 50.0, row.y + 13.0, 40.0, 22.0), state);
         }
-        canvas.fill(
-            Rect::new(
-                card.x + 12.0,
-                layout.control_row(Control::Volume).y - 6.0,
-                card.w - 24.0,
-                1.0,
-            ),
-            0.0,
-            SEPARATOR,
-        );
+        let separator = |canvas: &mut Canvas, y: f64| {
+            canvas.fill(Rect::new(card.x + 12.0, y, card.w - 24.0, 1.0), 0.0, SEPARATOR);
+        };
+        separator(canvas, layout.control_row(Control::Volume).y - 6.0);
         let sliders = [
-            (Control::Volume, svg::volume_icon(view.volume), view.volume),
+            (
+                Control::Volume,
+                svg::volume_icon(view.volume.unwrap_or(0)),
+                view.volume,
+                "Aucune sortie audio",
+            ),
             (
                 Control::Brightness,
-                svg::brightness_icon(view.brightness),
+                svg::brightness_icon(view.brightness.unwrap_or(100)),
                 view.brightness,
+                "Luminosité non réglable",
             ),
         ];
-        for (control, icon, value) in sliders {
+        for (control, icon, value, missing) in sliders {
             let row = layout.control_row(control);
+            let ink = if value.is_some() { TEXT } else { TEXT_DISABLED };
             canvas.icon(
                 icon,
                 (row.x + 22.0, row.y + row.h / 2.0),
                 30.0,
-                Style::Symbolic(TEXT),
+                Style::Symbolic(ink),
             );
-            canvas.slider(layout.slider_track(control), value);
+            match value {
+                Some(value) => canvas.slider(layout.slider_track(control), value),
+                None => canvas.label(
+                    &self.regular,
+                    missing,
+                    row.x + 48.0,
+                    row.y + 12.0,
+                    10.5,
+                    TEXT_SECONDARY,
+                ),
+            }
+        }
+        let settings = layout.control_row(Control::Settings);
+        separator(canvas, settings.y - 4.0);
+        canvas.label(
+            &self.regular,
+            "Paramètres du système…",
+            settings.x + 14.0,
+            settings.y + 10.0,
+            11.5,
+            TEXT,
+        );
+        if let Some(error) = &view.error {
+            let line = layout.controls_error();
+            canvas.label(
+                &self.regular,
+                &ellipsize(error, 46),
+                line.x + 14.0,
+                line.y + 2.0,
+                10.0,
+                DESTRUCTIVE,
+            );
         }
     }
 
@@ -402,10 +439,10 @@ impl Panels {
 pub fn action_at(
     output: Rectangle<i32, Logical>,
     pos: Point<f64, Logical>,
-    popover: Option<Popover>,
-    pending_power: Option<PowerAction>,
+    view: &DesktopView,
 ) -> Option<DesktopAction> {
-    let layout = Layout::new(output.size.w as f64, output.size.h as f64);
+    let layout = Layout::new(output.size.w as f64, output.size.h as f64, view);
+    let (popover, pending_power) = (view.popover, view.power);
     let pos = Point::from((pos.x - output.loc.x as f64, pos.y - output.loc.y as f64));
 
     if let Some(power) = pending_power {
@@ -445,14 +482,18 @@ pub fn action_at(
                 DesktopAction::Launch(App::ALL[index])
             }),
         Popover::Controls if layout.controls().contains(pos) => {
-            if layout.control_row(Control::Wifi).contains(pos) {
+            let row = |control| layout.control_row(control).contains(pos);
+            let percent = |control| layout.slider_track(control).percent_at(pos.x);
+            if row(Control::Wifi) && view.wifi.is_some() {
                 DesktopAction::ToggleWifi
-            } else if layout.control_row(Control::Bluetooth).contains(pos) {
+            } else if row(Control::Bluetooth) && view.bluetooth.is_some() {
                 DesktopAction::ToggleBluetooth
-            } else if layout.control_row(Control::Volume).contains(pos) {
-                DesktopAction::SetVolume(layout.slider_track(Control::Volume).percent_at(pos.x))
-            } else if layout.control_row(Control::Brightness).contains(pos) {
-                DesktopAction::SetBrightness(layout.slider_track(Control::Brightness).percent_at(pos.x))
+            } else if row(Control::Volume) && view.volume.is_some() {
+                DesktopAction::SetVolume(percent(Control::Volume))
+            } else if row(Control::Brightness) && view.brightness.is_some() {
+                DesktopAction::SetBrightness(percent(Control::Brightness))
+            } else if row(Control::Settings) {
+                DesktopAction::Launch(App::Settings)
             } else {
                 DesktopAction::Consume
             }
@@ -475,7 +516,8 @@ pub fn action_at(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Indicator {
     Bluetooth,
-    Wifi,
+    /// Wi-Fi s'il y a une carte, réseau filaire sinon : toujours présent.
+    Network,
     Volume,
     Battery,
     Power,
@@ -487,6 +529,7 @@ enum Control {
     Bluetooth,
     Volume,
     Brightness,
+    Settings,
 }
 
 /// Géométrie du bureau, en pixels logiques relatifs à l'écran.
@@ -494,14 +537,20 @@ struct Layout {
     w: f64,
     h: f64,
     battery: bool,
+    bluetooth: bool,
+    volume: bool,
+    error: bool,
 }
 
 impl Layout {
-    fn new(w: f64, h: f64) -> Self {
+    fn new(w: f64, h: f64, view: &DesktopView) -> Self {
         Self {
             w,
             h,
             battery: battery_dir().is_some(),
+            bluetooth: view.bluetooth.is_some(),
+            volume: view.volume.is_some(),
+            error: view.error.is_some(),
         }
     }
 
@@ -509,33 +558,45 @@ impl Layout {
         Rect::new(4.0, 0.0, 102.0, BAR)
     }
 
-    fn indicator(&self, indicator: Indicator) -> Rect {
-        let power = Rect::new(self.w - 6.0 - INDICATOR_WIDTH, 0.0, INDICATOR_WIDTH, BAR);
-        // Le pourcentage de batterie est écrit à droite de son icône.
-        let battery_text = if self.battery { 34.0 } else { 0.0 };
-        let slot = |index: f64| {
-            Rect::new(
-                power.x - 8.0 - battery_text - (index + 1.0) * INDICATOR_WIDTH,
-                0.0,
-                INDICATOR_WIDTH,
-                BAR,
-            )
-        };
-        let battery = if self.battery { 1.0 } else { 0.0 };
-        match indicator {
-            Indicator::Power => power,
-            Indicator::Battery => slot(0.0),
-            Indicator::Volume => slot(battery),
-            Indicator::Wifi => slot(battery + 1.0),
-            Indicator::Bluetooth => slot(battery + 2.0),
+    /// Indicateurs présents, de gauche à droite (l'alimentation à part, tout à droite).
+    fn present(&self) -> Vec<Indicator> {
+        let mut list = Vec::new();
+        if self.bluetooth {
+            list.push(Indicator::Bluetooth);
         }
-    }
-
-    fn indicators(&self) -> Vec<(Indicator, Rect)> {
-        let mut list = vec![Indicator::Bluetooth, Indicator::Wifi, Indicator::Volume];
+        list.push(Indicator::Network);
+        if self.volume {
+            list.push(Indicator::Volume);
+        }
         if self.battery {
             list.push(Indicator::Battery);
         }
+        list
+    }
+
+    /// Case d'un indicateur ; vide (largeur nulle) s'il est absent.
+    fn indicator(&self, indicator: Indicator) -> Rect {
+        let power = Rect::new(self.w - 6.0 - INDICATOR_WIDTH, 0.0, INDICATOR_WIDTH, BAR);
+        if indicator == Indicator::Power {
+            return power;
+        }
+        // Le pourcentage de batterie est écrit à droite de son icône.
+        let battery_text = if self.battery { 34.0 } else { 0.0 };
+        let present = self.present();
+        let Some(index) = present.iter().position(|known| *known == indicator) else {
+            return Rect::new(power.x, 0.0, 0.0, 0.0);
+        };
+        let from_right = (present.len() - index) as f64;
+        Rect::new(
+            power.x - 8.0 - battery_text - from_right * INDICATOR_WIDTH,
+            0.0,
+            INDICATOR_WIDTH,
+            BAR,
+        )
+    }
+
+    fn indicators(&self) -> Vec<(Indicator, Rect)> {
+        let mut list = self.present();
         list.push(Indicator::Power);
         list.into_iter()
             .map(|indicator| (indicator, self.indicator(indicator)))
@@ -544,7 +605,7 @@ impl Layout {
 
     /// Indicateurs qui ouvrent les réglages rapides (tous sauf l'alimentation).
     fn indicators_group(&self) -> Rect {
-        let first = self.indicator(Indicator::Bluetooth);
+        let first = self.indicator(self.present()[0]);
         let end = self.indicator(Indicator::Power).x - 4.0;
         Rect::new(first.x, 0.0, end - first.x, BAR)
     }
@@ -575,7 +636,8 @@ impl Layout {
 
     fn controls(&self) -> Rect {
         let x = (self.w - POPOVER_MARGIN - CONTROLS_WIDTH).max(POPOVER_MARGIN);
-        Rect::new(x, BAR + POPOVER_MARGIN, CONTROLS_WIDTH, 204.0)
+        let error = if self.error { 22.0 } else { 0.0 };
+        Rect::new(x, BAR + POPOVER_MARGIN, CONTROLS_WIDTH, 246.0 + error)
     }
 
     fn control_row(&self, control: Control) -> Rect {
@@ -585,8 +647,15 @@ impl Layout {
             Control::Bluetooth => (56.0, 48.0),
             Control::Volume => (116.0, 40.0),
             Control::Brightness => (156.0, 40.0),
+            Control::Settings => (204.0, 36.0),
         };
         Rect::new(card.x + 6.0, card.y + y, card.w - 12.0, h)
+    }
+
+    /// Ligne du message d'erreur, sous « Paramètres du système… ».
+    fn controls_error(&self) -> Rect {
+        let card = self.controls();
+        Rect::new(card.x + 6.0, card.y + 242.0, card.w - 12.0, 20.0)
     }
 
     fn slider_track(&self, control: Control) -> Rect {
@@ -755,8 +824,14 @@ impl Canvas<'_> {
         );
     }
 
-    fn switch(&mut self, rect: Rect, active: bool) {
-        let track = if active { ACCENT } else { Color::rgb(0xCFCFCF) };
+    /// Interrupteur ; `None` : grisé, indisponible.
+    fn switch(&mut self, rect: Rect, state: Option<bool>) {
+        let active = state == Some(true);
+        let track = match state {
+            Some(true) => ACCENT,
+            Some(false) => Color::rgb(0xCFCFCF),
+            None => Color::rgb(0xE6E6E8),
+        };
         self.fill(rect, rect.h as f32 / 2.0, track);
         let knob = rect.h - 4.0;
         let x = if active {
@@ -936,43 +1011,14 @@ fn read_battery() -> Option<Battery> {
     })
 }
 
-pub fn run_system_action(action: DesktopAction) -> bool {
-    let result = match action {
-        DesktopAction::SetWifi(enabled) => Command::new("nmcli")
-            .args(["radio", "wifi", if enabled { "on" } else { "off" }])
-            .status(),
-        DesktopAction::SetBluetooth(enabled) => Command::new("bluetoothctl")
-            .args(["power", if enabled { "on" } else { "off" }])
-            .status(),
-        DesktopAction::SetVolume(value) => Command::new("wpctl")
-            .args([
-                "set-volume",
-                "@DEFAULT_AUDIO_SINK@",
-                &format!("{:.2}", value as f32 / 100.0),
-            ])
-            .status(),
-        DesktopAction::SetBrightness(value) => Command::new("brightnessctl")
-            .args(["set", &format!("{value}%")])
-            .status(),
-        DesktopAction::ConfirmPower(power) => Command::new("systemctl")
-            .arg(match power {
-                PowerAction::PowerOff => "poweroff",
-                PowerAction::Restart => "reboot",
-            })
-            .status(),
-        _ => return false,
-    };
-    match result {
-        Ok(status) if status.success() => true,
-        Ok(status) => {
-            tracing::warn!(?action, ?status, "la commande du bureau a échoué");
-            false
-        }
-        Err(err) => {
-            tracing::warn!(?action, %err, "commande du bureau indisponible");
-            false
-        }
+/// Coupe un texte trop long avec « … ».
+fn ellipsize(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_owned();
     }
+    let mut short: String = text.chars().take(max.saturating_sub(1)).collect();
+    short.push('…');
+    short
 }
 
 #[cfg(test)]
@@ -987,12 +1033,24 @@ mod tests {
         Rectangle::new((0, 0).into(), (1280, 720).into())
     }
 
+    /// Ordinateur complet : Wi-Fi, Bluetooth, son et rétroéclairage présents.
+    fn view(popover: Option<Popover>) -> DesktopView {
+        DesktopView {
+            popover,
+            wifi: Some(true),
+            bluetooth: Some(false),
+            volume: Some(60),
+            brightness: Some(70),
+            ..DesktopView::default()
+        }
+    }
+
     fn layout() -> Layout {
-        Layout::new(1280.0, 720.0)
+        Layout::new(1280.0, 720.0, &view(None))
     }
 
     fn click(pos: Point<f64, Logical>, popover: Option<Popover>) -> Option<DesktopAction> {
-        action_at(output(), pos, popover, None)
+        action_at(output(), pos, &view(popover))
     }
 
     #[test]
@@ -1001,9 +1059,9 @@ mod tests {
             click(point(40.0, 15.0), None),
             Some(DesktopAction::TogglePopover(Popover::Launcher))
         );
-        let wifi = layout().indicator(Indicator::Wifi).center();
+        let network = layout().indicator(Indicator::Network).center();
         assert_eq!(
-            click(point(wifi.0, wifi.1), None),
+            click(point(network.0, network.1), None),
             Some(DesktopAction::TogglePopover(Popover::Controls))
         );
         assert_eq!(
@@ -1015,6 +1073,31 @@ mod tests {
         assert_eq!(
             click(point(640.0, 15.0), Some(Popover::Launcher)),
             Some(DesktopAction::ClosePopover)
+        );
+    }
+
+    #[test]
+    fn sans_materiel_les_indicateurs_absents_disparaissent() {
+        // Machine virtuelle : ni Wi-Fi, ni Bluetooth, ni son.
+        let bare = DesktopView::default();
+        let layout = Layout::new(1280.0, 720.0, &bare);
+        assert_eq!(layout.indicator(Indicator::Bluetooth).w, 0.0);
+        assert_eq!(layout.indicator(Indicator::Volume).w, 0.0);
+        // L'indicateur réseau reste : les réglages rapides restent accessibles.
+        let network = layout.indicator(Indicator::Network).center();
+        assert_eq!(
+            action_at(output(), point(network.0, network.1), &bare),
+            Some(DesktopAction::TogglePopover(Popover::Controls))
+        );
+        // Les réglages indisponibles ne réagissent pas.
+        let open = DesktopView {
+            popover: Some(Popover::Controls),
+            ..bare
+        };
+        let bluetooth = layout.control_row(Control::Bluetooth).center();
+        assert_eq!(
+            action_at(output(), point(bluetooth.0, bluetooth.1), &open),
+            Some(DesktopAction::Consume)
         );
     }
 
@@ -1060,6 +1143,11 @@ mod tests {
             click(point(brightness.right() + 5.0, brightness.y), open),
             Some(DesktopAction::SetBrightness(100))
         );
+        let settings = layout.control_row(Control::Settings).center();
+        assert_eq!(
+            click(point(settings.0, settings.1), open),
+            Some(DesktopAction::Launch(App::Settings))
+        );
     }
 
     #[test]
@@ -1076,26 +1164,21 @@ mod tests {
             Some(DesktopAction::RequestPower(PowerAction::PowerOff))
         );
 
-        let pending = Some(PowerAction::PowerOff);
+        let pending = DesktopView {
+            power: Some(PowerAction::PowerOff),
+            ..view(None)
+        };
+        let at = |x: f64, y: f64| action_at(output(), point(x, y), &pending);
         let confirm = layout.dialog_confirm().center();
         assert_eq!(
-            action_at(output(), point(confirm.0, confirm.1), None, pending),
+            at(confirm.0, confirm.1),
             Some(DesktopAction::ConfirmPower(PowerAction::PowerOff))
         );
         let cancel = layout.dialog_cancel().center();
-        assert_eq!(
-            action_at(output(), point(cancel.0, cancel.1), None, pending),
-            Some(DesktopAction::CancelPower)
-        );
+        assert_eq!(at(cancel.0, cancel.1), Some(DesktopAction::CancelPower));
         let inside = layout.dialog();
-        assert_eq!(
-            action_at(output(), point(inside.x + 10.0, inside.y + 10.0), None, pending),
-            Some(DesktopAction::Consume)
-        );
-        assert_eq!(
-            action_at(output(), point(5.0, 700.0), None, pending),
-            Some(DesktopAction::CancelPower)
-        );
+        assert_eq!(at(inside.x + 10.0, inside.y + 10.0), Some(DesktopAction::Consume));
+        assert_eq!(at(5.0, 700.0), Some(DesktopAction::CancelPower));
     }
 
     #[test]

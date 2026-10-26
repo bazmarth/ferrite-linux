@@ -99,14 +99,7 @@ pub fn output_elements(
     assets
         .dock
         .push_element(renderer, output, output_geo, scale, &running, &mut elements);
-    let view = DesktopView {
-        popover: state.popover,
-        wifi: state.wifi_enabled,
-        bluetooth: state.bluetooth_enabled,
-        volume: state.volume_level,
-        brightness: state.brightness_level,
-        power: state.pending_power,
-    };
+    let view = desktop_view(state);
     assets
         .panels
         .push_element(renderer, output, output_geo, scale, &view, &mut elements);
@@ -258,6 +251,22 @@ fn push_cursor(
     ) {
         Ok(element) => out.push(OutputElement::Memory(element)),
         Err(err) => warn!("curseur non importé : {err:?}"),
+    }
+}
+
+/// État du bureau affiché par les panneaux (et utilisé pour leurs clics).
+pub fn desktop_view(state: &Ferrite) -> DesktopView {
+    let system = &state.system;
+    DesktopView {
+        popover: state.popover,
+        wifi: system.wifi,
+        bluetooth: system.bluetooth,
+        volume: system
+            .volume
+            .map(|volume| if volume.muted { 0 } else { volume.level }),
+        brightness: system.brightness,
+        power: state.pending_power,
+        error: state.system_error.clone(),
     }
 }
 

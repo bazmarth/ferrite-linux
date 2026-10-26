@@ -61,6 +61,7 @@ icons![
     "status-brightness-3",
     "status-brightness-4",
     "status-brightness-5",
+    "status-network",
     "status-power",
     "status-update",
     "status-volume-0",

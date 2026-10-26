@@ -2,6 +2,8 @@
 
 use std::{ffi::OsStr, process::Command};
 
+use ferrite_system::command::spawn_detached;
+
 use tracing::info;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -10,10 +12,17 @@ pub enum App {
     TextEdit,
     Terminal,
     Calculator,
+    Settings,
 }
 
 impl App {
-    pub const ALL: [App; 4] = [App::Files, App::TextEdit, App::Terminal, App::Calculator];
+    pub const ALL: [App; 5] = [
+        App::Files,
+        App::TextEdit,
+        App::Terminal,
+        App::Calculator,
+        App::Settings,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -21,6 +30,7 @@ impl App {
             App::TextEdit => "TextEdit",
             App::Terminal => "Terminal",
             App::Calculator => "Calculatrice",
+            App::Settings => "Paramètres",
         }
     }
 
@@ -31,6 +41,7 @@ impl App {
             App::TextEdit => "app-text-editor",
             App::Terminal => "app-terminal",
             App::Calculator => "app-calculator",
+            App::Settings => "app-settings",
         }
     }
 
@@ -41,6 +52,7 @@ impl App {
             App::TextEdit => "ferrite-textedit",
             App::Terminal => "foot",
             App::Calculator => "ferrite-calculator",
+            App::Settings => "ferrite-settings",
         }
     }
 
@@ -50,6 +62,7 @@ impl App {
             App::TextEdit => ("ferrite-apps", Some("textedit")),
             App::Terminal => ("foot", None),
             App::Calculator => ("ferrite-apps", Some("calculator")),
+            App::Settings => ("ferrite-apps", Some("settings")),
         }
     }
 
@@ -66,8 +79,9 @@ impl App {
         if let Some(argument) = argument {
             command.arg(argument);
         }
-        match command.env("WAYLAND_DISPLAY", socket_name).spawn() {
-            Ok(child) => info!(pid = child.id(), app = self.name(), "application lancée"),
+        command.env("WAYLAND_DISPLAY", socket_name);
+        match spawn_detached(command) {
+            Ok(pid) => info!(pid, app = self.name(), "application lancée"),
             Err(err) => tracing::warn!(app = self.name(), %err, "application indisponible"),
         }
     }

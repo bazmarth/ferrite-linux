@@ -16,9 +16,10 @@ use tracing::info;
 use crate::{
     desktop::{
         dock,
-        panels::{self, DesktopAction},
+        panels::{self, DesktopAction, Popover},
     },
     state::Ferrite,
+    system::Change,
     wm::{BTN_LEFT, Hit, decoration::Part},
 };
 
@@ -31,6 +32,10 @@ enum Action {
     RestoreMinimized,
     /// Ctrl+Alt+F1…F12 : passe au terminal virtuel indiqué (backend DRM).
     SwitchVt(i32),
+    /// Échap : ferme le menu ou la confirmation ouverte.
+    CloseOverlay,
+    /// Touche Super : ouvre ou ferme le menu Applications.
+    ToggleLauncher,
 }
 
 /// Symboles XKB `XF86Switch_VT_1` à `XF86Switch_VT_12`, produits par Ctrl+Alt+F1…F12.
@@ -99,7 +104,18 @@ impl Ferrite {
             event.state(),
             SERIAL_COUNTER.next_serial(),
             event.time_msec(),
-            |_, modifiers, keysym| {
+            |state, modifiers, keysym| {
+                if pressed && !modifiers.ctrl && !modifiers.alt {
+                    match keysym.modified_sym() {
+                        Keysym::Escape if state.popover.is_some() || state.pending_power.is_some() => {
+                            return FilterResult::Intercept(Action::CloseOverlay);
+                        }
+                        Keysym::Super_L | Keysym::Super_R => {
+                            return FilterResult::Intercept(Action::ToggleLauncher);
+                        }
+                        _ => {}
+                    }
+                }
                 if !(pressed && modifiers.ctrl && modifiers.alt) {
                     return FilterResult::Forward;
                 }
@@ -126,6 +142,14 @@ impl Ferrite {
                     info!("passage au terminal virtuel {vt}");
                     change_vt(vt);
                 }
+            }
+            Some(Action::CloseOverlay) => {
+                self.popover = None;
+                self.pending_power = None;
+            }
+            Some(Action::ToggleLauncher) => {
+                self.pending_power = None;
+                self.handle_desktop_action(DesktopAction::TogglePopover(Popover::Launcher));
             }
             None => {}
         }
@@ -187,7 +211,7 @@ impl Ferrite {
                 return;
             }
             let desktop_action = output_geo.and_then(|output_geo| {
-                panels::action_at(output_geo, location, self.popover, self.pending_power)
+                panels::action_at(output_geo, location, &crate::render::desktop_view(self))
             });
             if button.button == BTN_LEFT
                 && let Some(action) = desktop_action
@@ -225,41 +249,27 @@ impl Ferrite {
                 app.launch(&self.socket_name);
             }
             DesktopAction::ToggleWifi => {
-                let enabled = !self.wifi_enabled;
-                if panels::run_system_action(DesktopAction::SetWifi(enabled)) {
-                    self.wifi_enabled = enabled;
+                if let Some(enabled) = self.system.wifi {
+                    self.request_system_change(Change::Wifi(!enabled));
                 }
             }
             DesktopAction::ToggleBluetooth => {
-                let enabled = !self.bluetooth_enabled;
-                if panels::run_system_action(DesktopAction::SetBluetooth(enabled)) {
-                    self.bluetooth_enabled = enabled;
+                if let Some(enabled) = self.system.bluetooth {
+                    self.request_system_change(Change::Bluetooth(!enabled));
                 }
             }
-            DesktopAction::SetVolume(value) => {
-                if panels::run_system_action(action) {
-                    self.volume_level = value;
-                }
-            }
-            DesktopAction::SetBrightness(value) => {
-                if panels::run_system_action(action) {
-                    self.brightness_level = value;
-                }
-            }
+            DesktopAction::SetVolume(value) => self.request_system_change(Change::Volume(value)),
+            DesktopAction::SetBrightness(value) => self.request_system_change(Change::Brightness(value)),
             DesktopAction::RequestPower(power) => {
                 self.popover = None;
                 self.pending_power = Some(power);
             }
             DesktopAction::CancelPower => self.pending_power = None,
             DesktopAction::ConfirmPower(power) => {
-                if panels::run_system_action(DesktopAction::ConfirmPower(power)) {
-                    self.request_exit();
-                    self.loop_signal.stop();
-                } else {
-                    self.pending_power = None;
-                }
+                // Le bureau se ferme quand systemd accepte l'arrêt (voir `system.rs`).
+                self.pending_power = None;
+                self.request_system_change(Change::Power(power));
             }
-            DesktopAction::SetWifi(_) | DesktopAction::SetBluetooth(_) => {}
             DesktopAction::Consume => {}
         }
     }

@@ -9,28 +9,41 @@ export XDG_SESSION_TYPE=wayland
 export XDG_SESSION_DESKTOP=ferrite
 
 log="${XDG_RUNTIME_DIR:-/tmp}/ferrite-shell.log"
-if [ -x /usr/local/bin/ferrite-shell ]; then
-    printf '\n  Démarrage du bureau Ferrite… (journal : %s)\n' "$log"
-    dbus-run-session -- /usr/local/bin/ferrite-shell --drm -- ferrite-apps files >"$log" 2>&1 &
-    shell_pid=$!
-    # Si le compositeur reste bloqué au démarrage, afficher son journal sur le
-    # terminal afin que le diagnostic soit visible en mode live et dans QEMU.
-    (
-        sleep 20
-        if kill -0 "$shell_pid" 2>/dev/null; then
-            printf '\n  Le bureau est encore en cours de démarrage. Dernières lignes du journal :\n\n'
-            tail -n 30 "$log" | sed 's/^/    /'
-        fi
-    ) &
-    watcher_pid=$!
-    wait "$shell_pid"
-    status=$?
-    kill "$watcher_pid" 2>/dev/null || true
-    if [ "$status" -ne 0 ]; then
-        printf "\n  \033[31mLe bureau Ferrite s'est arrêté (code %s).\033[0m Dernières lignes du journal :\n\n" "$status"
-        tail -n 15 "$log" | sed 's/^/    /'
+# Le bureau redémarre seul s'il s'arrête sur une erreur ; après 3 arrêts en moins de
+# 2 minutes, on retombe sur la console pour ne pas boucler. Ctrl+Alt+Retour arrière
+# (code 0) ramène directement à la console.
+crashes=0
+window_start=$(date +%s)
+first=1
+while [ -x /usr/local/bin/ferrite-shell ]; do
+    if [ "$first" = 1 ]; then
+        printf '\n  Démarrage du bureau Ferrite… (journal : %s)\n' "$log"
+        client="ferrite-apps files"
+    else
+        printf '\n  Redémarrage du bureau Ferrite…\n'
+        client=""
     fi
-fi
+    first=0
+    [ -f "$log" ] && mv -f "$log" "$log.precedent"
+    # shellcheck disable=SC2086 # $client est vide ou une commande et son argument.
+    dbus-run-session -- /usr/local/bin/ferrite-shell --drm ${client:+-- $client} >"$log" 2>&1
+    status=$?
+    [ "$status" -eq 0 ] && break
+
+    printf "\n  \033[31mLe bureau Ferrite s'est arrêté (code %s).\033[0m Dernières lignes du journal :\n\n" "$status"
+    tail -n 15 "$log" | sed 's/^/    /'
+    now=$(date +%s)
+    if [ $((now - window_start)) -gt 120 ]; then
+        window_start=$now
+        crashes=0
+    fi
+    crashes=$((crashes + 1))
+    if [ "$crashes" -ge 3 ]; then
+        printf '\n  Arrêts répétés : retour à la console (journal : %s).\n' "$log"
+        break
+    fi
+    sleep 2
+done
 
 printf '\n  \033[1mFerrite OS\033[0m — système live Debian %s, noyau %s\n\n' \
     "$(cat /etc/debian_version)" "$(uname -r)"

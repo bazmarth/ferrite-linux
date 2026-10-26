@@ -12,6 +12,7 @@ mod options;
 mod protocols;
 mod render;
 mod state;
+mod system;
 mod wm;
 
 use std::process::{Command, ExitCode};
@@ -55,6 +56,10 @@ fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     let display: Display<Ferrite> = Display::new()?;
     let mut state = Ferrite::new(&mut event_loop, display)?;
     state.popover = options.menu;
+    match system::start(&event_loop.handle()) {
+        Ok(link) => state.system_link = Some(link),
+        Err(err) => warn!("services système indisponibles : {err}"),
+    }
 
     let has_display = std::env::var_os("WAYLAND_DISPLAY").is_some() || std::env::var_os("DISPLAY").is_some();
     match options.backend.resolve(has_display) {
@@ -72,12 +77,9 @@ fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
             .filter(|path| path.is_file())
             .map(Command::new)
             .unwrap_or_else(|| Command::new(program));
-        match executable
-            .args(args)
-            .env("WAYLAND_DISPLAY", &state.socket_name)
-            .spawn()
-        {
-            Ok(child) => info!(pid = child.id(), "client lancé : {program}"),
+        executable.args(args).env("WAYLAND_DISPLAY", &state.socket_name);
+        match ferrite_system::command::spawn_detached(executable) {
+            Ok(pid) => info!(pid, "client lancé : {program}"),
             Err(err) => warn!("impossible de lancer {program} : {err}"),
         }
     }

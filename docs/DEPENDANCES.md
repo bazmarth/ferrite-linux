@@ -15,6 +15,7 @@ Chaque dépendance avec sa licence et la raison de sa présence. Les versions ex
 | `png` 0.18 | ferrite-shell | MIT/Apache-2.0 | écriture des captures (`--capture`) |
 | `tracing`, `tracing-subscriber` | ferrite-shell | MIT | journal (celui de Smithay) ; niveau réglable par `RUST_LOG` |
 | `resvg` 0.49 (sans fonctions par défaut) | ferrite-shell, ferrite-apps | Apache-2.0/MIT | rendu des icônes SVG de `icons/SVG` (Dock, barre du haut, menus, Fichiers) ; sans `text` : les icônes n'utilisent que des tracés |
+| `ferrite-system` (interne) | ferrite-shell, ferrite-apps | MIT | services du système avec délai maximal ; aucune dépendance externe |
 | `eframe` 0.37 | ferrite-apps | MIT/Apache-2.0 | fenêtres natives Wayland pour Fichiers, TextEdit et Calculatrice ; rendu GLES et prise en charge clavier/souris |
 
 ## Paquets de l'image live

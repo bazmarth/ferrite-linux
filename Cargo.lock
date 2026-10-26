@@ -790,6 +790,7 @@ name = "ferrite-apps"
 version = "0.1.0"
 dependencies = [
  "eframe",
+ "ferrite-system",
  "ferrite-ui",
  "resvg",
 ]
@@ -799,6 +800,7 @@ name = "ferrite-shell"
 version = "0.1.0"
 dependencies = [
  "bitflags 2.13.2",
+ "ferrite-system",
  "ferrite-ui",
  "fontdue",
  "png",
@@ -807,6 +809,10 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
 ]
+
+[[package]]
+name = "ferrite-system"
+version = "0.1.0"
 
 [[package]]
 name = "ferrite-ui"

@@ -1,0 +1,12 @@
+[package]
+name = "ferrite-system"
+description = "Accès aux services du système (réseau, Bluetooth, son, écran, réglages) sans jamais bloquer l'interface"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

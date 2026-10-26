@@ -61,9 +61,11 @@ impl ResizeSurfaceGrab {
     ) -> Self {
         let initial_rect = initial_window_rect;
 
-        ResizeSurfaceState::with(window.toplevel().unwrap().wl_surface(), |state| {
-            *state = ResizeSurfaceState::Resizing { edges, initial_rect };
-        });
+        if let Some(toplevel) = window.toplevel() {
+            ResizeSurfaceState::with(toplevel.wl_surface(), |state| {
+                *state = ResizeSurfaceState::Resizing { edges, initial_rect };
+            });
+        }
 
         Self {
             start_data,
@@ -107,12 +109,18 @@ impl PointerGrab<Ferrite> for ResizeSurfaceGrab {
             new_window_height = (self.initial_rect.size.h as f64 + delta.y) as i32;
         }
 
-        let (min_size, max_size) =
-            compositor::with_states(self.window.toplevel().unwrap().wl_surface(), |states| {
+        let (min_size, max_size) = match (self.window.toplevel(), self.window.x11_surface()) {
+            (Some(toplevel), _) => compositor::with_states(toplevel.wl_surface(), |states| {
                 let mut guard = states.cached_state.get::<SurfaceCachedState>();
                 let data = guard.current();
                 (data.min_size, data.max_size)
-            });
+            }),
+            (None, Some(x11)) => (
+                x11.min_size().unwrap_or_default(),
+                x11.max_size().unwrap_or_default(),
+            ),
+            (None, None) => return,
+        };
 
         let min_width = min_size.w.max(1);
         let min_height = min_size.h.max(1);
@@ -125,7 +133,23 @@ impl PointerGrab<Ferrite> for ResizeSurfaceGrab {
             new_window_height.max(min_height).min(max_height),
         ));
 
-        let xdg = self.window.toplevel().unwrap();
+        // X11 : la fenêtre prend aussitôt sa nouvelle taille, et se déplace si on la tire
+        // par le haut ou la gauche.
+        if self.window.x11_surface().is_some() {
+            let size = self.last_window_size;
+            let mut location = self.initial_rect.loc;
+            if self.edges.intersects(ResizeEdge::LEFT) {
+                location.x += self.initial_rect.size.w - size.w;
+            }
+            if self.edges.intersects(ResizeEdge::TOP) {
+                location.y += self.initial_rect.size.h - size.h;
+            }
+            data.place_x11(&self.window, Rectangle::new(location, size));
+            return;
+        }
+        let Some(xdg) = self.window.toplevel() else {
+            return;
+        };
         xdg.with_pending_state(|state| {
             state.states.set(xdg_toplevel::State::Resizing);
             state.size = Some(self.last_window_size);
@@ -156,7 +180,9 @@ impl PointerGrab<Ferrite> for ResizeSurfaceGrab {
             // Bouton relâché : fin du redimensionnement.
             handle.unset_grab(self, data, event.serial, event.time, true);
 
-            let xdg = self.window.toplevel().unwrap();
+            let Some(xdg) = self.window.toplevel() else {
+                return;
+            };
             xdg.with_pending_state(|state| {
                 state.states.unset(xdg_toplevel::State::Resizing);
                 state.size = Some(self.last_window_size);
@@ -309,7 +335,10 @@ impl ResizeSurfaceState {
 pub fn handle_commit(space: &mut Space<Window>, surface: &WlSurface) -> Option<()> {
     let window = space
         .elements()
-        .find(|w| w.toplevel().unwrap().wl_surface() == surface)
+        .find(|w| {
+            w.toplevel()
+                .is_some_and(|toplevel| toplevel.wl_surface() == surface)
+        })
         .cloned()?;
 
     let mut window_loc = space.element_location(&window)?;

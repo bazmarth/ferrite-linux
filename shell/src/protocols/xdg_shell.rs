@@ -248,6 +248,15 @@ impl Ferrite {
     /// Accroche une fenêtre sur une moitié d'écran et garde sa géométrie précédente pour
     /// que le double-clic sur la barre de titre puisse la restaurer.
     pub fn snap_window_to_side(&mut self, window: &Window, side: wm::SnapSide) {
+        if window.x11_surface().is_some() {
+            let Some(area) = self.usable_area() else { return };
+            self.x11_save_geometry(window);
+            self.place_x11(
+                window,
+                wm::snapped_content(area, side, wm::is_server_decorated(window)),
+            );
+            return;
+        }
         let Some(toplevel) = window.toplevel().cloned() else {
             return;
         };

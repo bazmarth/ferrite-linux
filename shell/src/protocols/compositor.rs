@@ -21,6 +21,7 @@ use crate::{
     state::{ClientState, Ferrite},
     wm,
 };
+use smithay::xwayland::XWaylandClientData;
 
 impl CompositorHandler for Ferrite {
     fn compositor_state(&mut self) -> &mut CompositorState {
@@ -28,6 +29,9 @@ impl CompositorHandler for Ferrite {
     }
 
     fn client_compositor_state<'a>(&self, client: &'a Client) -> &'a CompositorClientState {
+        if let Some(state) = client.get_data::<XWaylandClientData>() {
+            return &state.compositor_state;
+        }
         &client
             .get_data::<ClientState>()
             .expect("client inséré sans ClientState")

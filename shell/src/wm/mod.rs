@@ -22,7 +22,7 @@ use smithay::{
         wayland_server::protocol::wl_surface::WlSurface,
     },
     utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Serial, Size},
-    wayland::shell::xdg::XdgShellHandler,
+    wayland::{seat::WaylandFocus, shell::xdg::XdgShellHandler},
 };
 use tracing::info;
 
@@ -147,6 +147,11 @@ pub fn maximized_content(area: Rectangle<i32, Logical>, decorated: bool) -> Rect
 /// Les clients qui dessinent leurs propres décorations (mode client) ne le sont pas, ni les
 /// fenêtres en plein écran.
 pub fn is_server_decorated(window: &Window) -> bool {
+    if let Some(x11) = window.x11_surface() {
+        // `is_decorated` signale une fenêtre X11 qui dessine son propre cadre (Brave,
+        // Chromium) ; les menus et infobulles n'en ont jamais.
+        return !x11.is_override_redirect() && !x11.is_decorated() && !x11.is_fullscreen();
+    }
     window.toplevel().is_some_and(|toplevel| {
         let state = toplevel.current_state();
         state.decoration_mode == Some(DecorationMode::ServerSide)
@@ -154,8 +159,22 @@ pub fn is_server_decorated(window: &Window) -> bool {
     })
 }
 
+/// Demande à une fenêtre de se fermer (Wayland ou X11).
+pub fn close_window(window: &Window) {
+    if let Some(toplevel) = window.toplevel() {
+        toplevel.send_close();
+    } else if let Some(x11) = window.x11_surface() {
+        if let Err(err) = x11.close() {
+            tracing::warn!(?err, "fenêtre X11 non fermée");
+        }
+    }
+}
+
 /// La fenêtre est-elle active (au premier plan, avec le clavier) ?
 pub fn is_activated(window: &Window) -> bool {
+    if let Some(x11) = window.x11_surface() {
+        return x11.is_activated();
+    }
     window.toplevel().is_some_and(|toplevel| {
         toplevel
             .current_state()
@@ -184,12 +203,40 @@ impl Ferrite {
     /// Met `window` au premier plan et lui donne le clavier (ou retire le focus si `None`).
     pub fn focus_window(&mut self, window: Option<Window>) {
         let serial = SERIAL_COUNTER.next_serial();
+        // Les menus X11 ne prennent jamais le clavier.
+        let window = window.filter(|w| !w.x11_surface().is_some_and(|x11| x11.is_override_redirect()));
         let surface: Option<WlSurface> = window
             .as_ref()
-            .and_then(|w| w.toplevel())
-            .map(|t| t.wl_surface().clone());
+            .and_then(|w| w.wl_surface())
+            .map(|surface| surface.into_owned());
         match &window {
-            Some(window) => self.space.raise_element(window, true),
+            Some(window) => {
+                self.space.raise_element(window, true);
+                if let (Some(x11), Some(xwm)) = (window.x11_surface(), self.xwm.as_mut()) {
+                    if let Err(err) = xwm.raise_window(x11) {
+                        tracing::warn!(?err, "fenêtre X11 non remontée");
+                    }
+                }
+                // Ses boîtes de dialogue X11 restent au-dessus d'elle.
+                if let Some(id) = window.x11_surface().map(|x11| x11.window_id()) {
+                    let dialogs: Vec<Window> = self
+                        .space
+                        .elements()
+                        .filter(|other| {
+                            other
+                                .x11_surface()
+                                .is_some_and(|x11| x11.is_transient_for() == Some(id))
+                        })
+                        .cloned()
+                        .collect();
+                    for dialog in dialogs {
+                        self.space.raise_element(&dialog, false);
+                        if let (Some(x11), Some(xwm)) = (dialog.x11_surface(), self.xwm.as_mut()) {
+                            let _ = xwm.raise_window(x11);
+                        }
+                    }
+                }
+            }
             None => self.space.elements().for_each(|w| {
                 w.set_activated(false);
             }),
@@ -257,6 +304,16 @@ impl Ferrite {
         pointer.set_grab(self, grab, serial, Focus::Clear);
     }
 
+    /// Données de départ d'un déplacement demandé par un client X11 : le clic en cours.
+    pub fn current_grab_start(&self) -> Option<GrabStartData<Ferrite>> {
+        let pointer = self.seat.get_pointer()?;
+        Some(pointer.grab_start_data().unwrap_or_else(|| GrabStartData {
+            focus: None,
+            button: BTN_LEFT,
+            location: pointer.current_location(),
+        }))
+    }
+
     /// Commence le redimensionnement de `window` par les bords `edges`.
     pub fn start_resize(
         &mut self,
@@ -271,13 +328,14 @@ impl Ferrite {
         let Some(pointer) = self.seat.get_pointer() else {
             return;
         };
-        let Some(toplevel) = window.toplevel() else {
+        if let Some(toplevel) = window.toplevel() {
+            toplevel.with_pending_state(|state| {
+                state.states.set(xdg_toplevel::State::Resizing);
+            });
+            toplevel.send_pending_configure();
+        } else if window.x11_surface().is_none() {
             return;
-        };
-        toplevel.with_pending_state(|state| {
-            state.states.set(xdg_toplevel::State::Resizing);
-        });
-        toplevel.send_pending_configure();
+        }
         let size = window.geometry().size;
         let grab = ResizeSurfaceGrab::start(start_data, window, edges, Rectangle::new(location, size));
         pointer.set_grab(self, grab, serial, Focus::Clear);
@@ -285,6 +343,11 @@ impl Ferrite {
 
     /// Agrandit la fenêtre, ou lui rend sa taille si elle l'est déjà.
     pub fn toggle_maximize(&mut self, window: &Window) {
+        if let Some(x11) = window.x11_surface() {
+            let maximized = x11.is_maximized();
+            self.x11_set_maximized(window, !maximized);
+            return;
+        }
         let Some(toplevel) = window.toplevel().cloned() else {
             return;
         };
@@ -325,11 +388,7 @@ impl Ferrite {
     /// Action d'un feu tricolore cliqué.
     pub fn activate_light(&mut self, window: &Window, light: TrafficLight) {
         match light {
-            TrafficLight::Close => {
-                if let Some(toplevel) = window.toplevel() {
-                    toplevel.send_close();
-                }
-            }
+            TrafficLight::Close => close_window(window),
             TrafficLight::Minimize => self.minimize(window),
             TrafficLight::Zoom => self.toggle_maximize(window),
         }

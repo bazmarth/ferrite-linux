@@ -21,12 +21,20 @@ use smithay::{
     utils::{Logical, Point},
     wayland::{
         compositor::{CompositorClientState, CompositorState},
+        dmabuf::{DmabufGlobal, DmabufState},
+        fractional_scale::FractionalScaleManagerState,
         output::OutputManagerState,
-        selection::data_device::DataDeviceState,
+        relative_pointer::RelativePointerManagerState,
+        seat::WaylandFocus,
+        selection::{data_device::DataDeviceState, primary_selection::PrimarySelectionState},
         shell::xdg::{XdgShellState, decoration::XdgDecorationState},
         shm::ShmState,
         socket::ListeningSocketSource,
+        viewporter::ViewporterState,
+        xdg_activation::XdgActivationState,
+        xwayland_shell::XWaylandShellState,
     },
+    xwayland::X11Wm,
 };
 use tracing::{info, warn};
 
@@ -35,6 +43,7 @@ use crate::system::SystemLink;
 use crate::wm::{Hit, Minimized, Placement, decoration::TrafficLight};
 use ferrite_system::{
     Snapshot,
+    applications::DesktopEntry,
     config::{Settings, split_layout},
 };
 
@@ -52,6 +61,11 @@ pub struct Ferrite {
     pub expected_exit: bool,
     /// Menu déroulant ouvert depuis la barre du haut.
     pub popover: Option<Popover>,
+    /// Applications installées (fichiers `.desktop`), relues par le fil système.
+    pub applications: Vec<DesktopEntry>,
+    /// Recherche tapée dans le menu Applications.
+    pub launcher_query: String,
+    pub launcher_page: usize,
     /// Dernier état connu du réseau, du Bluetooth, du son et de l'écran.
     pub system: Snapshot,
     /// Dernier refus d'un réglage système, montré dans les réglages rapides.
@@ -87,6 +101,22 @@ pub struct Ferrite {
     pub output_manager_state: OutputManagerState,
     pub seat_state: SeatState<Ferrite>,
     pub data_device_state: DataDeviceState,
+    pub primary_selection_state: PrimarySelectionState,
+    pub dmabuf_state: DmabufState,
+    pub dmabuf_global: Option<DmabufGlobal>,
+    pub activation_state: XdgActivationState,
+    pub xwayland_shell_state: XWaylandShellState,
+    /// Globaux sans état à consulter, gardés en vie avec le compositeur.
+    #[allow(dead_code)]
+    pub passive_globals: (
+        ViewporterState,
+        FractionalScaleManagerState,
+        RelativePointerManagerState,
+    ),
+    /// Gestionnaire des fenêtres X11, une fois XWayland prêt.
+    pub xwm: Option<X11Wm>,
+    /// Numéro d'affichage X11 (`DISPLAY=:N`) d'XWayland.
+    pub x_display: Option<u32>,
     pub seat: Seat<Ferrite>,
 }
 
@@ -103,6 +133,14 @@ impl Ferrite {
         let shm_state = ShmState::new::<Self>(&dh, vec![]);
         let output_manager_state = OutputManagerState::new_with_xdg_output::<Self>(&dh);
         let data_device_state = DataDeviceState::new::<Self>(&dh);
+        let primary_selection_state = PrimarySelectionState::new::<Self>(&dh);
+        let activation_state = XdgActivationState::new::<Self>(&dh);
+        let xwayland_shell_state = XWaylandShellState::new::<Self>(&dh);
+        let passive_globals = (
+            ViewporterState::new::<Self>(&dh),
+            FractionalScaleManagerState::new::<Self>(&dh),
+            RelativePointerManagerState::new::<Self>(&dh),
+        );
 
         let mut seat_state = SeatState::new();
         let mut seat: Seat<Self> = seat_state.new_wl_seat(&dh, "seat0");
@@ -129,6 +167,9 @@ impl Ferrite {
             loop_signal: event_loop.get_signal(),
             expected_exit: false,
             popover: None,
+            applications: Vec::new(),
+            launcher_query: String::new(),
+            launcher_page: 0,
             system: Snapshot::default(),
             system_error: None,
             system_link: None,
@@ -148,6 +189,14 @@ impl Ferrite {
             output_manager_state,
             seat_state,
             data_device_state,
+            primary_selection_state,
+            dmabuf_state: DmabufState::new(),
+            dmabuf_global: None,
+            activation_state,
+            xwayland_shell_state,
+            passive_globals,
+            xwm: None,
+            x_display: None,
             seat,
         })
     }
@@ -165,12 +214,42 @@ impl Ferrite {
     pub fn window_for_surface(&self, surface: &WlSurface) -> Option<Window> {
         self.space
             .elements()
-            .find(|window| {
-                window
-                    .toplevel()
-                    .is_some_and(|toplevel| toplevel.wl_surface() == surface)
-            })
+            .find(|window| window.wl_surface().is_some_and(|own| *own == *surface))
             .cloned()
+    }
+
+    /// Variables d'environnement à donner aux applications lancées : la socket Wayland et,
+    /// une fois XWayland prêt, l'affichage X11.
+    pub fn client_environment(&self) -> Vec<(String, String)> {
+        let mut env = vec![
+            (
+                "WAYLAND_DISPLAY".to_owned(),
+                self.socket_name.to_string_lossy().into_owned(),
+            ),
+            ("XDG_CURRENT_DESKTOP".to_owned(), "Ferrite".to_owned()),
+            ("XDG_SESSION_TYPE".to_owned(), "wayland".to_owned()),
+        ];
+        if let Some(display) = self.x_display {
+            env.push(("DISPLAY".to_owned(), format!(":{display}")));
+        }
+        env
+    }
+
+    /// Transmet l'environnement de session à D-Bus, pour que les services
+    /// lancés à la demande (portails, dialogues de fichiers) trouvent l'affichage.
+    pub fn publish_environment(&self) {
+        let mut command = std::process::Command::new("dbus-update-activation-environment");
+        for (key, value) in self.client_environment() {
+            command.arg(format!("{key}={value}"));
+        }
+        if let Err(err) = ferrite_system::command::spawn_detached(command) {
+            warn!(%err, "environnement de session non transmis à D-Bus");
+        }
+    }
+
+    /// Cases du menu Applications, selon la recherche en cours.
+    pub fn launcher_entries(&self) -> Vec<crate::desktop::apps::LauncherEntry<'_>> {
+        crate::desktop::apps::launcher_entries(&self.applications, &self.launcher_query)
     }
 
     /// Change la disposition du clavier (choisie dans Paramètres).
@@ -194,9 +273,7 @@ impl Ferrite {
     pub fn request_exit(&mut self) {
         self.expected_exit = true;
         for window in self.space.elements() {
-            if let Some(toplevel) = window.toplevel() {
-                toplevel.send_close();
-            }
+            crate::wm::close_window(window);
         }
         if let Err(err) = self.display_handle.flush_clients() {
             warn!("envoi des demandes de fermeture impossible : {err}");

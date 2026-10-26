@@ -10,7 +10,7 @@ use smithay::{
         PointerInnerHandle, RelativeMotionEvent,
     },
     reexports::wayland_server::protocol::wl_surface::WlSurface,
-    utils::{Logical, Point},
+    utils::{Logical, Point, Rectangle},
 };
 
 use crate::state::Ferrite;
@@ -40,7 +40,12 @@ impl PointerGrab<Ferrite> for MoveSurfaceGrab {
         let mut location: Point<i32, Logical> =
             (self.initial_window_location.to_f64() + delta).to_i32_round();
         location.y = location.y.max(self.min_y);
-        data.space.map_element(self.window.clone(), location, true);
+        if self.window.x11_surface().is_some() {
+            let size = self.window.geometry().size;
+            data.place_x11(&self.window, Rectangle::new(location, size));
+        } else {
+            data.space.map_element(self.window.clone(), location, true);
+        }
     }
 
     fn relative_motion(

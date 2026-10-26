@@ -44,8 +44,15 @@ const BAR: f64 = MENUBAR_HEIGHT as f64;
 /// Écart entre la barre (ou le bord de l'écran) et un menu déroulant.
 const POPOVER_MARGIN: f64 = 6.0;
 const INDICATOR_WIDTH: f64 = 30.0;
-const LAUNCHER_COLUMNS: usize = 4;
+const LAUNCHER_COLUMNS: usize = 6;
+const LAUNCHER_ROWS: usize = 4;
+/// Applications par page du menu.
+pub const LAUNCHER_PAGE_SIZE: usize = LAUNCHER_COLUMNS * LAUNCHER_ROWS;
 const LAUNCHER_CELL: (f64, f64) = (104.0, 100.0);
+/// Hauteur de la zone de recherche, en haut du menu.
+const LAUNCHER_SEARCH: f64 = 52.0;
+/// Hauteur de la rangée des points de page, en bas du menu.
+const LAUNCHER_DOTS: f64 = 26.0;
 const CONTROLS_WIDTH: f64 = 300.0;
 const SESSION_WIDTH: f64 = 230.0;
 const DIALOG: (f64, f64) = (420.0, 168.0);
@@ -75,6 +82,9 @@ pub enum DesktopAction {
     TogglePopover(Popover),
     ClosePopover,
     Launch(App),
+    /// Case du menu Applications, dans la page affichée.
+    LaunchTile(usize),
+    SetLauncherPage(usize),
     ToggleWifi,
     ToggleBluetooth,
     SetVolume(u8),
@@ -84,6 +94,32 @@ pub enum DesktopAction {
     CancelPower,
     /// Clic absorbé par un panneau, sans effet.
     Consume,
+}
+
+/// Icône d'une case du menu Applications.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TileIcon {
+    /// Icône Ferrite embarquée.
+    Builtin(&'static str),
+    /// Fichier d'icône d'une application installée.
+    File(PathBuf),
+    /// Pas d'icône trouvée : icône générique.
+    Missing,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Tile {
+    pub name: String,
+    pub icon: TileIcon,
+}
+
+/// Contenu du menu Applications : la page affichée, déjà filtrée par la recherche.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct LauncherView {
+    pub query: String,
+    pub page: usize,
+    pub pages: usize,
+    pub tiles: Vec<Tile>,
 }
 
 /// État du bureau à afficher, fourni par le compositeur. `None` : matériel ou service
@@ -98,6 +134,7 @@ pub struct DesktopView {
     pub power: Option<PowerAction>,
     /// Dernier réglage refusé par le système.
     pub error: Option<String>,
+    pub launcher: LauncherView,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -242,7 +279,7 @@ impl Panels {
         }
 
         match view.popover {
-            Some(Popover::Launcher) => self.draw_launcher(&mut canvas, &layout),
+            Some(Popover::Launcher) => self.draw_launcher(&mut canvas, &layout, &view.launcher),
             Some(Popover::Controls) => self.draw_controls(&mut canvas, &layout, view),
             Some(Popover::Session) => self.draw_session(&mut canvas, &layout),
             None => {}
@@ -263,25 +300,91 @@ impl Panels {
         )
     }
 
-    fn draw_launcher(&self, canvas: &mut Canvas, layout: &Layout) {
+    fn draw_launcher(&self, canvas: &mut Canvas, layout: &Layout, launcher: &LauncherView) {
         canvas.card(layout.launcher(), 12.0);
-        for (index, app) in App::ALL.into_iter().enumerate() {
-            let cell = layout.launcher_cell(index);
-            canvas.icon(
-                app.icon(),
-                (cell.x + cell.w / 2.0, cell.y + 36.0),
-                60.0,
-                Style::Color,
-            );
-            let name_width = canvas.text_width(&self.regular, app.name(), 11.0);
+        // Recherche : il suffit de taper au clavier quand le menu est ouvert.
+        let search = layout.launcher_search();
+        canvas.fill(search, 8.0, Color::rgb(0xEDEDF0));
+        canvas.icon(
+            "app-search",
+            (search.x + 18.0, search.y + search.h / 2.0),
+            22.0,
+            Style::Symbolic(TEXT_SECONDARY),
+        );
+        let text_y = search.y + (search.h - 12.0 * 1.22) / 2.0 - 1.0;
+        if launcher.query.is_empty() {
             canvas.label(
                 &self.regular,
-                app.name(),
+                "Tape pour rechercher une application",
+                search.x + 34.0,
+                text_y,
+                12.0,
+                TEXT_SECONDARY,
+            );
+        } else {
+            canvas.label(
+                &self.regular,
+                &launcher.query,
+                search.x + 34.0,
+                text_y,
+                12.0,
+                TEXT,
+            );
+            let caret = search.x + 35.0 + canvas.text_width(&self.regular, &launcher.query, 12.0);
+            canvas.fill(
+                Rect::new(caret, search.y + 8.0, 1.5, search.h - 16.0),
+                0.0,
+                ACCENT,
+            );
+        }
+
+        if launcher.tiles.is_empty() {
+            let cell = layout.launcher_cell(0);
+            canvas.label(
+                &self.regular,
+                "Aucune application trouvée",
+                cell.x + 12.0,
+                cell.y + 12.0,
+                12.0,
+                TEXT_SECONDARY,
+            );
+        }
+        for (index, tile) in launcher.tiles.iter().enumerate() {
+            let cell = layout.launcher_cell(index);
+            let center = (cell.x + cell.w / 2.0, cell.y + 36.0);
+            let drawn = match &tile.icon {
+                TileIcon::Builtin(name) => {
+                    canvas.icon(name, center, 60.0, Style::Color);
+                    true
+                }
+                TileIcon::File(path) => canvas.icon_file(path, center, 48.0),
+                TileIcon::Missing => false,
+            };
+            if !drawn {
+                canvas.icon("file-generic", center, 60.0, Style::Color);
+            }
+            let name = ellipsize_to(canvas, &self.regular, &tile.name, 11.0, cell.w - 10.0);
+            let name_width = canvas.text_width(&self.regular, &name, 11.0);
+            canvas.label(
+                &self.regular,
+                &name,
                 cell.x + (cell.w - name_width) / 2.0,
                 cell.y + 72.0,
                 11.0,
                 TEXT,
             );
+        }
+
+        if launcher.pages > 1 {
+            for page in 0..launcher.pages {
+                let dot = layout.launcher_dot(page, launcher.pages);
+                let color = if page == launcher.page {
+                    ACCENT
+                } else {
+                    Color::rgb(0xCFCFD3)
+                };
+                canvas.fill(Rect::new(dot.x + 4.0, dot.y + 6.0, 8.0, 8.0), 4.0, color);
+            }
         }
     }
 
@@ -476,11 +579,21 @@ pub fn action_at(
 
     let popover = popover?;
     let action = match popover {
-        Popover::Launcher if layout.launcher().contains(pos) => (0..App::ALL.len())
-            .find(|&index| layout.launcher_cell(index).contains(pos))
-            .map_or(DesktopAction::Consume, |index| {
-                DesktopAction::Launch(App::ALL[index])
-            }),
+        Popover::Launcher if layout.launcher().contains(pos) => {
+            let launcher = &view.launcher;
+            if let Some(index) =
+                (0..launcher.tiles.len()).find(|&index| layout.launcher_cell(index).contains(pos))
+            {
+                DesktopAction::LaunchTile(index)
+            } else if let Some(page) = (0..launcher.pages)
+                .filter(|_| launcher.pages > 1)
+                .find(|&page| layout.launcher_dot(page, launcher.pages).contains(pos))
+            {
+                DesktopAction::SetLauncherPage(page)
+            } else {
+                DesktopAction::Consume
+            }
+        }
         Popover::Controls if layout.controls().contains(pos) => {
             let row = |control| layout.control_row(control).contains(pos);
             let percent = |control| layout.slider_track(control).percent_at(pos.x);
@@ -611,13 +724,17 @@ impl Layout {
     }
 
     fn launcher(&self) -> Rect {
-        let rows = App::ALL.len().div_ceil(LAUNCHER_COLUMNS) as f64;
         Rect::new(
             POPOVER_MARGIN,
             BAR + POPOVER_MARGIN,
             LAUNCHER_COLUMNS as f64 * LAUNCHER_CELL.0 + 16.0,
-            rows * LAUNCHER_CELL.1 + 16.0,
+            LAUNCHER_SEARCH + LAUNCHER_ROWS as f64 * LAUNCHER_CELL.1 + LAUNCHER_DOTS + 8.0,
         )
+    }
+
+    fn launcher_search(&self) -> Rect {
+        let card = self.launcher();
+        Rect::new(card.x + 14.0, card.y + 12.0, card.w - 28.0, 34.0)
     }
 
     fn launcher_cell(&self, index: usize) -> Rect {
@@ -628,9 +745,21 @@ impl Layout {
         );
         Rect::new(
             card.x + 8.0 + column * LAUNCHER_CELL.0,
-            card.y + 8.0 + row * LAUNCHER_CELL.1,
+            card.y + LAUNCHER_SEARCH + row * LAUNCHER_CELL.1,
             LAUNCHER_CELL.0,
             LAUNCHER_CELL.1,
+        )
+    }
+
+    /// Zone cliquable du point de la page `page` sur `pages`.
+    fn launcher_dot(&self, page: usize, pages: usize) -> Rect {
+        let card = self.launcher();
+        let width = pages as f64 * 16.0;
+        Rect::new(
+            card.x + (card.w - width) / 2.0 + page as f64 * 16.0,
+            card.bottom() - LAUNCHER_DOTS,
+            16.0,
+            20.0,
         )
     }
 
@@ -825,6 +954,21 @@ impl Canvas<'_> {
     }
 
     /// Interrupteur ; `None` : grisé, indisponible.
+    /// Icône d'une application installée ; faux si le fichier est illisible.
+    fn icon_file(&mut self, path: &std::path::Path, center: (f64, f64), size: f64) -> bool {
+        let s = self.scale;
+        let side = size as f32 * s;
+        self.icons.draw_file(
+            &mut self.pixels,
+            self.width,
+            self.height,
+            path,
+            center.0 as f32 * s - side / 2.0,
+            center.1 as f32 * s - side / 2.0,
+            side,
+        )
+    }
+
     fn switch(&mut self, rect: Rect, state: Option<bool>) {
         let active = state == Some(true);
         let track = match state {
@@ -1011,6 +1155,18 @@ fn read_battery() -> Option<Battery> {
     })
 }
 
+/// Coupe `text` avec « … » pour qu'il tienne dans `width` points.
+fn ellipsize_to(canvas: &Canvas, font: &Font, text: &str, size: f32, width: f64) -> String {
+    if canvas.text_width(font, text, size) <= width {
+        return text.to_owned();
+    }
+    let mut short: String = text.to_owned();
+    while !short.is_empty() && canvas.text_width(font, &format!("{short}…"), size) > width {
+        short.pop();
+    }
+    format!("{}…", short.trim_end())
+}
+
 /// Coupe un texte trop long avec « … ».
 fn ellipsize(text: &str, max: usize) -> String {
     if text.chars().count() <= max {
@@ -1102,14 +1258,32 @@ mod tests {
     }
 
     #[test]
-    fn le_menu_applications_lance_chaque_application() {
-        for (index, app) in App::ALL.into_iter().enumerate() {
+    fn le_menu_applications_lance_chaque_case_et_change_de_page() {
+        let tiles = (0..5)
+            .map(|index| Tile {
+                name: format!("App {index}"),
+                icon: TileIcon::Missing,
+            })
+            .collect();
+        let open = DesktopView {
+            launcher: LauncherView {
+                query: String::new(),
+                page: 0,
+                pages: 2,
+                tiles,
+            },
+            ..view(Some(Popover::Launcher))
+        };
+        let at = |x: f64, y: f64| action_at(output(), point(x, y), &open);
+        for index in 0..5 {
             let (x, y) = layout().launcher_cell(index).center();
-            assert_eq!(
-                click(point(x, y), Some(Popover::Launcher)),
-                Some(DesktopAction::Launch(app))
-            );
+            assert_eq!(at(x, y), Some(DesktopAction::LaunchTile(index)));
         }
+        // Case vide : rien ne se lance.
+        let empty = layout().launcher_cell(7).center();
+        assert_eq!(at(empty.0, empty.1), Some(DesktopAction::Consume));
+        let dot = layout().launcher_dot(1, 2).center();
+        assert_eq!(at(dot.0, dot.1), Some(DesktopAction::SetLauncherPage(1)));
         // Un clic hors du menu le ferme sans rien lancer.
         assert_eq!(
             click(point(700.0, 400.0), Some(Popover::Launcher)),

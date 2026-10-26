@@ -10,7 +10,7 @@ mod title;
 mod wallpaper;
 
 use ferrite_ui::theme::WINDOW_RADIUS;
-use smithay::wayland::{compositor::with_states, shell::xdg::XdgToplevelSurfaceData};
+use smithay::wayland::{compositor::with_states, seat::WaylandFocus, shell::xdg::XdgToplevelSurfaceData};
 use smithay::{
     backend::renderer::{
         element::{
@@ -33,8 +33,9 @@ pub use self::{cursor::Cursor, decorations::Decorations, wallpaper::Wallpaper};
 use crate::{
     desktop::{
         apps::App,
+        apps::LauncherEntry,
         dock::Dock,
-        panels::{DesktopView, Panels},
+        panels::{DesktopView, LAUNCHER_PAGE_SIZE, LauncherView, Panels, Popover, Tile, TileIcon},
     },
     state::Ferrite,
     wm,
@@ -172,10 +173,11 @@ fn push_decorated(
     scale: f64,
     out: &mut Vec<OutputElement>,
 ) {
-    let Some(toplevel) = window.toplevel() else {
+    // Surface Wayland de la fenêtre, qu'elle soit native ou X11 (via XWayland).
+    let Some(surface) = window.wl_surface() else {
         return;
     };
-    let surface = toplevel.wl_surface();
+    let surface = &*surface;
     let location = (content.loc - window.geometry().loc).to_physical_precise_round(scale);
 
     for (popup, offset) in PopupManager::popups_for_surface(surface) {
@@ -267,6 +269,39 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
         brightness: system.brightness,
         power: state.pending_power,
         error: state.system_error.clone(),
+        launcher: if state.popover == Some(Popover::Launcher) {
+            launcher_view(state)
+        } else {
+            LauncherView::default()
+        },
+    }
+}
+
+/// Page affichée du menu Applications.
+fn launcher_view(state: &Ferrite) -> LauncherView {
+    let entries = state.launcher_entries();
+    let pages = entries.len().div_ceil(LAUNCHER_PAGE_SIZE).max(1);
+    let page = state.launcher_page.min(pages - 1);
+    let tiles = entries
+        .into_iter()
+        .skip(page * LAUNCHER_PAGE_SIZE)
+        .take(LAUNCHER_PAGE_SIZE)
+        .map(|entry| match entry {
+            LauncherEntry::Builtin(app) => Tile {
+                name: app.name().to_owned(),
+                icon: TileIcon::Builtin(app.icon()),
+            },
+            LauncherEntry::Installed(entry) => Tile {
+                name: entry.name.clone(),
+                icon: entry.icon.clone().map_or(TileIcon::Missing, TileIcon::File),
+            },
+        })
+        .collect();
+    LauncherView {
+        query: state.launcher_query.clone(),
+        page,
+        pages,
+        tiles,
     }
 }
 
@@ -283,7 +318,11 @@ fn running_apps(state: &Ferrite) -> Vec<App> {
         .collect()
 }
 
-fn app_id(window: &Window) -> Option<String> {
+/// Identifiant de l'application : `app_id` Wayland, ou classe X11 en minuscules.
+pub fn app_id(window: &Window) -> Option<String> {
+    if let Some(x11) = window.x11_surface() {
+        return Some(x11.class().to_lowercase());
+    }
     let toplevel = window.toplevel()?;
     with_states(toplevel.wl_surface(), |states| {
         states

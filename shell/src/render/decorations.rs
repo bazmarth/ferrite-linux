@@ -253,6 +253,9 @@ impl Decorations {
 
 /// Titre de la fenêtre (vide si le client n'en a pas donné).
 fn window_title(window: &Window) -> String {
+    if let Some(x11) = window.x11_surface() {
+        return x11.title();
+    }
     let Some(toplevel) = window.toplevel() else {
         return String::new();
     };

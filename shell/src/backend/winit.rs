@@ -6,7 +6,7 @@ use std::{path::PathBuf, time::Duration};
 use smithay::{
     backend::{
         allocator::Fourcc,
-        renderer::{ExportMem, damage::OutputDamageTracker, gles::GlesRenderer},
+        renderer::{ExportMem, ImportDma, damage::OutputDamageTracker, gles::GlesRenderer},
         winit::{self, WinitEvent, WinitGraphicsBackend},
     },
     output::{Mode, Output, PhysicalProperties, Scale, Subpixel},
@@ -64,6 +64,13 @@ pub fn init(
     info!(size = ?mode.size, scale, "écran virtuel");
 
     let mut damage_tracker = OutputDamageTracker::from_output(&output);
+    let dmabuf_formats = backend
+        .renderer()
+        .dmabuf_formats()
+        .into_iter()
+        .collect::<Vec<_>>();
+    let egl_display = backend.renderer().egl_context().display().clone();
+    state.publish_dmabuf(&egl_display, dmabuf_formats);
     let assets = RenderAssets::new(backend.renderer())?;
     let mut pending_capture = options.capture.clone().map(|path| PendingCapture {
         path,

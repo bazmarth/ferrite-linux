@@ -31,6 +31,7 @@ features = [
     "renderer_gl",
     "use_system_lib",
     "wayland_frontend",
+    "xwayland",
 ]
 
 [lints]

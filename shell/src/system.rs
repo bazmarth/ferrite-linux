@@ -11,7 +11,13 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use ferrite_system::{Snapshot, audio, bluetooth, command, config::Settings, display, network};
+use ferrite_system::{
+    Snapshot,
+    applications::{self, DesktopEntry},
+    audio, bluetooth, command,
+    config::Settings,
+    display, network,
+};
 use smithay::reexports::calloop::{
     LoopHandle,
     channel::{self, Channel},
@@ -46,6 +52,7 @@ pub enum Event {
     Snapshot(Snapshot),
     Failed(String),
     KeyboardLayout(String),
+    Applications(Vec<DesktopEntry>),
     PowerAccepted,
 }
 
@@ -84,7 +91,19 @@ pub fn start(handle: &LoopHandle<'static, Ferrite>) -> Result<SystemLink, String
 fn worker(receiver: mpsc::Receiver<Change>, events: channel::Sender<Event>) {
     let mut layout_stamp: Option<SystemTime> = None;
     let mut layout = String::new();
+    let mut applications_stamp = None;
     loop {
+        // Applications installées ou retirées (apt, Flatpak, .deb) : le menu suit.
+        let stamp = Some(applications::stamp());
+        if stamp != applications_stamp {
+            applications_stamp = stamp;
+            if events
+                .send(Event::Applications(applications::installed()))
+                .is_err()
+            {
+                return;
+            }
+        }
         // Clavier : la disposition choisie dans Paramètres s'applique sans redémarrer.
         let stamp = Settings::modified();
         if stamp != layout_stamp {
@@ -152,6 +171,10 @@ impl Ferrite {
             Event::Snapshot(snapshot) => self.system = snapshot,
             Event::Failed(message) => self.system_error = Some(message),
             Event::KeyboardLayout(layout) => self.set_keyboard_layout(&layout),
+            Event::Applications(list) => {
+                info!(nombre = list.len(), "applications installées");
+                self.applications = list;
+            }
             Event::PowerAccepted => {
                 info!("arrêt du système accepté : fermeture du bureau");
                 self.request_exit();

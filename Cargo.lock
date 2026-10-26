@@ -696,6 +696,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "encoding_rs"
+version = "0.8.35"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75030f3c4f45dafd7586dd6780965a8c7e8e285a5ecb86713e63a79c5b2766f3"
+dependencies = [
+ "cfg-if",
+]
+
+[[package]]
 name = "epaint"
 version = "0.37.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2540,6 +2549,7 @@ dependencies = [
  "drm",
  "drm-ffi",
  "drm-fourcc",
+ "encoding_rs",
  "errno",
  "gbm",
  "gl_generator",
@@ -2552,6 +2562,7 @@ dependencies = [
  "profiling",
  "rand",
  "rustix 1.1.5",
+ "scopeguard",
  "sha2",
  "smallvec",
  "tempfile",
@@ -2568,6 +2579,7 @@ dependencies = [
  "wayland-server",
  "wayland-sys",
  "winit",
+ "x11rb",
  "xkbcommon",
 ]
 

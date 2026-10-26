@@ -16,7 +16,7 @@ use tracing::info;
 use crate::{
     desktop::{
         dock,
-        panels::{self, DesktopAction, Popover},
+        panels::{self, DesktopAction, LAUNCHER_PAGE_SIZE, Popover},
     },
     state::Ferrite,
     system::Change,
@@ -36,6 +36,10 @@ enum Action {
     CloseOverlay,
     /// Touche Super : ouvre ou ferme le menu Applications.
     ToggleLauncher,
+    /// Recherche dans le menu Applications ouvert.
+    LauncherType(char),
+    LauncherErase,
+    LauncherLaunchFirst,
 }
 
 /// Symboles XKB `XF86Switch_VT_1` à `XF86Switch_VT_12`, produits par Ctrl+Alt+F1…F12.
@@ -115,6 +119,20 @@ impl Ferrite {
                         }
                         _ => {}
                     }
+                    // Menu Applications ouvert : le clavier sert à la recherche.
+                    if state.popover == Some(Popover::Launcher) {
+                        match keysym.modified_sym() {
+                            Keysym::BackSpace => return FilterResult::Intercept(Action::LauncherErase),
+                            Keysym::Return | Keysym::KP_Enter => {
+                                return FilterResult::Intercept(Action::LauncherLaunchFirst);
+                            }
+                            sym => {
+                                if let Some(character) = sym.key_char().filter(|c| !c.is_control()) {
+                                    return FilterResult::Intercept(Action::LauncherType(character));
+                                }
+                            }
+                        }
+                    }
                 }
                 if !(pressed && modifiers.ctrl && modifiers.alt) {
                     return FilterResult::Forward;
@@ -146,6 +164,21 @@ impl Ferrite {
             Some(Action::CloseOverlay) => {
                 self.popover = None;
                 self.pending_power = None;
+            }
+            Some(Action::LauncherType(character)) => {
+                self.launcher_query.push(character);
+                self.launcher_page = 0;
+            }
+            Some(Action::LauncherErase) => {
+                self.launcher_query.pop();
+                self.launcher_page = 0;
+            }
+            Some(Action::LauncherLaunchFirst) => {
+                let first = self.launcher_entries().into_iter().next();
+                if let Some(entry) = first {
+                    entry.launch(&self.client_environment());
+                    self.popover = None;
+                }
             }
             Some(Action::ToggleLauncher) => {
                 self.pending_power = None;
@@ -207,7 +240,7 @@ impl Ferrite {
                 && let Some(app) = output_geo.and_then(|geo| dock::app_at(geo, location))
             {
                 self.popover = None;
-                app.launch(&self.socket_name);
+                app.launch(&self.client_environment());
                 return;
             }
             let desktop_action = output_geo.and_then(|output_geo| {
@@ -242,11 +275,24 @@ impl Ferrite {
         match action {
             DesktopAction::TogglePopover(popover) => {
                 self.popover = (self.popover != Some(popover)).then_some(popover);
+                self.launcher_query.clear();
+                self.launcher_page = 0;
             }
+            DesktopAction::LaunchTile(index) => {
+                let entry = self
+                    .launcher_entries()
+                    .into_iter()
+                    .nth(self.launcher_page * LAUNCHER_PAGE_SIZE + index);
+                if let Some(entry) = entry {
+                    entry.launch(&self.client_environment());
+                }
+                self.popover = None;
+            }
+            DesktopAction::SetLauncherPage(page) => self.launcher_page = page,
             DesktopAction::ClosePopover => self.popover = None,
             DesktopAction::Launch(app) => {
                 self.popover = None;
-                app.launch(&self.socket_name);
+                app.launch(&self.client_environment());
             }
             DesktopAction::ToggleWifi => {
                 if let Some(enabled) = self.system.wifi {
@@ -310,6 +356,20 @@ impl Ferrite {
     }
 
     fn on_axis<I: InputBackend>(&mut self, event: I::PointerAxisEvent) {
+        // Menu Applications ouvert : la molette tourne les pages.
+        if self.popover == Some(Popover::Launcher) {
+            let amount = event
+                .amount(Axis::Vertical)
+                .or_else(|| event.amount_v120(Axis::Vertical))
+                .unwrap_or(0.0);
+            let pages = self.launcher_entries().len().div_ceil(LAUNCHER_PAGE_SIZE).max(1);
+            if amount > 0.0 {
+                self.launcher_page = (self.launcher_page + 1).min(pages - 1);
+            } else if amount < 0.0 {
+                self.launcher_page = self.launcher_page.saturating_sub(1);
+            }
+            return;
+        }
         let source = event.source();
         let mut frame = AxisFrame::new(event.time_msec()).source(source);
         for axis in [Axis::Horizontal, Axis::Vertical] {

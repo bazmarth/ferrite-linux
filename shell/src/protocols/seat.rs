@@ -10,6 +10,7 @@ use smithay::{
             ClientDndGrabHandler, DataDeviceHandler, DataDeviceState, ServerDndGrabHandler,
             set_data_device_focus,
         },
+        primary_selection::set_primary_focus,
     },
 };
 
@@ -32,7 +33,8 @@ impl SeatHandler for Ferrite {
         // Le presse-papiers suit le client qui a le clavier.
         let dh = &self.display_handle;
         let client = focused.and_then(|surface| dh.get_client(surface.id()).ok());
-        set_data_device_focus(dh, seat, client);
+        set_data_device_focus(dh, seat, client.clone());
+        set_primary_focus(dh, seat, client);
     }
 }
 

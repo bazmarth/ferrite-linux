@@ -5,7 +5,12 @@
 //! du haut et les menus : leurs tracés prennent une seule teinte, et les parties claires
 //! et désaturées (barres Wi-Fi éteintes, rayons inactifs…) restent visibles en estompé.
 
-use std::{cell::RefCell, collections::HashMap};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use ferrite_ui::theme::Color;
 use resvg::{
@@ -28,9 +33,11 @@ macro_rules! icons {
 icons![
     "app-calculator",
     "app-files",
+    "app-search",
     "app-settings",
     "app-terminal",
     "app-text-editor",
+    "file-generic",
     "status-battery-000",
     "status-battery-010",
     "status-battery-020",
@@ -91,6 +98,8 @@ type CacheKey = (&'static str, u32, Style);
 #[derive(Debug, Default)]
 pub struct IconCache {
     pixmaps: RefCell<HashMap<CacheKey, Option<Pixmap>>>,
+    /// Icônes des applications installées, lues sur le disque.
+    files: RefCell<HashMap<(PathBuf, u32), Option<Pixmap>>>,
 }
 
 impl IconCache {
@@ -117,6 +126,93 @@ impl IconCache {
             composite(pixels, width, height, pixmap, x.round() as i32, y.round() as i32);
         }
     }
+
+    /// Comme [`IconCache::draw`], pour un fichier d'icône SVG ou PNG du système. Renvoie
+    /// faux si le fichier est illisible (l'appelant dessine alors une icône par défaut).
+    #[allow(clippy::too_many_arguments)] // Tampon, chemin et géométrie, sans état global.
+    pub fn draw_file(
+        &self,
+        pixels: &mut [u8],
+        width: u32,
+        height: u32,
+        path: &Path,
+        x: f32,
+        y: f32,
+        size: f32,
+    ) -> bool {
+        let side = size.round().max(1.0) as u32;
+        let mut files = self.files.borrow_mut();
+        let pixmap = files
+            .entry((path.to_path_buf(), side))
+            .or_insert_with(|| rasterize_file(path, side));
+        match pixmap {
+            Some(pixmap) => {
+                composite(pixels, width, height, pixmap, x.round() as i32, y.round() as i32);
+                true
+            }
+            None => false,
+        }
+    }
+}
+
+/// Lit une icône du système (SVG ou PNG) et la met à `side` pixels de côté.
+fn rasterize_file(path: &Path, side: u32) -> Option<Pixmap> {
+    let data = fs::read(path).ok()?;
+    let is_svg = path.extension().and_then(|ext| ext.to_str()) == Some("svg");
+    let mut pixmap = Pixmap::new(side, side)?;
+    if is_svg {
+        let tree = Tree::from_data(&data, &Options::default()).ok()?;
+        let view = tree.size();
+        let factor = side as f32 / view.width().max(view.height());
+        resvg::render(&tree, Transform::from_scale(factor, factor), &mut pixmap.as_mut());
+        return Some(pixmap);
+    }
+    let (rgba, source_width, source_height) = decode_png(&data)?;
+    // Réduction par moyenne de zone, en alpha prémultiplié (bords nets, sans halo).
+    let target = pixmap.data_mut();
+    for ty in 0..side {
+        for tx in 0..side {
+            let x0 = tx * source_width / side;
+            let x1 = ((tx + 1) * source_width / side).max(x0 + 1).min(source_width);
+            let y0 = ty * source_height / side;
+            let y1 = ((ty + 1) * source_height / side).max(y0 + 1).min(source_height);
+            let mut sum = [0u32; 4];
+            for sy in y0..y1 {
+                for sx in x0..x1 {
+                    let offset = ((sy * source_width + sx) * 4) as usize;
+                    let alpha = rgba[offset + 3] as u32;
+                    for channel in 0..3 {
+                        sum[channel] += rgba[offset + channel] as u32 * alpha / 255;
+                    }
+                    sum[3] += alpha;
+                }
+            }
+            let count = (x1 - x0) * (y1 - y0);
+            let offset = ((ty * side + tx) * 4) as usize;
+            for channel in 0..4 {
+                target[offset + channel] = (sum[channel] / count.max(1)) as u8;
+            }
+        }
+    }
+    Some(pixmap)
+}
+
+/// Décode un PNG en RVBA 8 bits (non prémultiplié).
+fn decode_png(data: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(data));
+    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+    let mut reader = decoder.read_info().ok()?;
+    let mut buffer = vec![0; reader.output_buffer_size()?];
+    let info = reader.next_frame(&mut buffer).ok()?;
+    let pixels = &buffer[..info.buffer_size()];
+    let rgba = match info.color_type {
+        png::ColorType::Rgba => pixels.to_vec(),
+        png::ColorType::Rgb => pixels.chunks(3).flat_map(|p| [p[0], p[1], p[2], 255]).collect(),
+        png::ColorType::GrayscaleAlpha => pixels.chunks(2).flat_map(|p| [p[0], p[0], p[0], p[1]]).collect(),
+        png::ColorType::Grayscale => pixels.iter().flat_map(|&v| [v, v, v, 255]).collect(),
+        png::ColorType::Indexed => return None,
+    };
+    Some((rgba, info.width, info.height))
 }
 
 /// Rasterise l'icône `name` en un carré de `side` pixels.

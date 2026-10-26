@@ -26,7 +26,7 @@ use smithay::{
         egl::{EGLContext, EGLDisplay},
         input::InputEvent,
         libinput::{LibinputInputBackend, LibinputSessionInterface},
-        renderer::{ImportMemWl, gles::GlesRenderer},
+        renderer::{ImportDma, ImportMemWl, gles::GlesRenderer},
         session::{Event as SessionEvent, Session, libseat::LibSeatSession},
         udev::{all_gpus, primary_gpu},
     },
@@ -164,6 +164,8 @@ pub fn init(
     .map_err(|err| format!("préparation de l'affichage : {err:?}"))?;
 
     state.shm_state.update_formats(renderer.shm_formats());
+    let dmabuf_formats = renderer.dmabuf_formats().into_iter().collect::<Vec<_>>();
+    state.publish_dmabuf(&display, dmabuf_formats);
     let assets = RenderAssets::new(&mut renderer)?;
 
     let drm = Rc::new(RefCell::new(Drm {

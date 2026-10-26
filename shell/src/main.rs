@@ -67,6 +67,8 @@ fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         _ => backend::winit::init(&mut event_loop, &mut state, &options)?,
     }
     info!(socket = ?state.socket_name, "ferrite-shell prêt");
+    protocols::xwayland::start(&event_loop.handle(), &mut state);
+    state.publish_environment();
 
     if let Some((program, args)) = options.command.split_first() {
         // WAYLAND_DISPLAY est passé explicitement au client, sans toucher à notre

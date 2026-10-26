@@ -13,7 +13,7 @@ cd "$REPO"
 
 [ -n "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ] || die "aucun affichage (WSLg) : WAYLAND_DISPLAY et DISPLAY sont vides"
 
-cargo build -p ferrite-shell
+cargo build -p ferrite-shell -p ferrite-apps
 target=${CARGO_TARGET_DIR:-$REPO/target}
 
 # Sous WSLg, le Weston de Windows plante (signal 11) quand la fenêtre de ferrite-shell

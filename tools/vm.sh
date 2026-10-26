@@ -5,6 +5,8 @@
 #   tools/vm.sh --headless SECONDES [ISO]     sans fenêtre : console série dans
 #                                             build/vm-serie.log et capture d'écran
 #                                             build/vm-ecran.png après SECONDES
+#   FERRITE_VM_CLOSE_AFTER=SECONDES tools/vm.sh --headless DÉLAI [ISO]
+#                                             envoie Ctrl+Alt+Retour arrière avant la capture
 #
 # ISO par défaut : build/ferrite-live.iso. Aucun disque de l'ordinateur n'est attaché.
 set -eu
@@ -53,7 +55,19 @@ rm -f "$log" "$shot" "$monitor"
 "$@" -display none -serial "file:$log" -monitor "unix:$monitor,server,nowait" &
 qemu=$!
 trap 'kill $qemu 2>/dev/null || true' EXIT INT TERM
-sleep "$headless"
+sleep 3
+# Dans le mode sans écran, GRUB ne reçoit pas toujours son propre délai d'attente
+# virtuel. Confirmer l'entrée live rend le test reproductible comme un appui Entrée.
+printf 'sendkey ret\n' | socat - "UNIX-CONNECT:$monitor" >/dev/null
+# Test facultatif du chemin de fermeture du compositeur ; QEMU reste en marche
+# afin de capturer le retour à la console après l'arrêt demandé.
+if [ -n "${FERRITE_VM_CLOSE_AFTER:-}" ]; then
+    sleep "$FERRITE_VM_CLOSE_AFTER"
+    printf 'sendkey ctrl-alt-backspace\n' | socat - "UNIX-CONNECT:$monitor" >/dev/null
+    sleep 2
+else
+    sleep "$headless"
+fi
 kill -0 "$qemu" 2>/dev/null || die "QEMU s'est arrêté ; voir $log"
 printf 'screendump %s -f png\n' "$shot" | socat - "UNIX-CONNECT:$monitor" >/dev/null
 sleep 1

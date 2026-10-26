@@ -2,7 +2,7 @@
 # Intégration continue locale : format, lints, tests, vérification des scripts.
 #
 #   tools/ci.sh            vérifications rapides (à lancer avant chaque commit)
-#   tools/ci.sh --image    puis construction de l'image live (sudo, plusieurs minutes)
+#   tools/ci.sh --image    puis construction de l'image live (demande sudo, plusieurs minutes)
 set -eu
 . "$(dirname -- "$0")/lib.sh"
 cd "$REPO"
@@ -26,6 +26,6 @@ fi
 
 if [ "${1:-}" = "--image" ]; then
     info "image live"
-    sudo "$REPO/tools/usb.sh"
+    "$REPO/tools/usb.sh"
 fi
 ok "CI réussie"

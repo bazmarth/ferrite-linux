@@ -1,12 +1,40 @@
 #!/bin/sh
-# Session Ferrite. Phase 1 : accueil en console puis shell. En phase 2, ce script lancera
-# « dbus-run-session ferrite-shell ».
+# Session Ferrite, lancée à la connexion sur tty1 : le bureau ferrite-shell avec
+# l'explorateur Fichiers ouvert. Si le bureau ne démarre pas (ou quand on le quitte avec Ctrl+Alt+Retour
+# arrière), on retombe sur la console avec les commandes utiles.
 set -u
 export FERRITE_SESSION=1
 export XDG_CURRENT_DESKTOP=Ferrite
+export XDG_SESSION_TYPE=wayland
+export XDG_SESSION_DESKTOP=ferrite
+
+log="${XDG_RUNTIME_DIR:-/tmp}/ferrite-shell.log"
+if [ -x /usr/local/bin/ferrite-shell ]; then
+    printf '\n  Démarrage du bureau Ferrite… (journal : %s)\n' "$log"
+    dbus-run-session -- /usr/local/bin/ferrite-shell --drm -- ferrite-apps files >"$log" 2>&1 &
+    shell_pid=$!
+    # Si le compositeur reste bloqué au démarrage, afficher son journal sur le
+    # terminal afin que le diagnostic soit visible en mode live et dans QEMU.
+    (
+        sleep 20
+        if kill -0 "$shell_pid" 2>/dev/null; then
+            printf '\n  Le bureau est encore en cours de démarrage. Dernières lignes du journal :\n\n'
+            tail -n 30 "$log" | sed 's/^/    /'
+        fi
+    ) &
+    watcher_pid=$!
+    wait "$shell_pid"
+    status=$?
+    kill "$watcher_pid" 2>/dev/null || true
+    if [ "$status" -ne 0 ]; then
+        printf "\n  \033[31mLe bureau Ferrite s'est arrêté (code %s).\033[0m Dernières lignes du journal :\n\n" "$status"
+        tail -n 15 "$log" | sed 's/^/    /'
+    fi
+fi
 
 printf '\n  \033[1mFerrite OS\033[0m — système live Debian %s, noyau %s\n\n' \
     "$(cat /etc/debian_version)" "$(uname -r)"
+printf '  Bureau     ferrite-session       (relance le bureau Ferrite)\n'
 printf '  Wi-Fi      nmcli dev wifi list   ·   nmcli dev wifi connect NOM --ask\n'
 printf '  Son        wpctl status          ·   speaker-test -c 2 -t wav -l 1\n'
 printf '  Matériel   ferrite-check         (vérifications de la phase 1)\n'

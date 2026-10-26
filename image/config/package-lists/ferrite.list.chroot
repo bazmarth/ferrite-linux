@@ -11,6 +11,8 @@ keyboard-configuration
 tzdata
 ca-certificates
 dbus-user-session
+dbus-daemon
+libpam-systemd
 
 # Noyau et micrologiciels du ThinkBook (Wi-Fi RTL8852BE → rtw89, Intel Iris Xe, son SOF)
 linux-image-amd64
@@ -23,10 +25,18 @@ firmware-intel-sound
 firmware-sof-signed
 firmware-misc-nonfree
 
-# Graphisme (pour le compositeur ferrite-shell, phase 2)
+# Graphisme et entrées du bureau ferrite-shell
 libgl1-mesa-dri
 libegl1
+libegl-mesa0
 libgles2
+libgbm1
+libinput10
+libseat1
+libxkbcommon0
+libwayland-server0
+libwayland-client0
+xkb-data
 mesa-vulkan-drivers
 intel-media-va-driver
 xwayland
@@ -36,6 +46,7 @@ network-manager
 wpasupplicant
 rfkill
 iw
+brightnessctl
 pipewire
 pipewire-pulse
 pipewire-alsa
@@ -50,9 +61,14 @@ flatpak
 polkitd
 accountsservice
 
+# Terminal lancé dans le bureau (en attendant le Terminal Ferrite, phase 5)
+foot
+
 # Polices
 fonts-noto-core
+fonts-dejavu-core
 fonts-noto-color-emoji
+fonts-jetbrains-mono
 
 # Outils de diagnostic (critères de la phase 1)
 libinput-tools

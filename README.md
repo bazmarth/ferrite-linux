@@ -48,7 +48,7 @@ réduite. Options : `ferrite-shell --help`.
 ## Construire et essayer l'image live
 
 ```sh
-sudo tools/usb.sh                  # → build/ferrite-live.iso (15-30 min la première fois)
+tools/usb.sh                       # compile ferrite-shell puis → build/ferrite-live.iso (sudo)
 tools/vm.sh                        # démarre l'ISO dans QEMU (UEFI), fenêtre via WSLg
 tools/vm.sh --headless 90          # sans fenêtre : capture build/vm-ecran.png
 ```

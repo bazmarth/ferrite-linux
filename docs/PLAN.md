@@ -52,7 +52,7 @@
 | Carte graphique | Intel Iris Xe (pilote Mesa `iris`, noyau `i915`/`xe`) |
 | Wi-Fi | Realtek **RTL8852BE**, PCI `10EC:B852` → pilote noyau **rtw89**, firmware `firmware-realtek` |
 | Stockage | SSD NVMe (contient Windows 11 — **à préserver**) |
-| Clavier | **AZERTY français** ; pavé tactile |
+| Clavier | **QWERTY anglais** ; pavé tactile |
 | Fuseau horaire | Africa/Ouagadougou |
 | OS actuel | Windows 11 (développement via WSL2) |
 

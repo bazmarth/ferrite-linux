@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 100 100" role="img" aria-label="Réseau">
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 100 100" role="img" aria-label="Réseau filaire">
 <defs>
  <linearGradient id="silver" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#DDE3EA"/></linearGradient>
  <linearGradient id="blue" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8BD0FF"/><stop offset="1" stop-color="#3687DB"/></linearGradient>
@@ -7,4 +7,4 @@
  <linearGradient id="red" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FF8989"/><stop offset="1" stop-color="#D94150"/></linearGradient>
  <linearGradient id="purple" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#E9C6FF"/><stop offset="1" stop-color="#9254CB"/></linearGradient>
  <linearGradient id="dark" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#56616D"/><stop offset="1" stop-color="#202833"/></linearGradient>
-</defs><g><circle cx="50" cy="26" r="7" fill="#4CAAC8"/><circle cx="27" cy="68" r="7" fill="#4CAAC8"/><circle cx="73" cy="68" r="7" fill="#4CAAC8"/><path d="M46 32L31 61M54 32L69 61M35 68H65" fill="none" stroke="#8FA7BE" stroke-width="4" stroke-linecap="round"/></g></svg>
+</defs><g><path d="M22 30q0-6 6-6h44q6 0 6 6v32q0 6-6 6H60v8H40v-8H28q-6 0-6-6z" fill="none" stroke="#273544" stroke-width="5" stroke-linejoin="round"/><path d="M36 36v10M46 36v10M54 36v10M64 36v10" stroke="#273544" stroke-width="4" stroke-linecap="round"/></g></svg>

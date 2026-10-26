@@ -1,0 +1,37 @@
+# Déplacements de fenêtres : au milieu, contre les bords (accrochage), hors de l'écran,
+# sur la barre du haut et sur le Dock. Le bureau doit rester vivant tout du long.
+sleep 75
+shot fen-1-depart
+# Fichiers, par sa barre de titre : vers le bas à gauche.
+drag 640 113 400 300
+sleep 2
+# Contre le bord gauche (accrochage à gauche), puis droit.
+drag 400 300 2 300
+sleep 2
+drag 300 45 1278 300
+sleep 2
+shot fen-2-accroche
+# Double-clic sur la barre de titre : restaurer.
+click 960 45
+click 960 45
+sleep 2
+# Vers le haut (sous la barre), puis loin dans le coin bas droit et sur le Dock.
+drag 640 113 640 0
+sleep 2
+drag 640 45 1270 795
+sleep 2
+drag 1100 700 640 760
+sleep 2
+shot fen-3-bords
+# Terminal, déplacé vite dans tous les sens.
+click 640 756
+sleep 5
+drag 670 161 100 600
+drag 100 600 1200 100
+drag 1200 100 600 400
+sleep 2
+shot fen-4-terminal
+# Le bureau répond toujours : menu Applications.
+click 40 15
+sleep 2
+shot fen-5-reactif

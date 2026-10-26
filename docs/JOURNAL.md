@@ -363,3 +363,50 @@ Vérifié :
 - dans une machine virtuelle très chargée, le relâchement des touches peut arriver en
   retard et le terminal répète la lettre.
 
+## 2026-10-26 — Gel au déplacement des fenêtres, luminosité, test rapide en VM
+
+Problèmes signalés sur le ThinkBook : le Wi-Fi se connecte, mais la luminosité ne change
+pas et le système plante quand on déplace une fenêtre.
+
+Fait :
+- **Gel au déplacement** : reproduit dans QEMU (scénario `fenetres.txt`, nouvelle étape
+  `drag`), puis diagnostiqué par la console série. Une pile `gdb` lisible a été obtenue
+  grâce au mode développement ci-dessous. Deux interblocages, figeant tout le compositeur :
+  - au relâchement, l'accrochage lisait la position par `PointerHandle`, dont le verrou
+    est déjà tenu pendant le déplacement ; il passe désormais par `handle` ;
+  - `snap_window_to_side` lisait la taille de la fenêtre en tenant déjà le verrou des
+    données de sa surface.
+- **Luminosité** : tous les rétroéclairages sont réglés, et non plus seulement le premier
+  par ordre alphabétique (souvent `acpi_video0`, sans effet sur Intel). Trois méthodes
+  sont essayées : écriture dans `/sys`, `SetBrightness` de logind, `brightnessctl`. Les
+  curseurs des réglages rapides se font maintenant glisser.
+- **Mode développement** :
+  - `ferrite-dev.service` monte en 9p le partage `ferrite-dev` fourni par QEMU ;
+  - `ferrite-session` utilise alors ces binaires, et relance le bureau quand on le quitte ;
+  - `FERRITE_VM_DEV=1 tools/vm.sh` ou `tools/vm-test.sh` partage `target/release` ;
+  - après une modification : `cargo build --release` (environ 20 s), puis
+    Ctrl+Alt+Retour arrière dans la VM, sans reconstruire l'ISO.
+- **Ferrite VM** (`tools/vm-manager`, `tools/vm-gui.sh`, `toolserrite-vm.cmd` sous
+  Windows) : outil graphique pour :
+  - choisir l'ISO, la mémoire, les processeurs, le réseau et le son ;
+  - démarrer, redémarrer, éteindre la VM, prendre des captures ;
+  - « Recompiler et relancer le bureau » ;
+  - lancer les scénarios de test, avec journal et aperçu de la dernière capture.
+- `tools/vm-test.sh` : étapes `drag` et `serial` (console série dans
+  `build/vm-serie.log`).
+
+Vérifié :
+- `tools/ci.sh` passe : **62 tests**.
+- Scénario `fenetres.txt` en mode développement, dans QEMU :
+  - déplacements, accrochage à droite et à gauche, fenêtres hors de l'écran ;
+  - Terminal déplacé dans tous les sens ;
+  - le bureau répond toujours à la fin.
+  Avant le correctif, le même scénario figeait le bureau dès le premier relâchement.
+- Ferrite VM s'ouvre et s'affiche correctement (capture dans le bureau de développement).
+
+À vérifier :
+- la luminosité sur le ThinkBook (QEMU n'a pas de rétroéclairage) ;
+- les déplacements de fenêtres sur le ThinkBook ;
+- l'ISO actuelle contient le premier correctif du gel mais pas le second (accrochage) :
+  elle est à reconstruire avant de refaire la clé USB.
+

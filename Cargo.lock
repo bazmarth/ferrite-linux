@@ -828,6 +828,14 @@ name = "ferrite-ui"
 version = "0.1.0"
 
 [[package]]
+name = "ferrite-vm"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "png",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"

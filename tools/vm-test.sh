@@ -2,9 +2,11 @@
 # Rejoue un scénario de clics dans l'ISO sous QEMU, sans fenêtre, et capture l'écran.
 #
 #   tools/vm-test.sh tools/scenarios/stabilite.txt [ISO]
+#   FERRITE_VM_DEV=1 tools/vm-test.sh …   avec les binaires de target/release
 #
 # Une ligne par étape : « sleep SECONDES », « click X Y » (pixels de l'écran 1280×800),
-# « key TOUCHES » (syntaxe sendkey de QEMU, ex. ctrl-alt-backspace), « type TEXTE »
+# « serial LIGNE » (tapée sur la console série, sortie dans build/vm-serie.log),
+# « drag X1 Y1 X2 Y2 » (glisser avec le bouton gauche), « key TOUCHES » (syntaxe sendkey de QEMU, ex. ctrl-alt-backspace), « type TEXTE »
 # (frappe au clavier QWERTY américain, disposition par défaut de Ferrite), « serve FICHIER »
 # (le fichier est servi à la machine virtuelle sur 10.0.2.2:8765, à lire par exemple avec
 # « bash -c "$(cat </dev/tcp/10.0.2.2/8765)" ») ou « shot NOM » (capture dans build/NOM.png). Les lignes vides et celles commençant par # sont ignorées.
@@ -27,18 +29,29 @@ else
 fi
 monitor="${TMPDIR:-/tmp}/ferrite-test-$$.sock"
 qmp="${TMPDIR:-/tmp}/ferrite-test-$$.qmp"
-rm -f "$monitor" "$qmp"
+serial="${TMPDIR:-/tmp}/ferrite-test-$$.serie"
+rm -f "$monitor" "$qmp" "$serial" "$BUILD/vm-serie.log"
 
+set --
+# Mode développement : les binaires compilés (cargo build --release) sont partagés avec
+# la machine virtuelle, qui les utilise à la place de ceux de l'ISO.
+if [ "${FERRITE_VM_DEV:-0}" = 1 ]; then
+    release="${CARGO_TARGET_DIR:-$REPO/target}/release"
+    [ -x "$release/ferrite-shell" ] || die "binaires absents : cargo build --release -p ferrite-shell -p ferrite-apps"
+    set -- -virtfs "local,path=$release,mount_tag=ferrite-dev,security_model=none,readonly=on"
+fi
 # shellcheck disable=SC2086 # $accel contient plusieurs options volontairement.
-qemu-system-x86_64 -machine q35 $accel -m 4G -smp 4 \
+qemu-system-x86_64 "$@" -machine q35 $accel -m 4G -smp 4 \
     -drive "if=pflash,format=raw,readonly=on,file=$code" -drive "if=pflash,format=raw,file=$vars" \
     -drive "id=cd,if=none,media=cdrom,readonly=on,file=$iso" -device ide-cd,drive=cd,bootindex=0 \
     -device virtio-vga -device qemu-xhci -device usb-tablet -nic user,model=virtio-net-pci \
-    -display none -serial "file:$BUILD/vm-serie.log" \
+    -display none \
+    -chardev "socket,id=serie,path=$serial,server=on,wait=off,logfile=$BUILD/vm-serie.log" \
+    -serial chardev:serie \
     -monitor "unix:$monitor,server,nowait" -qmp "unix:$qmp,server,nowait" &
 qemu=$!
 server=""
-trap 'kill $qemu $server 2>/dev/null || true; rm -f "$monitor" "$qmp"' EXIT INT TERM
+trap 'kill $qemu $server 2>/dev/null || true; rm -f "$monitor" "$qmp" "$serial"' EXIT INT TERM
 sleep 3
 
 hmp() { printf '%s\n' "$*" | socat - "UNIX-CONNECT:$monitor" >/dev/null; }
@@ -64,6 +77,11 @@ keys() {
     } | socat -t 2 - "UNIX-CONNECT:$qmp" >/dev/null
     # Laisse QEMU rejouer les touches (environ 60 ms chacune) avant l'étape suivante.
     sleep "$(($# / 12 + 1))"
+}
+
+# Place le pointeur de la tablette USB en (X, Y), en pixels de l'écran 1280×800.
+move_abs() {
+    input "{\"type\":\"abs\",\"data\":{\"axis\":\"x\",\"value\":$(($1 * 32767 / 1280))}},{\"type\":\"abs\",\"data\":{\"axis\":\"y\",\"value\":$(($2 * 32767 / 800))}}"
 }
 
 # Nom QMP (qcode) d'un caractère (clavier QWERTY américain), « shift-x » pour les majuscules.
@@ -110,6 +128,11 @@ while read -r command a b; do
     case "$command" in
         '' | '#'*) ;;
         sleep) sleep "$a" ;;
+        serial)
+            # Ligne tapée sur la console série (ttyS0) ; la sortie va dans vm-serie.log.
+            printf '%s\r' "$rest" | socat -t1 - "UNIX-CONNECT:$serial" >/dev/null
+            sleep 1
+            ;;
         serve)
             [ -f "$a" ] || die "fichier à servir introuvable : $a"
             socat TCP-LISTEN:8765,bind=127.0.0.1,reuseaddr,fork "SYSTEM:cat $a" &
@@ -133,6 +156,21 @@ while read -r command a b; do
             hmp screendump "$BUILD/$a.png" -f png
             sleep 1
             ok "capture : $BUILD/$a.png"
+            ;;
+        drag)
+            # drag X1 Y1 X2 Y2 : appui en (X1, Y1), glissement en 20 pas, relâchement.
+            # shellcheck disable=SC2086 # coordonnées séparées volontairement.
+            set -- $rest
+            move_abs "$1" "$2"
+            sleep 0.3
+            input '{"type":"btn","data":{"down":true,"button":"left"}}'
+            step=1
+            while [ "$step" -le 20 ]; do
+                move_abs $(($1 + ($3 - $1) * step / 20)) $(($2 + ($4 - $2) * step / 20))
+                sleep 0.05
+                step=$((step + 1))
+            done
+            input '{"type":"btn","data":{"down":false,"button":"left"}}'
             ;;
         click)
             # Coordonnées absolues de la tablette USB : de 0 à 32767 sur chaque axe.

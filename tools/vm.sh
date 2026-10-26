@@ -8,6 +8,12 @@
 #   FERRITE_VM_CLOSE_AFTER=SECONDES tools/vm.sh --headless DÉLAI [ISO]
 #                                             envoie Ctrl+Alt+Retour arrière avant la capture
 #
+# Réglages facultatifs (utilisés par l'outil graphique tools/vm-gui.sh) :
+#   FERRITE_VM_MEMORY=Go (4)  FERRITE_VM_CPUS=N (4)  FERRITE_VM_NETWORK=0 (sans réseau)
+#   FERRITE_VM_SOUND=1 (son vers WSLg)  FERRITE_VM_MONITOR=SOCKET (moniteur QEMU)
+#   FERRITE_VM_DEV=1 (binaires de target/release au lieu de ceux de l'ISO : pas besoin
+#                     de reconstruire l'ISO après une modification du bureau)
+#
 # ISO par défaut : build/ferrite-live.iso. Aucun disque de l'ordinateur n'est attaché.
 set -eu
 . "$(dirname -- "$0")/lib.sh"
@@ -34,14 +40,32 @@ else
     accel="-accel tcg -cpu max"
 fi
 
-# shellcheck disable=SC2086 # $accel contient plusieurs options volontairement.
-set -- qemu-system-x86_64 -machine q35 $accel -m 4G -smp 4 \
+memory=${FERRITE_VM_MEMORY:-4}
+cpus=${FERRITE_VM_CPUS:-4}
+network="-nic user,model=virtio-net-pci"
+[ "${FERRITE_VM_NETWORK:-1}" = 0 ] && network="-nic none"
+sound="none"
+[ "${FERRITE_VM_SOUND:-0}" = 1 ] && sound="pa"
+
+# shellcheck disable=SC2086 # $accel et $network contiennent plusieurs options volontairement.
+set -- qemu-system-x86_64 -machine q35 $accel -m "${memory}G" -smp "$cpus" \
+    -name "Ferrite OS" \
     -drive "if=pflash,format=raw,readonly=on,file=$code" \
     -drive "if=pflash,format=raw,file=$vars" \
     -drive "id=cd,if=none,media=cdrom,readonly=on,file=$iso" -device ide-cd,drive=cd,bootindex=0 \
     -device virtio-vga -device qemu-xhci -device usb-tablet \
-    -nic user,model=virtio-net-pci \
-    -audiodev none,id=son -device intel-hda -device hda-duplex,audiodev=son
+    $network \
+    -audiodev "$sound,id=son" -device intel-hda -device hda-duplex,audiodev=son
+# Mode développement : les binaires compilés (cargo build --release) sont partagés avec
+# la machine virtuelle, qui les utilise à la place de ceux de l'ISO.
+if [ "${FERRITE_VM_DEV:-0}" = 1 ]; then
+    release="${CARGO_TARGET_DIR:-$REPO/target}/release"
+    [ -x "$release/ferrite-shell" ] || die "binaires absents : cargo build --release -p ferrite-shell -p ferrite-apps"
+    set -- "$@" -virtfs "local,path=$release,mount_tag=ferrite-dev,security_model=none,readonly=on"
+fi
+if [ -n "${FERRITE_VM_MONITOR:-}" ]; then
+    set -- "$@" -monitor "unix:$FERRITE_VM_MONITOR,server,nowait"
+fi
 
 if [ -z "$headless" ]; then
     exec "$@"

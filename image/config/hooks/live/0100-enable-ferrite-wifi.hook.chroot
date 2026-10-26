@@ -1,3 +1,4 @@
 #!/bin/sh
 set -eu
 systemctl enable ferrite-wifi-unblock.service
+systemctl enable ferrite-dev.service

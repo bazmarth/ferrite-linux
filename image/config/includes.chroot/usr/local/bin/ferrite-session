@@ -9,13 +9,25 @@ export XDG_SESSION_TYPE=wayland
 export XDG_SESSION_DESKTOP=ferrite
 
 log="${XDG_RUNTIME_DIR:-/tmp}/ferrite-shell.log"
+
+# Mode développement (QEMU avec le partage « ferrite-dev », voir ferrite-dev.service) :
+# les binaires compilés sur l'hôte remplacent ceux de l'image, et quitter le bureau
+# (Ctrl+Alt+Retour arrière) le relance avec la dernière compilation.
+bin=/usr/local/bin
+dev=0
+if [ -x /run/ferrite-dev/ferrite-shell ]; then
+    bin=/run/ferrite-dev
+    dev=1
+    export PATH="/run/ferrite-dev:$PATH"
+    printf '\n  Mode développement : binaires de %s\n' "$bin"
+fi
 # Le bureau redémarre seul s'il s'arrête sur une erreur ; après 3 arrêts en moins de
 # 2 minutes, on retombe sur la console pour ne pas boucler. Ctrl+Alt+Retour arrière
 # (code 0) ramène directement à la console.
 crashes=0
 window_start=$(date +%s)
 first=1
-while [ -x /usr/local/bin/ferrite-shell ]; do
+while [ -x "$bin/ferrite-shell" ]; do
     if [ "$first" = 1 ]; then
         printf '\n  Démarrage du bureau Ferrite… (journal : %s)\n' "$log"
         client="ferrite-apps files"
@@ -26,9 +38,14 @@ while [ -x /usr/local/bin/ferrite-shell ]; do
     first=0
     [ -f "$log" ] && mv -f "$log" "$log.precedent"
     # shellcheck disable=SC2086 # $client est vide ou une commande et son argument.
-    dbus-run-session -- /usr/local/bin/ferrite-shell --drm ${client:+-- $client} >"$log" 2>&1
+    dbus-run-session -- "$bin/ferrite-shell" --drm ${client:+-- $client} >"$log" 2>&1
     status=$?
-    [ "$status" -eq 0 ] && break
+    if [ "$status" -eq 0 ]; then
+        # En développement, quitter le bureau sert à le relancer ; Ctrl+Alt+F2 donne une console.
+        [ "$dev" = 1 ] || break
+        crashes=0
+        continue
+    fi
 
     printf "\n  \033[31mLe bureau Ferrite s'est arrêté (code %s).\033[0m Dernières lignes du journal :\n\n" "$status"
     tail -n 15 "$log" | sed 's/^/    /'

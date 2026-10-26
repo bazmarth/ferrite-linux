@@ -1,0 +1,16 @@
+# Mode développement : dans QEMU lancé par tools/vm.sh (ou Ferrite VM), le dossier de
+# compilation de l'hôte est partagé en 9p sous le nom « ferrite-dev ». La session utilise
+# alors ces binaires plutôt que ceux de l'image : plus besoin de reconstruire l'ISO.
+# Sans partage (vrai PC), le montage échoue sans conséquence.
+[Unit]
+Description=Binaires Ferrite de développement (partage QEMU)
+Before=getty@tty1.service
+
+[Service]
+Type=oneshot
+ExecStartPre=/usr/bin/mkdir -p /run/ferrite-dev
+ExecStart=-/usr/bin/mount -t 9p -o trans=virtio,version=9p2000.L,ro ferrite-dev /run/ferrite-dev
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

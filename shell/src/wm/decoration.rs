@@ -7,8 +7,10 @@ use smithay::utils::{Logical, Point, Rectangle};
 
 use super::resize_grab::ResizeEdge;
 
-/// Largeur de la zone de saisie des bords, autour du cadre.
-pub const RESIZE_BORDER: i32 = 6;
+/// Largeur de la zone de saisie des bords, autour du cadre (invisible, comme sous Windows).
+pub const RESIZE_BORDER: i32 = 10;
+/// Près d'un coin, sur cette longueur le long des bords, on tire les deux côtés à la fois.
+const RESIZE_CORNER: f64 = 20.0;
 /// Rayon de clic d'un feu (un peu plus large que le feu dessiné).
 const LIGHT_HIT_RADIUS: f64 = 8.0;
 
@@ -99,6 +101,21 @@ pub fn hit(content: Rectangle<i32, Logical>, pos: Point<f64, Logical>) -> Option
         } else if pos.y >= bottom {
             edges |= ResizeEdge::BOTTOM;
         }
+        // Coins larges : un bord saisi près d'un coin tire aussi l'autre côté.
+        if !edges.intersects(ResizeEdge::TOP | ResizeEdge::BOTTOM) {
+            if pos.y < top + RESIZE_CORNER {
+                edges |= ResizeEdge::TOP;
+            } else if pos.y >= bottom - RESIZE_CORNER {
+                edges |= ResizeEdge::BOTTOM;
+            }
+        }
+        if !edges.intersects(ResizeEdge::LEFT | ResizeEdge::RIGHT) {
+            if pos.x < left + RESIZE_CORNER {
+                edges |= ResizeEdge::LEFT;
+            } else if pos.x >= right - RESIZE_CORNER {
+                edges |= ResizeEdge::RIGHT;
+            }
+        }
         return Some(Part::Border(edges));
     }
 
@@ -155,6 +172,15 @@ mod tests {
             Some(Part::Border(ResizeEdge::BOTTOM_RIGHT))
         );
         assert_eq!(hit(c, p(300.0, 96.0)), Some(Part::Border(ResizeEdge::TOP)));
+        // Zone élargie : 10 px autour du cadre.
+        assert_eq!(hit(c, p(91.0, 200.0)), Some(Part::Border(ResizeEdge::LEFT)));
+        assert_eq!(hit(c, p(89.0, 200.0)), None);
+        // Coins larges : le bord droit près du bas tire aussi le bas.
+        assert_eq!(
+            hit(c, p(505.0, 420.0)),
+            Some(Part::Border(ResizeEdge::BOTTOM_RIGHT))
+        );
+        assert_eq!(hit(c, p(110.0, 97.0)), Some(Part::Border(ResizeEdge::TOP_LEFT)));
     }
 
     #[test]

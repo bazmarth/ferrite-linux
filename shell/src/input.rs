@@ -34,8 +34,16 @@ enum Action {
     SwitchVt(i32),
     /// Échap : ferme le menu ou la confirmation ouverte.
     CloseOverlay,
-    /// Touche Super : ouvre ou ferme le menu Applications.
-    ToggleLauncher,
+    /// Touche Super enfoncée, puis relâchée : seule, elle ouvre ou ferme le menu
+    /// Applications (comme sous Windows).
+    SuperDown,
+    SuperUp,
+    /// Super+V : historique du presse-papiers.
+    ToggleClipboard,
+    /// Panneau Super+V : ligne précédente ou suivante, coller, supprimer.
+    ClipboardMove(isize),
+    ClipboardPasteSelected,
+    ClipboardDeleteSelected,
     /// Recherche dans le menu Applications ouvert.
     LauncherType(char),
     LauncherErase,
@@ -109,15 +117,36 @@ impl Ferrite {
             SERIAL_COUNTER.next_serial(),
             event.time_msec(),
             |state, modifiers, keysym| {
-                if pressed && !modifiers.ctrl && !modifiers.alt {
-                    match keysym.modified_sym() {
-                        Keysym::Escape if state.popover.is_some() || state.pending_power.is_some() => {
-                            return FilterResult::Intercept(Action::CloseOverlay);
+                let sym = keysym.modified_sym();
+                if matches!(sym, Keysym::Super_L | Keysym::Super_R) {
+                    return FilterResult::Intercept(if pressed {
+                        Action::SuperDown
+                    } else {
+                        Action::SuperUp
+                    });
+                }
+                if pressed && state.super_held {
+                    // Super combinée à une autre touche : le menu ne s'ouvrira pas au relâcher.
+                    state.super_used = true;
+                    if matches!(sym, Keysym::v | Keysym::V) {
+                        return FilterResult::Intercept(Action::ToggleClipboard);
+                    }
+                }
+                // Panneau Super+V ouvert : flèches, Entrée et Suppr le pilotent.
+                if pressed && state.popover == Some(Popover::Clipboard) {
+                    match sym {
+                        Keysym::Up => return FilterResult::Intercept(Action::ClipboardMove(-1)),
+                        Keysym::Down => return FilterResult::Intercept(Action::ClipboardMove(1)),
+                        Keysym::Return | Keysym::KP_Enter => {
+                            return FilterResult::Intercept(Action::ClipboardPasteSelected);
                         }
-                        Keysym::Super_L | Keysym::Super_R => {
-                            return FilterResult::Intercept(Action::ToggleLauncher);
-                        }
+                        Keysym::Delete => return FilterResult::Intercept(Action::ClipboardDeleteSelected),
                         _ => {}
+                    }
+                }
+                if pressed && !modifiers.ctrl && !modifiers.alt {
+                    if sym == Keysym::Escape && (state.popover.is_some() || state.pending_power.is_some()) {
+                        return FilterResult::Intercept(Action::CloseOverlay);
                     }
                     // Menu Applications ouvert : le clavier sert à la recherche.
                     if state.popover == Some(Popover::Launcher) {
@@ -180,9 +209,25 @@ impl Ferrite {
                     self.popover = None;
                 }
             }
-            Some(Action::ToggleLauncher) => {
+            Some(Action::SuperDown) => {
+                self.super_held = true;
+                self.super_used = false;
+            }
+            Some(Action::SuperUp) => {
+                if self.super_held && !self.super_used {
+                    self.pending_power = None;
+                    self.handle_desktop_action(DesktopAction::TogglePopover(Popover::Launcher));
+                }
+                self.super_held = false;
+            }
+            Some(Action::ToggleClipboard) => {
                 self.pending_power = None;
-                self.handle_desktop_action(DesktopAction::TogglePopover(Popover::Launcher));
+                self.handle_desktop_action(DesktopAction::TogglePopover(Popover::Clipboard));
+            }
+            Some(Action::ClipboardMove(step)) => self.move_clipboard_selection(step),
+            Some(Action::ClipboardPasteSelected) => self.paste_history(self.clipboard_selected),
+            Some(Action::ClipboardDeleteSelected) => {
+                self.handle_desktop_action(DesktopAction::ClipboardDelete(self.clipboard_selected));
             }
             None => {}
         }
@@ -316,6 +361,8 @@ impl Ferrite {
                 self.popover = (self.popover != Some(popover)).then_some(popover);
                 self.launcher_query.clear();
                 self.launcher_page = 0;
+                self.clipboard_selected = 0;
+                self.clipboard_first = 0;
             }
             DesktopAction::LaunchTile(index) => {
                 let entry = self
@@ -354,6 +401,16 @@ impl Ferrite {
                 // Le bureau se ferme quand systemd accepte l'arrêt (voir `system.rs`).
                 self.pending_power = None;
                 self.request_system_change(Change::Power(power));
+            }
+            DesktopAction::ClipboardPaste(index) => self.paste_history(index),
+            DesktopAction::ClipboardPin(index) => self.clipboard.toggle_pin(index),
+            DesktopAction::ClipboardDelete(index) => {
+                self.clipboard.remove(index);
+                self.clamp_clipboard_view();
+            }
+            DesktopAction::ClipboardClear => {
+                self.clipboard.clear();
+                self.clamp_clipboard_view();
             }
             DesktopAction::Consume => {}
         }
@@ -395,6 +452,17 @@ impl Ferrite {
     }
 
     fn on_axis<I: InputBackend>(&mut self, event: I::PointerAxisEvent) {
+        // Panneau Super+V : la molette fait défiler la liste.
+        if self.popover == Some(Popover::Clipboard) {
+            let amount = event
+                .amount(Axis::Vertical)
+                .or_else(|| event.amount_v120(Axis::Vertical))
+                .unwrap_or(0.0);
+            if amount != 0.0 {
+                self.scroll_clipboard(if amount > 0.0 { 1 } else { -1 });
+            }
+            return;
+        }
         // Menu Applications ouvert : la molette tourne les pages.
         if self.popover == Some(Popover::Launcher) {
             let amount = event

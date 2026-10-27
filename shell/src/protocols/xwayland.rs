@@ -14,15 +14,29 @@ use smithay::{
     desktop::Window,
     reexports::calloop::LoopHandle,
     utils::{Logical, Point, Rectangle, SERIAL_COUNTER, Size},
-    wayland::xwayland_shell::{XWaylandShellHandler, XWaylandShellState},
+    wayland::{
+        selection::{
+            SelectionTarget,
+            data_device::{
+                clear_data_device_selection, current_data_device_selection_userdata,
+                request_data_device_client_selection, set_data_device_selection,
+            },
+            primary_selection::{
+                clear_primary_selection, request_primary_client_selection, set_primary_selection,
+            },
+        },
+        xwayland_shell::{XWaylandShellHandler, XWaylandShellState},
+    },
     xwayland::{
         X11Surface, X11Wm, XWayland, XWaylandEvent, XwmHandler,
         xwm::{Reorder, ResizeEdge as X11ResizeEdge, XwmId},
     },
 };
+use std::os::fd::OwnedFd;
 use tracing::{info, warn};
 
 use crate::{
+    clipboard::{self, Owner},
     state::Ferrite,
     wm::{self, ResizeEdge},
 };
@@ -122,6 +136,29 @@ impl Ferrite {
         }
     }
 
+    /// Fenêtre X11 agrandie ou accrochée qu'on commence à déplacer : elle reprend sa
+    /// taille d'avant sous le pointeur (voir `release_snapped`).
+    pub fn x11_release_snapped(
+        &mut self,
+        window: &Window,
+        pointer: Point<f64, Logical>,
+    ) -> Option<Point<i32, Logical>> {
+        let surface = window.x11_surface()?.clone();
+        if surface.is_fullscreen() {
+            return None;
+        }
+        let location = self.space.element_location(window)?;
+        let size = window.geometry().size;
+        let previous = window
+            .user_data()
+            .get::<X11Restore>()
+            .and_then(|restore| restore.0.borrow_mut().take())?;
+        let _ = surface.set_maximized(false);
+        let target = wm::unsnapped_location(Rectangle::new(location, size), previous.size, pointer);
+        self.place_x11(window, Rectangle::new(target, previous.size));
+        Some(target)
+    }
+
     pub fn x11_set_maximized(&mut self, window: &Window, maximized: bool) {
         let Some(surface) = window.x11_surface().cloned() else {
             return;
@@ -161,6 +198,62 @@ impl Ferrite {
 }
 
 impl XwmHandler for Ferrite {
+    /// Presse-papiers partagé entre applications X11 et Wayland.
+    fn allow_selection_access(&mut self, _xwm: XwmId, _selection: SelectionTarget) -> bool {
+        true
+    }
+
+    /// Une application X11 colle : on lui donne la sélection Wayland (ou l'élément de
+    /// l'historique collé avec Super+V).
+    fn send_selection(&mut self, _xwm: XwmId, selection: SelectionTarget, mime_type: String, fd: OwnedFd) {
+        match selection {
+            SelectionTarget::Clipboard => {
+                let owner = current_data_device_selection_userdata(&self.seat).map(|owner| owner.clone());
+                match owner {
+                    Some(Owner::History(content)) => clipboard::write_selection(fd, content.bytes()),
+                    Some(Owner::X11) => {}
+                    None => {
+                        if let Err(err) = request_data_device_client_selection(&self.seat, mime_type, fd) {
+                            warn!(?err, "sélection Wayland non transmise à X11");
+                        }
+                    }
+                }
+            }
+            SelectionTarget::Primary => {
+                if let Err(err) = request_primary_client_selection(&self.seat, mime_type, fd) {
+                    warn!(?err, "sélection primaire non transmise à X11");
+                }
+            }
+        }
+    }
+
+    /// Une application X11 copie : les applications Wayland la voient, et le contenu
+    /// rejoint l'historique.
+    fn new_selection(&mut self, _xwm: XwmId, selection: SelectionTarget, mime_types: Vec<String>) {
+        match selection {
+            SelectionTarget::Clipboard => {
+                set_data_device_selection(&self.display_handle, &self.seat, mime_types.clone(), Owner::X11);
+                self.capture_x11_clipboard(&mime_types);
+            }
+            SelectionTarget::Primary => {
+                set_primary_selection(&self.display_handle, &self.seat, mime_types, Owner::X11);
+            }
+        }
+    }
+
+    fn cleared_selection(&mut self, _xwm: XwmId, selection: SelectionTarget) {
+        match selection {
+            SelectionTarget::Clipboard => {
+                let owned_by_x11 = current_data_device_selection_userdata(&self.seat)
+                    .is_some_and(|owner| matches!(*owner, Owner::X11));
+                if owned_by_x11 {
+                    clear_data_device_selection(&self.display_handle, &self.seat);
+                }
+            }
+            SelectionTarget::Primary => clear_primary_selection(&self.display_handle, &self.seat),
+        }
+    }
+
     fn xwm_state(&mut self, _xwm: XwmId) -> &mut X11Wm {
         self.xwm
             .as_mut()

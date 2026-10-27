@@ -73,6 +73,20 @@ pub struct Ferrite {
     pub dock_config: crate::desktop::dock::DockConfig,
     /// La barre du haut masquée a été rappelée par la souris (voir `bar_visible`).
     pub bar_revealed: std::cell::Cell<bool>,
+    /// Zone (cadre) où la fenêtre déplacée s'accrochera si on la lâche maintenant.
+    pub snap_preview: Option<smithay::utils::Rectangle<i32, smithay::utils::Logical>>,
+    /// Historique du presse-papiers (Super+V) et état de son panneau.
+    pub clipboard: crate::clipboard::History,
+    pub clipboard_sender: Option<smithay::reexports::calloop::channel::Sender<crate::clipboard::Content>>,
+    pub clipboard_selected: usize,
+    pub clipboard_first: usize,
+    /// Touche Super enfoncée, et utilisée avec une autre touche (Super+V) : relâchée
+    /// seule, elle ouvre le menu Applications, comme sous Windows.
+    pub super_held: bool,
+    pub super_used: bool,
+    pub loop_handle: smithay::reexports::calloop::LoopHandle<'static, Ferrite>,
+    /// Bords tirés pendant un redimensionnement à la souris (forme du curseur).
+    pub resizing: Option<crate::wm::ResizeEdge>,
     /// Curseur des réglages rapides en cours de glissement.
     pub slider_drag: Option<crate::desktop::panels::Slider>,
     /// Dernier état connu du réseau, du Bluetooth, du son et de l'écran.
@@ -131,7 +145,7 @@ pub struct Ferrite {
 
 impl Ferrite {
     pub fn new(
-        event_loop: &mut EventLoop<Ferrite>,
+        event_loop: &mut EventLoop<'static, Ferrite>,
         display: Display<Ferrite>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let dh = display.handle();
@@ -182,6 +196,15 @@ impl Ferrite {
             slider_drag: None,
             dock_config: Default::default(),
             bar_revealed: Default::default(),
+            snap_preview: None,
+            clipboard: crate::clipboard::History::load(),
+            clipboard_sender: None,
+            clipboard_selected: 0,
+            clipboard_first: 0,
+            super_held: false,
+            super_used: false,
+            loop_handle: event_loop.handle(),
+            resizing: None,
             volume_held_until: None,
             brightness_held_until: None,
             system: Snapshot::default(),

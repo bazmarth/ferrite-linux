@@ -1,0 +1,23 @@
+# Accrochage des fenêtres, comme sous Windows : bord gauche (moitié), coin (quart),
+# bord du haut (tout l'écran), puis décrochage en tirant la barre de titre.
+sleep 75
+# TextEdit depuis le Dock.
+click 583 756
+sleep 6
+shot accrochage-0-depart
+# Barre de titre tirée jusqu'au bord gauche : moitié gauche.
+drag 640 145 1 450
+sleep 2
+shot accrochage-1-moitie
+# Puis dans le coin en haut à droite : quart d'écran.
+drag 320 45 1278 40
+sleep 2
+shot accrochage-2-quart
+# Puis contre le bord du haut : tout l'écran.
+drag 960 45 640 0
+sleep 2
+shot accrochage-3-agrandie
+# Tirée vers le bas : elle reprend sa taille d'avant, sous le pointeur.
+drag 640 45 640 300
+sleep 2
+shot accrochage-4-decrochee

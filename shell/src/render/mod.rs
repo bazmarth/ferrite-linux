@@ -19,7 +19,7 @@ use smithay::{
             memory::MemoryRenderBufferRenderElement,
             surface::{WaylandSurfaceRenderElement, render_elements_from_surface_tree},
         },
-        gles::{GlesRenderer, element::PixelShaderElement},
+        gles::{GlesRenderer, Uniform, element::PixelShaderElement},
     },
     desktop::{PopupManager, Window},
     input::pointer::CursorImageStatus,
@@ -30,13 +30,20 @@ use smithay::{
 use tracing::warn;
 
 use self::rounded::RoundedSurface;
-pub use self::{cursor::Cursor, decorations::Decorations, wallpaper::Wallpaper};
+pub use self::{
+    cursor::{Cursor, CursorShape},
+    decorations::Decorations,
+    wallpaper::Wallpaper,
+};
 use crate::{
     desktop::{
         apps::App,
         apps::LauncherEntry,
         dock::Dock,
-        panels::{DesktopView, LAUNCHER_PAGE_SIZE, LauncherView, Panels, Popover, Tile, TileIcon},
+        panels::{
+            ClipItem, ClipPreview, ClipboardView, DesktopView, LAUNCHER_PAGE_SIZE, LauncherView, Panels,
+            Popover, Tile, TileIcon,
+        },
     },
     state::Ferrite,
     wm,
@@ -92,7 +99,8 @@ pub fn output_elements(
         if let Some(pointer) = state.seat.get_pointer() {
             let location = pointer.current_location() - output_geo.loc.to_f64();
             if Rectangle::from_size(output_geo.size).to_f64().contains(location) {
-                push_cursor(renderer, &assets.cursor, location, scale, &mut elements);
+                let shape = state.cursor_shape();
+                push_cursor(renderer, &assets.cursor, shape, location, scale, &mut elements);
             }
         }
     }
@@ -121,8 +129,24 @@ pub fn output_elements(
         .filter(|pointer| !pointer.is_grabbed())
         .map(|pointer| pointer.current_location());
 
+    // Aperçu d'accrochage, juste sous la fenêtre déplacée (celle du dessus).
+    let snap_preview = state.snap_preview.map(|zone| {
+        PixelShaderElement::new(
+            assets.decorations.shaders.snap.clone(),
+            Rectangle::new(zone.loc - output_geo.loc, zone.size),
+            None,
+            1.0,
+            vec![Uniform::new("scale", scale as f32)],
+            Kind::Unspecified,
+        )
+    });
+    let mut snap_preview = snap_preview.map(OutputElement::Shader);
+
     // Du dessus vers le dessous.
-    for window in state.space.elements().rev() {
+    for (index, window) in state.space.elements().rev().enumerate() {
+        if index == 1 {
+            elements.extend(snap_preview.take());
+        }
         let Some(content) = state.space.element_geometry(window) else {
             continue;
         };
@@ -153,6 +177,7 @@ pub fn output_elements(
             );
         }
     }
+    elements.extend(snap_preview);
 
     match MemoryRenderBufferRenderElement::from_buffer(
         renderer,
@@ -235,11 +260,12 @@ fn push_decorated(
 fn push_cursor(
     renderer: &mut GlesRenderer,
     cursor: &Cursor,
+    shape: CursorShape,
     location: Point<f64, Logical>,
     scale: f64,
     out: &mut Vec<OutputElement>,
 ) {
-    let image = cursor.image(scale);
+    let image = cursor.image(shape, scale);
     let tip = location.to_physical(scale);
     let position = Point::from((
         (tip.x - image.hotspot.0 as f64).round(),
@@ -268,7 +294,36 @@ fn push_cursor(
 /// Hauteur de la bande du haut qui rappelle une barre masquée.
 const BAR_REVEAL_EDGE: f64 = 2.0;
 
+/// Double flèche qui correspond aux bords tirés.
+fn resize_shape(edges: wm::ResizeEdge) -> CursorShape {
+    use wm::ResizeEdge;
+    if edges == ResizeEdge::TOP_LEFT || edges == ResizeEdge::BOTTOM_RIGHT {
+        CursorShape::DiagonalDown
+    } else if edges == ResizeEdge::TOP_RIGHT || edges == ResizeEdge::BOTTOM_LEFT {
+        CursorShape::DiagonalUp
+    } else if edges.intersects(ResizeEdge::LEFT | ResizeEdge::RIGHT) {
+        CursorShape::Horizontal
+    } else {
+        CursorShape::Vertical
+    }
+}
+
 impl Ferrite {
+    /// Forme du curseur : double flèche pendant un redimensionnement ou sur le bord d'une
+    /// fenêtre, flèche sinon.
+    pub fn cursor_shape(&self) -> CursorShape {
+        if let Some(edges) = self.resizing {
+            return resize_shape(edges);
+        }
+        let Some(pointer) = self.seat.get_pointer().filter(|pointer| !pointer.is_grabbed()) else {
+            return CursorShape::Arrow;
+        };
+        match self.hit_test(pointer.current_location()) {
+            Some(wm::Hit::Decoration(_, wm::decoration::Part::Border(edges))) => resize_shape(edges),
+            _ => CursorShape::Arrow,
+        }
+    }
+
     /// La fenêtre du dessus est-elle en plein écran ?
     pub fn top_fullscreen(&self) -> bool {
         self.space
@@ -365,6 +420,42 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
         } else {
             LauncherView::default()
         },
+        clipboard: if state.popover == Some(Popover::Clipboard) {
+            clipboard_view(state)
+        } else {
+            ClipboardView::default()
+        },
+    }
+}
+
+/// Lignes visibles du panneau Super+V.
+fn clipboard_view(state: &Ferrite) -> ClipboardView {
+    let entries = state.clipboard.entries();
+    let first = state.clipboard_first.min(entries.len());
+    let end = (first + crate::clipboard::VISIBLE).min(entries.len());
+    let items = entries[first..end]
+        .iter()
+        .enumerate()
+        .map(|(offset, entry)| ClipItem {
+            index: first + offset,
+            pinned: entry.pinned,
+            preview: match &entry.content {
+                crate::clipboard::Content::Text(text) => ClipPreview::Text(
+                    text.lines()
+                        .map(|line| line.trim().replace('\t', " "))
+                        .filter(|line| !line.is_empty())
+                        .take(2)
+                        .map(|line| line.chars().take(300).collect())
+                        .collect(),
+                ),
+                crate::clipboard::Content::Image { thumbnail, .. } => ClipPreview::Image(thumbnail.clone()),
+            },
+        })
+        .collect();
+    ClipboardView {
+        items,
+        selected: state.clipboard_selected,
+        more: entries.len() - end,
     }
 }
 

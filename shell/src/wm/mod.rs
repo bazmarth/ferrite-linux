@@ -37,40 +37,98 @@ const CASCADE_MARGIN: i32 = 40;
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 /// Distance du bord de l'écran qui déclenche l'accrochage d'une fenêtre.
 const SNAP_EDGE_MARGIN: i32 = 24;
+/// Longueur des zones de coin, le long des bords, qui donnent un quart d'écran.
+const SNAP_CORNER: i32 = 140;
 
+/// Place d'une fenêtre accrochée, comme sous Windows : moitiés, quarts, plein écran utile.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SnapSide {
+pub enum Snap {
     Left,
     Right,
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+    Maximize,
 }
 
-/// Côté vers lequel accrocher la fenêtre quand le pointeur est au bord de la zone utile.
-pub fn snap_side_at(area: Rectangle<i32, Logical>, pointer: Point<f64, Logical>) -> Option<SnapSide> {
+/// Accrochage proposé quand on lâche une fenêtre avec le pointeur en `pointer` : bord
+/// gauche ou droit pour une moitié, coin pour un quart, bord du haut pour tout l'écran.
+/// `screen` est l'écran entier (le bord du haut est celui de l'écran, pas de la zone utile).
+pub fn snap_at(
+    area: Rectangle<i32, Logical>,
+    screen: Rectangle<i32, Logical>,
+    pointer: Point<f64, Logical>,
+) -> Option<Snap> {
     let margin = SNAP_EDGE_MARGIN as f64;
-    if pointer.x < area.loc.x as f64 + margin {
-        Some(SnapSide::Left)
-    } else if pointer.x >= (area.loc.x + area.size.w) as f64 - margin {
-        Some(SnapSide::Right)
-    } else {
-        None
+    let corner = SNAP_CORNER as f64;
+    let (left, right) = (area.loc.x as f64, (area.loc.x + area.size.w) as f64);
+    let (top, bottom) = (area.loc.y as f64, (area.loc.y + area.size.h) as f64);
+    let at_left = pointer.x < left + margin;
+    let at_right = pointer.x >= right - margin;
+    let at_top = pointer.y < screen.loc.y as f64 + margin;
+    let near_top = pointer.y < top + corner;
+    let near_bottom = pointer.y >= bottom - corner;
+    if at_left || at_right {
+        return Some(match (at_left, near_top, near_bottom) {
+            (true, true, _) => Snap::TopLeft,
+            (true, _, true) => Snap::BottomLeft,
+            (true, _, _) => Snap::Left,
+            (false, true, _) => Snap::TopRight,
+            (false, _, true) => Snap::BottomRight,
+            (false, _, _) => Snap::Right,
+        });
+    }
+    if at_top {
+        return Some(if pointer.x < left + corner {
+            Snap::TopLeft
+        } else if pointer.x >= right - corner {
+            Snap::TopRight
+        } else {
+            Snap::Maximize
+        });
+    }
+    None
+}
+
+/// Cadre (barre de titre comprise) d'une fenêtre accrochée en `snap` dans `area`.
+pub fn snap_zone(area: Rectangle<i32, Logical>, snap: Snap) -> Rectangle<i32, Logical> {
+    let left_width = area.size.w / 2;
+    let top_height = area.size.h / 2;
+    let (x, y) = (area.loc.x, area.loc.y);
+    let (right_x, bottom_y) = (x + left_width, y + top_height);
+    let (right_width, bottom_height) = (area.size.w - left_width, area.size.h - top_height);
+    let rect = |x, y, w, h| Rectangle::new(Point::from((x, y)), Size::from((w, h)));
+    match snap {
+        Snap::Maximize => area,
+        Snap::Left => rect(x, y, left_width, area.size.h),
+        Snap::Right => rect(right_x, y, right_width, area.size.h),
+        Snap::TopLeft => rect(x, y, left_width, top_height),
+        Snap::TopRight => rect(right_x, y, right_width, top_height),
+        Snap::BottomLeft => rect(x, bottom_y, left_width, bottom_height),
+        Snap::BottomRight => rect(right_x, bottom_y, right_width, bottom_height),
     }
 }
 
-/// Géométrie d'un demi-écran, avec la barre de titre Ferrite incluse dans la hauteur utile.
+/// Position d'une fenêtre décrochée (contenu `current`) qui reprend la largeur `size` :
+/// le pointeur reste au même endroit relatif de sa largeur, et à la même hauteur.
+pub fn unsnapped_location(
+    current: Rectangle<i32, Logical>,
+    size: Size<i32, Logical>,
+    pointer: Point<f64, Logical>,
+) -> Point<i32, Logical> {
+    let ratio = ((pointer.x - current.loc.x as f64) / current.size.w.max(1) as f64).clamp(0.0, 1.0);
+    let x = pointer.x - ratio * size.w as f64;
+    Point::from((x.round() as i32, current.loc.y))
+}
+
+/// Contenu d'une fenêtre accrochée, la barre de titre Ferrite comprise dans la zone.
 pub fn snapped_content(
     area: Rectangle<i32, Logical>,
-    side: SnapSide,
+    snap: Snap,
     decorated: bool,
 ) -> Rectangle<i32, Logical> {
-    let left_width = area.size.w / 2;
-    let half = match side {
-        SnapSide::Left => Rectangle::new(area.loc, Size::from((left_width, area.size.h))),
-        SnapSide::Right => Rectangle::new(
-            area.loc + Point::from((left_width, 0)),
-            Size::from((area.size.w - left_width, area.size.h)),
-        ),
-    };
-    maximized_content(half, decorated)
+    maximized_content(snap_zone(area, snap), decorated)
 }
 
 /// Placement en cascade des nouvelles fenêtres, comme sur macOS : chaque fenêtre est
@@ -301,8 +359,12 @@ impl Ferrite {
 
     /// Commence le déplacement de `window` à la souris (barre de titre ou demande du client).
     pub fn start_move(&mut self, window: Window, start_data: GrabStartData<Ferrite>, serial: Serial) {
-        let Some(initial_window_location) = self.space.element_location(&window) else {
-            return;
+        let initial_window_location = match self.release_snapped(&window, start_data.location) {
+            Some(location) => location,
+            None => match self.space.element_location(&window) {
+                Some(location) => location,
+                None => return,
+            },
         };
         let Some(pointer) = self.seat.get_pointer() else {
             return;
@@ -354,6 +416,7 @@ impl Ferrite {
             return;
         }
         let size = window.geometry().size;
+        self.resizing = Some(edges);
         let grab = ResizeSurfaceGrab::start(start_data, window, edges, Rectangle::new(location, size));
         pointer.set_grab(self, grab, serial, Focus::Clear);
     }
@@ -372,6 +435,8 @@ impl Ferrite {
         if states.contains(xdg_toplevel::State::Maximized)
             || states.contains(xdg_toplevel::State::TiledLeft)
             || states.contains(xdg_toplevel::State::TiledRight)
+            || states.contains(xdg_toplevel::State::TiledTop)
+            || states.contains(xdg_toplevel::State::TiledBottom)
         {
             self.unmaximize_request(toplevel);
         } else {
@@ -493,28 +558,43 @@ mod tests {
     #[test]
     fn accrochage_partage_la_zone_utile_sans_couvrir_la_barre() {
         let area = rect(0, 30, 1440, 870);
-        assert_eq!(snapped_content(area, SnapSide::Left, true), rect(0, 60, 720, 840));
+        assert_eq!(snapped_content(area, Snap::Left, true), rect(0, 60, 720, 840));
+        assert_eq!(snapped_content(area, Snap::Right, true), rect(720, 60, 720, 840));
         assert_eq!(
-            snapped_content(area, SnapSide::Right, true),
-            rect(720, 60, 720, 840)
-        );
-        assert_eq!(
-            snapped_content(rect(0, 25, 1441, 875), SnapSide::Right, false),
+            snapped_content(rect(0, 25, 1441, 875), Snap::Right, false),
             rect(720, 25, 721, 875)
         );
+        // Quarts : les deux moitiés de la hauteur se partagent la zone sans trou.
+        assert_eq!(snap_zone(area, Snap::TopLeft), rect(0, 30, 720, 435));
+        assert_eq!(snap_zone(area, Snap::BottomRight), rect(720, 465, 720, 435));
+        assert_eq!(snap_zone(area, Snap::Maximize), area);
     }
 
     #[test]
-    fn accrochage_ne_se_declenche_qu_aux_bords_horizontaux() {
+    fn une_fenetre_decrochee_reste_sous_le_pointeur() {
+        // Agrandie sur 1440 px, saisie au milieu : elle reprend 800 px, centrée sur le pointeur.
+        let location = unsnapped_location(
+            rect(0, 60, 1440, 840),
+            Size::from((800, 500)),
+            Point::from((720.0, 45.0)),
+        );
+        assert_eq!(location, Point::from((320, 60)));
+    }
+
+    #[test]
+    fn accrochage_selon_le_bord_ou_le_coin() {
+        let screen = rect(0, 0, 1440, 900);
         let area = rect(0, 30, 1440, 870);
-        assert_eq!(
-            snap_side_at(area, Point::from((0.0, 450.0))),
-            Some(SnapSide::Left)
-        );
-        assert_eq!(
-            snap_side_at(area, Point::from((1439.0, 450.0))),
-            Some(SnapSide::Right)
-        );
-        assert_eq!(snap_side_at(area, Point::from((720.0, 450.0))), None);
+        let at = |x: f64, y: f64| snap_at(area, screen, Point::from((x, y)));
+        assert_eq!(at(0.0, 450.0), Some(Snap::Left));
+        assert_eq!(at(1439.0, 450.0), Some(Snap::Right));
+        assert_eq!(at(720.0, 450.0), None);
+        // Coins : quarts d'écran.
+        assert_eq!(at(0.0, 60.0), Some(Snap::TopLeft));
+        assert_eq!(at(1439.0, 890.0), Some(Snap::BottomRight));
+        assert_eq!(at(5.0, 899.0), Some(Snap::BottomLeft));
+        // Bord du haut : tout l'écran, ou un quart près des coins.
+        assert_eq!(at(720.0, 0.0), Some(Snap::Maximize));
+        assert_eq!(at(1400.0, 2.0), Some(Snap::TopRight));
     }
 }

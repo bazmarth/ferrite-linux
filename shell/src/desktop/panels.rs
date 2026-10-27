@@ -31,6 +31,7 @@ use smithay::{
     utils::{Logical, Point, Rectangle},
 };
 
+use crate::clipboard::{Thumbnail, VISIBLE as CLIPBOARD_VISIBLE};
 use crate::desktop::{
     apps::App,
     svg::{self, IconCache, Style},
@@ -54,6 +55,10 @@ const LAUNCHER_SEARCH: f64 = 52.0;
 /// Hauteur de la rangée des points de page, en bas du menu.
 const LAUNCHER_DOTS: f64 = 26.0;
 const CONTROLS_WIDTH: f64 = 300.0;
+const CLIPBOARD_WIDTH: f64 = 380.0;
+const CLIPBOARD_HEADER: f64 = 50.0;
+const CLIPBOARD_ROW: f64 = 70.0;
+const CLIPBOARD_GAP: f64 = 6.0;
 const SESSION_WIDTH: f64 = 230.0;
 const DIALOG: (f64, f64) = (420.0, 168.0);
 /// Fréquence de relecture de l'état de la batterie.
@@ -75,6 +80,8 @@ pub enum Popover {
     Launcher,
     Controls,
     Session,
+    /// Historique du presse-papiers (Super+V).
+    Clipboard,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,8 +99,38 @@ pub enum DesktopAction {
     RequestPower(PowerAction),
     ConfirmPower(PowerAction),
     CancelPower,
+    /// Historique du presse-papiers : indices dans la liste complète.
+    ClipboardPaste(usize),
+    ClipboardPin(usize),
+    ClipboardDelete(usize),
+    ClipboardClear,
     /// Clic absorbé par un panneau, sans effet.
     Consume,
+}
+
+/// Aperçu d'un élément de l'historique du presse-papiers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClipPreview {
+    /// Premières lignes du texte.
+    Text(Vec<String>),
+    Image(Thumbnail),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClipItem {
+    /// Position dans la liste complète.
+    pub index: usize,
+    pub preview: ClipPreview,
+    pub pinned: bool,
+}
+
+/// Lignes affichées du panneau Super+V.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ClipboardView {
+    pub items: Vec<ClipItem>,
+    pub selected: usize,
+    /// Éléments au-delà de ceux affichés.
+    pub more: usize,
 }
 
 /// Icône d'une case du menu Applications.
@@ -137,6 +174,7 @@ pub struct DesktopView {
     /// Barre du haut affichée (masquée quand une application est en plein écran).
     pub bar_visible: bool,
     pub launcher: LauncherView,
+    pub clipboard: ClipboardView,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -247,6 +285,7 @@ impl Panels {
             Some(Popover::Launcher) => self.draw_launcher(&mut canvas, &layout, &view.launcher),
             Some(Popover::Controls) => self.draw_controls(&mut canvas, &layout, view),
             Some(Popover::Session) => self.draw_session(&mut canvas, &layout),
+            Some(Popover::Clipboard) => self.draw_clipboard(&mut canvas, &layout, &view.clipboard),
             None => {}
         }
 
@@ -300,6 +339,7 @@ impl Panels {
                 Popover::Launcher => applications,
                 Popover::Controls => layout.indicators_group(),
                 Popover::Session => layout.indicator(Indicator::Power),
+                Popover::Clipboard => return,
             };
             canvas.fill(
                 Rect::new(rect.x + 6.0, BAR - 3.0, rect.w - 12.0, 2.0),
@@ -514,6 +554,117 @@ impl Panels {
         }
     }
 
+    /// Historique du presse-papiers, comme Windows + V.
+    fn draw_clipboard(&self, canvas: &mut Canvas, layout: &Layout, view: &ClipboardView) {
+        let card = layout.clipboard();
+        canvas.card(card, 14.0);
+        canvas.label(
+            &self.bold,
+            "Presse-papiers",
+            card.x + 16.0,
+            card.y + 16.0,
+            13.0,
+            TEXT,
+        );
+        if view.items.is_empty() {
+            let lines = [
+                (&self.bold, "Rien n’a encore été copié", TEXT, 12.0),
+                (
+                    &self.regular,
+                    "Le texte et les images copiés apparaîtront ici.",
+                    TEXT_SECONDARY,
+                    11.0,
+                ),
+            ];
+            for (index, (font, text, color, size)) in lines.into_iter().enumerate() {
+                let width = canvas.text_width(font, text, size);
+                let y = card.y + card.h / 2.0 - 24.0 + index as f64 * 24.0;
+                canvas.label(font, text, card.x + (card.w - width) / 2.0, y, size, color);
+            }
+            return;
+        }
+        let clear = layout.clipboard_clear();
+        let width = canvas.text_width(&self.regular, "Tout effacer", 11.0);
+        canvas.label(
+            &self.regular,
+            "Tout effacer",
+            clear.right() - width - 6.0,
+            clear.y + 6.0,
+            11.0,
+            ACCENT,
+        );
+        for (slot, item) in view.items.iter().enumerate() {
+            let row = layout.clipboard_row(slot);
+            let selected = item.index == view.selected;
+            canvas.fill(
+                row,
+                9.0,
+                if selected {
+                    Color::rgb(0xDCE8F8)
+                } else {
+                    Color::rgb(0xF0F0F2)
+                },
+            );
+            if selected {
+                canvas.fill(Rect::new(row.x, row.y + 12.0, 3.0, row.h - 24.0), 1.5, ACCENT);
+            }
+            match &item.preview {
+                ClipPreview::Text(lines) => {
+                    for (number, line) in lines.iter().take(2).enumerate() {
+                        let text = ellipsize_to(canvas, &self.regular, line, 11.5, row.w - 96.0);
+                        canvas.label(
+                            &self.regular,
+                            &text,
+                            row.x + 14.0,
+                            row.y + 14.0 + number as f64 * 21.0,
+                            11.5,
+                            TEXT,
+                        );
+                    }
+                }
+                ClipPreview::Image(thumbnail) => {
+                    canvas.image(
+                        Rect::new(row.x + 12.0, row.y + 7.0, row.w - 96.0, row.h - 14.0),
+                        thumbnail,
+                    );
+                }
+            }
+            // Épingle (bleue si l'élément est épinglé) et croix de suppression.
+            let pin = layout.clipboard_pin(slot);
+            let ink = if item.pinned { ACCENT } else { TEXT_SECONDARY };
+            let (cx, cy) = pin.center();
+            canvas.fill(Rect::new(cx - 5.0, cy - 8.0, 10.0, 10.0), 5.0, ink);
+            canvas.fill(Rect::new(cx - 6.0, cy + 1.0, 12.0, 2.0), 1.0, ink);
+            canvas.fill(Rect::new(cx - 0.9, cy + 2.0, 1.8, 7.0), 0.9, ink);
+            let delete = layout.clipboard_delete(slot);
+            let width = canvas.text_width(&self.regular, "×", 16.0);
+            canvas.label(
+                &self.regular,
+                "×",
+                delete.center().0 - width / 2.0,
+                delete.y + 3.0,
+                16.0,
+                TEXT_SECONDARY,
+            );
+        }
+        if view.more > 0 {
+            let text = if view.more == 1 {
+                "1 autre élément plus bas".to_owned()
+            } else {
+                format!("{} autres éléments plus bas", view.more)
+            };
+            let width = canvas.text_width(&self.regular, &text, 10.0);
+            canvas.label(
+                &self.regular,
+                &text,
+                card.x + (card.w - width) / 2.0,
+                card.bottom() - 22.0,
+                10.0,
+                TEXT_SECONDARY,
+            );
+        }
+    }
+
     fn draw_dialog(&self, canvas: &mut Canvas, layout: &Layout, power: PowerAction) {
         canvas.fill(
             Rect::new(0.0, 0.0, layout.w, layout.h),
@@ -620,6 +771,27 @@ pub fn action_at(
                 DesktopAction::SetBrightness(percent(Control::Brightness))
             } else if row(Control::Settings) {
                 DesktopAction::Launch(App::Settings)
+            } else {
+                DesktopAction::Consume
+            }
+        }
+        Popover::Clipboard if layout.clipboard().contains(pos) => {
+            let clipboard = &view.clipboard;
+            let row = clipboard
+                .items
+                .iter()
+                .enumerate()
+                .find(|(slot, _)| layout.clipboard_row(*slot).contains(pos));
+            if !clipboard.items.is_empty() && layout.clipboard_clear().contains(pos) {
+                DesktopAction::ClipboardClear
+            } else if let Some((slot, item)) = row {
+                if layout.clipboard_pin(slot).contains(pos) {
+                    DesktopAction::ClipboardPin(item.index)
+                } else if layout.clipboard_delete(slot).contains(pos) {
+                    DesktopAction::ClipboardDelete(item.index)
+                } else {
+                    DesktopAction::ClipboardPaste(item.index)
+                }
             } else {
                 DesktopAction::Consume
             }
@@ -830,6 +1002,42 @@ impl Layout {
         Rect::new(row.x + 48.0, row.y + row.h / 2.0 - 2.0, row.w - 64.0, 4.0)
     }
 
+    /// Panneau Super+V : en bas à droite, comme sous Windows 10.
+    fn clipboard(&self) -> Rect {
+        let h = CLIPBOARD_HEADER + CLIPBOARD_VISIBLE as f64 * (CLIPBOARD_ROW + CLIPBOARD_GAP) + 26.0;
+        Rect::new(
+            (self.w - POPOVER_MARGIN - 10.0 - CLIPBOARD_WIDTH).max(POPOVER_MARGIN),
+            (self.h - h - 96.0).max(BAR + POPOVER_MARGIN),
+            CLIPBOARD_WIDTH,
+            h,
+        )
+    }
+
+    fn clipboard_row(&self, slot: usize) -> Rect {
+        let card = self.clipboard();
+        Rect::new(
+            card.x + 10.0,
+            card.y + CLIPBOARD_HEADER + slot as f64 * (CLIPBOARD_ROW + CLIPBOARD_GAP),
+            card.w - 20.0,
+            CLIPBOARD_ROW,
+        )
+    }
+
+    fn clipboard_pin(&self, slot: usize) -> Rect {
+        let row = self.clipboard_row(slot);
+        Rect::new(row.right() - 68.0, row.y + 6.0, 30.0, 30.0)
+    }
+
+    fn clipboard_delete(&self, slot: usize) -> Rect {
+        let row = self.clipboard_row(slot);
+        Rect::new(row.right() - 36.0, row.y + 6.0, 30.0, 30.0)
+    }
+
+    fn clipboard_clear(&self) -> Rect {
+        let card = self.clipboard();
+        Rect::new(card.right() - 120.0, card.y + 10.0, 110.0, 30.0)
+    }
+
     fn session(&self) -> Rect {
         let x = (self.w - POPOVER_MARGIN - SESSION_WIDTH).max(POPOVER_MARGIN);
         Rect::new(x, BAR + POPOVER_MARGIN, SESSION_WIDTH, 84.0)
@@ -1005,6 +1213,38 @@ impl Canvas<'_> {
             center.1 as f32 * s - side / 2.0,
             side,
         )
+    }
+
+    /// Vignette d'image, réduite pour tenir dans `rect` (alignée à gauche, centrée en hauteur).
+    fn image(&mut self, rect: Rect, thumbnail: &Thumbnail) {
+        let s = self.scale as f64;
+        let ratio = (rect.w * s / thumbnail.width as f64).min(rect.h * s / thumbnail.height as f64);
+        let (w, h) = (
+            (thumbnail.width as f64 * ratio).round().max(1.0) as u32,
+            (thumbnail.height as f64 * ratio).round().max(1.0) as u32,
+        );
+        let x0 = (rect.x * s).round() as i64;
+        let y0 = (rect.y * s + (rect.h * s - h as f64) / 2.0).round() as i64;
+        for y in 0..h {
+            for x in 0..w {
+                let (px, py) = (x0 + x as i64, y0 + y as i64);
+                if px < 0 || py < 0 || px >= self.width as i64 || py >= self.height as i64 {
+                    continue;
+                }
+                let sx = ((x as f64 + 0.5) / ratio) as u32;
+                let sy = ((y as f64 + 0.5) / ratio) as u32;
+                let i = ((sy.min(thumbnail.height - 1) * thumbnail.width + sx.min(thumbnail.width - 1)) * 4)
+                    as usize;
+                let source = &thumbnail.pixels[i..i + 4];
+                let offset = ((py as u32 * self.width + px as u32) * 4) as usize;
+                let inverse = 255 - source[3] as u32;
+                let pixel = &mut self.pixels[offset..offset + 4];
+                for channel in 0..4 {
+                    pixel[channel] =
+                        (source[channel] as u32 + pixel[channel] as u32 * inverse / 255).min(255) as u8;
+                }
+            }
+        }
     }
 
     fn switch(&mut self, rect: Rect, state: Option<bool>) {

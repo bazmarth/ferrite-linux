@@ -161,6 +161,8 @@ impl XdgShellHandler for Ferrite {
             state.states.unset(xdg_toplevel::State::Maximized);
             state.states.unset(xdg_toplevel::State::TiledLeft);
             state.states.unset(xdg_toplevel::State::TiledRight);
+            state.states.unset(xdg_toplevel::State::TiledTop);
+            state.states.unset(xdg_toplevel::State::TiledBottom);
             state.size = previous.map(|rect| rect.size);
         });
         surface.send_pending_configure();
@@ -288,6 +290,12 @@ pub fn handle_commit(popups: &mut PopupManager, space: &Space<Window>, surface: 
 }
 
 impl Ferrite {
+    /// Premier écran entier.
+    pub fn screen_area(&self) -> Option<Rectangle<i32, Logical>> {
+        let output = self.space.outputs().next()?;
+        self.space.output_geometry(output)
+    }
+
     /// Zone utile du premier écran (sous la barre de menus si elle ne se cache pas).
     pub fn usable_area(&self) -> Option<Rectangle<i32, Logical>> {
         let output = self.space.outputs().next()?;
@@ -300,15 +308,31 @@ impl Ferrite {
         })
     }
 
-    /// Accroche une fenêtre sur une moitié d'écran et garde sa géométrie précédente pour
-    /// que le double-clic sur la barre de titre puisse la restaurer.
-    pub fn snap_window_to_side(&mut self, window: &Window, side: wm::SnapSide) {
+    /// Accroche une fenêtre (moitié, quart, ou tout l'écran utile) et garde sa géométrie
+    /// précédente pour que le double-clic sur la barre de titre, ou un nouveau
+    /// déplacement, puisse la restaurer.
+    pub fn snap_window(&mut self, window: &Window, snap: wm::Snap) {
+        if snap == wm::Snap::Maximize {
+            match window.toplevel().cloned() {
+                Some(toplevel) => {
+                    if !toplevel
+                        .current_state()
+                        .states
+                        .contains(xdg_toplevel::State::Maximized)
+                    {
+                        self.maximize_request(toplevel);
+                    }
+                }
+                None => self.x11_set_maximized(window, true),
+            }
+            return;
+        }
         if window.x11_surface().is_some() {
             let Some(area) = self.usable_area() else { return };
             self.x11_save_geometry(window);
             self.place_x11(
                 window,
-                wm::snapped_content(area, side, wm::is_server_decorated(window)),
+                wm::snapped_content(area, snap, wm::is_server_decorated(window)),
             );
             return;
         }
@@ -316,7 +340,7 @@ impl Ferrite {
             return;
         };
         let Some(area) = self.usable_area() else { return };
-        let target = wm::snapped_content(area, side, wm::is_server_decorated(window));
+        let target = wm::snapped_content(area, snap, wm::is_server_decorated(window));
         let Some(location) = self.space.element_location(window) else {
             return;
         };
@@ -333,14 +357,63 @@ impl Ferrite {
             state.states.unset(xdg_toplevel::State::Maximized);
             state.states.unset(xdg_toplevel::State::TiledLeft);
             state.states.unset(xdg_toplevel::State::TiledRight);
-            state.states.set(match side {
-                wm::SnapSide::Left => xdg_toplevel::State::TiledLeft,
-                wm::SnapSide::Right => xdg_toplevel::State::TiledRight,
-            });
+            state.states.unset(xdg_toplevel::State::TiledTop);
+            state.states.unset(xdg_toplevel::State::TiledBottom);
+            // Côtés de la fenêtre collés au bord de l'écran ou à une voisine.
+            use xdg_toplevel::State::{TiledBottom, TiledLeft, TiledRight, TiledTop};
+            let sides: &[xdg_toplevel::State] = match snap {
+                wm::Snap::Left => &[TiledLeft, TiledTop, TiledBottom],
+                wm::Snap::Right => &[TiledRight, TiledTop, TiledBottom],
+                wm::Snap::TopLeft => &[TiledLeft, TiledTop],
+                wm::Snap::TopRight => &[TiledRight, TiledTop],
+                wm::Snap::BottomLeft => &[TiledLeft, TiledBottom],
+                wm::Snap::BottomRight => &[TiledRight, TiledBottom],
+                wm::Snap::Maximize => &[],
+            };
+            for side in sides {
+                state.states.set(*side);
+            }
             state.size = Some(target.size);
         });
         toplevel.send_pending_configure();
         self.space.map_element(window.clone(), target.loc, true);
+    }
+
+    /// Fenêtre agrandie ou accrochée qu'on commence à déplacer : elle reprend sa taille
+    /// d'avant, sous le pointeur au même endroit relatif de sa largeur, comme sous
+    /// Windows. Renvoie sa nouvelle position, ou `None` si elle n'était pas accrochée.
+    pub fn release_snapped(
+        &mut self,
+        window: &Window,
+        pointer: Point<f64, Logical>,
+    ) -> Option<Point<i32, Logical>> {
+        let location = self.space.element_location(window)?;
+        let size = window.geometry().size;
+        let toplevel = match window.toplevel() {
+            Some(toplevel) => toplevel.clone(),
+            None => return self.x11_release_snapped(window, pointer),
+        };
+        use xdg_toplevel::State::{Maximized, TiledBottom, TiledLeft, TiledRight, TiledTop};
+        let states = toplevel.current_state().states;
+        if ![Maximized, TiledLeft, TiledRight, TiledTop, TiledBottom]
+            .iter()
+            .any(|state| states.contains(*state))
+        {
+            return None;
+        }
+        let previous = with_restore_geometry(toplevel.wl_surface(), |saved| saved.take())?;
+        let target = wm::unsnapped_location(Rectangle::new(location, size), previous.size, pointer);
+        toplevel.with_pending_state(|state| {
+            state.states.unset(Maximized);
+            state.states.unset(xdg_toplevel::State::TiledLeft);
+            state.states.unset(xdg_toplevel::State::TiledRight);
+            state.states.unset(xdg_toplevel::State::TiledTop);
+            state.states.unset(xdg_toplevel::State::TiledBottom);
+            state.size = Some(previous.size);
+        });
+        toplevel.send_pending_configure();
+        self.space.map_element(window.clone(), target, true);
+        Some(target)
     }
 
     /// Garde un menu contextuel entièrement visible à l'écran.

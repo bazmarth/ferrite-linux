@@ -1,0 +1,24 @@
+# Historique du presse-papiers (Super+V) : deux copies dans TextEdit, puis la plus
+# ancienne est choisie au clavier et collée dans le document vidé.
+sleep 75
+click 583 756
+sleep 6
+type Premier texte copie
+sleep 1
+key ctrl-a
+key ctrl-c
+sleep 1
+type Deuxieme texte
+key ctrl-a
+key ctrl-c
+sleep 1
+key ctrl-a
+key delete
+sleep 1
+key meta_l-v
+sleep 2
+shot presse-papiers-1-panneau
+key down
+key ret
+sleep 2
+shot presse-papiers-2-colle

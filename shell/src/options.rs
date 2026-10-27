@@ -17,7 +17,7 @@ Options :
   --capture FICHIER     en fenêtre : enregistre une capture PNG puis quitte
   --capture-delay SEC   délai avant la capture (défaut : 3)
   --menu MENU           ouvre un menu au démarrage, pour les captures
-                        (applications, reglages ou session)
+                        (applications, reglages, session ou presse-papiers)
   -h, --help            affiche cette aide
 
 COMMANDE est lancée comme client une fois le compositeur prêt (ex. -- foot).";
@@ -106,6 +106,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
                     "applications" => Popover::Launcher,
                     "reglages" => Popover::Controls,
                     "session" => Popover::Session,
+                    "presse-papiers" => Popover::Clipboard,
                     other => return Err(format!("menu inconnu : {other}")),
                 });
             }

@@ -131,6 +131,25 @@ void main() {
 }
 "#;
 
+/// Aperçu d'accrochage : zone bleutée translucide aux coins arrondis, bordée d'un trait.
+const SNAP: &str = r#"
+uniform float scale;
+
+float rounded_box(vec2 p, vec2 half_size, float r) {
+    vec2 q = abs(p) - half_size + r;
+    return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+}
+
+void main() {
+    vec2 p = v_coords * size;
+    float d = rounded_box(p - size * 0.5, size * 0.5 - 6.0, 12.0);
+    vec3 accent = vec3(0.212, 0.537, 0.902);
+    vec4 color = over(vec4(0.0), accent, 0.20 * coverage(d, scale));
+    color = over(color, accent, 0.75 * coverage(abs(d + 1.0) - 1.0, scale));
+    gl_FragColor = finish(color);
+}
+"#;
+
 /// Shader de texture : arrondit les coins du bas du contenu d'une fenêtre (ceux du haut
 /// sont sous la barre de titre). Coordonnées en pixels physiques, repère de l'écran.
 const ROUNDED_TEXTURE: &str = r#"#version 100
@@ -193,6 +212,7 @@ void main() {
 pub struct Shaders {
     pub titlebar: GlesPixelProgram,
     pub shadow: GlesPixelProgram,
+    pub snap: GlesPixelProgram,
     pub rounded: GlesTexProgram,
 }
 
@@ -215,11 +235,13 @@ impl Shaders {
             format!("{COMMON}{SHADOW}"),
             &[vec4("rect"), float("radius"), float("blur"), float("strength")],
         )?;
+        let snap = renderer.compile_custom_pixel_shader(format!("{COMMON}{SNAP}"), &[float("scale")])?;
         let rounded = renderer
             .compile_custom_texture_shader(ROUNDED_TEXTURE, &[vec4("geo"), vec4("clip"), float("radius")])?;
         Ok(Shaders {
             titlebar,
             shadow,
+            snap,
             rounded,
         })
     }

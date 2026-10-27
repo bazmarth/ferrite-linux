@@ -6,6 +6,7 @@
 //! La structure suit d'abord l'exemple `smallvil` de Smithay 0.7.
 
 mod backend;
+mod clipboard;
 mod desktop;
 mod input;
 mod options;
@@ -59,6 +60,10 @@ fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     match system::start(&event_loop.handle()) {
         Ok(link) => state.system_link = Some(link),
         Err(err) => warn!("services système indisponibles : {err}"),
+    }
+    match clipboard::start(&event_loop.handle()) {
+        Ok(sender) => state.clipboard_sender = Some(sender),
+        Err(err) => warn!("historique du presse-papiers indisponible : {err}"),
     }
 
     let has_display = std::env::var_os("WAYLAND_DISPLAY").is_some() || std::env::var_os("DISPLAY").is_some();

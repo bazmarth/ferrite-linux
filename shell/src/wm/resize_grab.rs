@@ -283,7 +283,9 @@ impl PointerGrab<Ferrite> for ResizeSurfaceGrab {
         &self.start_data
     }
 
-    fn unset(&mut self, _data: &mut Ferrite) {}
+    fn unset(&mut self, data: &mut Ferrite) {
+        data.resizing = None;
+    }
 }
 
 /// État du redimensionnement, stocké dans les données de la surface

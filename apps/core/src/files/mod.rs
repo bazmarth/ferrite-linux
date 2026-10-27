@@ -610,6 +610,15 @@ caches={}
                 if !selection.is_empty() && self.location != Location::Trash {
                     let cut = matches!(action, Action::Cut);
                     let count = selection.len();
+                    // Les chemins vont aussi dans le presse-papiers du système : on peut les
+                    // coller dans un texte, et Ctrl+V arrive bien à Fichiers (sous Wayland,
+                    // egui ne signale « coller » que si le presse-papiers contient du texte).
+                    let paths: Vec<String> =
+                        selection.iter().map(|path| path.display().to_string()).collect();
+                    ctx.copy_text(paths.join(
+                        "
+",
+                    ));
                     self.clipboard = Some((selection, cut));
                     self.info(format!(
                         "{count} élément{} {}",
@@ -969,13 +978,16 @@ caches={}
             if ctrl && pressed(Key::A) {
                 actions.push(Action::SelectAll);
             }
-            if ctrl && pressed(Key::C) {
+            // Sous Wayland, egui livre Ctrl+C, Ctrl+X et Ctrl+V comme des événements
+            // copier / couper / coller, et non comme des touches.
+            let event = |wanted: fn(&egui::Event) -> bool| input.events.iter().any(wanted);
+            if (ctrl && pressed(Key::C)) || event(|e| matches!(e, egui::Event::Copy)) {
                 actions.push(Action::Copy);
             }
-            if ctrl && pressed(Key::X) {
+            if (ctrl && pressed(Key::X)) || event(|e| matches!(e, egui::Event::Cut)) {
                 actions.push(Action::Cut);
             }
-            if ctrl && pressed(Key::V) {
+            if (ctrl && pressed(Key::V)) || event(|e| matches!(e, egui::Event::Paste(_))) {
                 actions.push(Action::Paste);
             }
             if ctrl && pressed(Key::D) {
@@ -1033,7 +1045,11 @@ caches={}
                 if let Some(text) = &mut self.path_edit {
                     let response =
                         ui.add(egui::TextEdit::singleline(text).desired_width(ui.available_width() - 8.0));
-                    response.request_focus();
+                    if !response.has_focus() {
+                        // Ouverture du champ : tout le chemin est sélectionné, la saisie le remplace.
+                        response.request_focus();
+                        select_all(ui, response.id, text);
+                    }
                     if ui.input(|input| input.key_pressed(Key::Enter)) {
                         actions.push(Action::CommitPath);
                     } else if ui.input(|input| input.key_pressed(Key::Escape)) || response.lost_focus() {
@@ -2124,6 +2140,16 @@ fn file_name(path: &Path) -> String {
     path.file_name()
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default()
+}
+
+fn select_all(ui: &egui::Ui, id: egui::Id, text: &str) {
+    let mut state = egui::TextEdit::load_state(ui.ctx(), id).unwrap_or_default();
+    let range = egui::text::CCursorRange::two(
+        egui::text::CCursor::new(0),
+        egui::text::CCursor::new(text.chars().count()),
+    );
+    state.cursor.set_char_range(Some(range));
+    state.store(ui.ctx(), id);
 }
 
 /// Sélectionne le nom sans l'extension dans le champ `id`, comme le Finder.

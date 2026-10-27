@@ -172,7 +172,8 @@ impl Default for EditorState {
             font: DEFAULT_FONT,
             message: None,
             cursor: (1, 1),
-            pending_selection: None,
+            // Le curseur est dans le texte dès l'ouverture : on peut écrire tout de suite.
+            pending_selection: Some(CCursorRange::one(CCursor::new(0))),
             reveal_match: false,
             quitting: false,
             close_window: false,

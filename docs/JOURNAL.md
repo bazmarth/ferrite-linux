@@ -526,3 +526,31 @@ Vérifié dans QEMU (mode développement) : scénarios `accrochage.txt` (moitié
 écran, décrochage), `fichiers.txt` (copie « essai (copie) », chemin saisi),
 `presse-papiers.txt` (deux copies, choix au clavier, collage). Clippy et tous les tests.
 À vérifier : copier-coller avec une application X11 (Brave) et une image, sur le PC.
+
+## 2026-10-27 — Dock dynamique, une fenêtre par application, nouveau cadre des applications
+
+- **Dock** : applications épinglées puis, après un trait, les applications ouvertes non
+  épinglées ; clic droit : garder / retirer du Dock, nouvelle fenêtre (si permise),
+  quitter (`dock_epingles`). Clic sur une application ouverte : sa fenêtre revient, même
+  réduite ; déjà devant, on passe à sa fenêtre suivante.
+- **Agrandissement** des icônes sous la souris (+22 %, sur place ; le fond garde sa
+  taille), désactivable (`dock_agrandissement`).
+- **Réduction animée** vers l'icône du Dock (rétrécit et s'estompe, 320 ms) et retour.
+- **Une seule fenêtre par application** : le menu et le Dock ramènent la fenêtre ouverte ;
+  un deuxième lancement d'une application Ferrite (TextEdit ouvert depuis Fichiers) confie
+  son fichier à la première instance (`$XDG_RUNTIME_DIR/<app_id>.sock`). Exceptions dans
+  Paramètres > Bureau et Dock > Fenêtres (`fenetres_multiples`, Fichiers par défaut).
+- **Cadre des applications**, dans l'esprit de macOS : colonne colorée sur toute la
+  hauteur avec les boutons de fenêtre en haut, barre d'outils et contenu clairs à droite.
+  Les applications Ferrite dessinent leur haut (`with_decorations(false)`) ; ferrite-shell
+  garde coins arrondis (les quatre), ombre et bords de redimensionnement.
+- **Paramètres** comme les Réglages de macOS : recherche, carte de l'utilisateur,
+  rubriques groupées en tuiles colorées, choix en bleu, précédent / suivant et titre.
+- Boutons de fenêtre plus grands (rayon 7, pas 23), dans le compositeur et les applications.
+
+Vérifié dans QEMU (mode développement, scénario `dock-dynamique.txt`) : une seule fenêtre
+de TextEdit, Moniteur après le trait, agrandissement, réduction par le bouton jaune de
+l'application et retour par le Dock. Clippy et tous les tests. Captures du nouveau cadre
+(Paramètres, Fichiers, TextEdit, Moniteur, Calculatrice).
+À vérifier : menu du clic droit sur le Dock (pas d'étape « clic droit » dans les
+scénarios), déplacement d'une fenêtre par sa barre d'outils, sur le PC.

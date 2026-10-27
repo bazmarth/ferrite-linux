@@ -453,3 +453,52 @@ Vérifié (QEMU en mode développement, sans reconstruire l'ISO) :
   réaliste) ;
 - l'ISO n'est pas reconstruite.
 
+
+## 2026-10-26 — Fichiers complet, TextEdit moderne
+
+Fichiers (`apps/core/src/files/`) :
+- vues liste (colonnes triables, tri naturel « image2 » avant « image10 ») et grille ;
+  vue, tri et fichiers cachés gardés dans `~/.config/ferrite/fichiers` ;
+- chemin cliquable ou saisi (Ctrl+L), précédent/suivant/parent, recherche ;
+- sélection multiple (Ctrl, Maj, Ctrl+A), menus contextuels, raccourcis habituels ;
+- copier, couper, coller, dupliquer en arrière-plan avec progression et annulation ;
+  renommer (F2), nouveau dossier (Ctrl+Maj+N) ;
+- Corbeille au format freedesktop (restaurer, vider), suppression définitive confirmée ;
+- ouvrir avec…, propriétés (taille des dossiers calculée à part), terminal ici ;
+- clés USB : montage par `udisksctl` et éjection ;
+- `ferrite-apps files CHEMIN` ouvre un dossier ou montre un fichier ; `xdg-open` d'un
+  dossier ouvre Fichiers (`ferrite-files.desktop`, `/etc/xdg/mimeapps.list`) ;
+- mode sélecteur (Ouvrir, Enregistrer sous, confirmation avant de remplacer) ;
+- icônes « emplacements » au trait (`icons/SVG/places-*.svg`), faites pour être teintées.
+
+TextEdit (`apps/core/src/editor.rs`) :
+- onglets, glisser-déposer, fichier déjà ouvert = retour à son onglet ;
+- Ouvrir et Enregistrer sous affichent le sélecteur de Fichiers en feuille ;
+- numéros de ligne, ligne courante, retour à la ligne au choix, taille du texte
+  (Ctrl+plus, Ctrl+moins, Ctrl+0) ;
+- rechercher (Ctrl+F, F3, occurrences surlignées) et remplacer (Ctrl+H) ;
+- demande avant de fermer un onglet ou de quitter avec des modifications ;
+- barre d'état : ligne, colonne, mots, caractères, fins de ligne.
+
+Vérifié :
+- clippy sans avertissement, tous les tests passent (20 pour `ferrite-apps`) ;
+- captures dans `tools/shell-dev.sh` : Fichiers en liste et en grille, TextEdit,
+  feuille « Enregistrer sous », recherche et remplacement.
+
+À vérifier :
+- les opérations à la souris et au clavier dans QEMU (scénario
+  `tools/scenarios/fichiers.txt` écrit, pas encore lancé) ;
+- l'ISO n'est pas reconstruite.
+
+## 2026-10-27 — Barre du haut masquable
+
+- Paramètres > Bureau et Dock > « Barre du haut » : jamais (sauf en plein écran, comme
+  avant, par défaut), quand une fenêtre la recouvre, ou toujours (clé `barre_masquage`).
+- Masquable, elle ne réserve plus de bande : les fenêtres agrandies montent jusqu'en haut.
+- Masquée, elle revient quand la souris touche le bord du haut (2 px), puis reste tant que
+  la souris est dessus : la barre de titre d'une fenêtre agrandie reste accessible. Même
+  règle en plein écran.
+
+Vérifié : clippy, tous les tests ; capture du bureau en mode « toujours » (barre absente).
+À vérifier : le mode « quand une fenêtre la recouvre » avec une fenêtre agrandie, et le
+retour de la barre à la souris, dans QEMU.

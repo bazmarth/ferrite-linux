@@ -20,7 +20,6 @@ pub const TEXT: Color32 = color(PALETTE.text);
 pub const TEXT_SECONDARY: Color32 = color(PALETTE.text_secondary);
 pub const SEPARATOR: Color32 = color(PALETTE.separator);
 pub const ACCENT: Color32 = Color32::from_rgb(0x36, 0x89, 0xE6);
-pub const SELECTION: Color32 = Color32::from_rgb(0xD9, 0xE8, 0xFA);
 /// Ligne choisie d'une barre latérale : gris neutre, comme macOS et elementary OS.
 pub const SIDEBAR_SELECTED: Color32 = Color32::from_rgb(0xDD, 0xDD, 0xE2);
 pub const ERROR: Color32 = Color32::from_rgb(0xC6, 0x26, 0x2E);
@@ -120,7 +119,7 @@ pub fn strong_family() -> FontFamily {
 
 /// Barre d'en-tête (boutons, chemin…) collée sous la barre de titre.
 pub fn header(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
-    egui::Panel::top("ferrite-header")
+    egui::Panel::top(ui.scope_id().with("ferrite-header"))
         .resizable(false)
         .frame(Frame::new().fill(HEADER).inner_margin(Margin::symmetric(10, 8)))
         .show(ui, |ui| ui.horizontal(add));
@@ -128,7 +127,7 @@ pub fn header(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
 
 /// Barre d'état discrète en bas de la fenêtre.
 pub fn status_bar(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
-    egui::Panel::bottom("ferrite-status")
+    egui::Panel::bottom(ui.scope_id().with("ferrite-status"))
         .resizable(false)
         .frame(Frame::new().fill(HEADER).inner_margin(Margin::symmetric(12, 5)))
         .show(ui, |ui| {
@@ -146,16 +145,6 @@ pub fn suggested_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
         egui::Button::new(egui::RichText::new(text).color(Color32::WHITE))
             .fill(ACCENT)
             .stroke(Stroke::new(1.0, Color32::from_rgb(0x2A, 0x74, 0xC9))),
-    )
-}
-
-/// Bouton d'outil carré, sans cadre au repos.
-pub fn tool_button(ui: &mut egui::Ui, text: &str, enabled: bool) -> egui::Response {
-    ui.add_enabled(
-        enabled,
-        egui::Button::new(egui::RichText::new(text).size(16.0))
-            .frame_when_inactive(false)
-            .min_size(egui::vec2(32.0, 28.0)),
     )
 }
 
@@ -202,9 +191,21 @@ icons![
     "app-music",
     "app-photos",
     "app-terminal",
+    "app-store",
     "app-video",
     "file-generic",
     "file-text",
+    "places-computer",
+    "places-desktop",
+    "places-documents",
+    "places-downloads",
+    "places-home",
+    "places-music",
+    "places-pictures",
+    "places-trash",
+    "places-trash-full",
+    "places-usb",
+    "places-videos",
     "app-calendar",
     "app-clock",
     "app-settings",
@@ -214,6 +215,7 @@ icons![
     "status-keyboard",
     "status-lock",
     "status-storage",
+    "status-usb",
     "status-user",
     "status-volume-4",
     "status-wifi-4",
@@ -262,13 +264,6 @@ impl Icons {
                 Some(ctx.load_texture(name, image, TextureOptions::LINEAR))
             })
             .clone()
-    }
-
-    /// Affiche l'icône `name` en carré de `size` points.
-    pub fn show(&mut self, ui: &mut egui::Ui, name: &'static str, size: f32) -> egui::Response {
-        let (rect, response) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
-        self.paint(ui, name, rect, IconStyle::Color);
-        response
     }
 
     /// Dessine l'icône dans `rect`, sans créer de widget (donc sans capter la souris).

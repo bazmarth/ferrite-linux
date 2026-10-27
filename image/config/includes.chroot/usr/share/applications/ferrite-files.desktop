@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Fichiers
+Comment=Gestionnaire de fichiers de Ferrite
+Exec=ferrite-apps files %f
+Icon=system-file-manager
+MimeType=inode/directory;
+Categories=System;FileManager;
+NoDisplay=true

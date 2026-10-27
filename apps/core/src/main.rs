@@ -64,7 +64,7 @@ impl AppKind {
 fn main() -> eframe::Result {
     let mut args = env::args().skip(1);
     let Some(kind) = args.next().and_then(|arg| AppKind::parse(&arg)) else {
-        eprintln!("Utilisation : ferrite-apps <files|textedit|calculator|settings> [fichier]");
+        eprintln!("Utilisation : ferrite-apps <files|textedit|calculator|settings> [dossier ou fichier]");
         return Ok(());
     };
     let initial_file = args.next().map(PathBuf::from);
@@ -96,12 +96,16 @@ impl FerriteApp {
     fn new(context: &eframe::CreationContext<'_>, kind: AppKind, initial_file: Option<PathBuf>) -> Self {
         style::apply(&context.egui_ctx);
         let mut editor = EditorState::default();
+        let mut files = (kind == AppKind::Files).then(FilesState::default);
         if let Some(path) = initial_file {
-            editor.open(path);
+            match &mut files {
+                Some(files) => files.open_at(path),
+                None => editor.open(path),
+            }
         }
         Self {
             kind,
-            files: (kind == AppKind::Files).then(FilesState::default),
+            files,
             editor,
             calculator: CalculatorState::default(),
             settings: (kind == AppKind::Settings).then(SettingsState::default),

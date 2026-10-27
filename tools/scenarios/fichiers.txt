@@ -1,0 +1,29 @@
+# Fichiers : ouverture depuis le Dock, nouveau dossier renommé, copier-coller,
+# Corbeille, vue en grille.
+sleep 75
+click 523 756
+sleep 6
+shot fichiers-1-accueil
+# Nouveau dossier (Ctrl+Maj+N) : le nom est déjà sélectionné pour la saisie.
+key ctrl-shift-n
+sleep 2
+type essai
+key ret
+sleep 2
+# Copier puis coller dans le même dossier : « essai (copie) ».
+key ctrl-c
+key ctrl-v
+sleep 3
+shot fichiers-2-copie
+# Mettre la copie à la Corbeille (Suppr) puis afficher la Corbeille.
+key end
+sleep 1
+key delete
+sleep 2
+shot fichiers-3-corbeille-pleine
+key ctrl-l
+sleep 1
+type /usr/share
+key ret
+sleep 3
+shot fichiers-4-chemin

@@ -29,6 +29,7 @@ macro_rules! icons {
 
 icons![
     "app-calculator",
+    "app-monitor",
     "app-files",
     "app-search",
     "app-settings",

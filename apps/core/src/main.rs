@@ -1,8 +1,10 @@
-//! Applications de base Ferrite : Fichiers, TextEdit et Calculatrice.
+//! Applications de base Ferrite : Fichiers, TextEdit, Calculatrice, Paramètres et
+//! Moniteur d'activité.
 
 mod calculator;
 mod editor;
 mod files;
+mod monitor;
 mod settings;
 mod style;
 
@@ -10,7 +12,10 @@ use std::{env, path::PathBuf};
 
 use eframe::egui;
 
-use crate::{calculator::CalculatorState, editor::EditorState, files::FilesState, settings::SettingsState};
+use crate::{
+    calculator::CalculatorState, editor::EditorState, files::FilesState, monitor::MonitorState,
+    settings::SettingsState,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AppKind {
@@ -18,6 +23,7 @@ enum AppKind {
     TextEdit,
     Calculator,
     Settings,
+    Monitor,
 }
 
 impl AppKind {
@@ -27,6 +33,7 @@ impl AppKind {
             "textedit" => Some(Self::TextEdit),
             "calculator" => Some(Self::Calculator),
             "settings" => Some(Self::Settings),
+            "monitor" => Some(Self::Monitor),
             _ => None,
         }
     }
@@ -37,6 +44,7 @@ impl AppKind {
             Self::TextEdit => "TextEdit",
             Self::Calculator => "Calculatrice",
             Self::Settings => "Paramètres",
+            Self::Monitor => "Moniteur d'activité",
         }
     }
 
@@ -47,6 +55,7 @@ impl AppKind {
             Self::TextEdit => "ferrite-textedit",
             Self::Calculator => "ferrite-calculator",
             Self::Settings => "ferrite-settings",
+            Self::Monitor => "ferrite-monitor",
         }
     }
 
@@ -57,6 +66,7 @@ impl AppKind {
             Self::TextEdit => ([760.0, 540.0], [420.0, 280.0]),
             Self::Calculator => ([320.0, 470.0], [280.0, 420.0]),
             Self::Settings => ([880.0, 580.0], [680.0, 440.0]),
+            Self::Monitor => ([920.0, 620.0], [680.0, 460.0]),
         }
     }
 }
@@ -64,7 +74,9 @@ impl AppKind {
 fn main() -> eframe::Result {
     let mut args = env::args().skip(1);
     let Some(kind) = args.next().and_then(|arg| AppKind::parse(&arg)) else {
-        eprintln!("Utilisation : ferrite-apps <files|textedit|calculator|settings> [dossier ou fichier]");
+        eprintln!(
+            "Utilisation : ferrite-apps <files|textedit|calculator|settings|monitor> [dossier ou fichier]"
+        );
         return Ok(());
     };
     let initial_file = args.next().map(PathBuf::from);
@@ -90,6 +102,7 @@ struct FerriteApp {
     editor: EditorState,
     calculator: CalculatorState,
     settings: Option<SettingsState>,
+    monitor: Option<MonitorState>,
 }
 
 impl FerriteApp {
@@ -109,6 +122,7 @@ impl FerriteApp {
             editor,
             calculator: CalculatorState::default(),
             settings: (kind == AppKind::Settings).then(SettingsState::default),
+            monitor: (kind == AppKind::Monitor).then(MonitorState::default),
         }
     }
 }
@@ -136,6 +150,11 @@ impl eframe::App for FerriteApp {
             AppKind::Settings => {
                 if let Some(settings) = &mut self.settings {
                     settings.update(ui);
+                }
+            }
+            AppKind::Monitor => {
+                if let Some(monitor) = &mut self.monitor {
+                    monitor.update(ui);
                 }
             }
         }

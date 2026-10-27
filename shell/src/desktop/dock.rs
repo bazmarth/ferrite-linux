@@ -77,7 +77,7 @@ impl DockConfig {
     }
 
     pub fn width(self) -> i32 {
-        let count = App::ALL.len() as i32;
+        let count = App::DOCK.len() as i32;
         2 * PAD_X + count * self.icon() + (count - 1) * ICON_GAP
     }
 
@@ -182,7 +182,7 @@ impl Dock {
         if reveal <= 0.0 {
             return;
         }
-        let mask = App::ALL
+        let mask = App::DOCK
             .iter()
             .enumerate()
             .filter(|(_, app)| running.contains(app))
@@ -253,7 +253,7 @@ impl Dock {
             0.0,
             Color::WHITE.with_alpha(150),
         );
-        for (index, app) in App::ALL.into_iter().enumerate() {
+        for (index, app) in App::DOCK.into_iter().enumerate() {
             let x = (PAD_X + index as i32 * (icon + ICON_GAP)) as f32 * factor;
             let size = icon as f32 * factor;
             self.icons.draw(
@@ -331,7 +331,7 @@ pub fn app_at(
     }
     let stride = config.icon() + ICON_GAP;
     let index = (x / stride) as usize;
-    (index < App::ALL.len() && x % stride < config.icon()).then_some(App::ALL[index])
+    (index < App::DOCK.len() && x % stride < config.icon()).then_some(App::DOCK[index])
 }
 
 #[allow(clippy::too_many_arguments)] // Rectangle, rayon et pixels sont transmis sans état global.

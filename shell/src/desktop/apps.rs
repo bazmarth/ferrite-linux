@@ -70,10 +70,22 @@ pub enum App {
     Terminal,
     Calculator,
     Settings,
+    Monitor,
 }
 
 impl App {
-    pub const ALL: [App; 5] = [
+    /// Applications Ferrite du menu Applications.
+    pub const ALL: [App; 6] = [
+        App::Files,
+        App::TextEdit,
+        App::Terminal,
+        App::Calculator,
+        App::Settings,
+        App::Monitor,
+    ];
+
+    /// Applications épinglées dans le Dock.
+    pub const DOCK: [App; 5] = [
         App::Files,
         App::TextEdit,
         App::Terminal,
@@ -88,6 +100,7 @@ impl App {
             App::Terminal => "Terminal",
             App::Calculator => "Calculatrice",
             App::Settings => "Paramètres",
+            App::Monitor => "Moniteur d'activité",
         }
     }
 
@@ -99,6 +112,7 @@ impl App {
             App::Terminal => "app-terminal",
             App::Calculator => "app-calculator",
             App::Settings => "app-settings",
+            App::Monitor => "app-monitor",
         }
     }
 
@@ -110,6 +124,7 @@ impl App {
             App::Terminal => "foot",
             App::Calculator => "ferrite-calculator",
             App::Settings => "ferrite-settings",
+            App::Monitor => "ferrite-monitor",
         }
     }
 
@@ -120,6 +135,7 @@ impl App {
             App::Terminal => ("foot", None),
             App::Calculator => ("ferrite-apps", Some("calculator")),
             App::Settings => ("ferrite-apps", Some("settings")),
+            App::Monitor => ("ferrite-apps", Some("monitor")),
         }
     }
 
@@ -169,5 +185,9 @@ mod tests {
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].name(), "VLC media player");
         assert_eq!(launcher_entries(&installed, "CALC")[0].name(), "Calculatrice");
+        assert_eq!(
+            launcher_entries(&installed, "moniteur")[0].name(),
+            "Moniteur d'activité"
+        );
     }
 }

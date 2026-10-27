@@ -1,6 +1,8 @@
-//! Apparence commune des applications Ferrite : couleurs de la charte, polices,
-//! barre d'en-tête prolongeant la barre de titre du compositeur, et icônes SVG du
-//! dossier `icons/SVG`.
+//! Apparence commune des applications Ferrite, dans l'esprit de macOS : une colonne
+//! colorée à gauche sur toute la hauteur, avec les trois boutons de fenêtre en haut, et
+//! à droite la barre d'outils et le contenu, plus clairs. Les applications dessinent leur
+//! haut elles-mêmes ; ferrite-shell garde les coins arrondis, l'ombre et les bords.
+//! Aussi : couleurs de la charte, polices, et icônes SVG du dossier `icons/SVG`.
 
 use std::{collections::HashMap, sync::Arc};
 
@@ -12,16 +14,22 @@ use ferrite_ui::theme::{Color, Palette};
 
 const PALETTE: Palette = Palette::LIGHT;
 
-/// En-tête et barre d'état : même teinte que la barre de titre, pour ne former qu'un bloc.
-pub const HEADER: Color32 = color(PALETTE.titlebar);
-pub const BACKGROUND: Color32 = color(PALETTE.window_background);
-pub const SIDEBAR: Color32 = Color32::from_rgb(0xEF, 0xEF, 0xF1);
+/// Barre d'état et fonds secondaires, à peine teintés.
+pub const HEADER: Color32 = Color32::from_rgb(0xF8, 0xF8, 0xFA);
+/// Contenu et barre d'outils : la partie claire de la fenêtre.
+pub const BACKGROUND: Color32 = Color32::WHITE;
+/// Fond du contenu des Paramètres, où les réglages sont posés sur des cartes blanches.
+pub const CONTENT_GRAY: Color32 = Color32::from_rgb(0xF5, 0xF5, 0xF7);
+/// Colonne de gauche : gris légèrement bleuté, plus soutenu que le contenu.
+pub const SIDEBAR: Color32 = Color32::from_rgb(0xE8, 0xE8, 0xEE);
+/// Hauteur de la barre d'outils, et de la zone des boutons en haut de la colonne.
+pub const TOOLBAR_HEIGHT: f32 = 52.0;
 pub const TEXT: Color32 = color(PALETTE.text);
 pub const TEXT_SECONDARY: Color32 = color(PALETTE.text_secondary);
 pub const SEPARATOR: Color32 = color(PALETTE.separator);
 pub const ACCENT: Color32 = Color32::from_rgb(0x36, 0x89, 0xE6);
-/// Ligne choisie d'une barre latérale : gris neutre, comme macOS et elementary OS.
-pub const SIDEBAR_SELECTED: Color32 = Color32::from_rgb(0xDD, 0xDD, 0xE2);
+/// Ligne choisie d'une barre latérale : gris neutre, comme le Finder.
+pub const SIDEBAR_SELECTED: Color32 = Color32::from_rgb(0xD5, 0xD5, 0xDE);
 pub const ERROR: Color32 = Color32::from_rgb(0xC6, 0x26, 0x2E);
 
 const fn color(color: Color) -> Color32 {
@@ -117,12 +125,167 @@ pub fn strong_family() -> FontFamily {
     FontFamily::Name("strong".into())
 }
 
-/// Barre d'en-tête (boutons, chemin…) collée sous la barre de titre.
+/// Barre d'outils d'une fenêtre sans colonne : boutons de fenêtre à gauche, puis `add`.
 pub fn header(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
+    toolbar(ui, true, add);
+}
+
+/// Barre d'outils en haut du contenu, claire. Avec `buttons`, elle porte les boutons de
+/// fenêtre (fenêtres sans colonne à gauche). Le vide sert à déplacer la fenêtre.
+pub fn toolbar(ui: &mut egui::Ui, buttons: bool, add: impl FnOnce(&mut egui::Ui)) {
+    let left = if buttons { 96 } else { 14 };
     egui::Panel::top(ui.scope_id().with("ferrite-header"))
         .resizable(false)
-        .frame(Frame::new().fill(HEADER).inner_margin(Margin::symmetric(10, 8)))
-        .show(ui, |ui| ui.horizontal(add));
+        .exact_size(TOOLBAR_HEIGHT)
+        .frame(Frame::new().fill(BACKGROUND).inner_margin(Margin {
+            left,
+            right: 12,
+            top: 0,
+            bottom: 0,
+        }))
+        .show(ui, |ui| {
+            let inner = ui.max_rect();
+            let full = egui::Rect::from_min_max(
+                egui::pos2(inner.left() - left as f32, inner.top()),
+                egui::pos2(inner.right() + 12.0, inner.bottom()),
+            );
+            // Fond déplaçable, enregistré avant les boutons pour qu'ils restent prioritaires.
+            drag_area(ui, full, "barre");
+            if buttons {
+                window_buttons(ui, egui::pos2(full.left() + 22.0, full.center().y));
+            }
+            ui.painter()
+                .hline(full.x_range(), full.bottom() - 0.5, Stroke::new(1.0, SEPARATOR));
+            // Centré en hauteur, sans étirer les éléments (pastilles, onglets).
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), add);
+        });
+}
+
+/// Colonne de gauche sur toute la hauteur, de couleur `fill`, avec les boutons de
+/// fenêtre en haut (sauf `buttons` faux : sélecteur de fichiers dans une feuille).
+pub fn sidebar(
+    ui: &mut egui::Ui,
+    id: &str,
+    width: f32,
+    fill: Color32,
+    buttons: bool,
+    add: impl FnOnce(&mut egui::Ui),
+) {
+    egui::Panel::left(ui.scope_id().with(id))
+        .resizable(false)
+        .exact_size(width)
+        .frame(Frame::new().fill(fill))
+        .show(ui, |ui| {
+            let full = ui.max_rect();
+            let top = egui::Rect::from_min_size(full.min, egui::vec2(full.width(), TOOLBAR_HEIGHT));
+            if buttons {
+                drag_area(ui, top, "colonne");
+                window_buttons(ui, egui::pos2(full.left() + 22.0, top.center().y));
+            }
+            ui.painter()
+                .vline(full.right() - 0.5, full.y_range(), Stroke::new(1.0, SEPARATOR));
+            let body = egui::Rect::from_min_max(
+                egui::pos2(
+                    full.left() + 10.0,
+                    if buttons { top.bottom() } else { full.top() + 12.0 },
+                ),
+                egui::pos2(full.right() - 10.0, full.bottom() - 8.0),
+            );
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(body));
+            add(&mut child);
+        });
+}
+
+/// Zone vide qui déplace la fenêtre ; un double-clic l'agrandit ou la rétablit.
+fn drag_area(ui: &mut egui::Ui, rect: egui::Rect, salt: &str) {
+    let response = ui.interact(
+        rect,
+        ui.scope_id().with(("deplacer", salt)),
+        egui::Sense::click_and_drag(),
+    );
+    if response.drag_started() {
+        ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+    }
+    if response.double_clicked() {
+        let maximized = ui.input(|input| input.viewport().maximized.unwrap_or(false));
+        ui.ctx()
+            .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+    }
+}
+
+/// Les trois boutons de fenêtre (fermer, réduire, agrandir), comme ceux que ferrite-shell
+/// dessine pour les autres applications : même taille, mêmes couleurs, symboles au survol.
+fn window_buttons(ui: &mut egui::Ui, first: egui::Pos2) {
+    use ferrite_ui::theme::{TRAFFIC_LIGHT_RADIUS, TRAFFIC_LIGHT_STEP};
+    let radius = TRAFFIC_LIGHT_RADIUS as f32;
+    let step = TRAFFIC_LIGHT_STEP as f32;
+    let group = egui::Rect::from_min_max(
+        egui::pos2(first.x - radius - 3.0, first.y - radius - 3.0),
+        egui::pos2(first.x + 2.0 * step + radius + 3.0, first.y + radius + 3.0),
+    );
+    let hovered = ui.rect_contains_pointer(group);
+    let focused = ui.input(|input| input.viewport().focused.unwrap_or(true));
+    let [close, minimize, zoom] = PALETTE.traffic_lights;
+    let (off_fill, off_edge) = PALETTE.traffic_light_inactive;
+    for (index, (fill, edge)) in [close, minimize, zoom].into_iter().enumerate() {
+        let center = egui::pos2(first.x + index as f32 * step, first.y);
+        let rect = egui::Rect::from_center_size(center, egui::vec2(2.0 * radius + 4.0, 2.0 * radius + 4.0));
+        let response = ui.interact(rect, ui.scope_id().with(("feu", index)), egui::Sense::click());
+        let (fill, edge) = if focused || hovered {
+            (fill, edge)
+        } else {
+            (off_fill, off_edge)
+        };
+        let painter = ui.painter();
+        painter.circle(center, radius, color(fill), Stroke::new(0.8, color(edge)));
+        if hovered {
+            let ink = color(edge).gamma_multiply(0.55);
+            let stroke = Stroke::new(1.3, ink);
+            let d = radius * 0.42;
+            match index {
+                0 => {
+                    painter.line_segment([center + egui::vec2(-d, -d), center + egui::vec2(d, d)], stroke);
+                    painter.line_segment([center + egui::vec2(-d, d), center + egui::vec2(d, -d)], stroke);
+                }
+                1 => {
+                    painter.line_segment(
+                        [
+                            center + egui::vec2(-d - 0.6, 0.0),
+                            center + egui::vec2(d + 0.6, 0.0),
+                        ],
+                        stroke,
+                    );
+                }
+                _ => {
+                    painter.line_segment(
+                        [
+                            center + egui::vec2(-d - 0.6, 0.0),
+                            center + egui::vec2(d + 0.6, 0.0),
+                        ],
+                        stroke,
+                    );
+                    painter.line_segment(
+                        [
+                            center + egui::vec2(0.0, -d - 0.6),
+                            center + egui::vec2(0.0, d + 0.6),
+                        ],
+                        stroke,
+                    );
+                }
+            }
+        }
+        if response.clicked() {
+            let ctx = ui.ctx();
+            match index {
+                0 => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+                1 => ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true)),
+                _ => {
+                    let maximized = ui.input(|input| input.viewport().maximized.unwrap_or(false));
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+                }
+            }
+        }
+    }
 }
 
 /// Barre d'état discrète en bas de la fenêtre.
@@ -322,6 +485,119 @@ pub fn sidebar_item(
         text,
         font,
         TEXT,
+    );
+    response
+}
+
+/// Ligne de colonne des Paramètres : choisie, elle se remplit de bleu, texte blanc
+/// (comme les Réglages de macOS).
+pub fn sidebar_item_filled(
+    ui: &mut egui::Ui,
+    icons: &mut Icons,
+    icon: &'static str,
+    icon_style: IconStyle,
+    text: &str,
+    selected: bool,
+) -> egui::Response {
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 32.0), egui::Sense::click());
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    if selected {
+        ui.painter().rect_filled(rect, 8.0, ACCENT);
+    } else if response.hovered() {
+        ui.painter().rect_filled(rect, 8.0, Color32::from_black_alpha(10));
+    }
+    let icon_rect = egui::Rect::from_center_size(
+        egui::pos2(rect.left() + 20.0, rect.center().y),
+        egui::vec2(22.0, 22.0),
+    );
+    icons.paint(ui, icon, icon_rect, icon_style);
+    ui.painter().text(
+        egui::pos2(icon_rect.right() + 10.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        text,
+        FontId::proportional(13.5),
+        if selected { Color32::WHITE } else { TEXT },
+    );
+    response
+}
+
+/// Carte de l'utilisateur en haut de la colonne des Paramètres : avatar à l'initiale,
+/// nom et identifiant.
+pub fn account_card(ui: &mut egui::Ui, name: &str, login: &str, selected: bool) -> egui::Response {
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 56.0), egui::Sense::click());
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    let painter = ui.painter();
+    let fill = if selected {
+        ACCENT
+    } else if response.hovered() {
+        Color32::from_black_alpha(10)
+    } else {
+        Color32::TRANSPARENT
+    };
+    painter.rect_filled(rect, 10.0, fill);
+    let avatar = egui::pos2(rect.left() + 28.0, rect.center().y);
+    painter.circle_filled(avatar, 19.0, Color32::from_rgb(0x8E, 0x93, 0x9E));
+    let initial: String = name
+        .chars()
+        .next()
+        .map(|c| c.to_uppercase().collect())
+        .unwrap_or_default();
+    painter.text(
+        avatar,
+        egui::Align2::CENTER_CENTER,
+        initial,
+        FontId::new(17.0, strong_family()),
+        Color32::WHITE,
+    );
+    let (ink, secondary) = if selected {
+        (Color32::WHITE, Color32::from_white_alpha(210))
+    } else {
+        (TEXT, TEXT_SECONDARY)
+    };
+    painter.text(
+        egui::pos2(rect.left() + 56.0, rect.center().y - 8.0),
+        egui::Align2::LEFT_CENTER,
+        name,
+        FontId::new(13.5, strong_family()),
+        ink,
+    );
+    painter.text(
+        egui::pos2(rect.left() + 56.0, rect.center().y + 9.0),
+        egui::Align2::LEFT_CENTER,
+        format!("Compte Ferrite · {login}"),
+        FontId::proportional(11.5),
+        secondary,
+    );
+    response
+}
+
+/// Flèche précédent (`forward` faux) ou suivant d'une barre d'outils.
+pub fn arrow_button(ui: &mut egui::Ui, forward: bool, enabled: bool) -> egui::Response {
+    let sense = if enabled {
+        egui::Sense::click()
+    } else {
+        egui::Sense::hover()
+    };
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(30.0, 26.0), sense);
+    if enabled && response.hovered() {
+        ui.painter().rect_filled(rect, 6.0, Color32::from_black_alpha(12));
+    }
+    let color = if enabled {
+        TEXT
+    } else {
+        Color32::from_rgb(0xBB, 0xBB, 0xC2)
+    };
+    let c = rect.center();
+    let s = if forward { -1.0 } else { 1.0 };
+    ui.painter().line(
+        vec![
+            c + egui::vec2(3.0 * s, -6.0),
+            c + egui::vec2(-3.0 * s, 0.0),
+            c + egui::vec2(3.0 * s, 6.0),
+        ],
+        Stroke::new(1.8, color),
     );
     response
 }

@@ -87,8 +87,13 @@ impl CalculatorState {
 
     pub fn update(&mut self, ui: &mut egui::Ui) {
         self.keyboard(ui);
+        style::header(ui, |_| {});
         egui::CentralPanel::no_frame()
-            .frame(Frame::new().fill(style::HEADER).inner_margin(Margin::same(14)))
+            .frame(
+                Frame::new()
+                    .fill(style::BACKGROUND)
+                    .inner_margin(Margin::same(14)),
+            )
             .show(ui, |ui| {
                 self.display(ui);
                 ui.add_space(12.0);

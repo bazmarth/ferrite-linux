@@ -271,30 +271,30 @@ impl MonitorState {
     }
 
     fn header(&mut self, ui: &mut egui::Ui) {
-        // Onglets en contrôle segmenté.
-        Frame::new()
-            .fill(Color32::from_black_alpha(14))
-            .corner_radius(8.0)
-            .inner_margin(Margin::same(2))
-            .show(ui, |ui| {
-                ui.spacing_mut().item_spacing.x = 2.0;
-                for (tab, text) in [(Tab::Processes, "Processus"), (Tab::Resources, "Ressources")] {
-                    let selected = self.tab == tab;
-                    let label = RichText::new(text).color(style::TEXT);
-                    let button = egui::Button::new(label)
-                        .fill(if selected {
-                            style::BACKGROUND
-                        } else {
-                            Color32::TRANSPARENT
-                        })
-                        .stroke(Stroke::NONE)
-                        .corner_radius(6.0)
-                        .min_size(egui::vec2(96.0, 24.0));
-                    if ui.add(button).clicked() {
-                        self.tab = tab;
-                    }
-                }
-            });
+        // Onglets en contrôle segmenté, d'une hauteur fixe dans la barre d'outils.
+        let (pill, _) = ui.allocate_exact_size(egui::vec2(2.0 * 96.0 + 6.0, 30.0), Sense::hover());
+        ui.painter().rect_filled(pill, 8.0, Color32::from_black_alpha(14));
+        let mut tabs = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(pill.shrink(3.0))
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
+        tabs.spacing_mut().item_spacing.x = 0.0;
+        for (tab, text) in [(Tab::Processes, "Processus"), (Tab::Resources, "Ressources")] {
+            let selected = self.tab == tab;
+            let button = egui::Button::new(RichText::new(text).color(style::TEXT))
+                .fill(if selected {
+                    Color32::WHITE
+                } else {
+                    Color32::TRANSPARENT
+                })
+                .stroke(Stroke::NONE)
+                .corner_radius(6.0)
+                .min_size(egui::vec2(96.0, 24.0));
+            if tabs.add(button).clicked() {
+                self.tab = tab;
+            }
+        }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if self.tab == Tab::Processes {
                 let enabled = self.selected.is_some();

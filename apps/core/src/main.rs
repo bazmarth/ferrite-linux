@@ -6,6 +6,7 @@ mod editor;
 mod files;
 mod monitor;
 mod settings;
+mod single;
 mod style;
 
 use std::{env, path::PathBuf};
@@ -80,11 +81,28 @@ fn main() -> eframe::Result {
         return Ok(());
     };
     let initial_file = args.next().map(PathBuf::from);
+    // Une seule fenêtre par application, sauf celles choisies dans Paramètres : un
+    // deuxième lancement confie son fichier à la fenêtre déjà ouverte.
+    let multiple = ferrite_system::config::Settings::load()
+        .multi_window_apps()
+        .iter()
+        .any(|id| id == kind.app_id());
+    let requests = if multiple {
+        None
+    } else {
+        match single::claim(kind.app_id(), initial_file.as_deref()) {
+            single::Start::Primary(requests) => Some(requests),
+            single::Start::Forwarded => return Ok(()),
+        }
+    };
     let (size, min_size) = kind.sizes();
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Glow,
         viewport: egui::ViewportBuilder::default()
             .with_app_id(kind.app_id())
+            // Les applications Ferrite dessinent leur haut (colonne, barre d'outils et
+            // boutons) ; ferrite-shell garde coins arrondis, ombre et bords.
+            .with_decorations(false)
             .with_inner_size(size)
             .with_min_inner_size(min_size),
         ..Default::default()
@@ -92,7 +110,7 @@ fn main() -> eframe::Result {
     eframe::run_native(
         kind.title(),
         options,
-        Box::new(move |context| Ok(Box::new(FerriteApp::new(context, kind, initial_file)))),
+        Box::new(move |context| Ok(Box::new(FerriteApp::new(context, kind, initial_file, requests)))),
     )
 }
 
@@ -103,11 +121,23 @@ struct FerriteApp {
     calculator: CalculatorState,
     settings: Option<SettingsState>,
     monitor: Option<MonitorState>,
+    /// Lancements suivants de la même application (instance unique).
+    requests: Option<single::Requests>,
 }
 
 impl FerriteApp {
-    fn new(context: &eframe::CreationContext<'_>, kind: AppKind, initial_file: Option<PathBuf>) -> Self {
+    fn new(
+        context: &eframe::CreationContext<'_>,
+        kind: AppKind,
+        initial_file: Option<PathBuf>,
+        requests: Option<single::Requests>,
+    ) -> Self {
         style::apply(&context.egui_ctx);
+        if let Some(requests) = &requests
+            && let Ok(mut waker) = requests.context.lock()
+        {
+            *waker = Some(context.egui_ctx.clone());
+        }
         let mut editor = EditorState::default();
         let mut files = (kind == AppKind::Files).then(FilesState::default);
         if let Some(path) = initial_file {
@@ -123,12 +153,32 @@ impl FerriteApp {
             calculator: CalculatorState::default(),
             settings: (kind == AppKind::Settings).then(SettingsState::default),
             monitor: (kind == AppKind::Monitor).then(MonitorState::default),
+            requests,
         }
+    }
+
+    /// Un autre lancement de l'application : son fichier s'ouvre ici, et la fenêtre
+    /// revient au premier plan (le compositeur la sort du Dock si elle était réduite).
+    fn handle_requests(&mut self, ctx: &egui::Context) {
+        let Some(requests) = &self.requests else { return };
+        let received: Vec<Option<PathBuf>> = requests.receiver.try_iter().collect();
+        if received.is_empty() {
+            return;
+        }
+        for file in received.into_iter().flatten() {
+            match &mut self.files {
+                Some(files) => files.open_at(file),
+                None => self.editor.open(file),
+            }
+        }
+        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
     }
 }
 
 impl eframe::App for FerriteApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.handle_requests(&ui.ctx().clone());
         // F11 : plein écran, comme dans les navigateurs.
         if ui.input(|input| input.key_pressed(egui::Key::F11)) {
             let fullscreen = ui.input(|input| input.viewport().fullscreen.unwrap_or(false));

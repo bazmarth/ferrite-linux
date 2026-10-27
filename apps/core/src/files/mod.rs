@@ -914,21 +914,18 @@ caches={}
         let mut actions = Vec::new();
         self.keyboard(ui, &mut actions);
 
-        style::header(ui, |ui| self.header(ui, &mut actions));
+        // Colonne sur toute la hauteur (boutons de fenêtre en haut, sauf dans une feuille),
+        // puis barre d'outils et contenu à droite.
+        let buttons = self.picker.is_none();
+        style::sidebar(ui, "emplacements", 210.0, style::SIDEBAR, buttons, |ui| {
+            self.sidebar(ui, &mut actions)
+        });
+        style::toolbar(ui, false, |ui| self.header(ui, &mut actions));
         if self.picker.is_some() {
             self.picker_bar(ui, &mut actions);
         } else {
             self.status_bar(ui, &mut actions);
         }
-        egui::Panel::left(ui.scope_id().with("emplacements"))
-            .resizable(false)
-            .exact_size(200.0)
-            .frame(
-                Frame::new()
-                    .fill(style::SIDEBAR)
-                    .inner_margin(Margin::symmetric(8, 10)),
-            )
-            .show(ui, |ui| self.sidebar(ui, &mut actions));
         egui::CentralPanel::no_frame()
             .frame(Frame::new().fill(style::BACKGROUND))
             .show(ui, |ui| match self.view {

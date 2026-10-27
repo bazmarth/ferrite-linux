@@ -39,15 +39,11 @@ enum Page {
 }
 
 impl Page {
-    const ALL: [Page; 8] = [
-        Page::Network,
-        Page::Bluetooth,
-        Page::Sound,
-        Page::Display,
-        Page::Desktop,
-        Page::Keyboard,
-        Page::DateTime,
-        Page::About,
+    /// Rubriques de la colonne, par groupes séparés d'un espace (comme macOS).
+    const GROUPS: [&'static [Page]; 3] = [
+        &[Page::Network, Page::Bluetooth],
+        &[Page::Sound, Page::Display, Page::Desktop, Page::Keyboard],
+        &[Page::DateTime, Page::About],
     ];
 
     fn title(self) -> &'static str {
@@ -131,6 +127,12 @@ pub struct SettingsState {
     keyboard_sample: String,
     /// Dernier mouvement d'un curseur (volume, luminosité).
     touched: Option<Instant>,
+    /// Recherche dans la colonne, et rubriques visitées (boutons précédent et suivant).
+    search: String,
+    back: Vec<Page>,
+    forward: Vec<Page>,
+    /// Nom complet et identifiant de l'utilisateur, pour la carte du haut de la colonne.
+    user: (String, String),
     timezone: Option<String>,
     ntp: Option<bool>,
     timezones: Vec<String>,
@@ -167,6 +169,10 @@ impl Default for SettingsState {
             keyboard: Settings::load().keyboard_layout().to_owned(),
             keyboard_sample: String::new(),
             touched: None,
+            search: String::new(),
+            back: Vec::new(),
+            forward: Vec::new(),
+            user: current_user(),
             timezone: None,
             ntp: None,
             timezones: Vec::new(),
@@ -297,6 +303,44 @@ impl SettingsState {
 
         let running = self.running > 0;
         let message = self.message.clone();
+        // Barre d'état seulement quand il y a quelque chose à dire.
+        let visible = running
+            || matches!(&message, Some(Ok(text)) if !text.is_empty())
+            || matches!(message, Some(Err(_)));
+        if visible {
+            self.status(ui, running, message);
+        }
+
+        // Comme les Réglages de macOS : colonne à gauche (recherche, carte de
+        // l'utilisateur, rubriques), barre d'outils avec précédent / suivant et le titre.
+        style::sidebar(ui, "rubriques", 240.0, style::SIDEBAR, true, |ui| {
+            self.sidebar(ui)
+        });
+        style::toolbar(ui, false, |ui| self.toolbar(ui));
+        egui::CentralPanel::no_frame()
+            .frame(
+                Frame::new()
+                    .fill(style::CONTENT_GRAY)
+                    .inner_margin(Margin::symmetric(28, 16)),
+            )
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .auto_shrink(false)
+                    .show(ui, |ui| match self.page {
+                        Page::Network => self.network_page(ui, &ctx),
+                        Page::Bluetooth => self.bluetooth_page(ui, &ctx),
+                        Page::Sound => self.sound_page(ui, &ctx),
+                        Page::Display => self.display_page(ui, &ctx),
+                        Page::Desktop => self.desktop_page(ui),
+                        Page::Keyboard => self.keyboard_page(ui),
+                        Page::DateTime => self.datetime_page(ui, &ctx),
+                        Page::About => self.about_page(ui),
+                    });
+            });
+    }
+
+    /// Barre d'état : attente d'une opération, réussite ou erreur.
+    fn status(&self, ui: &mut egui::Ui, running: bool, message: Option<Result<String, String>>) {
         style::status_bar(ui, |ui| {
             if running {
                 ui.add(egui::Spinner::new().size(12.0));
@@ -312,57 +356,92 @@ impl SettingsState {
                 _ => {}
             }
         });
+    }
 
-        egui::Panel::left("rubriques")
-            .resizable(false)
-            .exact_size(210.0)
-            .frame(
-                Frame::new()
-                    .fill(style::SIDEBAR)
-                    .inner_margin(Margin::symmetric(8, 12)),
-            )
-            .show(ui, |ui| self.sidebar(ui));
+    /// Ouvre une rubrique ; `remember` la garde pour le bouton précédent.
+    fn go(&mut self, page: Page, remember: bool) {
+        if page == self.page {
+            return;
+        }
+        if remember {
+            self.back.push(self.page);
+            self.forward.clear();
+        }
+        self.page = page;
+        self.message = None;
+    }
 
-        egui::CentralPanel::no_frame()
-            .frame(
-                Frame::new()
-                    .fill(style::BACKGROUND)
-                    .inner_margin(Margin::symmetric(28, 22)),
-            )
-            .show(ui, |ui| {
-                egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
-                    ui.heading(self.page.title());
-                    ui.add_space(14.0);
-                    match self.page {
-                        Page::Network => self.network_page(ui, &ctx),
-                        Page::Bluetooth => self.bluetooth_page(ui, &ctx),
-                        Page::Sound => self.sound_page(ui, &ctx),
-                        Page::Display => self.display_page(ui, &ctx),
-                        Page::Desktop => self.desktop_page(ui),
-                        Page::Keyboard => self.keyboard_page(ui),
-                        Page::DateTime => self.datetime_page(ui, &ctx),
-                        Page::About => self.about_page(ui),
-                    }
-                });
-            });
+    fn toolbar(&mut self, ui: &mut egui::Ui) {
+        // Précédent et suivant, groupés dans une pastille claire.
+        let (pill, _) = ui.allocate_exact_size(egui::vec2(64.0, 30.0), egui::Sense::hover());
+        ui.painter().rect_filled(pill, 8.0, style::CONTENT_GRAY);
+        let mut buttons = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(pill.shrink2(egui::vec2(2.0, 2.0)))
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
+        buttons.spacing_mut().item_spacing.x = 0.0;
+        if style::arrow_button(&mut buttons, false, !self.back.is_empty()).clicked()
+            && let Some(page) = self.back.pop()
+        {
+            self.forward.push(self.page);
+            self.go(page, false);
+        }
+        if style::arrow_button(&mut buttons, true, !self.forward.is_empty()).clicked()
+            && let Some(page) = self.forward.pop()
+        {
+            self.back.push(self.page);
+            self.go(page, false);
+        }
+        ui.add_space(10.0);
+        ui.label(
+            RichText::new(self.page.title())
+                .size(15.0)
+                .family(style::strong_family()),
+        );
     }
 
     fn sidebar(&mut self, ui: &mut egui::Ui) {
-        ui.add_space(4.0);
-        for page in Page::ALL {
-            let response = style::sidebar_item(
-                ui,
-                &mut self.icons,
-                page.icon(),
-                style::IconStyle::Tile(page.color()),
-                page.title(),
-                self.page == page,
-            );
-            if response.clicked() {
-                self.page = page;
-                self.message = None;
-            }
+        ui.add(
+            egui::TextEdit::singleline(&mut self.search)
+                .hint_text("Rechercher")
+                .desired_width(f32::INFINITY)
+                .margin(Margin::symmetric(10, 6)),
+        );
+        ui.add_space(10.0);
+        // Carte de l'utilisateur : ouvre « À propos ».
+        let (name, login) = self.user.clone();
+        if style::account_card(ui, &name, &login, self.page == Page::About).clicked() {
+            self.go(Page::About, true);
         }
+        ui.add_space(8.0);
+        let query = self.search.trim().to_lowercase();
+        egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+            for group in Page::GROUPS {
+                let pages: Vec<Page> = group
+                    .iter()
+                    .copied()
+                    .filter(|page| query.is_empty() || page.title().to_lowercase().contains(&query))
+                    .collect();
+                if pages.is_empty() {
+                    continue;
+                }
+                ui.add_space(8.0);
+                for page in pages {
+                    let response = style::sidebar_item_filled(
+                        ui,
+                        &mut self.icons,
+                        page.icon(),
+                        style::IconStyle::Tile(page.color()),
+                        page.title(),
+                        self.page == page,
+                    );
+                    if response.clicked() {
+                        self.go(page, true);
+                    }
+                }
+            }
+        });
     }
 
     // ---- Wi-Fi et réseau -------------------------------------------------------------
@@ -664,6 +743,12 @@ impl SettingsState {
             settings.bar_hiding(),
         );
         let (mut new_size, mut new_hiding, mut new_bar) = (size, hiding, bar);
+        let magnify = settings.dock_magnify();
+        let mut new_magnify = magnify;
+        let multi = settings.multi_window_apps();
+        let mut new_multi = multi.clone();
+        let custom_dock = settings.dock_pinned().is_some();
+        let mut reset_dock = false;
         section(ui, "Barre du haut");
         group(ui, |ui| {
             row(
@@ -700,6 +785,49 @@ impl SettingsState {
                 });
             }
             ui.add_space(6.0);
+            row(
+                ui,
+                "Agrandir les icônes sous la souris",
+                "Comme sur macOS",
+                |ui| {
+                    style::switch(ui, &mut new_magnify, true);
+                },
+            );
+            row(
+                ui,
+                "Applications du Dock",
+                "Clic droit sur une icône pour la garder ou la retirer",
+                |ui| {
+                    if ui
+                        .add_enabled(custom_dock, egui::Button::new("Rétablir par défaut"))
+                        .clicked()
+                    {
+                        reset_dock = true;
+                    }
+                },
+            );
+        });
+        section(ui, "Fenêtres");
+        group(ui, |ui| {
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new(
+                    "Les autres applications n'ont qu'une fenêtre : les relancer ramène                      celle qui est ouverte, même réduite dans le Dock.",
+                )
+                .color(style::TEXT_SECONDARY),
+            );
+            for (name, id) in MULTI_WINDOW_APPS {
+                let mut allowed = new_multi.iter().any(|known| known == id);
+                row(ui, name, "Plusieurs fenêtres", |ui| {
+                    if style::switch(ui, &mut allowed, true).changed() {
+                        if allowed {
+                            new_multi.push(id.to_owned());
+                        } else {
+                            new_multi.retain(|known| known != id);
+                        }
+                    }
+                });
+            }
         });
         section(ui, "Plein écran");
         group(ui, |ui| {
@@ -712,10 +840,18 @@ impl SettingsState {
                 },
             );
         });
-        if (new_size, new_hiding, new_bar) != (size, hiding, bar) {
+        if (new_size, new_hiding, new_bar, new_magnify) != (size, hiding, bar, magnify)
+            || new_multi != multi
+            || reset_dock
+        {
             settings.set("dock_taille", new_size.key());
             settings.set("dock_masquage", new_hiding.key());
             settings.set("barre_masquage", new_bar.key());
+            settings.set("dock_agrandissement", if new_magnify { "oui" } else { "non" });
+            settings.set_multi_window_apps(&new_multi);
+            if reset_dock {
+                settings.set_dock_pinned(&DEFAULT_DOCK.map(str::to_owned));
+            }
             self.message = Some(
                 settings
                     .save()
@@ -881,6 +1017,54 @@ fn format_uptime(seconds: u64) -> String {
 }
 
 /// Titre de section, au-dessus d'un groupe.
+/// Applications Ferrite et leur identifiant de fenêtre, pour le réglage « Plusieurs
+/// fenêtres ».
+const MULTI_WINDOW_APPS: [(&str, &str); 6] = [
+    ("Fichiers", "ferrite-files"),
+    ("TextEdit", "ferrite-textedit"),
+    ("Terminal", "foot"),
+    ("Calculatrice", "ferrite-calculator"),
+    ("Paramètres", "ferrite-settings"),
+    ("Moniteur d'activité", "ferrite-monitor"),
+];
+
+/// Dock d'origine (même ordre que le compositeur).
+const DEFAULT_DOCK: [&str; 5] = [
+    "ferrite-files",
+    "ferrite-textedit",
+    "foot",
+    "ferrite-calculator",
+    "ferrite-settings",
+];
+
+/// Nom complet (champ GECOS de `/etc/passwd`) et identifiant de l'utilisateur.
+fn current_user() -> (String, String) {
+    let login = std::env::var("USER").unwrap_or_else(|_| "ferrite".to_owned());
+    let full = std::fs::read_to_string("/etc/passwd")
+        .ok()
+        .and_then(|text| {
+            text.lines().find_map(|line| {
+                let fields: Vec<&str> = line.split(':').collect();
+                (fields.first() == Some(&login.as_str()))
+                    .then(|| {
+                        fields
+                            .get(4)
+                            .map(|gecos| gecos.split(',').next().unwrap_or("").to_owned())
+                    })
+                    .flatten()
+            })
+        })
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or_else(|| {
+            let mut name = login.clone();
+            if let Some(first) = name.get_mut(0..1) {
+                first.make_ascii_uppercase();
+            }
+            name
+        });
+    (full, login)
+}
+
 fn section(ui: &mut egui::Ui, title: &str) {
     ui.add_space(14.0);
     ui.label(

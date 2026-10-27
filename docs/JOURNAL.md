@@ -502,3 +502,27 @@ Vérifié :
 Vérifié : clippy, tous les tests ; capture du bureau en mode « toujours » (barre absente).
 À vérifier : le mode « quand une fenêtre la recouvre » avec une fenêtre agrandie, et le
 retour de la barre à la souris, dans QEMU.
+
+## 2026-10-27 — Moniteur d'activité, accrochage des fenêtres, historique du presse-papiers
+
+- **Moniteur d'activité** (`ferrite-apps monitor`, menu Applications) : processeur (total
+  et par cœur), mémoire, disques (débits et occupation), réseau, sur une minute ; liste des
+  processus triable, recherche, « Mes processus », terminer ou forcer l'arrêt (confirmé).
+- **Fenêtres** : zone de redimensionnement élargie (10 px autour du cadre, coins de 20 px),
+  curseurs à double flèche ; accrochage comme sous Windows : bord gauche ou droit (moitié),
+  coins (quart), bord du haut (tout l'écran), avec aperçu ; une fenêtre accrochée qu'on
+  tire reprend sa taille sous le pointeur.
+- **Historique du presse-papiers (Super+V)**, comme Windows + V : 25 éléments (texte et
+  images PNG), épingler (gardé après redémarrage), supprimer, tout effacer ; flèches et
+  Entrée, ou clic, collent l'élément dans l'application active. La touche Super seule ouvre
+  désormais le menu Applications au relâcher.
+- **Presse-papiers partagé** : les applications Ferrite étaient compilées sans le
+  presse-papiers du système (option `clipboard` d'eframe) ; le pont X11 ↔ Wayland
+  manquait aussi (copier dans Brave, coller dans TextEdit). Les deux sont faits.
+- Fichiers : Ctrl+C/Ctrl+V fonctionnent sous Wayland, Ctrl+L remplace le chemin ;
+  TextEdit place le curseur dans le texte dès l'ouverture.
+
+Vérifié dans QEMU (mode développement) : scénarios `accrochage.txt` (moitié, quart, plein
+écran, décrochage), `fichiers.txt` (copie « essai (copie) », chemin saisi),
+`presse-papiers.txt` (deux copies, choix au clavier, collage). Clippy et tous les tests.
+À vérifier : copier-coller avec une application X11 (Brave) et une image, sur le PC.

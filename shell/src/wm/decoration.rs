@@ -12,7 +12,7 @@ pub const RESIZE_BORDER: i32 = 10;
 /// Près d'un coin, sur cette longueur le long des bords, on tire les deux côtés à la fois.
 const RESIZE_CORNER: f64 = 20.0;
 /// Rayon de clic d'un feu (un peu plus large que le feu dessiné).
-const LIGHT_HIT_RADIUS: f64 = 8.0;
+const LIGHT_HIT_RADIUS: f64 = 9.5;
 
 /// Les trois feux, de gauche à droite.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,7 +79,20 @@ pub fn lights_hovered(content: Rectangle<i32, Logical>, pos: Point<f64, Logical>
 /// Partie de la décoration sous `pos`, ou `None` si `pos` est dans le contenu ou hors du
 /// cadre et de ses bords.
 pub fn hit(content: Rectangle<i32, Logical>, pos: Point<f64, Logical>) -> Option<Part> {
-    let frame = frame(content);
+    hit_frame(content, frame(content), pos)
+}
+
+/// Bords d'une fenêtre sans barre de titre (elle dessine la sienne) : seulement le
+/// redimensionnement.
+pub fn hit_border(content: Rectangle<i32, Logical>, pos: Point<f64, Logical>) -> Option<Part> {
+    hit_frame(content, content, pos).filter(|part| matches!(part, Part::Border(_)))
+}
+
+fn hit_frame(
+    content: Rectangle<i32, Logical>,
+    frame: Rectangle<i32, Logical>,
+    pos: Point<f64, Logical>,
+) -> Option<Part> {
     let (left, top) = (frame.loc.x as f64, frame.loc.y as f64);
     let (right, bottom) = (left + frame.size.w as f64, top + frame.size.h as f64);
     let border = RESIZE_BORDER as f64;
@@ -154,15 +167,21 @@ mod tests {
             frame(content()),
             Rectangle::new((100, 100).into(), (400, 330).into())
         );
-        assert_eq!(light_center(content(), TrafficLight::Close), p(120.0, 115.0));
-        assert_eq!(light_center(content(), TrafficLight::Zoom), p(160.0, 115.0));
+        assert_eq!(light_center(content(), TrafficLight::Close), p(122.0, 115.0));
+        assert_eq!(light_center(content(), TrafficLight::Zoom), p(168.0, 115.0));
     }
 
     #[test]
     fn zones_de_clic() {
         let c = content();
         assert_eq!(hit(c, p(120.0, 115.0)), Some(Part::Light(TrafficLight::Close)));
-        assert_eq!(hit(c, p(141.0, 116.0)), Some(Part::Light(TrafficLight::Minimize)));
+        assert_eq!(hit(c, p(144.0, 116.0)), Some(Part::Light(TrafficLight::Minimize)));
+        // Sans barre de titre : seuls les bords comptent.
+        assert_eq!(hit_border(c, p(300.0, 135.0)), None);
+        assert_eq!(
+            hit_border(c, p(300.0, 125.0)),
+            Some(Part::Border(ResizeEdge::TOP))
+        );
         assert_eq!(hit(c, p(300.0, 110.0)), Some(Part::Titlebar));
         assert_eq!(hit(c, p(300.0, 200.0)), None, "dans le contenu");
         assert_eq!(hit(c, p(50.0, 50.0)), None, "loin de la fenêtre");

@@ -60,6 +60,8 @@ pub enum Event {
     Failed(String),
     KeyboardLayout(String),
     Dock(DockConfig),
+    /// Applications épinglées dans le Dock, et applications à plusieurs fenêtres.
+    DockApps(Option<Vec<String>>, Vec<String>),
     Applications(Vec<DesktopEntry>),
     PowerAccepted,
 }
@@ -130,8 +132,13 @@ fn worker(receiver: mpsc::Receiver<Change>, events: channel::Sender<Event>) {
                 size: settings.dock_size(),
                 hiding: settings.dock_hiding(),
                 bar: settings.bar_hiding(),
+                magnify: settings.dock_magnify(),
             };
             if events.send(Event::Dock(dock)).is_err() {
+                return;
+            }
+            let apps = Event::DockApps(settings.dock_pinned(), settings.multi_window_apps());
+            if events.send(apps).is_err() {
                 return;
             }
         }
@@ -206,6 +213,10 @@ impl Ferrite {
             Event::Failed(message) => self.system_error = Some(message),
             Event::KeyboardLayout(layout) => self.set_keyboard_layout(&layout),
             Event::Dock(config) => self.dock_config = config,
+            Event::DockApps(pinned, multi) => {
+                self.dock_pinned = pinned;
+                self.multi_window = multi;
+            }
             Event::Applications(list) => {
                 info!(nombre = list.len(), "applications installées");
                 self.applications = list;

@@ -85,6 +85,21 @@ pub struct Ferrite {
     pub super_held: bool,
     pub super_used: bool,
     pub loop_handle: smithay::reexports::calloop::LoopHandle<'static, Ferrite>,
+    /// Applications épinglées dans le Dock (`None` : Dock par défaut), applications à
+    /// plusieurs fenêtres, ordre des applications ouvertes non épinglées.
+    pub dock_pinned: Option<Vec<String>>,
+    pub multi_window: Vec<String>,
+    pub dock_order: std::cell::RefCell<Vec<crate::desktop::apps::AppKey>>,
+    /// Glissement et agrandissement du Dock.
+    pub dock_motion: crate::desktop::dock::DockMotion,
+    /// Menu d'une icône du Dock (clic droit) : application, choix, et position.
+    pub dock_menu: Option<(
+        crate::desktop::apps::AppKey,
+        Vec<crate::desktop::launch::DockMenuAction>,
+        smithay::utils::Point<f64, smithay::utils::Logical>,
+    )>,
+    /// Fenêtres en train d'être réduites ou rappelées.
+    pub window_animations: std::cell::RefCell<Vec<crate::wm::animation::WindowAnimation>>,
     /// Bords tirés pendant un redimensionnement à la souris (forme du curseur).
     pub resizing: Option<crate::wm::ResizeEdge>,
     /// Curseur des réglages rapides en cours de glissement.
@@ -204,6 +219,12 @@ impl Ferrite {
             super_held: false,
             super_used: false,
             loop_handle: event_loop.handle(),
+            dock_pinned: Settings::load().dock_pinned(),
+            multi_window: Settings::load().multi_window_apps(),
+            dock_order: Default::default(),
+            dock_motion: Default::default(),
+            dock_menu: None,
+            window_animations: Default::default(),
             resizing: None,
             volume_held_until: None,
             brightness_held_until: None,

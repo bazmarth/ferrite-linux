@@ -79,12 +79,15 @@ impl Decorations {
 
     /// Ajoute à `out`, du premier plan vers l'arrière, le titre, la barre de titre et
     /// l'ombre de `window`, dont le contenu occupe `content` (logique, repère de l'écran).
+    /// Sans `titlebar` (la fenêtre dessine son haut), seulement l'ombre.
+    #[allow(clippy::too_many_arguments)] // Rendu, fenêtre, géométrie et apparence.
     pub fn push_elements(
         &self,
         renderer: &mut GlesRenderer,
         window: &Window,
         content: Rectangle<i32, Logical>,
         look: (bool, bool),
+        titlebar: bool,
         scale: f64,
         out: &mut Vec<OutputElement>,
     ) {
@@ -97,6 +100,25 @@ impl Decorations {
             return;
         };
         let mut cache = cache.borrow_mut();
+        // Fenêtre sans barre de titre (elle dessine la sienne) : seulement l'ombre.
+        if titlebar {
+            self.push_titlebar(renderer, window, content, look, scale, &mut cache, out);
+        }
+        self.push_shadow(content, titlebar, active, &mut cache, out);
+    }
+
+    #[allow(clippy::too_many_arguments)] // Rendu, fenêtre, géométrie et apparence.
+    fn push_titlebar(
+        &self,
+        renderer: &mut GlesRenderer,
+        window: &Window,
+        content: Rectangle<i32, Logical>,
+        look: Look,
+        scale: f64,
+        cache: &mut Cache,
+        out: &mut Vec<OutputElement>,
+    ) {
+        let Look { active, hover, .. } = look;
         let palette = Palette::LIGHT;
         let bar = decoration::titlebar(content);
 
@@ -198,9 +220,22 @@ impl Decorations {
         if let Some((_, _, element)) = &cache.titlebar {
             out.push(OutputElement::Shader(element.clone()));
         }
+    }
 
-        // Ombre, autour du cadre entier.
-        let frame = decoration::frame(content);
+    /// Ombre, autour du cadre entier.
+    fn push_shadow(
+        &self,
+        content: Rectangle<i32, Logical>,
+        titlebar: bool,
+        active: bool,
+        cache: &mut Cache,
+        out: &mut Vec<OutputElement>,
+    ) {
+        let frame = if titlebar {
+            decoration::frame(content)
+        } else {
+            content
+        };
         let area = Rectangle::new(
             frame.loc - Point::from((SHADOW_MARGIN, SHADOW_MARGIN)),
             (frame.size.w + 2 * SHADOW_MARGIN, frame.size.h + 2 * SHADOW_MARGIN).into(),

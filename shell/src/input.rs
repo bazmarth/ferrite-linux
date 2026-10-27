@@ -14,13 +14,10 @@ use smithay::{
 use tracing::info;
 
 use crate::{
-    desktop::{
-        dock,
-        panels::{self, DesktopAction, LAUNCHER_PAGE_SIZE, Popover, Slider},
-    },
+    desktop::panels::{self, DesktopAction, LAUNCHER_PAGE_SIZE, Popover, Slider},
     state::Ferrite,
     system::Change,
-    wm::{BTN_LEFT, Hit, decoration::Part},
+    wm::{BTN_LEFT, BTN_RIGHT, Hit, decoration::Part},
 };
 
 /// Raccourcis gérés par le compositeur lui-même (non transmis aux applications).
@@ -203,10 +200,14 @@ impl Ferrite {
                 self.launcher_page = 0;
             }
             Some(Action::LauncherLaunchFirst) => {
-                let first = self.launcher_entries().into_iter().next();
-                if let Some(entry) = first {
-                    entry.launch(&self.client_environment());
+                let first = self
+                    .launcher_entries()
+                    .into_iter()
+                    .next()
+                    .map(|entry| entry.key());
+                if let Some(key) = first {
                     self.popover = None;
+                    self.open_app(&key);
                 }
             }
             Some(Action::SuperDown) => {
@@ -312,14 +313,34 @@ impl Ferrite {
                 .outputs()
                 .next()
                 .and_then(|output| self.space.output_geometry(output));
-            if button.button == BTN_LEFT
-                && self.pending_power.is_none()
-                && let Some(app) = output_geo
-                    .filter(|geo| self.dock_shown(*geo))
-                    .and_then(|geo| dock::app_at(geo, self.dock_config, location))
+            // Dock : clic gauche pour ouvrir ou ramener l'application, clic droit pour son
+            // menu.
+            if self.pending_power.is_none()
+                && let Some((_, item)) = self.dock_item_at(location)
             {
-                self.popover = None;
-                app.launch(&self.client_environment());
+                match button.button {
+                    BTN_LEFT => {
+                        self.popover = None;
+                        self.dock_menu = None;
+                        self.activate_app(&item.key);
+                    }
+                    BTN_RIGHT => {
+                        let entries = self.dock_menu_entries(&item);
+                        let anchor = self.dock_geometry().and_then(|(_, items, geometry)| {
+                            let index = items.iter().position(|known| known.key == item.key)?;
+                            let icon = geometry.icons.get(index)?;
+                            Some(Point::from((
+                                icon.loc.x + icon.size.w / 2.0,
+                                geometry.plate.loc.y,
+                            )))
+                        });
+                        if let (false, Some(anchor)) = (entries.is_empty(), anchor) {
+                            self.dock_menu = Some((item.key, entries, anchor));
+                            self.popover = Some(Popover::DockMenu);
+                        }
+                    }
+                    _ => {}
+                }
                 return;
             }
             let desktop_action = output_geo.and_then(|output_geo| {
@@ -365,20 +386,28 @@ impl Ferrite {
                 self.clipboard_first = 0;
             }
             DesktopAction::LaunchTile(index) => {
-                let entry = self
+                let key = self
                     .launcher_entries()
                     .into_iter()
-                    .nth(self.launcher_page * LAUNCHER_PAGE_SIZE + index);
-                if let Some(entry) = entry {
-                    entry.launch(&self.client_environment());
-                }
+                    .nth(self.launcher_page * LAUNCHER_PAGE_SIZE + index)
+                    .map(|entry| entry.key());
                 self.popover = None;
+                if let Some(key) = key {
+                    self.open_app(&key);
+                }
             }
             DesktopAction::SetLauncherPage(page) => self.launcher_page = page,
             DesktopAction::ClosePopover => self.popover = None,
             DesktopAction::Launch(app) => {
                 self.popover = None;
-                app.launch(&self.client_environment());
+                self.open_app(&crate::desktop::apps::AppKey::Builtin(app));
+            }
+            DesktopAction::DockMenu(index) => {
+                if let Some((key, actions, _)) = self.dock_menu.clone()
+                    && let Some(action) = actions.get(index)
+                {
+                    self.dock_menu_action(&key, *action);
+                }
             }
             DesktopAction::ToggleWifi => {
                 if let Some(enabled) = self.system.wifi {

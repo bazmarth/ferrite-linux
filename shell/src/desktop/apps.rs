@@ -21,10 +21,11 @@ impl LauncherEntry<'_> {
         }
     }
 
-    pub fn launch(&self, env: &[(String, String)]) {
+    /// Application de la case, pour l'ouvrir sans doublon.
+    pub fn key(&self) -> AppKey {
         match self {
-            LauncherEntry::Builtin(app) => app.launch(env),
-            LauncherEntry::Installed(entry) => launch_entry(entry, env),
+            LauncherEntry::Builtin(app) => AppKey::Builtin(*app),
+            LauncherEntry::Installed(entry) => AppKey::Installed(entry.id.clone()),
         }
     }
 }
@@ -63,7 +64,104 @@ fn launch_entry(entry: &DesktopEntry, env: &[(String, String)]) {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Application du Dock : une application Ferrite, une application installée (fichier
+/// `.desktop`), ou une fenêtre qu'on ne sait rattacher à rien (son `app_id`).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum AppKey {
+    Builtin(App),
+    Installed(String),
+    Other(String),
+}
+
+/// Icône d'une application du Dock.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum AppIcon {
+    Builtin(&'static str),
+    File(std::path::PathBuf),
+    Missing,
+}
+
+impl AppKey {
+    /// Identifiant gardé dans les réglages : `app_id` des applications Ferrite, nom du
+    /// fichier `.desktop` des autres.
+    pub fn token(&self) -> String {
+        match self {
+            AppKey::Builtin(app) => app.app_id().to_owned(),
+            AppKey::Installed(id) | AppKey::Other(id) => id.clone(),
+        }
+    }
+
+    pub fn from_token(token: &str, installed: &[DesktopEntry]) -> AppKey {
+        if let Some(app) = App::ALL.into_iter().find(|app| app.app_id() == token) {
+            return AppKey::Builtin(app);
+        }
+        if installed.iter().any(|entry| entry.id == token) {
+            return AppKey::Installed(token.to_owned());
+        }
+        AppKey::Other(token.to_owned())
+    }
+
+    /// Application d'une fenêtre d'identifiant `app_id` (ou classe X11 en minuscules).
+    pub fn for_window(app_id: &str, installed: &[DesktopEntry]) -> AppKey {
+        if let Some(app) = App::ALL.into_iter().find(|app| app.app_id() == app_id) {
+            return AppKey::Builtin(app);
+        }
+        let id = app_id.to_lowercase();
+        let matches = |entry: &&DesktopEntry| {
+            let desktop = entry.id.to_lowercase();
+            entry.wm_class.as_deref().is_some_and(|class| class.to_lowercase() == id)
+                || desktop == id
+                // « org.videolan.VLC » pour une fenêtre « vlc ».
+                || desktop.rsplit('.').next() == Some(id.as_str())
+                || entry
+                    .exec
+                    .first()
+                    .and_then(|program| program.rsplit('/').next())
+                    .is_some_and(|program| program.to_lowercase() == id)
+        };
+        match installed.iter().find(matches) {
+            Some(entry) => AppKey::Installed(entry.id.clone()),
+            None => AppKey::Other(app_id.to_owned()),
+        }
+    }
+
+    fn entry<'a>(&self, installed: &'a [DesktopEntry]) -> Option<&'a DesktopEntry> {
+        match self {
+            AppKey::Installed(id) => installed.iter().find(|entry| entry.id == *id),
+            _ => None,
+        }
+    }
+
+    pub fn icon(&self, installed: &[DesktopEntry]) -> AppIcon {
+        match self {
+            AppKey::Builtin(app) => AppIcon::Builtin(app.icon()),
+            _ => self
+                .entry(installed)
+                .and_then(|entry| entry.icon.clone())
+                .map_or(AppIcon::Missing, AppIcon::File),
+        }
+    }
+
+    /// Lance l'application ; faux si on ne sait pas comment (fenêtre sans `.desktop`).
+    pub fn launch(&self, installed: &[DesktopEntry], env: &[(String, String)]) -> bool {
+        match self {
+            AppKey::Builtin(app) => {
+                app.launch(env);
+                true
+            }
+            AppKey::Installed(_) => match self.entry(installed) {
+                Some(entry) => {
+                    launch_entry(entry, env);
+                    true
+                }
+                None => false,
+            },
+            AppKey::Other(_) => false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum App {
     Files,
     TextEdit,
@@ -173,6 +271,38 @@ mod tests {
             icon: None,
             wm_class: None,
         }
+    }
+
+    #[test]
+    fn une_fenetre_retrouve_son_application() {
+        let mut vlc = entry("VLC media player");
+        vlc.id = "org.videolan.VLC".into();
+        let mut brave = entry("Brave");
+        brave.id = "brave-browser".into();
+        brave.wm_class = Some("Brave-browser".into());
+        let installed = [vlc, brave];
+        assert_eq!(
+            AppKey::for_window("ferrite-files", &installed),
+            AppKey::Builtin(App::Files)
+        );
+        assert_eq!(
+            AppKey::for_window("vlc", &installed),
+            AppKey::Installed("org.videolan.VLC".into())
+        );
+        assert_eq!(
+            AppKey::for_window("brave-browser", &installed),
+            AppKey::Installed("brave-browser".into())
+        );
+        assert_eq!(
+            AppKey::for_window("inconnu", &installed),
+            AppKey::Other("inconnu".into())
+        );
+        let key = AppKey::from_token("org.videolan.VLC", &installed);
+        assert_eq!(key.token(), "org.videolan.VLC");
+        assert_eq!(
+            AppKey::from_token("ferrite-textedit", &installed),
+            AppKey::Builtin(App::TextEdit)
+        );
     }
 
     #[test]

@@ -130,6 +130,13 @@ impl XdgShellHandler for Ferrite {
         self.start_resize(window, edges.into(), start_data, serial);
     }
 
+    /// Bouton jaune dessiné par l'application elle-même.
+    fn minimize_request(&mut self, surface: ToplevelSurface) {
+        if let Some(window) = self.window_for_surface(surface.wl_surface()) {
+            self.minimize(&window);
+        }
+    }
+
     fn maximize_request(&mut self, surface: ToplevelSurface) {
         let Some(window) = self.window_for_surface(surface.wl_surface()) else {
             return;

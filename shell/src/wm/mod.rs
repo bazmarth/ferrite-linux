@@ -1,11 +1,12 @@
 //! Gestion des fenêtres : placement, focus, décorations, déplacement, redimensionnement,
 //! agrandissement et réduction.
 
+pub mod animation;
 pub mod decoration;
 mod move_grab;
 mod resize_grab;
 
-pub use move_grab::{BTN_LEFT, MoveSurfaceGrab};
+pub use move_grab::{BTN_LEFT, BTN_RIGHT, MoveSurfaceGrab};
 pub use resize_grab::{ResizeEdge, ResizeSurfaceGrab, handle_commit as handle_resize_commit};
 
 use std::time::{Duration, Instant};
@@ -221,6 +222,25 @@ pub fn maximized_content(area: Rectangle<i32, Logical>, decorated: bool) -> Rect
 /// La fenêtre est-elle décorée par ferrite-shell (barre de titre, ombre, coins) ?
 /// Les clients qui dessinent leurs propres décorations (mode client) ne le sont pas, ni les
 /// fenêtres en plein écran.
+/// Fenêtre d'une application Ferrite qui dessine elle-même son haut (colonne et barre
+/// d'outils, feux compris) : ferrite-shell garde les coins arrondis, l'ombre et les bords
+/// de redimensionnement, sans barre de titre.
+pub fn is_unified(window: &Window) -> bool {
+    window.toplevel().is_some_and(|toplevel| {
+        let state = toplevel.current_state();
+        let ferrite = smithay::wayland::compositor::with_states(toplevel.wl_surface(), |states| {
+            states
+                .data_map
+                .get::<smithay::wayland::shell::xdg::XdgToplevelSurfaceData>()
+                .and_then(|data| data.lock().ok()?.app_id.clone())
+        })
+        .is_some_and(|id| id.starts_with("ferrite-"));
+        ferrite
+            && state.decoration_mode == Some(DecorationMode::ClientSide)
+            && !state.states.contains(xdg_toplevel::State::Fullscreen)
+    })
+}
+
 pub fn is_server_decorated(window: &Window) -> bool {
     if let Some(x11) = window.x11_surface() {
         // `is_decorated` signale une fenêtre X11 qui dessine son propre cadre (Brave,
@@ -342,6 +362,10 @@ impl Ferrite {
                 if let Some(part) = decoration::hit(content, pos) {
                     return Some(Hit::Decoration(window.clone(), part));
                 }
+            } else if is_unified(window)
+                && let Some(part) = decoration::hit_border(content, pos)
+            {
+                return Some(Hit::Decoration(window.clone(), part));
             }
             let render_location = content.loc - window.geometry().loc;
             if let Some((surface, location)) =
@@ -449,6 +473,20 @@ impl Ferrite {
         let Some(location) = self.space.element_location(window) else {
             return;
         };
+        // La fenêtre file vers son icône du Dock.
+        if let Some(content) = self.space.element_geometry(window) {
+            let key = self.window_app(window);
+            if let Some(icon) = self.dock_icon_rect(key.as_ref()) {
+                self.window_animations
+                    .borrow_mut()
+                    .push(animation::WindowAnimation::new(
+                        window.clone(),
+                        animation::Motion::Minimize,
+                        content.to_f64(),
+                        icon,
+                    ));
+            }
+        }
         self.space.unmap_elem(window);
         self.minimized.push(Minimized {
             window: window.clone(),
@@ -458,13 +496,44 @@ impl Ferrite {
         self.focus_window(next);
     }
 
-    /// Remet à l'écran la dernière fenêtre réduite. En attendant le Dock (phase 3), c'est
-    /// le raccourci Ctrl+Alt+M.
+    /// Remet à l'écran la dernière fenêtre réduite (Ctrl+Alt+M).
     pub fn restore_minimized(&mut self) {
-        if let Some(Minimized { window, location }) = self.minimized.pop() {
-            self.space.map_element(window.clone(), location, true);
-            self.focus_window(Some(window));
+        if !self.minimized.is_empty() {
+            self.restore_minimized_at(self.minimized.len() - 1);
         }
+    }
+
+    /// Remet à l'écran la fenêtre réduite `index` : elle ressort de son icône du Dock.
+    pub fn restore_minimized_at(&mut self, index: usize) {
+        if index >= self.minimized.len() {
+            return;
+        }
+        let Minimized { window, location } = self.minimized.remove(index);
+        let key = self.window_app(&window);
+        let icon = self.dock_icon_rect(key.as_ref());
+        // Une animation de réduction encore en cours s'arrête.
+        self.window_animations
+            .borrow_mut()
+            .retain(|animation| animation.window != window);
+        self.space.map_element(window.clone(), location, true);
+        if let (Some(icon), Some(content)) = (icon, self.space.element_geometry(&window)) {
+            self.window_animations
+                .borrow_mut()
+                .push(animation::WindowAnimation::new(
+                    window.clone(),
+                    animation::Motion::Restore,
+                    content.to_f64(),
+                    icon,
+                ));
+        }
+        self.focus_window(Some(window));
+    }
+
+    /// Fenêtre réduite qui correspond à `surface`, s'il y en a une.
+    pub fn minimized_index(&self, surface: &WlSurface) -> Option<usize> {
+        self.minimized
+            .iter()
+            .position(|minimized| minimized.window.wl_surface().is_some_and(|own| *own == *surface))
     }
 
     /// Action d'un feu tricolore cliqué.

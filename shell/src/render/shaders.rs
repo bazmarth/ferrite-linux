@@ -150,6 +150,27 @@ void main() {
 }
 "#;
 
+/// Fond du Dock : verre clair aux coins arrondis, contour discret et reflet en haut.
+const DOCK: &str = r#"
+uniform float scale;
+
+float rounded_box(vec2 p, vec2 half_size, float r) {
+    vec2 q = abs(p) - half_size + r;
+    return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+}
+
+void main() {
+    vec2 p = v_coords * size;
+    float d = rounded_box(p - size * 0.5, size * 0.5, 18.0);
+    vec4 color = over(vec4(0.0), vec3(0.0), 0.157 * coverage(d, scale));
+    color = over(color, vec3(0.957, 0.965, 0.980), 0.588 * coverage(d + 1.0, scale));
+    if (p.y < 2.0 && p.x > 18.0 && p.x < size.x - 18.0) {
+        color = over(color, vec3(1.0), 0.588 * coverage(d + 1.0, scale));
+    }
+    gl_FragColor = finish(color);
+}
+"#;
+
 /// Shader de texture : arrondit les coins du bas du contenu d'une fenêtre (ceux du haut
 /// sont sous la barre de titre). Coordonnées en pixels physiques, repère de l'écran.
 const ROUNDED_TEXTURE: &str = r#"#version 100
@@ -178,6 +199,8 @@ uniform float tint;
 uniform vec4 geo;
 uniform vec4 clip;
 uniform float radius;
+// 1 : arrondir aussi les coins du haut (fenêtre sans barre de titre).
+uniform float top;
 
 void main() {
     vec4 color = texture2D(tex, v_coords);
@@ -187,10 +210,20 @@ void main() {
 
     vec2 p = geo.xy + v_coords * geo.zw;
     float bottom = clip.y + clip.w - radius;
+    float upper = clip.y + radius;
     float cover = 1.0;
+    float y = 0.0;
+    bool corner = false;
     if (p.y > bottom) {
-        vec2 left = vec2(clip.x + radius, bottom);
-        vec2 right = vec2(clip.x + clip.z - radius, bottom);
+        y = bottom;
+        corner = true;
+    } else if (top > 0.5 && p.y < upper) {
+        y = upper;
+        corner = true;
+    }
+    if (corner) {
+        vec2 left = vec2(clip.x + radius, y);
+        vec2 right = vec2(clip.x + clip.z - radius, y);
         if (p.x < left.x) {
             cover = clamp(radius - length(p - left) + 0.5, 0.0, 1.0);
         } else if (p.x > right.x) {
@@ -213,6 +246,7 @@ pub struct Shaders {
     pub titlebar: GlesPixelProgram,
     pub shadow: GlesPixelProgram,
     pub snap: GlesPixelProgram,
+    pub dock: GlesPixelProgram,
     pub rounded: GlesTexProgram,
 }
 
@@ -236,12 +270,16 @@ impl Shaders {
             &[vec4("rect"), float("radius"), float("blur"), float("strength")],
         )?;
         let snap = renderer.compile_custom_pixel_shader(format!("{COMMON}{SNAP}"), &[float("scale")])?;
-        let rounded = renderer
-            .compile_custom_texture_shader(ROUNDED_TEXTURE, &[vec4("geo"), vec4("clip"), float("radius")])?;
+        let dock = renderer.compile_custom_pixel_shader(format!("{COMMON}{DOCK}"), &[float("scale")])?;
+        let rounded = renderer.compile_custom_texture_shader(
+            ROUNDED_TEXTURE,
+            &[vec4("geo"), vec4("clip"), float("radius"), float("top")],
+        )?;
         Ok(Shaders {
             titlebar,
             shadow,
             snap,
+            dock,
             rounded,
         })
     }

@@ -37,12 +37,11 @@ pub use self::{
 };
 use crate::{
     desktop::{
-        apps::App,
         apps::LauncherEntry,
         dock::Dock,
         panels::{
-            ClipItem, ClipPreview, ClipboardView, DesktopView, LAUNCHER_PAGE_SIZE, LauncherView, Panels,
-            Popover, Tile, TileIcon,
+            ClipItem, ClipPreview, ClipboardView, DesktopView, DockMenuView, LAUNCHER_PAGE_SIZE,
+            LauncherView, Panels, Popover, Tile, TileIcon,
         },
     },
     state::Ferrite,
@@ -105,18 +104,28 @@ pub fn output_elements(
         }
     }
 
-    let running = running_apps(state);
+    let items = state.dock_items();
     let dock_shown = state.dock_shown(output_geo);
-    assets.dock.push_element(
-        renderer,
-        output,
+    let (dock_layout, reveal) = state.dock_motion.frame_layout(
         output_geo,
-        scale,
-        &running,
         state.dock_config,
+        &items,
         dock_shown,
-        &mut elements,
+        state.pointer_location(),
     );
+    if reveal > 0.0 {
+        assets.dock.push_elements(
+            renderer,
+            &assets.decorations.shaders.dock,
+            output,
+            output_geo,
+            scale,
+            &items,
+            state.dock_config,
+            &dock_layout,
+            &mut elements,
+        );
+    }
     let view = desktop_view(state);
     assets
         .panels
@@ -142,23 +151,56 @@ pub fn output_elements(
     });
     let mut snap_preview = snap_preview.map(OutputElement::Shader);
 
+    // Fenêtres qui filent vers le Dock ou en reviennent, au-dessus des autres.
+    let now = std::time::Instant::now();
+    let mut animations = state.window_animations.borrow_mut();
+    animations.retain(|animation| !animation.finished(now));
+    for animation in animations.iter() {
+        let (rect, alpha) = animation.frame(now);
+        let window = &animation.window;
+        let factor = rect.size.w / animation.window_rect.size.w.max(1.0);
+        let origin = rect.loc - output_geo.loc.to_f64() - window.geometry().loc.to_f64().upscale(factor);
+        elements.extend(
+            window
+                .render_elements::<WaylandSurfaceRenderElement<GlesRenderer>>(
+                    renderer,
+                    origin.to_physical_precise_round(scale),
+                    (scale * factor).into(),
+                    alpha,
+                )
+                .into_iter()
+                .map(OutputElement::Surface),
+        );
+    }
+    let animated: Vec<Window> = animations
+        .iter()
+        .map(|animation| animation.window.clone())
+        .collect();
+    drop(animations);
+
     // Du dessus vers le dessous.
     for (index, window) in state.space.elements().rev().enumerate() {
         if index == 1 {
             elements.extend(snap_preview.take());
         }
+        // Une fenêtre qui ressort du Dock n'est dessinée que par son animation.
+        if animated.contains(window) {
+            continue;
+        }
         let Some(content) = state.space.element_geometry(window) else {
             continue;
         };
         let local = Rectangle::new(content.loc - output_geo.loc, content.size);
-        if wm::is_server_decorated(window) {
-            let hover = pointer.is_some_and(|p| wm::decoration::lights_hovered(content, p));
+        let titlebar = wm::is_server_decorated(window);
+        if titlebar || wm::is_unified(window) {
+            let hover = titlebar && pointer.is_some_and(|p| wm::decoration::lights_hovered(content, p));
             push_decorated(
                 renderer,
                 assets,
                 window,
                 local,
                 (wm::is_activated(window), hover),
+                titlebar,
                 scale,
                 &mut elements,
             );
@@ -197,13 +239,15 @@ pub fn output_elements(
 }
 
 /// Fenêtre décorée par ferrite-shell : menus contextuels, titre, barre de titre, contenu
-/// aux coins arrondis, ombre.
+/// aux coins arrondis, ombre. Sans `titlebar` : coins arrondis partout et ombre seulement.
+#[allow(clippy::too_many_arguments)] // Rendu, fenêtre, géométrie et apparence.
 fn push_decorated(
     renderer: &mut GlesRenderer,
     assets: &RenderAssets,
     window: &Window,
     content: Rectangle<i32, Logical>,
     look: (bool, bool),
+    titlebar: bool,
     scale: f64,
     out: &mut Vec<OutputElement>,
 ) {
@@ -233,7 +277,7 @@ fn push_decorated(
     let mut decorations = Vec::new();
     assets
         .decorations
-        .push_elements(renderer, window, content, look, scale, &mut decorations);
+        .push_elements(renderer, window, content, look, titlebar, scale, &mut decorations);
     // Le titre et la barre passent devant le contenu, l'ombre derrière.
     let shadow = decorations.pop();
     out.extend(decorations);
@@ -251,7 +295,15 @@ fn push_decorated(
             Kind::Unspecified,
         )
         .into_iter()
-        .map(|element| OutputElement::Rounded(RoundedSurface::new(element, program.clone(), clip, radius))),
+        .map(|element| {
+            OutputElement::Rounded(RoundedSurface::new(
+                element,
+                program.clone(),
+                clip,
+                radius,
+                !titlebar,
+            ))
+        }),
     );
     out.extend(shadow);
 }
@@ -332,7 +384,7 @@ impl Ferrite {
             .is_some_and(wm::is_fullscreen)
     }
 
-    fn pointer_location(&self) -> Option<Point<f64, Logical>> {
+    pub fn pointer_location(&self) -> Option<Point<f64, Logical>> {
         self.seat.get_pointer().map(|pointer| pointer.current_location())
     }
 
@@ -355,13 +407,16 @@ impl Ferrite {
     /// Le Dock doit-il être affiché sur l'écran `output` ?
     pub fn dock_shown(&self, output: Rectangle<i32, Logical>) -> bool {
         let frames = self.window_frames();
+        let items = self.dock_items();
+        let dock = crate::desktop::dock::layout(output, self.dock_config, &items, 1.0, None, 0.0).plate;
         crate::desktop::dock::should_show(crate::desktop::dock::Visibility {
             config: self.dock_config,
             output,
+            dock,
             pointer: self.pointer_location(),
             windows: &frames,
             fullscreen: self.top_fullscreen(),
-            launcher_open: self.popover == Some(Popover::Launcher),
+            launcher_open: matches!(self.popover, Some(Popover::Launcher | Popover::DockMenu)),
         })
     }
 
@@ -425,6 +480,14 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
         } else {
             ClipboardView::default()
         },
+        dock_menu: match (&state.dock_menu, state.popover) {
+            (Some((_, actions, anchor)), Some(Popover::DockMenu)) => Some(DockMenuView {
+                x: anchor.x,
+                bottom: anchor.y,
+                entries: actions.iter().map(|action| action.label().to_owned()).collect(),
+            }),
+            _ => None,
+        },
     }
 }
 
@@ -485,19 +548,6 @@ fn launcher_view(state: &Ferrite) -> LauncherView {
         pages,
         tiles,
     }
-}
-
-/// Applications du Dock qui ont au moins une fenêtre, visible ou réduite.
-fn running_apps(state: &Ferrite) -> Vec<App> {
-    let windows = state
-        .space
-        .elements()
-        .chain(state.minimized.iter().map(|minimized| &minimized.window));
-    let ids: Vec<String> = windows.filter_map(app_id).collect();
-    App::ALL
-        .into_iter()
-        .filter(|app| ids.iter().any(|id| id == app.app_id()))
-        .collect()
 }
 
 /// Identifiant de l'application : `app_id` Wayland, ou classe X11 en minuscules.

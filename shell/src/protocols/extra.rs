@@ -54,6 +54,9 @@ impl XdgActivationHandler for Ferrite {
         if data.timestamp.elapsed() < ACTIVATION_DELAY {
             if let Some(window) = self.window_for_surface(&surface) {
                 self.focus_window(Some(window));
+            } else if let Some(index) = self.minimized_index(&surface) {
+                // Une application réduite qui demande à revenir (relancée) ressort du Dock.
+                self.restore_minimized_at(index);
             }
         }
         self.activation_state.remove_token(&token);

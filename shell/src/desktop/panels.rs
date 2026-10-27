@@ -82,6 +82,8 @@ pub enum Popover {
     Session,
     /// Historique du presse-papiers (Super+V).
     Clipboard,
+    /// Menu d'une icône du Dock (clic droit).
+    DockMenu,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,6 +106,8 @@ pub enum DesktopAction {
     ClipboardPin(usize),
     ClipboardDelete(usize),
     ClipboardClear,
+    /// Choix `index` du menu d'une icône du Dock.
+    DockMenu(usize),
     /// Clic absorbé par un panneau, sans effet.
     Consume,
 }
@@ -123,6 +127,17 @@ pub struct ClipItem {
     pub preview: ClipPreview,
     pub pinned: bool,
 }
+
+/// Menu d'une icône du Dock, posé au-dessus d'elle.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct DockMenuView {
+    /// Centre de l'icône, et haut du Dock, en pixels logiques de l'écran.
+    pub x: f64,
+    pub bottom: f64,
+    pub entries: Vec<String>,
+}
+
+impl Eq for DockMenuView {}
 
 /// Lignes affichées du panneau Super+V.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -175,6 +190,7 @@ pub struct DesktopView {
     pub bar_visible: bool,
     pub launcher: LauncherView,
     pub clipboard: ClipboardView,
+    pub dock_menu: Option<DockMenuView>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -286,6 +302,11 @@ impl Panels {
             Some(Popover::Controls) => self.draw_controls(&mut canvas, &layout, view),
             Some(Popover::Session) => self.draw_session(&mut canvas, &layout),
             Some(Popover::Clipboard) => self.draw_clipboard(&mut canvas, &layout, &view.clipboard),
+            Some(Popover::DockMenu) => {
+                if let Some(menu) = &view.dock_menu {
+                    self.draw_dock_menu(&mut canvas, &layout, menu);
+                }
+            }
             None => {}
         }
 
@@ -339,7 +360,7 @@ impl Panels {
                 Popover::Launcher => applications,
                 Popover::Controls => layout.indicators_group(),
                 Popover::Session => layout.indicator(Indicator::Power),
-                Popover::Clipboard => return,
+                Popover::Clipboard | Popover::DockMenu => return,
             };
             canvas.fill(
                 Rect::new(rect.x + 6.0, BAR - 3.0, rect.w - 12.0, 2.0),
@@ -554,6 +575,14 @@ impl Panels {
         }
     }
 
+    fn draw_dock_menu(&self, canvas: &mut Canvas, layout: &Layout, menu: &DockMenuView) {
+        canvas.card(layout.dock_menu(menu), 10.0);
+        for (index, entry) in menu.entries.iter().enumerate() {
+            let row = layout.dock_menu_row(menu, index);
+            canvas.label(&self.regular, entry, row.x + 12.0, row.y + 8.0, 11.5, TEXT);
+        }
+    }
+
     /// Historique du presse-papiers, comme Windows + V.
     fn draw_clipboard(&self, canvas: &mut Canvas, layout: &Layout, view: &ClipboardView) {
         let card = layout.clipboard();
@@ -743,6 +772,12 @@ pub fn action_at(
 
     let popover = popover?;
     let action = match popover {
+        Popover::DockMenu => match &view.dock_menu {
+            Some(menu) if layout.dock_menu(menu).contains(pos) => (0..menu.entries.len())
+                .find(|&index| layout.dock_menu_row(menu, index).contains(pos))
+                .map_or(DesktopAction::Consume, DesktopAction::DockMenu),
+            _ => DesktopAction::ClosePopover,
+        },
         Popover::Launcher if layout.launcher().contains(pos) => {
             let launcher = &view.launcher;
             if let Some(index) =
@@ -1000,6 +1035,23 @@ impl Layout {
     fn slider_track(&self, control: Control) -> Rect {
         let row = self.control_row(control);
         Rect::new(row.x + 48.0, row.y + row.h / 2.0 - 2.0, row.w - 64.0, 4.0)
+    }
+
+    /// Menu d'une icône du Dock, au-dessus d'elle (sans sortir de l'écran).
+    fn dock_menu(&self, menu: &DockMenuView) -> Rect {
+        let (w, h) = (210.0, 12.0 + menu.entries.len() as f64 * 32.0);
+        let x = (menu.x - w / 2.0).clamp(POPOVER_MARGIN, (self.w - w - POPOVER_MARGIN).max(POPOVER_MARGIN));
+        Rect::new(x, (menu.bottom - h - 10.0).max(BAR + POPOVER_MARGIN), w, h)
+    }
+
+    fn dock_menu_row(&self, menu: &DockMenuView, index: usize) -> Rect {
+        let card = self.dock_menu(menu);
+        Rect::new(
+            card.x + 6.0,
+            card.y + 6.0 + index as f64 * 32.0,
+            card.w - 12.0,
+            32.0,
+        )
     }
 
     /// Panneau Super+V : en bas à droite, comme sous Windows 10.

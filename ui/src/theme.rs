@@ -24,9 +24,9 @@ pub const MENU_WIDTH: u32 = 220;
 pub const MENU_ITEM_HEIGHT: u32 = 24;
 
 /// Feux tricolores : rayon, centre du premier feu depuis le bord gauche, et pas entre feux.
-pub const TRAFFIC_LIGHT_RADIUS: u32 = 6;
-pub const TRAFFIC_LIGHT_FIRST_X: u32 = 20;
-pub const TRAFFIC_LIGHT_STEP: u32 = 20;
+pub const TRAFFIC_LIGHT_RADIUS: u32 = 7;
+pub const TRAFFIC_LIGHT_FIRST_X: u32 = 22;
+pub const TRAFFIC_LIGHT_STEP: u32 = 23;
 
 /// Polices de l'interface (fichiers dans `assets/fonts`).
 pub const FONT_UI: &str = "Inter";

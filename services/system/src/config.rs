@@ -78,6 +78,33 @@ impl Settings {
         DockHiding::parse(self.get("dock_masquage").unwrap_or_default())
     }
 
+    /// Applications épinglées dans le Dock (identifiants : `app_id` des applications
+    /// Ferrite, nom du fichier `.desktop` des autres) ; `None` : le Dock par défaut.
+    pub fn dock_pinned(&self) -> Option<Vec<String>> {
+        self.get("dock_epingles").map(split_list)
+    }
+
+    pub fn set_dock_pinned(&mut self, apps: &[String]) {
+        self.set("dock_epingles", &apps.join(","));
+    }
+
+    /// Applications qui peuvent ouvrir plusieurs fenêtres ; les autres n'en ont qu'une,
+    /// ramenée au premier plan quand on les relance. Fichiers par défaut.
+    pub fn multi_window_apps(&self) -> Vec<String> {
+        self.get("fenetres_multiples")
+            .map(split_list)
+            .unwrap_or_else(|| vec!["ferrite-files".to_owned()])
+    }
+
+    pub fn set_multi_window_apps(&mut self, apps: &[String]) {
+        self.set("fenetres_multiples", &apps.join(","));
+    }
+
+    /// Agrandissement des icônes du Dock sous la souris, comme sur macOS (oui par défaut).
+    pub fn dock_magnify(&self) -> bool {
+        self.get("dock_agrandissement") != Some("non")
+    }
+
     /// Masquage de la barre du haut ; par défaut, elle ne se cache qu'en plein écran.
     pub fn bar_hiding(&self) -> DockHiding {
         match self.get("barre_masquage") {
@@ -198,6 +225,16 @@ impl DockHiding {
     }
 }
 
+/// Liste séparée par des virgules, sans éléments vides.
+fn split_list(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|item| !item.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
 /// Sépare « ch(fr) » en disposition « ch » et variante « fr » pour XKB.
 pub fn split_layout(layout: &str) -> (String, String) {
     match layout.split_once('(') {
@@ -226,6 +263,26 @@ dock_masquage = jamais
         assert_eq!(dock.dock_hiding(), DockHiding::Never);
         assert_eq!(Settings::default().dock_hiding(), DockHiding::Smart);
         assert_eq!(Settings::default().bar_hiding(), DockHiding::Never);
+        assert_eq!(Settings::default().dock_pinned(), None);
+        assert_eq!(Settings::default().multi_window_apps(), ["ferrite-files"]);
+        assert!(Settings::default().dock_magnify());
+        let mut custom = Settings::default();
+        custom.set_dock_pinned(&["ferrite-files".into(), "vlc".into()]);
+        custom.set_multi_window_apps(&[]);
+        let custom = Settings::parse(&format!(
+            "dock_epingles = {}
+fenetres_multiples = {}
+dock_agrandissement = non
+",
+            custom.get("dock_epingles").unwrap(),
+            custom.get("fenetres_multiples").unwrap()
+        ));
+        assert_eq!(
+            custom.dock_pinned(),
+            Some(vec!["ferrite-files".into(), "vlc".into()])
+        );
+        assert!(custom.multi_window_apps().is_empty());
+        assert!(!custom.dock_magnify());
         assert_eq!(
             Settings::parse("barre_masquage = toujours\n").bar_hiding(),
             DockHiding::Always

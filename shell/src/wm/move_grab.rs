@@ -17,6 +17,8 @@ use crate::state::Ferrite;
 
 /// Bouton gauche (`BTN_LEFT` de `linux/input-event-codes.h`).
 pub const BTN_LEFT: u32 = 0x110;
+/// Bouton droit (`BTN_RIGHT`).
+pub const BTN_RIGHT: u32 = 0x111;
 
 pub struct MoveSurfaceGrab {
     pub start_data: PointerGrabStartData<Ferrite>,

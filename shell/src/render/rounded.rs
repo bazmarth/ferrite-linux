@@ -20,6 +20,8 @@ pub struct RoundedSurface {
     clip: Rectangle<i32, Physical>,
     /// Rayon des coins, en pixels physiques.
     radius: f32,
+    /// Coins du haut arrondis aussi (fenêtre sans barre de titre).
+    top: bool,
 }
 
 impl RoundedSurface {
@@ -28,12 +30,14 @@ impl RoundedSurface {
         program: GlesTexProgram,
         clip: Rectangle<i32, Physical>,
         radius: f32,
+        top: bool,
     ) -> Self {
         RoundedSurface {
             inner,
             program,
             clip,
             radius,
+            top,
         }
     }
 }
@@ -99,6 +103,7 @@ impl RenderElement<GlesRenderer> for RoundedSurface {
                 Uniform::new("geo", rect(dst)),
                 Uniform::new("clip", rect(self.clip)),
                 Uniform::new("radius", self.radius),
+                Uniform::new("top", if self.top { 1.0f32 } else { 0.0 }),
             ],
         );
         // Sans zones opaques : le mélange alpha reste actif partout, coins compris.

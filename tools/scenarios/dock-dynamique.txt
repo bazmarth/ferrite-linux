@@ -1,0 +1,35 @@
+# Dock dynamique : application ouverte ajoutée après le trait, agrandissement sous la
+# souris, une seule fenêtre de TextEdit, réduction animée et retour par le Dock.
+sleep 75
+# Moniteur d'activité (non épinglé) depuis le menu Applications.
+key meta_l
+sleep 1
+type moni
+key ret
+sleep 5
+# TextEdit depuis le menu, deux fois : une seule fenêtre.
+key meta_l
+sleep 1
+type textedit
+key ret
+sleep 5
+key meta_l
+sleep 1
+type textedit
+key ret
+sleep 4
+shot dock-1-une-fenetre
+# Souris sur le Dock : les icônes grossissent.
+move 547 754
+sleep 1
+shot dock-2-agrandi
+# Réduction de TextEdit (feu jaune), saisie en pleine animation puis à la fin.
+click 365 245
+shot dock-3-reduction
+sleep 2
+shot dock-4-reduite
+# Clic sur TextEdit dans le Dock : la fenêtre revient (pas de nouvelle fenêtre).
+click 547 754
+shot dock-5-retour
+sleep 2
+shot dock-6-ramenee

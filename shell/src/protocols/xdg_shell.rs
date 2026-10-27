@@ -288,12 +288,16 @@ pub fn handle_commit(popups: &mut PopupManager, space: &Space<Window>, surface: 
 }
 
 impl Ferrite {
-    /// Zone utile du premier écran (sous la barre de menus).
+    /// Zone utile du premier écran (sous la barre de menus si elle ne se cache pas).
     pub fn usable_area(&self) -> Option<Rectangle<i32, Logical>> {
         let output = self.space.outputs().next()?;
-        self.space
-            .output_geometry(output)
-            .map(|geometry| wm::usable_area(geometry, self.dock_config.reserved_height()))
+        self.space.output_geometry(output).map(|geometry| {
+            wm::usable_area(
+                geometry,
+                self.dock_config.bar_reserved_height(),
+                self.dock_config.reserved_height(),
+            )
+        })
     }
 
     /// Accroche une fenêtre sur une moitié d'écran et garde sa géométrie précédente pour

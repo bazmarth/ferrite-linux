@@ -43,14 +43,35 @@ const REVEAL_EDGE: f64 = 3.0;
 /// Durée du glissement du Dock.
 const SLIDE: Duration = Duration::from_millis(180);
 
-/// Réglages du Dock, lus dans `~/.config/ferrite/reglages`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// Réglages du Dock et de la barre du haut, lus dans `~/.config/ferrite/reglages`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DockConfig {
     pub size: DockSize,
     pub hiding: DockHiding,
+    /// Masquage de la barre du haut.
+    pub bar: DockHiding,
+}
+
+impl Default for DockConfig {
+    fn default() -> Self {
+        Self {
+            size: DockSize::default(),
+            hiding: DockHiding::default(),
+            bar: DockHiding::Never,
+        }
+    }
 }
 
 impl DockConfig {
+    /// Bande du haut que les fenêtres laissent libre : seulement si la barre ne se cache
+    /// jamais (hors plein écran).
+    pub fn bar_reserved_height(self) -> i32 {
+        match self.bar {
+            DockHiding::Never => ferrite_ui::theme::MENUBAR_HEIGHT as i32,
+            DockHiding::Smart | DockHiding::Always => 0,
+        }
+    }
+
     fn icon(self) -> i32 {
         self.size.icon()
     }

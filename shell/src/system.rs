@@ -129,6 +129,7 @@ fn worker(receiver: mpsc::Receiver<Change>, events: channel::Sender<Event>) {
             let dock = DockConfig {
                 size: settings.dock_size(),
                 hiding: settings.dock_hiding(),
+                bar: settings.bar_hiding(),
             };
             if events.send(Event::Dock(dock)).is_err() {
                 return;

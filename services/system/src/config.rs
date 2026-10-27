@@ -78,6 +78,14 @@ impl Settings {
         DockHiding::parse(self.get("dock_masquage").unwrap_or_default())
     }
 
+    /// Masquage de la barre du haut ; par défaut, elle ne se cache qu'en plein écran.
+    pub fn bar_hiding(&self) -> DockHiding {
+        match self.get("barre_masquage") {
+            Some(value) if !value.is_empty() => DockHiding::parse(value),
+            _ => DockHiding::Never,
+        }
+    }
+
     /// Écrit le fichier entier (via un fichier temporaire, pour ne jamais le laisser à moitié).
     pub fn save(&self) -> std::io::Result<()> {
         let path = Self::path();
@@ -179,6 +187,15 @@ impl DockHiding {
             DockHiding::Never => "Jamais",
         }
     }
+
+    /// Libellé pour la barre du haut (féminin).
+    pub fn bar_label(self) -> &'static str {
+        match self {
+            DockHiding::Smart => "Quand une fenêtre la recouvre",
+            DockHiding::Always => "Toujours",
+            DockHiding::Never => "Jamais (sauf en plein écran)",
+        }
+    }
 }
 
 /// Sépare « ch(fr) » en disposition « ch » et variante « fr » pour XKB.
@@ -208,6 +225,11 @@ dock_masquage = jamais
         assert_eq!(dock.dock_size(), DockSize::Large);
         assert_eq!(dock.dock_hiding(), DockHiding::Never);
         assert_eq!(Settings::default().dock_hiding(), DockHiding::Smart);
+        assert_eq!(Settings::default().bar_hiding(), DockHiding::Never);
+        assert_eq!(
+            Settings::parse("barre_masquage = toujours\n").bar_hiding(),
+            DockHiding::Always
+        );
         assert_eq!(DockSize::parse(DockSize::Small.key()), DockSize::Small);
     }
 }

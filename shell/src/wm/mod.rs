@@ -10,7 +10,7 @@ pub use resize_grab::{ResizeEdge, ResizeSurfaceGrab, handle_commit as handle_res
 
 use std::time::{Duration, Instant};
 
-use ferrite_ui::theme::{MENUBAR_HEIGHT, TITLEBAR_HEIGHT};
+use ferrite_ui::theme::TITLEBAR_HEIGHT;
 use smithay::{
     desktop::{Window, WindowSurfaceType},
     input::pointer::{Focus, GrabStartData},
@@ -119,13 +119,19 @@ pub fn clamp_frame(
     ))
 }
 
-/// Zone utile d'un écran de taille `output` : tout sauf la barre du haut et la bande
-/// réservée au Dock (`dock_reserved`, nulle quand le Dock se cache).
-pub fn usable_area(output: Rectangle<i32, Logical>, dock_reserved: i32) -> Rectangle<i32, Logical> {
-    let menubar = MENUBAR_HEIGHT as i32;
+/// Zone utile d'un écran de taille `output` : tout sauf les bandes réservées à la barre du
+/// haut (`bar_reserved`) et au Dock (`dock_reserved`), nulles quand ils se cachent.
+pub fn usable_area(
+    output: Rectangle<i32, Logical>,
+    bar_reserved: i32,
+    dock_reserved: i32,
+) -> Rectangle<i32, Logical> {
     Rectangle::new(
-        output.loc + Point::from((0, menubar)),
-        Size::from((output.size.w, (output.size.h - menubar - dock_reserved).max(0))),
+        output.loc + Point::from((0, bar_reserved)),
+        Size::from((
+            output.size.w,
+            (output.size.h - bar_reserved - dock_reserved).max(0),
+        )),
     )
 }
 
@@ -310,7 +316,7 @@ impl Ferrite {
             start_data,
             window,
             initial_window_location,
-            min_y: MENUBAR_HEIGHT as i32 + titlebar,
+            min_y: self.dock_config.bar_reserved_height() + titlebar,
         };
         pointer.set_grab(self, grab, serial, Focus::Clear);
     }
@@ -430,8 +436,10 @@ mod tests {
 
     #[test]
     fn zone_utile_sous_la_barre_de_menus() {
-        assert_eq!(usable_area(rect(0, 0, 1440, 900), 0), rect(0, 30, 1440, 870));
-        assert_eq!(usable_area(rect(0, 0, 1440, 900), 84), rect(0, 30, 1440, 786));
+        assert_eq!(usable_area(rect(0, 0, 1440, 900), 30, 0), rect(0, 30, 1440, 870));
+        assert_eq!(usable_area(rect(0, 0, 1440, 900), 30, 84), rect(0, 30, 1440, 786));
+        // Barre masquable : les fenêtres montent jusqu'en haut.
+        assert_eq!(usable_area(rect(0, 0, 1440, 900), 0, 0), rect(0, 0, 1440, 900));
     }
 
     #[test]

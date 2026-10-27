@@ -9,6 +9,7 @@ mod shaders;
 mod title;
 mod wallpaper;
 
+use ferrite_system::config::DockHiding;
 use ferrite_ui::theme::WINDOW_RADIUS;
 use smithay::wayland::{compositor::with_states, seat::WaylandFocus, shell::xdg::XdgToplevelSurfaceData};
 use smithay::{
@@ -264,6 +265,9 @@ fn push_cursor(
     }
 }
 
+/// Hauteur de la bande du haut qui rappelle une barre masquée.
+const BAR_REVEAL_EDGE: f64 = 2.0;
+
 impl Ferrite {
     /// La fenêtre du dessus est-elle en plein écran ?
     pub fn top_fullscreen(&self) -> bool {
@@ -277,10 +281,9 @@ impl Ferrite {
         self.seat.get_pointer().map(|pointer| pointer.current_location())
     }
 
-    /// Le Dock doit-il être affiché sur l'écran `output` ?
-    pub fn dock_shown(&self, output: Rectangle<i32, Logical>) -> bool {
-        let frames: Vec<Rectangle<i32, Logical>> = self
-            .space
+    /// Cadres des fenêtres affichées, barre de titre comprise.
+    fn window_frames(&self) -> Vec<Rectangle<i32, Logical>> {
+        self.space
             .elements()
             .filter(|window| !window.x11_surface().is_some_and(|x11| x11.is_override_redirect()))
             .filter_map(|window| {
@@ -291,7 +294,12 @@ impl Ferrite {
                     content
                 })
             })
-            .collect();
+            .collect()
+    }
+
+    /// Le Dock doit-il être affiché sur l'écran `output` ?
+    pub fn dock_shown(&self, output: Rectangle<i32, Logical>) -> bool {
+        let frames = self.window_frames();
         crate::desktop::dock::should_show(crate::desktop::dock::Visibility {
             config: self.dock_config,
             output,
@@ -302,15 +310,39 @@ impl Ferrite {
         })
     }
 
-    /// La barre du haut est-elle affichée ? En plein écran, elle revient quand la souris
-    /// touche le haut de l'écran ou qu'un menu est ouvert.
+    /// La barre du haut est-elle affichée ? Masquée (plein écran ou réglage de
+    /// Paramètres), elle revient quand la souris touche le bord du haut, et reste tant
+    /// qu'elle est dessus ou qu'un menu est ouvert. Il faut toucher le bord lui-même :
+    /// la barre de titre d'une fenêtre agrandie, juste dessous, reste accessible.
     pub fn bar_visible(&self) -> bool {
-        !self.top_fullscreen()
-            || self.popover.is_some()
-            || self.pending_power.is_some()
-            || self
-                .pointer_location()
-                .is_some_and(|pointer| pointer.y < ferrite_ui::theme::MENUBAR_HEIGHT as f64)
+        let height = ferrite_ui::theme::MENUBAR_HEIGHT as f64;
+        let revealed = self.bar_revealed.get();
+        let pointer_calls = self
+            .pointer_location()
+            .is_some_and(|pointer| pointer.y < BAR_REVEAL_EDGE || (revealed && pointer.y < height));
+        self.bar_revealed.set(pointer_calls);
+        if pointer_calls || self.popover.is_some() || self.pending_power.is_some() {
+            return true;
+        }
+        if self.top_fullscreen() {
+            return false;
+        }
+        match self.dock_config.bar {
+            DockHiding::Never => true,
+            DockHiding::Always => false,
+            DockHiding::Smart => {
+                let Some(output) = self
+                    .space
+                    .outputs()
+                    .next()
+                    .and_then(|output| self.space.output_geometry(output))
+                else {
+                    return true;
+                };
+                let strip = Rectangle::new(output.loc, (output.size.w, height as i32).into());
+                !self.window_frames().iter().any(|frame| frame.overlaps(strip))
+            }
+        }
     }
 }
 

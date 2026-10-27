@@ -71,6 +71,8 @@ pub struct Ferrite {
     pub brightness_held_until: Option<Instant>,
     /// Taille et masquage du Dock (Paramètres).
     pub dock_config: crate::desktop::dock::DockConfig,
+    /// La barre du haut masquée a été rappelée par la souris (voir `bar_visible`).
+    pub bar_revealed: std::cell::Cell<bool>,
     /// Curseur des réglages rapides en cours de glissement.
     pub slider_drag: Option<crate::desktop::panels::Slider>,
     /// Dernier état connu du réseau, du Bluetooth, du son et de l'écran.
@@ -179,6 +181,7 @@ impl Ferrite {
             launcher_page: 0,
             slider_drag: None,
             dock_config: Default::default(),
+            bar_revealed: Default::default(),
             volume_held_until: None,
             brightness_held_until: None,
             system: Snapshot::default(),

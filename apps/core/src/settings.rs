@@ -658,8 +658,28 @@ impl SettingsState {
 
     fn desktop_page(&mut self, ui: &mut egui::Ui) {
         let mut settings = Settings::load();
-        let (size, hiding) = (settings.dock_size(), settings.dock_hiding());
-        let (mut new_size, mut new_hiding) = (size, hiding);
+        let (size, hiding, bar) = (
+            settings.dock_size(),
+            settings.dock_hiding(),
+            settings.bar_hiding(),
+        );
+        let (mut new_size, mut new_hiding, mut new_bar) = (size, hiding, bar);
+        section(ui, "Barre du haut");
+        group(ui, |ui| {
+            row(
+                ui,
+                "Masquer la barre du haut",
+                "Elle revient quand la souris touche le bord du haut de l'écran",
+                |_| {},
+            );
+            for choice in DockHiding::ALL {
+                ui.horizontal(|ui| {
+                    ui.add_space(4.0);
+                    ui.radio_value(&mut new_bar, choice, choice.bar_label());
+                });
+            }
+            ui.add_space(6.0);
+        });
         section(ui, "Dock");
         group(ui, |ui| {
             row(ui, "Taille des icônes", "", |ui| {
@@ -692,13 +712,14 @@ impl SettingsState {
                 },
             );
         });
-        if (new_size, new_hiding) != (size, hiding) {
+        if (new_size, new_hiding, new_bar) != (size, hiding, bar) {
             settings.set("dock_taille", new_size.key());
             settings.set("dock_masquage", new_hiding.key());
+            settings.set("barre_masquage", new_bar.key());
             self.message = Some(
                 settings
                     .save()
-                    .map(|()| "Réglage du Dock appliqué".to_owned())
+                    .map(|()| "Réglage appliqué".to_owned())
                     .map_err(|error| format!("Enregistrement impossible : {error}")),
             );
         }

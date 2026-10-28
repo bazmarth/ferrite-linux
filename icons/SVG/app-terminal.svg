@@ -1,10 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 100 100" role="img" aria-label="Terminal">
 <defs>
- <linearGradient id="silver" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#DDE3EA"/></linearGradient>
- <linearGradient id="blue" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8BD0FF"/><stop offset="1" stop-color="#3687DB"/></linearGradient>
- <linearGradient id="green" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#B9F27B"/><stop offset="1" stop-color="#4CAF62"/></linearGradient>
- <linearGradient id="yellow" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFE58B"/><stop offset="1" stop-color="#E6A51A"/></linearGradient>
- <linearGradient id="red" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FF8989"/><stop offset="1" stop-color="#D94150"/></linearGradient>
- <linearGradient id="purple" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#E9C6FF"/><stop offset="1" stop-color="#9254CB"/></linearGradient>
- <linearGradient id="dark" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#56616D"/><stop offset="1" stop-color="#202833"/></linearGradient>
-</defs><g><rect x="17" y="17" width="66" height="66" rx="10" fill="url(#dark)" stroke="#101417" stroke-width="2"/><path d="M29 38l11 10-11 10M47 58h17" stroke="#FFF" stroke-width="4" fill="none" stroke-linecap="round"/></g></svg>
+ <linearGradient id="base" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4A4A4F"/><stop offset="1" stop-color="#1E1E21"/></linearGradient>
+ <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%"><feGaussianBlur stdDeviation="1.2"/></filter>
+</defs>
+<g transform="translate(4 3) scale(1.7037)">
+ <rect x="1" y="3" width="52" height="53" rx="13" fill="#000" opacity="0.18" filter="url(#shadow)"/>
+ <rect x="0" y="0" width="54" height="54" rx="13" fill="url(#base)"/>
+ <rect x="0.4" y="0.4" width="53.2" height="53.2" rx="12.6" fill="none" stroke="#000" stroke-opacity="0.1" stroke-width="0.8"/>
+ <rect x="6" y="8" width="42" height="38" rx="6" fill="#101012" stroke="#FFF" stroke-opacity="0.12" stroke-width="0.8"/>
+ <polyline points="13,18 19,23 13,28" fill="none" stroke="#F2F2F2" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+ <line x1="22" y1="29" x2="30" y2="29" stroke="#F2F2F2" stroke-width="2.2" stroke-linecap="round"/>
+ </g>
+</svg>

@@ -6,8 +6,9 @@ Applications du premier ensemble du bureau, en Rust avec eframe/egui :
 
 - **Fichiers** : parcourir les dossiers, remonter, saisir un chemin, trier dossiers et
   fichiers, ouvrir les fichiers texte dans TextEdit et déléguer les autres à `xdg-open`.
-- **TextEdit** : ouvrir ou créer un fichier UTF-8, modifier le texte, enregistrer et
-  utiliser Ctrl+S.
+- **TextEdit** : onglets, fichiers UTF-8, enregistrement et annulation/rétablissement ;
+  les fichiers Markdown ont les modes Éditer, Partagé et Aperçu avec rendu des titres,
+  listes, tableaux, citations et blocs de code.
 - **Calculatrice** : opérations `+`, `-`, `*`, `/`, nombres décimaux et parenthèses.
 - **Terminal** : `foot`, lancé par le Dock.
 - **Paramètres** : Wi-Fi et réseau (connexion avec mot de passe), Bluetooth (recherche,

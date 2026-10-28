@@ -1,157 +1,148 @@
-//! Fond d'écran Ferrite : montagnes et lac au coucher du soleil.
+//! Fond d'écran Ferrite, repris du bureau d'origine (`D:\Os\kernel\src\gui.rs`,
+//! `paint_wallpaper`) : dégradé du bleu nuit au corail, halo en haut à droite et
+//! collines ondulées translucides. Dessiné à la résolution réelle de l'écran (net sur
+//! un écran 2880×1800 comme en 1280×800).
+use std::{cell::RefCell, f32::consts::TAU};
+
+use ferrite_ui::theme::{Color, WALLPAPER_GRADIENT, gradient_at};
 use smithay::{
     backend::{allocator::Fourcc, renderer::element::memory::MemoryRenderBuffer},
     utils::{Buffer, Logical, Rectangle, Transform},
 };
 
-const WIDTH: i32 = 1280;
-const HEIGHT: i32 = 800;
-const SUPER_SAMPLE: f32 = 2.0;
+/// Halo lumineux du haut à droite.
+const GLOW: Color = Color::rgb(0xFFC7A8);
 
-#[derive(Debug)]
+/// Une colline : couleur, opacité (0 à 1), hauteur de base, amplitude (fractions de la
+/// hauteur de l'écran), nombre d'ondulations sur la largeur, et décalage (en 60es de tour).
+struct Wave {
+    color: Color,
+    opacity: f32,
+    base: f32,
+    amplitude: f32,
+    frequency: f32,
+    phase: f32,
+}
+
+const WAVES: [Wave; 4] = [
+    Wave {
+        color: Color::rgb(0xFFB49C),
+        opacity: 70.0 / 255.0,
+        base: 0.58,
+        amplitude: 0.06,
+        frequency: 1.0,
+        phase: 0.0,
+    },
+    Wave {
+        color: Color::rgb(0xE66A8A),
+        opacity: 90.0 / 255.0,
+        base: 0.69,
+        amplitude: 0.045,
+        frequency: 2.0,
+        phase: 20.0,
+    },
+    Wave {
+        color: Color::rgb(0x4A2F86),
+        opacity: 120.0 / 255.0,
+        base: 0.82,
+        amplitude: 0.03,
+        frequency: 1.0,
+        phase: 40.0,
+    },
+    Wave {
+        color: Color::rgb(0x24185A),
+        opacity: 140.0 / 255.0,
+        base: 0.92,
+        amplitude: 0.02,
+        frequency: 3.0,
+        phase: 10.0,
+    },
+];
+
+/// Fond d'écran, dessiné une fois par taille d'écran (en pixels physiques).
+#[derive(Debug, Default)]
 pub struct Wallpaper {
-    buffer: MemoryRenderBuffer,
+    cached: RefCell<Option<((i32, i32), MemoryRenderBuffer)>>,
 }
 
 impl Wallpaper {
-    pub fn landscape() -> Wallpaper {
-        let pixels = landscape_pixels();
-        let opaque = vec![Rectangle::<i32, Buffer>::from_size((WIDTH, HEIGHT).into())];
-        let buffer = MemoryRenderBuffer::from_slice(
-            &pixels,
-            Fourcc::Argb8888,
-            (WIDTH, HEIGHT),
-            1,
-            Transform::Normal,
-            Some(opaque),
-        );
-        Wallpaper { buffer }
+    pub fn waves() -> Wallpaper {
+        Wallpaper::default()
     }
 
-    pub fn buffer(&self) -> &MemoryRenderBuffer {
-        &self.buffer
-    }
-
-    /// Zone de la texture à dessiner : la texture entière.
-    pub fn source(&self) -> Rectangle<f64, Logical> {
-        Rectangle::from_size((WIDTH as f64, HEIGHT as f64).into())
+    /// Texture à la taille physique de l'écran, et la zone à en dessiner.
+    pub fn buffer(&self, width: i32, height: i32) -> (MemoryRenderBuffer, Rectangle<f64, Logical>) {
+        let size = (width.max(1), height.max(1));
+        let mut cached = self.cached.borrow_mut();
+        if cached.as_ref().is_none_or(|(known, _)| *known != size) {
+            let pixels = waves_pixels(size.0, size.1);
+            let opaque = vec![Rectangle::<i32, Buffer>::from_size(size.into())];
+            let buffer = MemoryRenderBuffer::from_slice(
+                &pixels,
+                Fourcc::Argb8888,
+                size,
+                1,
+                Transform::Normal,
+                Some(opaque),
+            );
+            *cached = Some((size, buffer));
+        }
+        let buffer = cached
+            .as_ref()
+            .map(|(_, buffer)| buffer.clone())
+            .expect("dessiné juste avant");
+        (
+            buffer,
+            Rectangle::from_size((size.0 as f64, size.1 as f64).into()),
+        )
     }
 }
 
-/// Fond 2× pour les écrans QEMU et les panneaux HiDPI. Les polygones sont
-/// évalués en quatre sous-pixels pour garder les crêtes et le soleil nets.
-fn landscape_pixels() -> Vec<u8> {
-    let far = [
-        (0, 250),
-        (55, 205),
-        (104, 222),
-        (205, 128),
-        (277, 203),
-        (356, 160),
-        (433, 218),
-        (510, 174),
-        (640, 227),
-        (640, 286),
-        (0, 286),
-    ];
-    let near = [
-        (0, 268),
-        (64, 218),
-        (130, 259),
-        (225, 190),
-        (296, 253),
-        (372, 221),
-        (450, 266),
-        (520, 204),
-        (585, 250),
-        (640, 218),
-        (640, 305),
-        (0, 305),
-    ];
-    let snow = [
-        [(158, 195), (205, 128), (239, 183)],
-        [(331, 178), (356, 160), (382, 192)],
-        [(493, 219), (520, 204), (544, 235)],
-    ];
-    let mut pixels = Vec::with_capacity((WIDTH * HEIGHT * 4) as usize);
-    for y in 0..HEIGHT {
-        for x in 0..WIDTH {
-            let mut accumulated = [0u32; 3];
-            for (sx, sy) in [(0.25, 0.25), (0.75, 0.25), (0.25, 0.75), (0.75, 0.75)] {
-                let scene_x = (x as f32 + sx) / SUPER_SAMPLE;
-                let scene_y = (y as f32 + sy) / SUPER_SAMPLE;
-                let color = landscape_color(scene_x, scene_y, &far, &near, &snow);
-                for channel in 0..3 {
-                    accumulated[channel] += color[channel] as u32;
+/// Fond à `width` × `height` pixels. Le bord de chaque colline est anticrénelé : un
+/// pixel qu'il traverse n'en reçoit que la part qu'il couvre.
+fn waves_pixels(width: i32, height: i32) -> Vec<u8> {
+    let (w, h) = (width as f32, height as f32);
+    // Bord de chaque colline, colonne par colonne (en pixels depuis le haut).
+    let edges: Vec<Vec<f32>> = WAVES
+        .iter()
+        .map(|wave| {
+            (0..width)
+                .map(|x| {
+                    let turns = x as f32 * wave.frequency / w + wave.phase / 60.0;
+                    (wave.base + wave.amplitude * (turns * TAU).sin()) * h
+                })
+                .collect()
+        })
+        .collect();
+    let (glow_x, glow_y, glow_r) = (w * 0.72, h * 0.18, h * 0.60);
+    let mut pixels = Vec::with_capacity((width * height * 4) as usize);
+    for y in 0..height {
+        let base = gradient_at(&WALLPAPER_GRADIENT, y as f32 / (h - 1.0).max(1.0));
+        for x in 0..width {
+            let mut color = [base.r, base.g, base.b].map(f32::from);
+            let (dx, dy) = (x as f32 - glow_x, y as f32 - glow_y);
+            let d2 = (dx * dx + dy * dy) / (glow_r * glow_r);
+            if d2 < 1.0 {
+                let a = 60.0 * (1.0 - d2);
+                blend(&mut color, GLOW, a * a / 60.0 / 255.0);
+            }
+            for (wave, edge) in WAVES.iter().zip(&edges) {
+                let coverage = (y as f32 + 1.0 - edge[x as usize]).clamp(0.0, 1.0);
+                if coverage > 0.0 {
+                    blend(&mut color, wave.color, wave.opacity * coverage);
                 }
             }
-            let color = accumulated.map(|channel| ((channel + 2) / 4) as u8);
-            pixels.extend([color[2], color[1], color[0], 255]);
+            let [r, g, b] = color.map(|channel| channel.round().clamp(0.0, 255.0) as u8);
+            pixels.extend([b, g, r, 255]);
         }
     }
     pixels
 }
 
-fn landscape_color(
-    x: f32,
-    y: f32,
-    far: &[(i32, i32)],
-    near: &[(i32, i32)],
-    snow: &[[(i32, i32); 3]],
-) -> [u8; 3] {
-    let mut color = if y < 252.0 {
-        mix([105, 151, 196], [255, 218, 192], y / 252.0)
-    } else {
-        mix([112, 146, 177], [24, 49, 82], (y - 252.0) / (400.0 - 252.0))
-    };
-    let sun = (((x - 472.0) / 62.0).powi(2) + ((y - 245.0) / 48.0).powi(2)).sqrt();
-    if sun < 1.0 {
-        color = mix(color, [255, 245, 221], (1.0 - sun) * 0.92);
-    } else if sun < 3.0 {
-        color = mix(color, [255, 204, 175], (3.0 - sun) * 0.08);
+fn blend(color: &mut [f32; 3], over: Color, amount: f32) {
+    for (channel, value) in color.iter_mut().zip([over.r, over.g, over.b]) {
+        *channel += (f32::from(value) - *channel) * amount;
     }
-    if inside(x, y, far) {
-        color = [101, 130, 158];
-    }
-    if inside(x, y, near) {
-        color = [55, 83, 112];
-    }
-    if snow.iter().any(|triangle| inside(x, y, triangle)) {
-        color = [206, 220, 230];
-    }
-    if y >= 252.0 {
-        let distance = (x - 472.0).abs();
-        let reflection = (1.0 - distance / (20.0 + (y - 252.0) * 0.45)).clamp(0.0, 1.0);
-        let shimmer = ((y * 0.22 + x * 0.02).sin() * 0.5 + 0.5) * 0.08;
-        color = mix(color, [255, 213, 178], reflection * (0.13 + shimmer));
-        if ((y as i32 + (x as i32 / 8) % 4) % 19 == 0) && distance < 90.0 {
-            color = mix(color, [194, 208, 220], 0.16);
-        }
-    }
-    color
-}
-
-fn inside(x: f32, y: f32, polygon: &[(i32, i32)]) -> bool {
-    let mut hit = false;
-    let mut previous = polygon.len() - 1;
-    for current in 0..polygon.len() {
-        let (xi, yi) = polygon[current];
-        let (xj, yj) = polygon[previous];
-        if (yi as f32 > y) != (yj as f32 > y)
-            && x < (xj - xi) as f32 * (y - yi as f32) / (yj - yi) as f32 + xi as f32
-        {
-            hit = !hit;
-        }
-        previous = current;
-    }
-    hit
-}
-
-fn mix(a: [u8; 3], b: [u8; 3], amount: f32) -> [u8; 3] {
-    let amount = amount.clamp(0.0, 1.0);
-    std::array::from_fn(|index| {
-        (a[index] as f32 + (b[index] as f32 - a[index] as f32) * amount).round() as u8
-    })
 }
 
 #[cfg(test)]
@@ -159,11 +150,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn paysage_opaque_aux_dimensions_attendues() {
-        let pixels = landscape_pixels();
-        assert_eq!(pixels.len(), (WIDTH * HEIGHT * 4) as usize);
+    fn fond_opaque_aux_dimensions_attendues() {
+        let pixels = waves_pixels(1280, 800);
+        assert_eq!(pixels.len(), 1280 * 800 * 4);
         assert!(pixels.chunks_exact(4).all(|pixel| pixel[3] == 255));
-        assert!(inside(205.0, 150.0, &[(0, 250), (205, 128), (300, 250)]));
-        assert!(!inside(5.0, 5.0, &[(0, 250), (205, 128), (300, 250)]));
+        // Écran du ThinkBook : texture à sa résolution réelle.
+        let (_, source) = Wallpaper::waves().buffer(2880, 1800);
+        assert_eq!(source.size, (2880.0, 1800.0).into());
+    }
+
+    #[test]
+    fn degrade_puis_collines() {
+        let pixels = waves_pixels(400, 300);
+        let at = |x: usize, y: usize| {
+            let i = (y * 400 + x) * 4;
+            [pixels[i + 2], pixels[i + 1], pixels[i]]
+        };
+        // En haut à gauche : le bleu nuit du dégradé, loin du halo.
+        let top = WALLPAPER_GRADIENT[0];
+        let [r, g, b] = at(0, 0);
+        assert!(r.abs_diff(top.r) < 6 && g.abs_diff(top.g) < 6 && b.abs_diff(top.b) < 6);
+        // En bas : la dernière colline, sombre, recouvre le corail du dégradé.
+        let [r, _, b] = at(200, 299);
+        assert!(r < 0xC0 && b > 0x50);
     }
 }

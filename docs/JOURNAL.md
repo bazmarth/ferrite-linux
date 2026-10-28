@@ -554,3 +554,25 @@ l'application et retour par le Dock. Clippy et tous les tests. Captures du nouve
 (Paramètres, Fichiers, TextEdit, Moniteur, Calculatrice).
 À vérifier : menu du clic droit sur le Dock (pas d'étape « clic droit » dans les
 scénarios), déplacement d'une fenêtre par sa barre d'outils, sur le PC.
+
+## 2026-10-28 — Aspect du Ferrite d'origine
+
+Le bureau et les applications reprennent l'apparence du Ferrite d'origine (`D:\Os`) :
+
+- **Fond d'écran** : dégradé bleu nuit → violet → corail, halo en haut à droite et quatre
+  collines ondulées translucides (`paint_wallpaper` d'origine), à la résolution de l'écran.
+- **Barre du haut** claire (presque blanche), texte sombre, logo en losange devant
+  « Applications », date et heure à droite avant les indicateurs ; le menu ouvert est
+  marqué par une pastille grise.
+- **Dock** : verre blanc translucide (rayon 20), liseré blanc, point sombre sous les
+  applications ouvertes ; icônes refaites en carrés arrondis à dégradé (Fichiers,
+  TextEdit, Terminal, Calculatrice, Paramètres, Moniteur, Horloge).
+- **Barres de titre** des autres applications : dégradé F0EEF1 → E4E2E5, reflet blanc,
+  trait dessous, titre gris foncé (clair si inactive).
+- **Applications Ferrite** : panneau latéral gris flottant aux coins arrondis (Fichiers,
+  Paramètres), barre d'outils en dégradé sans panneau (TextEdit, Moniteur, Calculatrice),
+  groupes de boutons en pilule, contrôle segmenté grille / liste, accent 0A7AFF.
+
+Vérifié : clippy, tous les tests ; captures dans QEMU (mode développement, scénario
+`aspect-origine.txt`) : bureau, Fichiers, TextEdit, terminal foot, menu Applications.
+À vérifier : rendu sur l'écran du ThinkBook (échelle 2).

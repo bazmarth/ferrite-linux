@@ -1,7 +1,8 @@
-//! Apparence commune des applications Ferrite, dans l'esprit de macOS : une colonne
-//! colorée à gauche sur toute la hauteur, avec les trois boutons de fenêtre en haut, et
-//! à droite la barre d'outils et le contenu, plus clairs. Les applications dessinent leur
-//! haut elles-mêmes ; ferrite-shell garde les coins arrondis, l'ombre et les bords.
+//! Apparence commune des applications Ferrite, reprise du Ferrite d'origine
+//! (`D:\Os\user\src\gui.rs`) : un panneau latéral gris flottant aux coins arrondis, avec
+//! les trois boutons de fenêtre en haut ; sans panneau, une barre d'outils en dégradé ;
+//! des groupes de boutons en pilule. Les applications dessinent leur haut elles-mêmes ;
+//! ferrite-shell garde les coins arrondis, l'ombre et les bords.
 //! Aussi : couleurs de la charte, polices, et icônes SVG du dossier `icons/SVG`.
 
 use std::{collections::HashMap, sync::Arc};
@@ -15,21 +16,28 @@ use ferrite_ui::theme::{Color, Palette};
 const PALETTE: Palette = Palette::LIGHT;
 
 /// Barre d'état et fonds secondaires, à peine teintés.
-pub const HEADER: Color32 = Color32::from_rgb(0xF8, 0xF8, 0xFA);
+pub const HEADER: Color32 = Color32::from_rgb(0xF6, 0xF6, 0xF8);
 /// Contenu et barre d'outils : la partie claire de la fenêtre.
 pub const BACKGROUND: Color32 = Color32::WHITE;
 /// Fond du contenu des Paramètres, où les réglages sont posés sur des cartes blanches.
 pub const CONTENT_GRAY: Color32 = Color32::from_rgb(0xF5, 0xF5, 0xF7);
-/// Colonne de gauche : gris légèrement bleuté, plus soutenu que le contenu.
-pub const SIDEBAR: Color32 = Color32::from_rgb(0xE8, 0xE8, 0xEE);
+/// Panneau latéral flottant : gris clair (milieu du dégradé F1F1F4 → E8E8EC d'origine).
+pub const SIDEBAR: Color32 = Color32::from_rgb(0xED, 0xED, 0xF0);
+/// Barre d'outils d'une fenêtre sans panneau : dégradé de haut en bas, trait dessous.
+const TOOLBAR_TOP: Color32 = Color32::from_rgb(0xFB, 0xFB, 0xFC);
+const TOOLBAR_BOTTOM: Color32 = Color32::from_rgb(0xF1, 0xF1, 0xF4);
+const TOOLBAR_LINE: Color32 = Color32::from_rgb(0xD9, 0xD9, 0xDE);
+/// Marge autour du panneau latéral, et rayon de ses coins.
+const PANEL_MARGIN: f32 = 8.0;
+const PANEL_RADIUS: u8 = 14;
 /// Hauteur de la barre d'outils, et de la zone des boutons en haut de la colonne.
 pub const TOOLBAR_HEIGHT: f32 = 52.0;
-pub const TEXT: Color32 = color(PALETTE.text);
+pub const TEXT: Color32 = Color32::from_rgb(0x1D, 0x1D, 0x1F);
 pub const TEXT_SECONDARY: Color32 = color(PALETTE.text_secondary);
-pub const SEPARATOR: Color32 = color(PALETTE.separator);
-pub const ACCENT: Color32 = Color32::from_rgb(0x36, 0x89, 0xE6);
-/// Ligne choisie d'une barre latérale : gris neutre, comme le Finder.
-pub const SIDEBAR_SELECTED: Color32 = Color32::from_rgb(0xD5, 0xD5, 0xDE);
+pub const SEPARATOR: Color32 = Color32::from_rgb(0xE3, 0xE3, 0xE8);
+pub const ACCENT: Color32 = color(PALETTE.accent);
+/// Ligne choisie d'une barre latérale : voile sombre léger, comme dans l'original.
+pub const SIDEBAR_SELECTED: Color32 = Color32::from_black_alpha(22);
 pub const ERROR: Color32 = Color32::from_rgb(0xC6, 0x26, 0x2E);
 
 const fn color(color: Color) -> Color32 {
@@ -130,8 +138,10 @@ pub fn header(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
     toolbar(ui, true, add);
 }
 
-/// Barre d'outils en haut du contenu, claire. Avec `buttons`, elle porte les boutons de
-/// fenêtre (fenêtres sans colonne à gauche). Le vide sert à déplacer la fenêtre.
+/// Barre d'outils en haut du contenu. Avec `buttons` (fenêtre sans panneau latéral),
+/// elle porte les boutons de fenêtre sur un dégradé clair, avec un trait dessous ; à côté
+/// d'un panneau, elle reste blanche et sans trait, ses boutons flottant sur le contenu.
+/// Le vide sert à déplacer la fenêtre.
 pub fn toolbar(ui: &mut egui::Ui, buttons: bool, add: impl FnOnce(&mut egui::Ui)) {
     let left = if buttons { 96 } else { 14 };
     egui::Panel::top(ui.scope_id().with("ferrite-header"))
@@ -149,20 +159,39 @@ pub fn toolbar(ui: &mut egui::Ui, buttons: bool, add: impl FnOnce(&mut egui::Ui)
                 egui::pos2(inner.left() - left as f32, inner.top()),
                 egui::pos2(inner.right() + 12.0, inner.bottom()),
             );
+            if buttons {
+                vertical_gradient(ui.painter(), full, TOOLBAR_TOP, TOOLBAR_BOTTOM);
+                ui.painter().hline(
+                    full.x_range(),
+                    full.bottom() - 0.5,
+                    Stroke::new(1.0, TOOLBAR_LINE),
+                );
+            }
             // Fond déplaçable, enregistré avant les boutons pour qu'ils restent prioritaires.
             drag_area(ui, full, "barre");
             if buttons {
                 window_buttons(ui, egui::pos2(full.left() + 22.0, full.center().y));
             }
-            ui.painter()
-                .hline(full.x_range(), full.bottom() - 0.5, Stroke::new(1.0, SEPARATOR));
             // Centré en hauteur, sans étirer les éléments (pastilles, onglets).
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), add);
         });
 }
 
-/// Colonne de gauche sur toute la hauteur, de couleur `fill`, avec les boutons de
-/// fenêtre en haut (sauf `buttons` faux : sélecteur de fichiers dans une feuille).
+/// Rectangle peint d'un dégradé vertical, de `top` à `bottom`.
+fn vertical_gradient(painter: &egui::Painter, rect: egui::Rect, top: Color32, bottom: Color32) {
+    let mut mesh = egui::Mesh::default();
+    mesh.colored_vertex(rect.left_top(), top);
+    mesh.colored_vertex(rect.right_top(), top);
+    mesh.colored_vertex(rect.left_bottom(), bottom);
+    mesh.colored_vertex(rect.right_bottom(), bottom);
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(1, 3, 2);
+    painter.add(mesh);
+}
+
+/// Panneau latéral flottant, de couleur `fill`, détaché des bords de la fenêtre par une
+/// marge blanche, avec les boutons de fenêtre dans son coin (sauf `buttons` faux :
+/// sélecteur de fichiers dans une feuille).
 pub fn sidebar(
     ui: &mut egui::Ui,
     id: &str,
@@ -174,26 +203,88 @@ pub fn sidebar(
     egui::Panel::left(ui.scope_id().with(id))
         .resizable(false)
         .exact_size(width)
-        .frame(Frame::new().fill(fill))
+        .frame(Frame::new().fill(BACKGROUND))
         .show(ui, |ui| {
             let full = ui.max_rect();
+            let panel = full.shrink(PANEL_MARGIN);
+            let painter = ui.painter();
+            painter.rect_filled(
+                panel.expand(1.0).translate(egui::vec2(0.0, 1.0)),
+                PANEL_RADIUS + 1,
+                Color32::from_black_alpha(12),
+            );
+            painter.rect(
+                panel,
+                PANEL_RADIUS,
+                fill,
+                Stroke::new(1.0, Color32::from_black_alpha(22)),
+                egui::StrokeKind::Inside,
+            );
             let top = egui::Rect::from_min_size(full.min, egui::vec2(full.width(), TOOLBAR_HEIGHT));
             if buttons {
                 drag_area(ui, top, "colonne");
-                window_buttons(ui, egui::pos2(full.left() + 22.0, top.center().y));
+                window_buttons(ui, egui::pos2(panel.left() + 21.0, top.center().y));
             }
-            ui.painter()
-                .vline(full.right() - 0.5, full.y_range(), Stroke::new(1.0, SEPARATOR));
             let body = egui::Rect::from_min_max(
                 egui::pos2(
-                    full.left() + 10.0,
-                    if buttons { top.bottom() } else { full.top() + 12.0 },
+                    panel.left() + 6.0,
+                    if buttons { top.bottom() } else { panel.top() + 10.0 },
                 ),
-                egui::pos2(full.right() - 10.0, full.bottom() - 8.0),
+                egui::pos2(panel.right() - 6.0, panel.bottom() - 6.0),
             );
             let mut child = ui.new_child(egui::UiBuilder::new().max_rect(body));
             add(&mut child);
         });
+}
+
+/// Groupe de boutons en forme de pilule, comme dans les barres d'outils du Ferrite
+/// d'origine : fond blanc, contour et ombre légers. Les boutons de `add` sont collés.
+pub fn pill_group<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    Frame::new()
+        .fill(Color32::WHITE)
+        .stroke(Stroke::new(1.0, Color32::from_black_alpha(26)))
+        .corner_radius(16)
+        .shadow(egui::Shadow {
+            offset: [0, 1],
+            blur: 0,
+            spread: 0,
+            color: Color32::from_black_alpha(14),
+        })
+        .inner_margin(Margin::symmetric(2, 2))
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            ui.horizontal(add).inner
+        })
+        .inner
+}
+
+/// Contrôle segmenté : rail gris dans lequel le segment choisi est blanc et en relief.
+/// Les segments de `add` dessinent eux-mêmes leur état (voir [`segment_background`]).
+pub fn segmented<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    Frame::new()
+        .fill(Color32::from_rgb(0xE3, 0xE3, 0xE8))
+        .corner_radius(8)
+        .inner_margin(Margin::symmetric(2, 2))
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            ui.horizontal(add).inner
+        })
+        .inner
+}
+
+/// Fond d'un segment de [`segmented`] : blanc en relief s'il est choisi.
+pub fn segment_background(ui: &egui::Ui, rect: egui::Rect, selected: bool, hovered: bool) {
+    let painter = ui.painter();
+    if selected {
+        painter.rect_filled(
+            rect.translate(egui::vec2(0.0, 1.0)),
+            6.0,
+            Color32::from_black_alpha(20),
+        );
+        painter.rect_filled(rect, 6.0, Color32::WHITE);
+    } else if hovered {
+        painter.rect_filled(rect, 6.0, Color32::from_black_alpha(10));
+    }
 }
 
 /// Zone vide qui déplace la fenêtre ; un double-clic l'agrandit ou la rétablit.
@@ -294,6 +385,9 @@ pub fn status_bar(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
         .resizable(false)
         .frame(Frame::new().fill(HEADER).inner_margin(Margin::symmetric(12, 5)))
         .show(ui, |ui| {
+            let full = ui.max_rect().expand2(egui::vec2(12.0, 5.0));
+            ui.painter()
+                .hline(full.x_range(), full.top() + 0.5, Stroke::new(1.0, SEPARATOR));
             ui.horizontal(|ui| {
                 ui.style_mut().override_text_style = Some(TextStyle::Small);
                 ui.visuals_mut().override_text_color = Some(TEXT_SECONDARY);
@@ -307,7 +401,7 @@ pub fn suggested_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
     ui.add(
         egui::Button::new(egui::RichText::new(text).color(Color32::WHITE))
             .fill(ACCENT)
-            .stroke(Stroke::new(1.0, Color32::from_rgb(0x2A, 0x74, 0xC9))),
+            .stroke(Stroke::new(1.0, Color32::from_rgb(0x08, 0x66, 0xD6))),
     )
 }
 
@@ -459,26 +553,22 @@ pub fn sidebar_item(
     text: &str,
     selected: bool,
 ) -> egui::Response {
-    let height = 32.0;
+    let height = 28.0;
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), height), egui::Sense::click());
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     if selected {
-        ui.painter().rect_filled(rect, 8.0, SIDEBAR_SELECTED);
+        ui.painter().rect_filled(rect, 7.0, SIDEBAR_SELECTED);
     } else if response.hovered() {
-        ui.painter().rect_filled(rect, 8.0, Color32::from_black_alpha(9));
+        ui.painter().rect_filled(rect, 7.0, Color32::from_black_alpha(9));
     }
-    let icon_size = 20.0;
+    let icon_size = 18.0;
     let icon_rect = egui::Rect::from_center_size(
-        egui::pos2(rect.left() + 10.0 + icon_size / 2.0, rect.center().y),
+        egui::pos2(rect.left() + 8.0 + icon_size / 2.0, rect.center().y),
         egui::vec2(icon_size, icon_size),
     );
     icons.paint(ui, icon, icon_rect, icon_style);
-    let font = if selected {
-        FontId::new(13.5, strong_family())
-    } else {
-        FontId::proportional(13.5)
-    };
+    let font = FontId::proportional(13.5);
     ui.painter().text(
         egui::pos2(icon_rect.right() + 10.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
@@ -608,8 +698,7 @@ pub fn sidebar_heading(ui: &mut egui::Ui, text: &str) {
     ui.label(
         egui::RichText::new(text)
             .size(11.5)
-            .family(strong_family())
-            .color(TEXT_SECONDARY),
+            .color(Color32::from_rgb(0x8E, 0x8E, 0x93)),
     );
     ui.add_space(2.0);
 }

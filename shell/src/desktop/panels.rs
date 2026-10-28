@@ -1,5 +1,5 @@
-//! Interface du bureau, dans l'esprit d'elementary OS : une barre fine en haut (menu
-//! Applications à gauche, date et heure au centre, indicateurs à droite) et des menus
+//! Interface du bureau, avec l'aspect du Ferrite d'origine : une barre claire en haut (logo
+//! et menu Applications à gauche, date et heure puis indicateurs à droite) et des menus
 //! déroulants clairs qui s'ouvrent sous elle.
 //!
 //! La géométrie de chaque élément est calculée une seule fois par [`Layout`], qui sert
@@ -64,8 +64,8 @@ const DIALOG: (f64, f64) = (420.0, 168.0);
 /// Fréquence de relecture de l'état de la batterie.
 const BATTERY_REFRESH: Duration = Duration::from_secs(20);
 
-const BAR_TINT: Color = Color::BLACK.with_alpha(112);
-const BAR_INK: Color = Color::WHITE;
+const BAR_TINT: Color = Color::rgb(0xFBFBFD).with_alpha(228);
+const BAR_INK: Color = Color::rgb(0x1D1D1F);
 const CARD: Color = Color::rgb(0xFAFAFA);
 const TEXT: Color = Color::rgb(0x333333);
 const TEXT_SECONDARY: Color = Color::rgb(0x7E8087);
@@ -327,11 +327,39 @@ impl Panels {
 
     fn draw_bar(&self, canvas: &mut Canvas, layout: &Layout, state: &VisualState) {
         let view = &state.view;
+        // Barre presque blanche, comme celle du Ferrite d'origine : reflet en haut, trait
+        // discret en bas, texte sombre lisible sur tout fond d'écran.
         canvas.fill(Rect::new(0.0, 0.0, layout.w, BAR), 0.0, BAR_TINT);
+        canvas.fill(
+            Rect::new(0.0, 0.0, layout.w, 1.0),
+            0.0,
+            Color::WHITE.with_alpha(90),
+        );
+        canvas.fill(
+            Rect::new(0.0, BAR - 1.0, layout.w, 1.0),
+            0.0,
+            Color::BLACK.with_alpha(36),
+        );
         let applications = layout.applications_button();
-        canvas.bar_label(&self.bold, "Applications", applications.x + 10.0, 11.5);
-        let clock_width = canvas.text_width(&self.bold, &state.clock, 11.5);
-        canvas.bar_label(&self.bold, &state.clock, (layout.w - clock_width) / 2.0, 11.5);
+        // Pastille sous l'élément de la barre dont le menu est ouvert.
+        let open = view.popover.and_then(|popover| match popover {
+            Popover::Launcher => Some(applications),
+            Popover::Controls => Some(layout.indicators_group()),
+            Popover::Session => Some(layout.indicator(Indicator::Power)),
+            Popover::Clipboard | Popover::DockMenu => None,
+        });
+        if let Some(rect) = open {
+            canvas.fill(
+                Rect::new(rect.x + 2.0, 4.0, rect.w - 4.0, BAR - 8.0),
+                6.0,
+                Color::BLACK.with_alpha(30),
+            );
+        }
+        canvas.logo((applications.x + 16.0, BAR / 2.0), BAR_INK);
+        canvas.bar_label(&self.bold, "Applications", applications.x + 32.0, 11.5);
+        let clock_width = canvas.text_width(&self.regular, &state.clock, 11.5);
+        let clock_right = layout.indicators_group().x - 10.0;
+        canvas.bar_label(&self.regular, &state.clock, clock_right - clock_width, 11.5);
         for (indicator, rect) in layout.indicators() {
             let name = match indicator {
                 Indicator::Bluetooth if view.bluetooth == Some(true) => "status-bluetooth-on",
@@ -353,20 +381,6 @@ impl Panels {
             let rect = layout.indicator(Indicator::Battery);
             let text = format!("{} %", battery.percent);
             canvas.bar_label(&self.regular, &text, rect.right() + 2.0, 10.5);
-        }
-        // Souligne l'élément de la barre dont le menu est ouvert.
-        if let Some(popover) = view.popover {
-            let rect = match popover {
-                Popover::Launcher => applications,
-                Popover::Controls => layout.indicators_group(),
-                Popover::Session => layout.indicator(Indicator::Power),
-                Popover::Clipboard | Popover::DockMenu => return,
-            };
-            canvas.fill(
-                Rect::new(rect.x + 6.0, BAR - 3.0, rect.w - 12.0, 2.0),
-                1.0,
-                BAR_INK,
-            );
         }
     }
 
@@ -913,7 +927,7 @@ impl Layout {
     }
 
     fn applications_button(&self) -> Rect {
-        Rect::new(4.0, 0.0, 102.0, BAR)
+        Rect::new(4.0, 0.0, 116.0, BAR)
     }
 
     /// Indicateurs présents, de gauche à droite (l'alimentation à part, tout à droite).
@@ -1351,11 +1365,28 @@ impl Canvas<'_> {
         self.label(font, text, rect.x + (rect.w - width) / 2.0, y, 11.5, ink);
     }
 
-    /// Texte de la barre : blanc, avec une ombre légère pour rester lisible sur tout fond.
+    /// Texte de la barre, sombre sur le fond clair.
     fn bar_label(&mut self, font: &Font, text: &str, x: f64, size: f32) {
         let y = (BAR - size as f64 * 1.22) / 2.0 - 1.0;
-        self.label(font, text, x, y + 1.0, size, Color::BLACK.with_alpha(90));
         self.label(font, text, x, y, size, BAR_INK);
+    }
+
+    /// Logo Ferrite du Ferrite d'origine : un losange plein, traversé d'un trait clair.
+    fn logo(&mut self, center: (f64, f64), color: Color) {
+        let (cx, cy) = center;
+        for dy in -7i32..=7 {
+            let half = 6.0 - f64::from(dy.abs()) * 6.0 / 7.0;
+            self.fill(
+                Rect::new(cx - half - 0.5, cy + f64::from(dy) - 0.5, 2.0 * half + 1.0, 1.0),
+                0.0,
+                color,
+            );
+        }
+        self.fill(
+            Rect::new(cx - 6.5, cy - 0.5, 13.0, 1.0),
+            0.0,
+            color.mix(Color::WHITE, 90.0 / 255.0),
+        );
     }
 
     fn text_width(&self, font: &Font, text: &str, size: f32) -> f64 {

@@ -46,6 +46,7 @@ vec4 finish(vec4 color) {
 const TITLEBAR: &str = r#"
 uniform float scale;
 uniform vec4 background;
+uniform vec4 background_bottom;
 uniform vec4 separator;
 uniform float lit;
 uniform float hover;
@@ -89,7 +90,11 @@ void main() {
     } else if (p.y < RADIUS && p.x > right.x) {
         d = length(p - right) - RADIUS;
     }
-    vec4 color = background * coverage(d, scale);
+    // Dégradé vertical, reflet blanc d'un pixel en haut.
+    vec4 color = mix(background, background_bottom, v_coords.y) * coverage(d, scale);
+    if (p.y < 1.0 / scale) {
+        color = over(color, vec3(1.0), 0.78 * coverage(d, scale));
+    }
 
     // Séparateur d'un pixel physique en bas.
     if (p.y > size.y - 1.0 / scale) {
@@ -150,7 +155,8 @@ void main() {
 }
 "#;
 
-/// Fond du Dock : verre clair aux coins arrondis, contour discret et reflet en haut.
+/// Fond du Dock, comme celui du Ferrite d'origine : verre blanc translucide aux coins
+/// arrondis (rayon 20), liseré blanc à l'intérieur et contour sombre très léger dehors.
 const DOCK: &str = r#"
 uniform float scale;
 
@@ -161,12 +167,13 @@ float rounded_box(vec2 p, vec2 half_size, float r) {
 
 void main() {
     vec2 p = v_coords * size;
-    float d = rounded_box(p - size * 0.5, size * 0.5, 18.0);
-    vec4 color = over(vec4(0.0), vec3(0.0), 0.157 * coverage(d, scale));
-    color = over(color, vec3(0.957, 0.965, 0.980), 0.588 * coverage(d + 1.0, scale));
-    if (p.y < 2.0 && p.x > 18.0 && p.x < size.x - 18.0) {
-        color = over(color, vec3(1.0), 0.588 * coverage(d + 1.0, scale));
-    }
+    float d = rounded_box(p - size * 0.5, size * 0.5, 20.0);
+    float outside = coverage(d, scale);
+    float body = coverage(d + 1.0, scale);
+    float inner = coverage(d + 2.0, scale);
+    vec4 color = over(vec4(0.0), vec3(0.0), 0.11 * (outside - body));
+    color = over(color, vec3(1.0), 0.36 * body);
+    color = over(color, vec3(1.0), 0.43 * (body - inner));
     gl_FragColor = finish(color);
 }
 "#;
@@ -260,6 +267,7 @@ impl Shaders {
             &[
                 float("scale"),
                 vec4("background"),
+                vec4("background_bottom"),
                 vec4("separator"),
                 float("lit"),
                 float("hover"),

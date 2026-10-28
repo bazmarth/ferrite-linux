@@ -25,7 +25,7 @@ Le Ferrite d'origine (noyau maison, `D:\Os`) reste un projet séparé et intact.
 
 ## Développer
 
-Tout se fait dans **Debian 13 sous WSL2**. Le dépôt est sur `D:\ferrite-linux`, donc
+Tout se fait dans **Debian 13 sous WSL2** (ou sous Fedora : voir [docs/FEDORA.md](docs/FEDORA.md)). Le dépôt est sur `D:\ferrite-linux`, donc
 `/mnt/d/ferrite-linux` dans WSL.
 
 ```sh

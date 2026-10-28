@@ -1,0 +1,26 @@
+# Aspect du Ferrite d'origine : fond à vagues, barre claire, Dock en verre blanc,
+# Fichiers (panneau flottant), TextEdit (pilules) et barre de titre d'un terminal.
+sleep 75
+shot aspect-1-bureau
+key meta_l
+sleep 1
+type fichiers
+key ret
+sleep 5
+shot aspect-2-fichiers
+key meta_l
+sleep 1
+type textedit
+key ret
+sleep 5
+shot aspect-3-textedit
+key meta_l
+sleep 1
+type terminal
+key ret
+sleep 5
+shot aspect-4-terminal
+# Menu Applications ouvert : pastille sous le bouton de la barre.
+click 40 15
+sleep 1
+shot aspect-5-menu

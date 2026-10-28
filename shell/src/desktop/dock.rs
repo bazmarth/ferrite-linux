@@ -497,7 +497,7 @@ impl Dock {
                     s,
                     s,
                     s / 2.0,
-                    Color::rgb(0x333A45).with_alpha(220),
+                    Color::rgb(0x1C1C1E).with_alpha(230),
                 );
                 let dot = MemoryRenderBuffer::from_slice(
                     &pixels,

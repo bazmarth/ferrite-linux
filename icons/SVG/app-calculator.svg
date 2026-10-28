@@ -1,10 +1,19 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 100 100" role="img" aria-label="Calculatrice">
 <defs>
- <linearGradient id="silver" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#DDE3EA"/></linearGradient>
- <linearGradient id="blue" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8BD0FF"/><stop offset="1" stop-color="#3687DB"/></linearGradient>
- <linearGradient id="green" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#B9F27B"/><stop offset="1" stop-color="#4CAF62"/></linearGradient>
- <linearGradient id="yellow" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFE58B"/><stop offset="1" stop-color="#E6A51A"/></linearGradient>
- <linearGradient id="red" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FF8989"/><stop offset="1" stop-color="#D94150"/></linearGradient>
- <linearGradient id="purple" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#E9C6FF"/><stop offset="1" stop-color="#9254CB"/></linearGradient>
- <linearGradient id="dark" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#56616D"/><stop offset="1" stop-color="#202833"/></linearGradient>
-</defs><g><rect x="22" y="15" width="56" height="70" rx="10" fill="url(#dark)" stroke="#101417" stroke-width="2"/><rect x="29" y="22" width="42" height="17" rx="4" fill="url(#green)" stroke="#2F7D45" stroke-width="1"/><path d="M49 33.5h4M57 28.5v9M61 28.5h4v4.5h-4v4.5h4" fill="none" stroke="#1D4A2A" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><rect x="30" y="47" width="8.5" height="8.5" rx="2" fill="#E7ECF2"/><rect x="41" y="47" width="8.5" height="8.5" rx="2" fill="#E7ECF2"/><rect x="52" y="47" width="8.5" height="8.5" rx="2" fill="#E7ECF2"/><rect x="30" y="58" width="8.5" height="8.5" rx="2" fill="#E7ECF2"/><rect x="41" y="58" width="8.5" height="8.5" rx="2" fill="#E7ECF2"/><rect x="52" y="58" width="8.5" height="8.5" rx="2" fill="#E7ECF2"/><rect x="30" y="69" width="8.5" height="8.5" rx="2" fill="#E7ECF2"/><rect x="41" y="69" width="8.5" height="8.5" rx="2" fill="#E7ECF2"/><rect x="52" y="69" width="8.5" height="8.5" rx="2" fill="#E7ECF2"/><rect x="63" y="47" width="8.5" height="19.5" rx="2" fill="#FFB357"/><rect x="63" y="69" width="8.5" height="8.5" rx="2" fill="url(#yellow)"/><path d="M64.8 55.5h5M67.3 53v5M64.8 72.3h5M64.8 75h5" stroke="#5A3A07" stroke-width="1.4" stroke-linecap="round"/></g></svg>
+ <linearGradient id="base" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4A4A4F"/><stop offset="1" stop-color="#1E1E21"/></linearGradient>
+ <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%"><feGaussianBlur stdDeviation="1.2"/></filter>
+</defs>
+<g transform="translate(4 3) scale(1.7037)">
+ <rect x="1" y="3" width="52" height="53" rx="13" fill="#000" opacity="0.18" filter="url(#shadow)"/>
+ <rect x="0" y="0" width="54" height="54" rx="13" fill="url(#base)"/>
+ <rect x="0.4" y="0.4" width="53.2" height="53.2" rx="12.6" fill="none" stroke="#000" stroke-opacity="0.1" stroke-width="0.8"/>
+ <rect x="9" y="7" width="36" height="11" rx="3" fill="#101012"/>
+ <rect x="30" y="11" width="11" height="3" rx="1.5" fill="#F2F2F2"/>
+ <g fill="#8E8E93">
+  <circle cx="13.5" cy="25" r="3.6"/><circle cx="23" cy="25" r="3.6"/><circle cx="32.5" cy="25" r="3.6"/>
+  <circle cx="13.5" cy="34" r="3.6"/><circle cx="23" cy="34" r="3.6"/><circle cx="32.5" cy="34" r="3.6"/>
+  <circle cx="13.5" cy="43" r="3.6"/><circle cx="23" cy="43" r="3.6"/><circle cx="32.5" cy="43" r="3.6"/>
+ </g>
+ <g fill="#FF9F0A"><circle cx="42" cy="25" r="3.6"/><circle cx="42" cy="34" r="3.6"/><circle cx="42" cy="43" r="3.6"/></g>
+ </g>
+</svg>

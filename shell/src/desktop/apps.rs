@@ -55,6 +55,11 @@ fn launch_entry(entry: &DesktopEntry, env: &[(String, String)]) {
     } else {
         let mut command = Command::new(program);
         command.args(args);
+        // Navigateurs Chromium (Brave, Chrome, Edge, Vivaldi) et VS Code : en Wayland
+        // natif, nets sur un écran HiDPI ; sinon XWayland les agrandit et les floute.
+        if is_chromium(program) {
+            command.arg("--ozone-platform-hint=auto");
+        }
         command
     };
     command.envs(env.iter().map(|(key, value)| (key, value)));
@@ -159,6 +164,22 @@ impl AppKey {
             AppKey::Other(_) => false,
         }
     }
+}
+
+/// Programme de la famille Chromium (qui choisit Wayland avec `--ozone-platform-hint`).
+fn is_chromium(program: &str) -> bool {
+    let name = program.rsplit('/').next().unwrap_or(program);
+    [
+        "brave",
+        "chromium",
+        "google-chrome",
+        "microsoft-edge",
+        "vivaldi",
+        "code",
+        "codium",
+    ]
+    .iter()
+    .any(|known| name.starts_with(known))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -271,6 +292,15 @@ mod tests {
             icon: None,
             wm_class: None,
         }
+    }
+
+    #[test]
+    fn navigateurs_chromium_reconnus() {
+        assert!(is_chromium("/usr/bin/brave-browser-stable"));
+        assert!(is_chromium("google-chrome"));
+        assert!(is_chromium("/usr/share/code/code"));
+        assert!(!is_chromium("vlc"));
+        assert!(!is_chromium("firefox"));
     }
 
     #[test]

@@ -1,10 +1,19 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 100 100" role="img" aria-label="Éditeur de texte">
 <defs>
- <linearGradient id="silver" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#DDE3EA"/></linearGradient>
- <linearGradient id="blue" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8BD0FF"/><stop offset="1" stop-color="#3687DB"/></linearGradient>
- <linearGradient id="green" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#B9F27B"/><stop offset="1" stop-color="#4CAF62"/></linearGradient>
- <linearGradient id="yellow" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFE58B"/><stop offset="1" stop-color="#E6A51A"/></linearGradient>
- <linearGradient id="red" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FF8989"/><stop offset="1" stop-color="#D94150"/></linearGradient>
- <linearGradient id="purple" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#E9C6FF"/><stop offset="1" stop-color="#9254CB"/></linearGradient>
- <linearGradient id="dark" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#56616D"/><stop offset="1" stop-color="#202833"/></linearGradient>
-</defs><g><path d="M24 17h38l16 16v44q0 7-7 7H24q-7 0-7-7V24q0-7 7-7z" fill="url(#silver)" stroke="#AEB9C6" stroke-width="1.8"/><path d="M62 17v11q0 5 5 5h11" fill="#E4E9EF" stroke="#AEB9C6" stroke-width="1.8" stroke-linejoin="round"/><path d="M28 40h30M28 49h40M28 58h36M28 67h22" stroke="#8FA0B5" stroke-width="3" stroke-linecap="round"/><path d="M54 78l3-11 25-25q3-3 6 0l2 2q3 3 0 6L65 75z" fill="url(#yellow)" stroke="#B9851A" stroke-width="1.5" stroke-linejoin="round"/><path d="M79 45l8 8" stroke="#D94150" stroke-width="5" stroke-linecap="round"/><path d="M57 67l8 8-11 3z" fill="#F3DDB0" stroke="#B9851A" stroke-width="1.2" stroke-linejoin="round"/><path d="M54 78l2.2-6.5 4.3 4.3z" fill="#3C4654"/></g></svg>
+ <linearGradient id="base" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#E9E9EC"/></linearGradient>
+ <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%"><feGaussianBlur stdDeviation="1.2"/></filter>
+</defs>
+<g transform="translate(4 3) scale(1.7037)">
+ <rect x="1" y="3" width="52" height="53" rx="13" fill="#000" opacity="0.18" filter="url(#shadow)"/>
+ <rect x="0" y="0" width="54" height="54" rx="13" fill="url(#base)"/>
+ <rect x="0.4" y="0.4" width="53.2" height="53.2" rx="12.6" fill="none" stroke="#000" stroke-opacity="0.1" stroke-width="0.8"/>
+ <rect x="12" y="7" width="30" height="40" rx="3" fill="#FFF" stroke="#000" stroke-opacity="0.16" stroke-width="0.8"/>
+ <g fill="#A0A0A6">
+  <rect x="16" y="13" width="22" height="2" rx="1"/><rect x="16" y="18" width="22" height="2" rx="1"/>
+  <rect x="16" y="23" width="22" height="2" rx="1"/><rect x="16" y="28" width="22" height="2" rx="1"/>
+  <rect x="16" y="33" width="22" height="2" rx="1"/><rect x="16" y="38" width="12" height="2" rx="1"/>
+ </g>
+ <line x1="31" y1="41" x2="45" y2="24" stroke="#FF9F0A" stroke-width="4" stroke-linecap="round"/>
+ <line x1="29.2" y1="43.2" x2="31.2" y2="40.8" stroke="#3A3A3C" stroke-width="2.4" stroke-linecap="round"/>
+ </g>
+</svg>

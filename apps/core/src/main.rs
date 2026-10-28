@@ -4,6 +4,7 @@
 mod calculator;
 mod editor;
 mod files;
+mod markdown;
 mod monitor;
 mod settings;
 mod single;

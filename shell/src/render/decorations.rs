@@ -5,7 +5,7 @@
 
 use std::cell::RefCell;
 
-use ferrite_ui::theme::{Palette, TRAFFIC_LIGHT_FIRST_X, TRAFFIC_LIGHT_STEP, WINDOW_RADIUS};
+use ferrite_ui::theme::{Color, TRAFFIC_LIGHT_FIRST_X, TRAFFIC_LIGHT_STEP, WINDOW_RADIUS};
 use smithay::{
     backend::{
         allocator::Fourcc,
@@ -36,6 +36,9 @@ const SHADOW_OFFSET_Y: f32 = 10.0;
 const SHADOW_BLUR: f32 = 26.0;
 const SHADOW_ACTIVE: f32 = 0.42;
 const SHADOW_INACTIVE: f32 = 0.22;
+/// Titre de la barre, comme dans le Ferrite d'origine : gris foncé, ou clair si inactive.
+const TITLE_ACTIVE: Color = Color::rgb(0x3A3A3C);
+const TITLE_INACTIVE: Color = Color::rgb(0xB0B0B4);
 
 /// Ressources partagées des décorations.
 #[derive(Debug)]
@@ -119,7 +122,6 @@ impl Decorations {
         out: &mut Vec<OutputElement>,
     ) {
         let Look { active, hover, .. } = look;
-        let palette = Palette::LIGHT;
         let bar = decoration::titlebar(content);
 
         // Titre, centré dans la barre, sans empiéter sur les feux.
@@ -130,11 +132,7 @@ impl Decorations {
             t.text != text || t.active != active || t.scale != scale || t.max_width != max_width
         });
         if stale {
-            let color = if active {
-                palette.text
-            } else {
-                palette.text_secondary
-            };
+            let color = if active { TITLE_ACTIVE } else { TITLE_INACTIVE };
             let image = self
                 .font
                 .render(&text, TITLE_SIZE * scale as f32, color, max_width)
@@ -183,13 +181,21 @@ impl Decorations {
         }
 
         // Barre de titre.
+        // Dégradé du Ferrite d'origine : plus soutenu sur la fenêtre active, trait dessous.
+        let (top, bottom, line) = if active {
+            (Color::rgb(0xF0EEF1), Color::rgb(0xE4E2E5), 38u8)
+        } else {
+            (Color::rgb(0xF6F6F6), Color::rgb(0xF3F3F3), 22u8)
+        };
         let uniforms = || {
             vec![
                 Uniform::new("scale", scale as f32),
-                Uniform::new("background", premultiplied(palette.titlebar)),
-                // Sans trait sous la barre : elle se prolonge dans l'en-tête des
-                // applications Ferrite, de la même teinte.
-                Uniform::new("separator", premultiplied(palette.titlebar)),
+                Uniform::new("background", premultiplied(top)),
+                Uniform::new("background_bottom", premultiplied(bottom)),
+                Uniform::new(
+                    "separator",
+                    premultiplied(bottom.mix(Color::BLACK, f32::from(line) / 255.0)),
+                ),
                 Uniform::new("lit", if active { 1.0f32 } else { 0.0 }),
                 Uniform::new("hover", if hover { 1.0f32 } else { 0.0 }),
             ]

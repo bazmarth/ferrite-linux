@@ -286,6 +286,14 @@ impl Ferrite {
             ),
             ("XDG_CURRENT_DESKTOP".to_owned(), "Ferrite".to_owned()),
             ("XDG_SESSION_TYPE".to_owned(), "wayland".to_owned()),
+            // Applications GTK, Qt, Firefox, Electron et SDL en Wayland natif : elles
+            // dessinent à la résolution de l'écran au lieu d'être agrandies (floues) par
+            // XWayland. X11 reste le repli.
+            ("GDK_BACKEND".to_owned(), "wayland,x11".to_owned()),
+            ("QT_QPA_PLATFORM".to_owned(), "wayland;xcb".to_owned()),
+            ("MOZ_ENABLE_WAYLAND".to_owned(), "1".to_owned()),
+            ("ELECTRON_OZONE_PLATFORM_HINT".to_owned(), "auto".to_owned()),
+            ("SDL_VIDEODRIVER".to_owned(), "wayland,x11".to_owned()),
         ];
         if let Some(display) = self.x_display {
             env.push(("DISPLAY".to_owned(), format!(":{display}")));

@@ -23,7 +23,7 @@ use eframe::egui::{
 
 use crate::{
     files::{FilesState, PickerMode},
-    style,
+    markdown, style,
 };
 
 const FONT_SIZES: [f32; 7] = [11.0, 12.0, 13.0, 14.0, 16.0, 18.0, 22.0];
@@ -40,15 +40,26 @@ struct Document {
     /// Contenu sur le disque : le document est modifié s'il en diffère.
     saved: String,
     id: egui::Id,
+    markdown_mode: MarkdownMode,
+    version: u64,
+    markdown_preview: Option<(u64, Vec<markdown::Block>)>,
 }
 
 impl Document {
     fn new(path: Option<PathBuf>, contents: String) -> Self {
+        let markdown_mode = if path.as_deref().is_some_and(is_markdown_path) {
+            MarkdownMode::Split
+        } else {
+            MarkdownMode::Edit
+        };
         Self {
             path,
             saved: contents.clone(),
             contents,
             id: egui::Id::unique(("document", next_id())),
+            markdown_mode,
+            version: 0,
+            markdown_preview: None,
         }
     }
 
@@ -66,6 +77,16 @@ impl Document {
     fn is_blank(&self) -> bool {
         self.path.is_none() && self.contents.is_empty()
     }
+
+    fn is_markdown(&self) -> bool {
+        self.path.as_deref().is_some_and(is_markdown_path)
+    }
+}
+
+fn is_markdown_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| matches!(extension.to_ascii_lowercase().as_str(), "md" | "markdown"))
 }
 
 fn next_id() -> u64 {
@@ -113,9 +134,12 @@ enum Command {
     Open,
     Save,
     SaveAs,
+    Undo,
+    Redo,
     Close(usize),
     Select(usize),
     NextTab(bool),
+    SetMode(MarkdownMode),
     Find(bool),
     CloseFind,
     FindStep(bool),
@@ -126,6 +150,13 @@ enum Command {
     ToggleLineNumbers,
     /// Réponse à la question : enregistrer, ne pas enregistrer, annuler.
     Answer(Option<bool>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MarkdownMode {
+    Edit,
+    Split,
+    Preview,
 }
 
 pub struct EditorState {
@@ -266,6 +297,75 @@ impl EditorState {
         self.picker = Some((Purpose::SaveAs(index, then), picker));
     }
 
+    fn text_edit_state(&self, ctx: &egui::Context) -> Option<egui::widgets::text_edit::TextEditState> {
+        egui::TextEdit::load_state(ctx, self.document().id)
+    }
+
+    fn can_undo(&self, ctx: &egui::Context) -> bool {
+        let Some(state) = self.text_edit_state(ctx) else {
+            return false;
+        };
+        let document = self.document();
+        let cursor = state
+            .cursor
+            .char_range()
+            .unwrap_or_else(|| CCursorRange::one(CCursor::end_of_str(&document.contents)));
+        state.undoer().has_undo(&(cursor, document.contents.clone()))
+    }
+
+    fn can_redo(&self, ctx: &egui::Context) -> bool {
+        let Some(state) = self.text_edit_state(ctx) else {
+            return false;
+        };
+        let document = self.document();
+        let cursor = state
+            .cursor
+            .char_range()
+            .unwrap_or_else(|| CCursorRange::one(CCursor::end_of_str(&document.contents)));
+        state.undoer().has_redo(&(cursor, document.contents.clone()))
+    }
+
+    fn checkpoint_text_edit(&self, ctx: &egui::Context) {
+        let document = self.document();
+        let Some(mut state) = self.text_edit_state(ctx) else {
+            return;
+        };
+        let cursor = state
+            .cursor
+            .char_range()
+            .unwrap_or_else(|| CCursorRange::one(CCursor::end_of_str(&document.contents)));
+        let mut undoer = state.undoer();
+        undoer.add_undo(&(cursor, document.contents.clone()));
+        state.set_undoer(undoer);
+        state.store(ctx, document.id);
+    }
+
+    fn edit_history(&mut self, ctx: &egui::Context, redo: bool) {
+        let document = &mut self.documents[self.active];
+        let Some(mut state) = egui::TextEdit::load_state(ctx, document.id) else {
+            return;
+        };
+        let cursor = state
+            .cursor
+            .char_range()
+            .unwrap_or_else(|| CCursorRange::one(CCursor::end_of_str(&document.contents)));
+        let current = (cursor, document.contents.clone());
+        let mut undoer = state.undoer();
+        let next = if redo {
+            undoer.redo(&current)
+        } else {
+            undoer.undo(&current)
+        }
+        .cloned();
+        if let Some((cursor, contents)) = next {
+            document.contents = contents;
+            document.version += 1;
+            state.cursor.set_char_range(Some(cursor));
+            state.set_undoer(undoer);
+            state.store(ctx, document.id);
+        }
+    }
+
     fn open_dialog(&mut self) {
         let start = self
             .document()
@@ -340,7 +440,7 @@ impl EditorState {
         }
     }
 
-    fn run(&mut self, command: Command) {
+    fn run(&mut self, command: Command, ctx: &egui::Context) {
         match command {
             Command::New => self.new_document(),
             Command::Open => self.open_dialog(),
@@ -348,10 +448,13 @@ impl EditorState {
                 self.save(self.active, Then::Nothing);
             }
             Command::SaveAs => self.save_as(self.active, Then::Nothing),
+            Command::Undo => self.edit_history(ctx, false),
+            Command::Redo => self.edit_history(ctx, true),
             // `usize::MAX` : l'onglet actif (Ctrl+W).
             Command::Close(usize::MAX) => self.close(self.active, false),
             Command::Close(index) => self.close(index, false),
             Command::Select(index) => self.active = index.min(self.documents.len() - 1),
+            Command::SetMode(mode) => self.documents[self.active].markdown_mode = mode,
             Command::NextTab(forward) => {
                 let count = self.documents.len();
                 self.active = if forward {
@@ -399,10 +502,11 @@ impl EditorState {
                 if let Some(find) = &self.find
                     && let Some(range) = matches.get(find.current).cloned()
                 {
+                    self.checkpoint_text_edit(ctx);
                     let replacement = find.replacement.clone();
-                    self.documents[self.active]
-                        .contents
-                        .replace_range(range, &replacement);
+                    let document = &mut self.documents[self.active];
+                    document.contents.replace_range(range, &replacement);
+                    document.version += 1;
                     self.reveal_match = true;
                     if let Some(find) = &mut self.find {
                         let left = matches.len() - 1;
@@ -415,11 +519,13 @@ impl EditorState {
                 if let Some(find) = &self.find
                     && !matches.is_empty()
                 {
+                    self.checkpoint_text_edit(ctx);
                     let replacement = find.replacement.clone();
                     let document = &mut self.documents[self.active];
                     for range in matches.iter().rev() {
                         document.contents.replace_range(range.clone(), &replacement);
                     }
+                    document.version += 1;
                     let count = matches.len();
                     self.report(
                         format!("{count} remplacement{}", if count > 1 { "s" } else { "" }),
@@ -482,13 +588,54 @@ impl EditorState {
         self.status_bar(ui, &mut commands);
         egui::CentralPanel::no_frame()
             .frame(Frame::new().fill(style::BACKGROUND))
-            .show(ui, |ui| self.text_area(ui));
+            .show(ui, |ui| match self.document().markdown_mode {
+                MarkdownMode::Edit => self.text_area(ui),
+                MarkdownMode::Split => ui.columns(2, |columns| {
+                    self.text_area(&mut columns[0]);
+                    self.markdown_area(&mut columns[1]);
+                }),
+                MarkdownMode::Preview => self.markdown_area(ui),
+            });
         self.picker_sheet(&ctx);
         self.ask_dialog(&ctx, &mut commands);
 
         for command in commands {
-            self.run(command);
+            self.run(command, &ctx);
         }
+    }
+
+    fn markdown_area(&mut self, ui: &mut egui::Ui) {
+        let document = &mut self.documents[self.active];
+        if document
+            .markdown_preview
+            .as_ref()
+            .is_none_or(|(version, _)| *version != document.version)
+        {
+            document.markdown_preview = Some((document.version, markdown::parse(&document.contents)));
+        }
+        let preview = &document.markdown_preview.as_ref().unwrap().1;
+        let available_width = ui.available_width();
+        egui::ScrollArea::vertical()
+            .id_salt(("textedit-markdown-preview", document.id))
+            .auto_shrink(false)
+            .show(ui, |ui| {
+                ui.add_space(20.0);
+                ui.horizontal(|ui| {
+                    ui.add_space(((available_width - 760.0) * 0.5).max(0.0));
+                    egui::Frame::new()
+                        .fill(Color32::WHITE)
+                        .stroke(Stroke::new(1.0, style::SEPARATOR))
+                        .corner_radius(10.0)
+                        .inner_margin(Margin::symmetric(28, 24))
+                        .show(ui, |ui| {
+                            ui.set_max_width(760.0);
+                            for block in preview {
+                                render_markdown_block(ui, block, 0);
+                            }
+                        });
+                });
+                ui.add_space(24.0);
+            });
     }
 
     /// Fermeture de la fenêtre et fichiers déposés dessus.
@@ -517,13 +664,59 @@ impl EditorState {
     }
 
     fn header(&mut self, ui: &mut egui::Ui, commands: &mut Vec<Command>) {
-        if ui.button("Ouvrir…").on_hover_text("Ctrl+O").clicked() {
-            commands.push(Command::Open);
-        }
-        if glyph_button(ui, Glyph::Plus, false, "Nouveau document (Ctrl+N)").clicked() {
-            commands.push(Command::New);
-        }
+        // Groupes de boutons en pilule, comme le TextEdit du Ferrite d'origine.
+        style::pill_group(ui, |ui| {
+            ui.add_space(6.0);
+            if ui
+                .add(egui::Button::new("Ouvrir…").frame(false))
+                .on_hover_text("Ctrl+O")
+                .clicked()
+            {
+                commands.push(Command::Open);
+            }
+            if glyph_button(ui, Glyph::Plus, false, "Nouveau document (Ctrl+N)").clicked() {
+                commands.push(Command::New);
+            }
+        });
         ui.add_space(8.0);
+        let ctx = ui.ctx().clone();
+        let (can_undo, can_redo) = (self.can_undo(&ctx), self.can_redo(&ctx));
+        style::pill_group(ui, |ui| {
+            if can_undo && tool_glyph_button(ui, Glyph::Undo, true, "Annuler (Ctrl+Z)").clicked() {
+                commands.push(Command::Undo);
+            }
+            if can_redo && tool_glyph_button(ui, Glyph::Redo, true, "Rétablir (Ctrl+Y)").clicked() {
+                commands.push(Command::Redo);
+            }
+        });
+        if self.document().is_markdown() {
+            ui.add_space(6.0);
+            style::segmented(ui, |ui| {
+                for (label, mode) in [
+                    ("Éditer", MarkdownMode::Edit),
+                    ("Partagé", MarkdownMode::Split),
+                    ("Aperçu", MarkdownMode::Preview),
+                ] {
+                    let (rect, response) = ui.allocate_exact_size(egui::vec2(62.0, 28.0), Sense::click());
+                    style::segment_background(
+                        ui,
+                        rect,
+                        self.document().markdown_mode == mode,
+                        response.hovered(),
+                    );
+                    ui.painter().text(
+                        rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        label,
+                        FontId::proportional(12.5),
+                        style::TEXT,
+                    );
+                    if response.clicked() {
+                        commands.push(Command::SetMode(mode));
+                    }
+                }
+            });
+        }
         let document = self.document();
         let name = document.name();
         let folder = document
@@ -534,16 +727,23 @@ impl EditorState {
             .unwrap_or_default();
         let dirty = document.dirty();
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let more = glyph_button(ui, Glyph::More, false, "Menu");
-            egui::Popup::menu(&more).show(|ui| self.menu(ui, commands));
             let searching = self.find.is_some();
-            if glyph_button(ui, Glyph::Search, searching, "Rechercher (Ctrl+F)").clicked() {
+            // De droite à gauche : « ••• » au bord, la loupe avant lui.
+            let (more, search) = style::pill_group(ui, |ui| {
+                (
+                    glyph_button(ui, Glyph::More, false, "Menu"),
+                    glyph_button(ui, Glyph::Search, searching, "Rechercher (Ctrl+F)"),
+                )
+            });
+            egui::Popup::menu(&more).show(|ui| self.menu(ui, commands));
+            if search.clicked() {
                 commands.push(if searching {
                     Command::CloseFind
                 } else {
                     Command::Find(false)
                 });
             }
+            ui.add_space(6.0);
             if style::suggested_button(ui, "Enregistrer")
                 .on_hover_text("Ctrl+S")
                 .clicked()
@@ -574,6 +774,8 @@ impl EditorState {
         item(ui, "Ouvrir…", "Ctrl+O", Command::Open);
         item(ui, "Enregistrer", "Ctrl+S", Command::Save);
         item(ui, "Enregistrer sous…", "Ctrl+Maj+S", Command::SaveAs);
+        item(ui, "Annuler", "Ctrl+Z", Command::Undo);
+        item(ui, "Rétablir", "Ctrl+Y", Command::Redo);
         ui.separator();
         item(ui, "Rechercher", "Ctrl+F", Command::Find(false));
         item(ui, "Remplacer", "Ctrl+H", Command::Find(true));
@@ -791,6 +993,9 @@ impl EditorState {
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(format!("UTF-8 · {line_ending}"));
+                if document.is_markdown() {
+                    ui.label("Markdown");
+                }
                 let wrap_text = if wrap {
                     "Retour à la ligne"
                 } else {
@@ -872,6 +1077,9 @@ impl EditorState {
                 .lock_focus(true)
                 .layouter(&mut layouter)
                 .show(ui);
+            if output.response.response.changed() {
+                document.version += 1;
+            }
             let rect = output.response.response.rect;
             let galley = &output.galley;
             let origin = output.galley_pos;
@@ -994,6 +1202,11 @@ impl EditorState {
             Purpose::SaveAs(index, then) => {
                 if let Some(document) = self.documents.get_mut(index) {
                     document.path = Some(path);
+                    if document.is_markdown() && document.markdown_mode == MarkdownMode::Edit {
+                        document.markdown_mode = MarkdownMode::Split;
+                    } else if !document.is_markdown() {
+                        document.markdown_mode = MarkdownMode::Edit;
+                    }
                     self.save(index, then);
                 }
             }
@@ -1089,6 +1302,142 @@ fn shortcuts(ctx: &egui::Context, finding: bool, commands: &mut Vec<Command>) {
     });
 }
 
+fn render_markdown_block(ui: &mut egui::Ui, block: &markdown::Block, depth: usize) {
+    use crate::markdown::{Align, Block, Marker};
+
+    match block {
+        Block::Heading(level, spans) => {
+            let size = match level {
+                1 => 26.0,
+                2 => 22.0,
+                3 => 18.0,
+                4 => 16.0,
+                _ => 14.0,
+            };
+            ui.add_space(if *level <= 2 { 10.0 } else { 6.0 });
+            ui.label(markdown_job(ui, spans, size, style::TEXT));
+            if *level <= 2 {
+                ui.add_space(4.0);
+                ui.separator();
+            }
+        }
+        Block::Paragraph(spans) => {
+            ui.label(markdown_job(ui, spans, 14.0, style::TEXT));
+            ui.add_space(8.0);
+        }
+        Block::Code(lines) => {
+            egui::Frame::new()
+                .fill(Color32::from_rgb(0xF2, 0xF2, 0xF5))
+                .corner_radius(7.0)
+                .inner_margin(Margin::symmetric(12, 10))
+                .show(ui, |ui| {
+                    ui.label(RichText::new(lines.join("\n")).monospace().color(style::TEXT));
+                });
+            ui.add_space(10.0);
+        }
+        Block::Quote(blocks) => {
+            egui::Frame::new()
+                .fill(style::HEADER)
+                .inner_margin(Margin::symmetric(12, 8))
+                .show(ui, |ui| {
+                    ui.set_min_width((ui.available_width() - 24.0).max(0.0));
+                    for child in blocks {
+                        render_markdown_block(ui, child, depth + 1);
+                    }
+                });
+            ui.add_space(8.0);
+        }
+        Block::List(items) => {
+            for item in items {
+                ui.horizontal(|ui| {
+                    ui.add_space((item.level * 18) as f32);
+                    let marker = match item.marker {
+                        Marker::Bullet => "•".to_owned(),
+                        Marker::Number(number) => format!("{number}."),
+                        Marker::Task(true) => "☑".to_owned(),
+                        Marker::Task(false) => "□".to_owned(),
+                    };
+                    ui.label(RichText::new(marker).color(style::TEXT_SECONDARY));
+                    ui.label(markdown_job(ui, &item.text, 14.0, style::TEXT));
+                });
+            }
+            ui.add_space(8.0);
+        }
+        Block::Rule => {
+            ui.add_space(4.0);
+            ui.separator();
+            ui.add_space(8.0);
+        }
+        Block::Table { align, header, rows } => {
+            egui::Grid::new(ui.next_auto_id()).striped(true).show(ui, |ui| {
+                for (column, cell) in header.iter().enumerate() {
+                    render_table_cell(ui, cell, align.get(column), true);
+                }
+                ui.end_row();
+                for row in rows {
+                    for (column, cell) in row.iter().enumerate() {
+                        render_table_cell(ui, cell, align.get(column), false);
+                    }
+                    ui.end_row();
+                }
+            });
+            ui.add_space(8.0);
+        }
+    }
+
+    if depth == 0 {
+        ui.add_space(2.0);
+    }
+
+    fn render_table_cell(ui: &mut egui::Ui, spans: &[markdown::Span], align: Option<&Align>, heading: bool) {
+        let layout = match align {
+            Some(Align::Center) => egui::Layout::top_down(egui::Align::Center),
+            Some(Align::Right) => egui::Layout::top_down(egui::Align::RIGHT),
+            _ => egui::Layout::top_down(egui::Align::LEFT),
+        };
+        ui.with_layout(layout, |ui| {
+            ui.label(markdown_job(
+                ui,
+                spans,
+                13.0,
+                if heading {
+                    style::TEXT
+                } else {
+                    style::TEXT_SECONDARY
+                },
+            ));
+        });
+    }
+}
+
+fn markdown_job(ui: &egui::Ui, spans: &[markdown::Span], size: f32, color: Color32) -> LayoutJob {
+    let mut job = LayoutJob::default();
+    job.wrap.max_width = ui.available_width().max(80.0);
+    for span in spans {
+        let mut format = TextFormat::simple(FontId::proportional(size), color);
+        if span.style & markdown::BOLD != 0 {
+            format.font_id = FontId::new(size, style::strong_family());
+        }
+        if span.style & markdown::ITALIC != 0 {
+            format.italics = true;
+        }
+        if span.style & markdown::CODE != 0 {
+            format.font_id = FontId::monospace(size);
+            format.color = Color32::from_rgb(0xA0, 0x35, 0x2B);
+            format.background = Color32::from_rgb(0xF2, 0xF2, 0xF5);
+        }
+        if span.style & markdown::LINK != 0 {
+            format.color = Color32::from_rgb(0x0A, 0x64, 0xD8);
+            format.underline = Stroke::new(1.0, format.color);
+        }
+        if span.style & markdown::STRIKE != 0 {
+            format.strikethrough = Stroke::new(1.0, format.color);
+        }
+        job.append(&span.text, 0.0, format);
+    }
+    job
+}
+
 /// Occurrences de `query` dans `text` (positions en octets), sans chevauchement.
 fn find_matches(text: &str, query: &str, match_case: bool) -> Vec<Range<usize>> {
     if query.is_empty() {
@@ -1179,6 +1528,8 @@ enum Glyph {
     Plus,
     Search,
     Close,
+    Undo,
+    Redo,
     Up,
     Down,
     More,
@@ -1202,6 +1553,27 @@ fn paint_glyph(ui: &egui::Ui, glyph: Glyph, rect: egui::Rect, color: Color32) {
             painter.line_segment([p(-4.0, -4.0), p(4.0, 4.0)], stroke);
             painter.line_segment([p(4.0, -4.0), p(-4.0, 4.0)], stroke);
         }
+        Glyph::Undo | Glyph::Redo => {
+            let direction = if matches!(glyph, Glyph::Undo) { -1.0 } else { 1.0 };
+            let points = [
+                p(direction * -5.0, -3.0),
+                p(direction * -3.0, -5.0),
+                p(direction * 1.0, -5.0),
+                p(direction * 4.5, -2.0),
+                p(direction * 4.5, 1.0),
+                p(direction * 2.0, 3.0),
+            ];
+            painter.line(points.to_vec(), stroke);
+            painter.line(
+                vec![
+                    p(direction * -5.0, -3.0),
+                    p(direction * -1.0, -3.0),
+                    p(direction * 1.0, 0.0),
+                ],
+                stroke,
+            );
+            painter.line(vec![p(direction * -5.0, -3.0), p(direction * -1.0, -7.0)], stroke);
+        }
         Glyph::Up => {
             painter.line(vec![p(-5.0, 3.0), p(0.0, -2.5), p(5.0, 3.0)], stroke);
         }
@@ -1217,13 +1589,30 @@ fn paint_glyph(ui: &egui::Ui, glyph: Glyph, rect: egui::Rect, color: Color32) {
 }
 
 fn glyph_button(ui: &mut egui::Ui, glyph: Glyph, active: bool, hint: &str) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(30.0, 28.0), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(34.0, 28.0), Sense::click());
     if active {
-        ui.painter().rect_filled(rect, 7.0, Color32::from_black_alpha(22));
+        ui.painter()
+            .rect_filled(rect.shrink(1.0), 13.0, Color32::from_rgb(0xE4, 0xE4, 0xE9));
     } else if response.hovered() {
-        ui.painter().rect_filled(rect, 7.0, Color32::from_black_alpha(12));
+        ui.painter()
+            .rect_filled(rect.shrink(1.0), 13.0, Color32::from_black_alpha(10));
     }
     paint_glyph(ui, glyph, rect, style::TEXT);
+    response.on_hover_text(hint)
+}
+
+fn tool_glyph_button(ui: &mut egui::Ui, glyph: Glyph, enabled: bool, hint: &str) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(34.0, 28.0), Sense::click());
+    if enabled && response.hovered() {
+        ui.painter()
+            .rect_filled(rect.shrink(1.0), 13.0, Color32::from_black_alpha(10));
+    }
+    let color = if enabled {
+        style::TEXT
+    } else {
+        style::TEXT_SECONDARY.gamma_multiply(0.55)
+    };
+    paint_glyph(ui, glyph, rect, color);
     response.on_hover_text(hint)
 }
 
@@ -1280,12 +1669,13 @@ mod tests {
     #[test]
     fn fermer_un_document_modifie_demande_confirmation() {
         let mut editor = EditorState::default();
+        let context = egui::Context::default();
         editor.new_document();
         editor.documents[1].contents = "à garder".into();
-        editor.run(Command::Close(1));
+        editor.run(Command::Close(1), &context);
         assert_eq!(editor.ask, Some(Ask::Close(1)));
         assert_eq!(editor.documents.len(), 2);
-        editor.run(Command::Answer(Some(false)));
+        editor.run(Command::Answer(Some(false)), &context);
         assert_eq!(editor.documents.len(), 1);
         assert_eq!(editor.active, 0);
     }
@@ -1302,9 +1692,10 @@ mod tests {
             replacement: "chien".into(),
             ..Find::default()
         });
-        editor.run(Command::ReplaceOne);
+        let context = egui::Context::default();
+        editor.run(Command::ReplaceOne, &context);
         assert_eq!(editor.document().contents, "un chien, deux chats");
-        editor.run(Command::ReplaceAll);
+        editor.run(Command::ReplaceAll, &context);
         assert_eq!(editor.document().contents, "un chien, deux chiens");
     }
 
@@ -1313,5 +1704,33 @@ mod tests {
         assert_eq!(line_column("ab\ncdé\nf", 0), (1, 1));
         assert_eq!(line_column("ab\ncdé\nf", 5), (2, 3));
         assert_eq!(line_column("ab\ncdé\nf", 7), (3, 1));
+    }
+
+    #[test]
+    fn les_documents_markdown_commencent_en_mode_partage() {
+        assert_eq!(
+            Document::new(Some(PathBuf::from("README.MD")), String::new()).markdown_mode,
+            MarkdownMode::Split
+        );
+        assert_eq!(
+            Document::new(Some(PathBuf::from("notes.txt")), String::new()).markdown_mode,
+            MarkdownMode::Edit
+        );
+    }
+
+    #[test]
+    fn apercu_markdown_analyse_titres_listes_et_code() {
+        let blocks = markdown::parse("# Titre\n\n- **élément**\n\n```rs\nlet x = 1;\n```");
+        assert!(matches!(blocks.first(), Some(markdown::Block::Heading(1, _))));
+        assert!(
+            blocks
+                .iter()
+                .any(|block| matches!(block, markdown::Block::List(_)))
+        );
+        assert!(
+            blocks
+                .iter()
+                .any(|block| matches!(block, markdown::Block::Code(_)))
+        );
     }
 }

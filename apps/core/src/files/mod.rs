@@ -1018,21 +1018,27 @@ caches={}
     }
 
     fn header(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
-        if nav_button(ui, Glyph::Back, !self.back.is_empty(), "Précédent (Alt+←)").clicked() {
-            actions.push(Action::Back);
-        }
-        if nav_button(ui, Glyph::Forward, !self.forward.is_empty(), "Suivant (Alt+→)").clicked() {
-            actions.push(Action::Forward);
-        }
-        ui.add_space(4.0);
+        // Précédent / suivant en pilule, comme le Fichiers du Ferrite d'origine.
+        style::pill_group(ui, |ui| {
+            if nav_button(ui, Glyph::Back, !self.back.is_empty(), "Précédent (Alt+←)").clicked() {
+                actions.push(Action::Back);
+            }
+            if nav_button(ui, Glyph::Forward, !self.forward.is_empty(), "Suivant (Alt+→)").clicked() {
+                actions.push(Action::Forward);
+            }
+        });
+        ui.add_space(10.0);
         // Côté droit d'abord (vue, recherche), puis le chemin dans la place restante.
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if view_button(ui, Glyph::Grid, self.view == View::Grid, "Grille").clicked() {
-                actions.push(Action::SetView(View::Grid));
-            }
-            if view_button(ui, Glyph::List, self.view == View::List, "Liste").clicked() {
-                actions.push(Action::SetView(View::List));
-            }
+            style::segmented(ui, |ui| {
+                if view_button(ui, Glyph::Grid, self.view == View::Grid, "Grille").clicked() {
+                    actions.push(Action::SetView(View::Grid));
+                }
+                if view_button(ui, Glyph::List, self.view == View::List, "Liste").clicked() {
+                    actions.push(Action::SetView(View::List));
+                }
+            });
+            ui.add_space(6.0);
             ui.add(
                 egui::TextEdit::singleline(&mut self.search)
                     .hint_text("Rechercher")
@@ -1542,13 +1548,13 @@ caches={}
                 } else if response.hovered() {
                     Some(Color32::from_rgb(0xF0, 0xF3, 0xF8))
                 } else if row_index % 2 == 1 {
-                    Some(Color32::from_rgb(0xFA, 0xFA, 0xFB))
+                    Some(Color32::from_rgb(0xF4, 0xF4, 0xF6))
                 } else {
                     None
                 };
                 if let Some(fill) = fill {
                     ui.painter()
-                        .rect_filled(rect.shrink2(egui::vec2(6.0, 1.0)), 6.0, fill);
+                        .rect_filled(rect.shrink2(egui::vec2(8.0, 0.0)), 5.0, fill);
                 }
                 let ink = if selected { Color32::WHITE } else { style::TEXT };
                 let secondary = if selected {
@@ -1971,30 +1977,27 @@ fn paint_glyph(ui: &egui::Ui, glyph: Glyph, rect: egui::Rect, color: Color32) {
 
 fn nav_button(ui: &mut egui::Ui, glyph: Glyph, enabled: bool, hint: &str) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(32.0, 28.0),
+        egui::vec2(34.0, 28.0),
         if enabled { Sense::click() } else { Sense::hover() },
     );
     if enabled && response.hovered() {
-        ui.painter().rect_filled(rect, 7.0, Color32::from_black_alpha(14));
+        ui.painter()
+            .rect_filled(rect.shrink(1.0), 13.0, Color32::from_black_alpha(10));
     }
     let color = if enabled {
-        style::TEXT
+        Color32::from_rgb(0x3A, 0x3A, 0x3F)
     } else {
-        Color32::from_rgb(0xBB, 0xBB, 0xC0)
+        Color32::from_rgb(0xC2, 0xC2, 0xC8)
     };
     paint_glyph(ui, glyph, rect, color);
     response.on_hover_text(hint)
 }
 
-/// Bouton de vue (liste, grille) : la vue active reste enfoncée.
+/// Segment de vue (liste, grille) : la vue active est blanche et en relief.
 fn view_button(ui: &mut egui::Ui, glyph: Glyph, active: bool, hint: &str) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(32.0, 28.0), Sense::click());
-    if active {
-        ui.painter().rect_filled(rect, 7.0, Color32::from_black_alpha(22));
-    } else if response.hovered() {
-        ui.painter().rect_filled(rect, 7.0, Color32::from_black_alpha(10));
-    }
-    paint_glyph(ui, glyph, rect, style::TEXT);
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(36.0, 22.0), Sense::click());
+    style::segment_background(ui, rect, active, response.hovered());
+    paint_glyph(ui, glyph, rect, Color32::from_rgb(0x3A, 0x3A, 0x3F));
     response.on_hover_text(hint)
 }
 

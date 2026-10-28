@@ -70,7 +70,7 @@ pub struct RenderAssets {
 impl RenderAssets {
     pub fn new(renderer: &mut GlesRenderer) -> Result<RenderAssets, String> {
         Ok(RenderAssets {
-            wallpaper: Wallpaper::landscape(),
+            wallpaper: Wallpaper::waves(),
             decorations: Decorations::new(renderer)?,
             cursor: Cursor::default(),
             dock: Dock::new(),
@@ -221,14 +221,19 @@ pub fn output_elements(
     }
     elements.extend(snap_preview);
 
+    // Fond à la résolution physique de l'écran : net à toute échelle.
+    let physical = output_geo.size.to_f64().to_physical(scale);
+    let (wallpaper, source) = assets
+        .wallpaper
+        .buffer(physical.w.round() as i32, physical.h.round() as i32);
     match MemoryRenderBufferRenderElement::from_buffer(
         renderer,
         Point::from((0.0, 0.0)),
-        assets.wallpaper.buffer(),
+        &wallpaper,
         None,
-        // Toute la texture, étirée à la taille de l'écran (sans `src`, Smithay prendrait
-        // la taille de l'écran comme zone source et n'étirerait rien).
-        Some(assets.wallpaper.source()),
+        // Toute la texture, à la taille de l'écran (sans `src`, Smithay prendrait la
+        // taille de l'écran comme zone source).
+        Some(source),
         Some(output_geo.size),
         Kind::Unspecified,
     ) {

@@ -7,7 +7,7 @@ conteneur Debian.
 ## 1. Récupérer le dépôt
 
 ```sh
-git clone https://github.com/Bazteck/ferrite-linux.git
+git clone https://github.com/bazmarth/ferrite-linux.git
 cd ferrite-linux
 ```
 

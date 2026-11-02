@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 100 100" role="img" aria-label="Réglages du bureau">
+<rect x="12" y="20" width="76" height="60" rx="9" fill="none" stroke="#000" stroke-width="7"/>
+<circle cx="35" cy="40" r="7" fill="#000"/>
+<path d="M17 74 40 53l13 12 12-11 19 20z" fill="#000"/>
+</svg>

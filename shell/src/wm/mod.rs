@@ -5,6 +5,7 @@ pub mod animation;
 pub mod decoration;
 mod move_grab;
 mod resize_grab;
+pub mod workspaces;
 
 pub use move_grab::{BTN_LEFT, BTN_RIGHT, MoveSurfaceGrab};
 pub use resize_grab::{ResizeEdge, ResizeSurfaceGrab, handle_commit as handle_resize_commit};
@@ -219,6 +220,17 @@ pub fn maximized_content(area: Rectangle<i32, Logical>, decorated: bool) -> Rect
     )
 }
 
+/// Une application Ferrite dessine elle-même sa barre de titre.
+pub fn is_ferrite_app(surface: &smithay::wayland::shell::xdg::ToplevelSurface) -> bool {
+    smithay::wayland::compositor::with_states(surface.wl_surface(), |states| {
+        states
+            .data_map
+            .get::<smithay::wayland::shell::xdg::XdgToplevelSurfaceData>()
+            .and_then(|data| data.lock().ok()?.app_id.clone())
+    })
+    .is_some_and(|id| id.starts_with("ferrite-"))
+}
+
 /// La fenêtre est-elle décorée par ferrite-shell (barre de titre, ombre, coins) ?
 /// Les clients qui dessinent leurs propres décorations (mode client) ne le sont pas, ni les
 /// fenêtres en plein écran.
@@ -228,14 +240,7 @@ pub fn maximized_content(area: Rectangle<i32, Logical>, decorated: bool) -> Rect
 pub fn is_unified(window: &Window) -> bool {
     window.toplevel().is_some_and(|toplevel| {
         let state = toplevel.current_state();
-        let ferrite = smithay::wayland::compositor::with_states(toplevel.wl_surface(), |states| {
-            states
-                .data_map
-                .get::<smithay::wayland::shell::xdg::XdgToplevelSurfaceData>()
-                .and_then(|data| data.lock().ok()?.app_id.clone())
-        })
-        .is_some_and(|id| id.starts_with("ferrite-"));
-        ferrite
+        is_ferrite_app(&toplevel)
             && state.decoration_mode == Some(DecorationMode::ClientSide)
             && !state.states.contains(xdg_toplevel::State::Fullscreen)
     })
@@ -252,6 +257,16 @@ pub fn is_server_decorated(window: &Window) -> bool {
         state.decoration_mode == Some(DecorationMode::ServerSide)
             && !state.states.contains(xdg_toplevel::State::Fullscreen)
     })
+}
+
+/// Cadre complet utilisé par les animations, barre de titre serveur comprise.
+pub fn animation_frame(window: &Window, content: Rectangle<i32, Logical>) -> Rectangle<f64, Logical> {
+    let frame = if is_server_decorated(window) {
+        decoration::frame(content)
+    } else {
+        content
+    };
+    frame.to_f64()
 }
 
 /// Demande à une fenêtre de se fermer (Wayland ou X11).
@@ -482,7 +497,7 @@ impl Ferrite {
                     .push(animation::WindowAnimation::new(
                         window.clone(),
                         animation::Motion::Minimize,
-                        content.to_f64(),
+                        animation_frame(window, content),
                         icon,
                     ));
             }
@@ -522,7 +537,7 @@ impl Ferrite {
                 .push(animation::WindowAnimation::new(
                     window.clone(),
                     animation::Motion::Restore,
-                    content.to_f64(),
+                    animation_frame(&window, content),
                     icon,
                 ));
         }

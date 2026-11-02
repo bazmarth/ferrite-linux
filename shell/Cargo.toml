@@ -11,6 +11,7 @@ ferrite-system = { path = "../services/system" }
 ferrite-ui = { path = "../ui" }
 bitflags = "2"
 fontdue = "0.9"
+libc = "0.2"
 png = "0.18"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

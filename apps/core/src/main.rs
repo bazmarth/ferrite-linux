@@ -10,7 +10,11 @@ mod settings;
 mod single;
 mod style;
 
-use std::{env, path::PathBuf};
+use std::{
+    env,
+    path::PathBuf,
+    time::{Duration, Instant, SystemTime},
+};
 
 use eframe::egui;
 
@@ -65,7 +69,7 @@ impl AppKind {
     fn sizes(self) -> ([f32; 2], [f32; 2]) {
         match self {
             Self::Files => ([860.0, 520.0], [560.0, 340.0]),
-            Self::TextEdit => ([760.0, 540.0], [420.0, 280.0]),
+            Self::TextEdit => ([1180.0, 760.0], [420.0, 280.0]),
             Self::Calculator => ([320.0, 470.0], [280.0, 420.0]),
             Self::Settings => ([880.0, 580.0], [680.0, 440.0]),
             Self::Monitor => ([920.0, 620.0], [680.0, 460.0]),
@@ -124,6 +128,8 @@ struct FerriteApp {
     monitor: Option<MonitorState>,
     /// Lancements suivants de la même application (instance unique).
     requests: Option<single::Requests>,
+    settings_stamp: Option<SystemTime>,
+    settings_checked_at: Instant,
 }
 
 impl FerriteApp {
@@ -155,6 +161,21 @@ impl FerriteApp {
             settings: (kind == AppKind::Settings).then(SettingsState::default),
             monitor: (kind == AppKind::Monitor).then(MonitorState::default),
             requests,
+            settings_stamp: ferrite_system::config::Settings::modified(),
+            settings_checked_at: Instant::now(),
+        }
+    }
+
+    fn refresh_preferences(&mut self, context: &egui::Context) {
+        if self.settings_checked_at.elapsed() < Duration::from_secs(1) {
+            return;
+        }
+        self.settings_checked_at = Instant::now();
+        let stamp = ferrite_system::config::Settings::modified();
+        let settings = ferrite_system::config::Settings::load();
+        if stamp != self.settings_stamp || settings.appearance().is_dark() != style::theme_is_dark() {
+            self.settings_stamp = stamp;
+            style::apply_preferences(context, &settings);
         }
     }
 
@@ -179,6 +200,7 @@ impl FerriteApp {
 
 impl eframe::App for FerriteApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.refresh_preferences(ui.ctx());
         self.handle_requests(&ui.ctx().clone());
         // F11 : plein écran, comme dans les navigateurs.
         if ui.input(|input| input.key_pressed(egui::Key::F11)) {
@@ -189,7 +211,7 @@ impl eframe::App for FerriteApp {
         // Le client est rendu dans une surface Wayland translucide : peindre son
         // fond explicitement évite que le bureau transparaisse.
         ui.painter()
-            .rect_filled(ui.max_rect(), egui::CornerRadius::ZERO, style::BACKGROUND);
+            .rect_filled(ui.max_rect(), egui::CornerRadius::ZERO, style::background());
         match self.kind {
             AppKind::Files => {
                 if let Some(files) = &mut self.files {

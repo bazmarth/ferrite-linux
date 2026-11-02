@@ -22,7 +22,7 @@ if [ "$(id -u)" -eq 0 ]; then
         libxkbcommon-x11 libxcb libXcursor libXrandr libXi \
         xorriso squashfs-tools mtools dosfstools \
         qemu-system-x86 qemu-img edk2-ovmf socat \
-        weston foot ShellCheck podman
+        weston foot tmux ShellCheck podman
     user=${SUDO_USER:-}
     if [ -n "$user" ] && [ "$user" != root ]; then
         usermod -aG kvm "$user"

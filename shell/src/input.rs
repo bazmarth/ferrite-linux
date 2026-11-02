@@ -2,8 +2,9 @@
 
 use smithay::{
     backend::input::{
-        AbsolutePositionEvent, Axis, AxisSource, ButtonState, Event, InputBackend, InputEvent, KeyState,
-        KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent, PointerMotionEvent,
+        AbsolutePositionEvent, Axis, AxisSource, ButtonState, Event, GestureBeginEvent, GestureEndEvent,
+        GestureSwipeUpdateEvent, InputBackend, InputEvent, KeyState, KeyboardKeyEvent, PointerAxisEvent,
+        PointerButtonEvent, PointerMotionEvent,
     },
     input::{
         keyboard::{FilterResult, Keysym},
@@ -14,7 +15,7 @@ use smithay::{
 use tracing::info;
 
 use crate::{
-    desktop::panels::{self, DesktopAction, LAUNCHER_PAGE_SIZE, Popover, Slider},
+    desktop::panels::{self, DesktopAction, LAUNCHER_SCROLL_STEP, Popover, SectionLink, Slider},
     state::Ferrite,
     system::Change,
     wm::{BTN_LEFT, BTN_RIGHT, Hit, decoration::Part},
@@ -27,6 +28,8 @@ enum Action {
     Quit,
     /// Ctrl+Alt+M : remet à l'écran la dernière fenêtre réduite (en attendant le Dock).
     RestoreMinimized,
+    /// Ctrl+Alt+← ou → (Ctrl+Super sous GNOME, qui garde Ctrl+Alt) : page voisine.
+    SwitchPage(i32),
     /// Ctrl+Alt+F1…F12 : passe au terminal virtuel indiqué (backend DRM).
     SwitchVt(i32),
     /// Échap : ferme le menu ou la confirmation ouverte.
@@ -45,6 +48,10 @@ enum Action {
     LauncherType(char),
     LauncherErase,
     LauncherLaunchFirst,
+    DashboardType(char),
+    DashboardErase,
+    DashboardEnter,
+    DashboardStopEditing,
 }
 
 /// Symboles XKB `XF86Switch_VT_1` à `XF86Switch_VT_12`, produits par Ctrl+Alt+F1…F12.
@@ -98,6 +105,9 @@ impl Ferrite {
                 self.on_button(button);
             }
             InputEvent::PointerAxis { event } => self.on_axis::<I>(event),
+            InputEvent::GestureSwipeBegin { event } => self.swipe_begin(event.fingers()),
+            InputEvent::GestureSwipeUpdate { event } => self.swipe_update(event.delta_x(), event.delta_y()),
+            InputEvent::GestureSwipeEnd { event } => self.swipe_end(event.cancelled()),
             _ => {}
         }
     }
@@ -127,6 +137,30 @@ impl Ferrite {
                     state.super_used = true;
                     if matches!(sym, Keysym::v | Keysym::V) {
                         return FilterResult::Intercept(Action::ToggleClipboard);
+                    }
+                    if modifiers.ctrl && sym == Keysym::Left {
+                        return FilterResult::Intercept(Action::SwitchPage(-1));
+                    }
+                    if modifiers.ctrl && sym == Keysym::Right {
+                        return FilterResult::Intercept(Action::SwitchPage(1));
+                    }
+                }
+                if pressed && state.dashboard_editing.is_some() {
+                    match sym {
+                        Keysym::Escape => return FilterResult::Intercept(Action::DashboardStopEditing),
+                        Keysym::BackSpace => return FilterResult::Intercept(Action::DashboardErase),
+                        Keysym::Return | Keysym::KP_Enter => {
+                            return FilterResult::Intercept(Action::DashboardEnter);
+                        }
+                        sym => {
+                            if !modifiers.ctrl && !modifiers.alt {
+                                if let Some(character) =
+                                    sym.key_char().filter(|character| !character.is_control())
+                                {
+                                    return FilterResult::Intercept(Action::DashboardType(character));
+                                }
+                            }
+                        }
                     }
                 }
                 // Panneau Super+V ouvert : flèches, Entrée et Suppr le pilotent.
@@ -170,6 +204,8 @@ impl Ferrite {
                 match keysym.modified_sym() {
                     Keysym::BackSpace => FilterResult::Intercept(Action::Quit),
                     Keysym::m | Keysym::M => FilterResult::Intercept(Action::RestoreMinimized),
+                    Keysym::Left => FilterResult::Intercept(Action::SwitchPage(-1)),
+                    Keysym::Right => FilterResult::Intercept(Action::SwitchPage(1)),
                     _ => FilterResult::Forward,
                 }
             },
@@ -181,6 +217,7 @@ impl Ferrite {
                 self.loop_signal.stop();
             }
             Some(Action::RestoreMinimized) => self.restore_minimized(),
+            Some(Action::SwitchPage(step)) => self.go_to_neighbor_page(step),
             Some(Action::SwitchVt(vt)) => {
                 if let Some(change_vt) = self.change_vt.as_mut() {
                     info!("passage au terminal virtuel {vt}");
@@ -190,14 +227,57 @@ impl Ferrite {
             Some(Action::CloseOverlay) => {
                 self.popover = None;
                 self.pending_power = None;
+                self.overview = false;
             }
             Some(Action::LauncherType(character)) => {
                 self.launcher_query.push(character);
-                self.launcher_page = 0;
+                self.reset_launcher_view();
             }
             Some(Action::LauncherErase) => {
                 self.launcher_query.pop();
-                self.launcher_page = 0;
+                self.reset_launcher_view();
+            }
+            Some(Action::DashboardType(character)) => {
+                if self.dashboard.type_char(
+                    self.dashboard_editing,
+                    character,
+                    crate::desktop::widgets::now_seconds(),
+                ) && let Err(error) = self.dashboard.save()
+                {
+                    tracing::warn!(%error, "notes du tableau de bord non enregistrées");
+                }
+            }
+            Some(Action::DashboardErase) => {
+                if self
+                    .dashboard
+                    .erase_char(self.dashboard_editing, crate::desktop::widgets::now_seconds())
+                    && let Err(error) = self.dashboard.save()
+                {
+                    tracing::warn!(%error, "notes du tableau de bord non enregistrées");
+                }
+            }
+            Some(Action::DashboardEnter) => match self.dashboard_editing {
+                Some(crate::desktop::widgets::DashboardEdit::Note(_)) => {
+                    if self.dashboard.type_char(
+                        self.dashboard_editing,
+                        '\n',
+                        crate::desktop::widgets::now_seconds(),
+                    ) && let Err(error) = self.dashboard.save()
+                    {
+                        tracing::warn!(%error, "notes du tableau de bord non enregistrées");
+                    }
+                }
+                Some(crate::desktop::widgets::DashboardEdit::NewTask) => {
+                    if self.dashboard.commit_draft()
+                        && let Err(error) = self.dashboard.save()
+                    {
+                        tracing::warn!(%error, "tâches du tableau de bord non enregistrées");
+                    }
+                }
+                None => {}
+            },
+            Some(Action::DashboardStopEditing) => {
+                self.stop_dashboard_editing();
             }
             Some(Action::LauncherLaunchFirst) => {
                 let first = self
@@ -234,6 +314,59 @@ impl Ferrite {
         }
     }
 
+    fn place_clipboard_near_pointer(&mut self) {
+        let Some(output) = self
+            .space
+            .outputs()
+            .next()
+            .and_then(|output| self.space.output_geometry(output))
+        else {
+            return;
+        };
+        let pointer = self
+            .seat
+            .get_pointer()
+            .map(|pointer| pointer.current_location())
+            .unwrap_or(Point::from((
+                output.size.w as f64 / 2.0,
+                output.size.h as f64 / 2.0,
+            )));
+        let width = 380.0_f64;
+        let height = 456.0_f64;
+        let x = (pointer.x - width / 2.0)
+            .round()
+            .clamp(8.0, (output.size.w as f64 - width - 8.0).max(8.0));
+        let y = (pointer.y + 18.0)
+            .round()
+            .clamp(40.0, (output.size.h as f64 - height - 8.0).max(40.0));
+        self.clipboard_position = Some((output.loc.x + x as i32, output.loc.y + y as i32));
+    }
+
+    fn drag_clipboard(&mut self, location: Point<f64, Logical>) {
+        let Some((offset_x, offset_y)) = self.clipboard_drag_offset else {
+            return;
+        };
+        let Some(output) = self
+            .space
+            .outputs()
+            .next()
+            .and_then(|output| self.space.output_geometry(output))
+        else {
+            return;
+        };
+        let width = 380.0_f64;
+        let height = 456.0_f64;
+        let x = (location.x - offset_x as f64).clamp(
+            output.loc.x as f64 + 8.0,
+            output.loc.x as f64 + (output.size.w as f64 - width - 8.0).max(8.0),
+        );
+        let y = (location.y - offset_y as f64).clamp(
+            output.loc.y as f64 + 40.0,
+            output.loc.y as f64 + (output.size.h as f64 - height - 8.0).max(40.0),
+        );
+        self.clipboard_position = Some((x.round() as i32, y.round() as i32));
+    }
+
     /// Nouvelle valeur d'un curseur glissé, envoyée seulement si elle change.
     fn drag_slider(&mut self, slider: Slider, location: Point<f64, Logical>) {
         let Some(output_geo) = self
@@ -265,9 +398,30 @@ impl Ferrite {
         let Some(pointer) = self.seat.get_pointer() else {
             return;
         };
-        // Glissement d'un curseur des réglages rapides : la valeur suit le pointeur.
+        let previous = pointer.current_location();
+        let now = std::time::Instant::now();
+        let elapsed = self
+            .dock_pointer_motion_at
+            .replace(Some(now))
+            .map(|last| now.duration_since(last));
+        if let (Some(elapsed), Some(output)) = (elapsed, self.space.outputs().next())
+            && let Some(output_geo) = self.space.output_geometry(output)
+            && crate::desktop::dock::fast_approach(
+                previous,
+                location,
+                (output_geo.loc.y + output_geo.size.h) as f64,
+                elapsed,
+            )
+        {
+            self.dock_fast_approach_until
+                .set(Some(now + crate::desktop::dock::REVEAL_APPROACH_GRACE));
+        }
+        // Glissement d'un curseur des réglages rapides ou du panneau presse-papiers.
         if let Some(slider) = self.slider_drag {
             self.drag_slider(slider, location);
+        }
+        if self.clipboard_drag_offset.is_some() {
+            self.drag_clipboard(location);
         }
         let under = if self.slider_drag.is_some() {
             None
@@ -297,6 +451,9 @@ impl Ferrite {
         if button.state == ButtonState::Released && self.slider_drag.take().is_some() {
             return;
         }
+        if button.state == ButtonState::Released && self.clipboard_drag_offset.take().is_some() {
+            return;
+        }
         if button.state == ButtonState::Released {
             // Un feu agit au relâchement, si le pointeur est toujours dessus.
             if let Some((window, light)) = self.pressed_light.take() {
@@ -308,6 +465,27 @@ impl Ferrite {
                 return;
             }
         } else if !pointer.is_grabbed() {
+            if self.overview && button.button == BTN_LEFT {
+                self.overview = false;
+                let selected = self
+                    .space
+                    .outputs()
+                    .next()
+                    .and_then(|output| self.space.output_geometry(output))
+                    .and_then(|output_geo| {
+                        let windows: Vec<_> = self.space.elements().rev().collect();
+                        let tiles = crate::wm::workspaces::overview_tiles(output_geo, windows.len());
+                        windows
+                            .into_iter()
+                            .zip(tiles)
+                            .find(|(_, tile)| tile.to_f64().contains(location))
+                            .map(|(window, _)| (*window).clone())
+                    });
+                if let Some(window) = selected {
+                    self.focus_window(Some(window));
+                }
+                return;
+            }
             let output_geo = self
                 .space
                 .outputs()
@@ -326,16 +504,8 @@ impl Ferrite {
                     }
                     BTN_RIGHT => {
                         let entries = self.dock_menu_entries(&item);
-                        let anchor = self.dock_geometry().and_then(|(_, items, geometry)| {
-                            let index = items.iter().position(|known| known.key == item.key)?;
-                            let icon = geometry.icons.get(index)?;
-                            Some(Point::from((
-                                icon.loc.x + icon.size.w / 2.0,
-                                geometry.plate.loc.y,
-                            )))
-                        });
-                        if let (false, Some(anchor)) = (entries.is_empty(), anchor) {
-                            self.dock_menu = Some((item.key, entries, anchor));
+                        if !entries.is_empty() {
+                            self.dock_menu = Some((item.key, entries, location));
                             self.popover = Some(Popover::DockMenu);
                         }
                     }
@@ -346,6 +516,21 @@ impl Ferrite {
             let desktop_action = output_geo.and_then(|output_geo| {
                 panels::action_at(output_geo, location, &crate::render::desktop_view(self))
             });
+            let desktop_action = desktop_action.filter(|action| {
+                !matches!(
+                    action,
+                    DesktopAction::DashboardAddNote
+                        | DesktopAction::DashboardEditNote(_)
+                        | DesktopAction::DashboardAddTask
+                        | DesktopAction::DashboardToggleTask(_)
+                        | DesktopAction::DashboardCyclePriority(_)
+                        | DesktopAction::DashboardDeleteTask(_)
+                        | DesktopAction::DashboardMonth(_)
+                        | DesktopAction::DashboardConsume
+                        | DesktopAction::DashboardLaunch(_)
+                        | DesktopAction::DashboardShortcut(_)
+                ) || self.hit_test(location).is_none()
+            });
             if button.button == BTN_LEFT
                 && let Some(action) = desktop_action
             {
@@ -355,6 +540,12 @@ impl Ferrite {
                     _ => None,
                 };
                 self.handle_desktop_action(action);
+                return;
+            }
+            if button.button == BTN_RIGHT
+                && let Some(DesktopAction::DashboardCyclePriority(index)) = desktop_action
+            {
+                self.handle_desktop_action(DesktopAction::DashboardDeleteTask(index));
                 return;
             }
             match self.hit_test(location) {
@@ -376,27 +567,140 @@ impl Ferrite {
         pointer.frame(self);
     }
 
+    /// Le lanceur revient à sa vue d'ensemble, en haut.
+    fn reset_launcher_view(&mut self) {
+        self.launcher_section = None;
+        self.launcher_scroll = 0;
+    }
+
     fn handle_desktop_action(&mut self, action: DesktopAction) {
         match action {
             DesktopAction::TogglePopover(popover) => {
+                let opening_clipboard =
+                    popover == Popover::Clipboard && self.popover != Some(Popover::Clipboard);
                 self.popover = (self.popover != Some(popover)).then_some(popover);
                 self.launcher_query.clear();
-                self.launcher_page = 0;
+                self.reset_launcher_view();
                 self.clipboard_selected = 0;
                 self.clipboard_first = 0;
+                if opening_clipboard {
+                    self.place_clipboard_near_pointer();
+                }
             }
+            DesktopAction::ClipboardDragStart(offset_x, offset_y) => {
+                self.clipboard_drag_offset = Some((offset_x, offset_y));
+            }
+            DesktopAction::DashboardAddNote => {
+                self.stop_dashboard_editing();
+                self.dashboard_editing = self.dashboard.add_note(crate::desktop::widgets::now_seconds());
+                if self.dashboard_editing.is_some()
+                    && let Err(error) = self.dashboard.save()
+                {
+                    tracing::warn!(%error, "note du tableau de bord non enregistrée");
+                }
+                if self.dashboard_editing.is_none() {
+                    tracing::warn!("limite de notes du tableau de bord atteinte");
+                }
+            }
+            DesktopAction::DashboardEditNote(index) => {
+                let removed = self.stop_dashboard_editing();
+                let index = if removed.is_some_and(|removed| removed < index) {
+                    index - 1
+                } else {
+                    index
+                };
+                self.dashboard_editing = Some(crate::desktop::widgets::DashboardEdit::Note(index));
+            }
+            DesktopAction::DashboardAddTask => {
+                self.dashboard.draft.clear();
+                self.dashboard_editing = Some(crate::desktop::widgets::DashboardEdit::NewTask);
+            }
+            DesktopAction::DashboardToggleTask(index) => {
+                if let Some(task) = self.dashboard.tasks.get_mut(index) {
+                    task.done = !task.done;
+                    if let Err(error) = self.dashboard.save() {
+                        tracing::warn!(%error, "tâches du tableau de bord non enregistrées");
+                    }
+                }
+            }
+            DesktopAction::DashboardCyclePriority(index) => {
+                if let Some(task) = self.dashboard.tasks.get_mut(index) {
+                    task.priority = task.priority.next();
+                    if let Err(error) = self.dashboard.save() {
+                        tracing::warn!(%error, "tâches du tableau de bord non enregistrées");
+                    }
+                }
+            }
+            DesktopAction::DashboardDeleteTask(index) => {
+                if index < self.dashboard.tasks.len() {
+                    self.dashboard.tasks.remove(index);
+                    if let Err(error) = self.dashboard.save() {
+                        tracing::warn!(%error, "tâche du tableau de bord non supprimée");
+                    }
+                }
+            }
+            DesktopAction::DashboardMonth(delta) => {
+                self.dashboard.month_offset = (self.dashboard.month_offset + delta).clamp(-120, 120);
+            }
+            DesktopAction::DashboardLaunch(app) => {
+                self.open_app(&crate::desktop::apps::AppKey::Builtin(app));
+            }
+            DesktopAction::DashboardShortcut(index) => match index {
+                0 => self.open_app(&crate::desktop::apps::AppKey::Builtin(
+                    crate::desktop::apps::App::Files,
+                )),
+                1 => self.open_app(&crate::desktop::apps::AppKey::Builtin(
+                    crate::desktop::apps::App::Terminal,
+                )),
+                2 | 3 => {
+                    let query = if index == 2 {
+                        ["firefox", "chromium", "browser", "navigateur", "web"]
+                    } else {
+                        ["codium", "visual studio code", "vscode", "code", "éditeur"]
+                    };
+                    let entry = self.launcher_entries().into_iter().find(|entry| {
+                        let name = entry.name().to_lowercase();
+                        query.iter().any(|term| name.contains(term))
+                    });
+                    if let Some(entry) = entry {
+                        let key = entry.key();
+                        self.open_app(&key);
+                    } else {
+                        tracing::warn!(shortcut = index, "application du raccourci indisponible");
+                    }
+                }
+                4 => self.open_app(&crate::desktop::apps::AppKey::Builtin(
+                    crate::desktop::apps::App::Settings,
+                )),
+                5 => self.open_app(&crate::desktop::apps::AppKey::Builtin(
+                    crate::desktop::apps::App::Files,
+                )),
+                _ => {}
+            },
+            // Un clic ailleurs sur les widgets termine la saisie.
+            DesktopAction::DashboardConsume => {
+                self.stop_dashboard_editing();
+            }
+            DesktopAction::GoToPage(page) => self.go_to_page(page),
             DesktopAction::LaunchTile(index) => {
                 let key = self
                     .launcher_entries()
                     .into_iter()
-                    .nth(self.launcher_page * LAUNCHER_PAGE_SIZE + index)
+                    .nth(index)
                     .map(|entry| entry.key());
                 self.popover = None;
                 if let Some(key) = key {
                     self.open_app(&key);
                 }
             }
-            DesktopAction::SetLauncherPage(page) => self.launcher_page = page,
+
+            DesktopAction::LauncherLink(link) => {
+                self.launcher_section = match link {
+                    SectionLink::More(section) => Some(section),
+                    SectionLink::Less => None,
+                };
+                self.launcher_scroll = 0;
+            }
             DesktopAction::ClosePopover => self.popover = None,
             DesktopAction::Launch(app) => {
                 self.popover = None;
@@ -417,6 +721,17 @@ impl Ferrite {
             DesktopAction::ToggleBluetooth => {
                 if let Some(enabled) = self.system.bluetooth {
                     self.request_system_change(Change::Bluetooth(!enabled));
+                }
+            }
+            DesktopAction::ToggleAirplane => {
+                // Mode avion : toutes les radios présentes éteintes. Le quitter les rallume.
+                let (wifi, bluetooth) = (self.system.wifi, self.system.bluetooth);
+                let enable = wifi != Some(true) && bluetooth != Some(true);
+                if wifi.is_some() {
+                    self.request_system_change(Change::Wifi(enable));
+                }
+                if bluetooth.is_some() {
+                    self.request_system_change(Change::Bluetooth(enable));
                 }
             }
             DesktopAction::SetVolume(value) => self.request_system_change(Change::Volume(value)),
@@ -445,6 +760,17 @@ impl Ferrite {
         }
     }
 
+    fn stop_dashboard_editing(&mut self) -> Option<usize> {
+        let removed = self.dashboard.finish_editing(self.dashboard_editing);
+        self.dashboard_editing = None;
+        if removed.is_some()
+            && let Err(error) = self.dashboard.save()
+        {
+            tracing::warn!(%error, "note du tableau de bord non supprimée");
+        }
+        removed
+    }
+
     /// Appui du bouton gauche sur une décoration. Renvoie vrai si l'événement ne doit pas
     /// être transmis plus loin.
     fn on_decoration_press(
@@ -462,6 +788,15 @@ impl Ferrite {
         match part {
             Part::Light(light) => {
                 self.pressed_light = Some((window, light));
+                true
+            }
+            Part::Plus => {
+                if crate::render::app_id(&window).is_some_and(|id| {
+                    let id = id.to_lowercase();
+                    id == "foot" || id == "footclient" || id.contains("terminal")
+                }) {
+                    self.new_terminal_tmux_window();
+                }
                 true
             }
             Part::Titlebar => {
@@ -492,17 +827,19 @@ impl Ferrite {
             }
             return;
         }
-        // Menu Applications ouvert : la molette tourne les pages.
+        // Lanceur ouvert : la molette (ou le pavé tactile) fait défiler les rubriques.
         if self.popover == Some(Popover::Launcher) {
-            let amount = event
-                .amount(Axis::Vertical)
-                .or_else(|| event.amount_v120(Axis::Vertical))
-                .unwrap_or(0.0);
-            let pages = self.launcher_entries().len().div_ceil(LAUNCHER_PAGE_SIZE).max(1);
-            if amount > 0.0 {
-                self.launcher_page = (self.launcher_page + 1).min(pages - 1);
-            } else if amount < 0.0 {
-                self.launcher_page = self.launcher_page.saturating_sub(1);
+            let amount = event.amount(Axis::Vertical).unwrap_or_else(|| {
+                event.amount_v120(Axis::Vertical).unwrap_or(0.0) / 120.0 * LAUNCHER_SCROLL_STEP
+            });
+            let output_geo = self
+                .space
+                .outputs()
+                .next()
+                .and_then(|output| self.space.output_geometry(output));
+            if let Some(output_geo) = output_geo {
+                let limit = panels::launcher_scroll_limit(output_geo, &crate::render::desktop_view(self));
+                self.launcher_scroll = (self.launcher_scroll as f64 + amount).clamp(0.0, limit as f64) as u32;
             }
             return;
         }

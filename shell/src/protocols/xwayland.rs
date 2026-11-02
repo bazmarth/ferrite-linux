@@ -2,9 +2,8 @@
 //!
 //! ferrite-shell lance `Xwayland` à la demande de Smithay et en devient le gestionnaire de
 //! fenêtres (X11Wm). Une fenêtre X11 est une `Window` de l'espace comme les autres : elle
-//! reçoit les décorations Ferrite si elle ne dessine pas les siennes, se déplace, s'agrandit
-//! et passe en plein écran. Les menus et infobulles X11 (« override-redirect ») sont posés
-//! tels quels à la position qu'ils demandent.
+//! reçoit la barre de titre Ferrite, se déplace, s'agrandit et passe en plein écran. Les
+//! menus et infobulles X11 (« override-redirect ») sont posés tels quels à leur position.
 
 use std::{cell::RefCell, process::Stdio};
 
@@ -265,6 +264,7 @@ impl XwmHandler for Ferrite {
     fn new_override_redirect_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
 
     fn map_window_request(&mut self, _xwm: XwmId, surface: X11Surface) {
+        self.leave_widgets();
         if let Err(err) = surface.set_mapped(true) {
             warn!(?err, "fenêtre X11 non affichée");
             return;
@@ -309,6 +309,7 @@ impl XwmHandler for Ferrite {
             None => Rectangle::new(requested.loc, size),
         };
         self.place_x11(&window, content);
+        self.animate_opening(&window);
         self.focus_window(Some(window));
     }
 
@@ -319,6 +320,8 @@ impl XwmHandler for Ferrite {
     }
 
     fn unmapped_window(&mut self, _xwm: XwmId, surface: X11Surface) {
+        self.workspaces
+            .retain(|parked| parked.window.x11_surface() != Some(&surface));
         if let Some(window) = self.x11_window(&surface) {
             self.space.unmap_elem(&window);
             self.minimized.retain(|minimized| minimized.window != window);
@@ -331,6 +334,8 @@ impl XwmHandler for Ferrite {
     }
 
     fn destroyed_window(&mut self, _xwm: XwmId, surface: X11Surface) {
+        self.workspaces
+            .retain(|parked| parked.window.x11_surface() != Some(&surface));
         if let Some(window) = self.x11_window(&surface) {
             self.space.unmap_elem(&window);
             self.minimized.retain(|minimized| minimized.window != window);
@@ -402,13 +407,13 @@ impl XwmHandler for Ferrite {
 
     fn maximize_request(&mut self, _xwm: XwmId, surface: X11Surface) {
         if let Some(window) = self.x11_window(&surface) {
-            self.x11_set_maximized(&window, true);
+            self.animate_frame_change(&window, |state| state.x11_set_maximized(&window, true));
         }
     }
 
     fn unmaximize_request(&mut self, _xwm: XwmId, surface: X11Surface) {
         if let Some(window) = self.x11_window(&surface) {
-            self.x11_set_maximized(&window, false);
+            self.animate_frame_change(&window, |state| state.x11_set_maximized(&window, false));
         }
     }
 

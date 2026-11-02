@@ -1,6 +1,6 @@
 //! Calculatrice : écran et pavé de touches, utilisable aussi au clavier.
 
-use eframe::egui::{self, Color32, CornerRadius, Frame, Margin, RichText, Stroke};
+use eframe::egui::{self, CornerRadius, Frame, Margin, RichText, Stroke};
 
 use crate::style;
 
@@ -91,7 +91,7 @@ impl CalculatorState {
         egui::CentralPanel::no_frame()
             .frame(
                 Frame::new()
-                    .fill(style::BACKGROUND)
+                    .fill(style::background())
                     .inner_margin(Margin::same(14)),
             )
             .show(ui, |ui| {
@@ -138,8 +138,8 @@ impl CalculatorState {
 
     fn display(&self, ui: &mut egui::Ui) {
         Frame::new()
-            .fill(Color32::WHITE)
-            .stroke(Stroke::new(1.0, style::SEPARATOR))
+            .fill(style::background())
+            .stroke(Stroke::new(1.0, style::separator()))
             .corner_radius(CornerRadius::same(10))
             .inner_margin(Margin::symmetric(16, 12))
             .show(ui, |ui| {
@@ -155,8 +155,12 @@ impl CalculatorState {
                     } else {
                         (format!("{expression} ="), self.result.clone())
                     };
-                    ui.label(RichText::new(top).size(14.0).color(style::TEXT_SECONDARY));
-                    let color = if self.error { style::ERROR } else { style::TEXT };
+                    ui.label(RichText::new(top).size(14.0).color(style::text_secondary()));
+                    let color = if self.error {
+                        style::error()
+                    } else {
+                        style::primary_text()
+                    };
                     let size = if self.error { 18.0 } else { 32.0 };
                     ui.label(RichText::new(bottom).size(size).color(color));
                 });
@@ -172,11 +176,11 @@ impl CalculatorState {
             ui.horizontal(|ui| {
                 for key in row {
                     let (fill, ink) = match key {
-                        Key::Equals => (style::ACCENT, Color32::WHITE),
+                        Key::Equals => (style::accent(), style::accent_text()),
                         Key::Operator(_) | Key::Clear | Key::Erase => {
-                            (Color32::from_rgb(0xE9, 0xEA, 0xEE), style::TEXT)
+                            (style::control_background(), style::primary_text())
                         }
-                        Key::Text(_) => (Color32::WHITE, style::TEXT),
+                        Key::Text(_) => (style::background(), style::primary_text()),
                     };
                     let button = egui::Button::new(RichText::new(key.label()).size(18.0).color(ink))
                         .fill(fill)

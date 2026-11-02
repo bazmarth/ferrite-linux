@@ -1,6 +1,5 @@
-//! Shaders GLES des décorations : barre de titre (avec feux tricolores), ombre, et coins
-//! arrondis du contenu des fenêtres. Les couleurs et mesures viennent de la charte
-//! (`ferrite_ui::theme`) et sont écrites dans la source GLSL à la compilation.
+//! Shaders GLES des décorations et des animations. Les couleurs et mesures viennent de
+//! la charte (`ferrite_ui::theme`) et sont écrites dans la source GLSL à la compilation.
 //!
 //! Les distances sont calculées en pixels logiques ; `scale` (pixels physiques par pixel
 //! logique) sert à l'anticrénelage, sur un pixel physique.
@@ -159,6 +158,7 @@ void main() {
 /// arrondis (rayon 20), liseré blanc à l'intérieur et contour sombre très léger dehors.
 const DOCK: &str = r#"
 uniform float scale;
+uniform float dark;
 
 float rounded_box(vec2 p, vec2 half_size, float r) {
     vec2 q = abs(p) - half_size + r;
@@ -171,9 +171,11 @@ void main() {
     float outside = coverage(d, scale);
     float body = coverage(d + 1.0, scale);
     float inner = coverage(d + 2.0, scale);
+    vec3 glass = mix(vec3(1.0), vec3(0.12), dark);
+    vec3 rim = mix(vec3(1.0), vec3(0.48), dark);
     vec4 color = over(vec4(0.0), vec3(0.0), 0.11 * (outside - body));
-    color = over(color, vec3(1.0), 0.36 * body);
-    color = over(color, vec3(1.0), 0.43 * (body - inner));
+    color = over(color, glass, 0.36 * body);
+    color = over(color, rim, 0.43 * (body - inner));
     gl_FragColor = finish(color);
 }
 "#;
@@ -247,6 +249,58 @@ void main() {
 }
 "#;
 
+/// Texture de la fenêtre déformée entre ses bords et l'icône du Dock.
+const GENIE_TEXTURE: &str = r#"#version 100
+
+//_DEFINES_
+
+#if defined(EXTERNAL)
+#extension GL_OES_EGL_image_external : require
+#endif
+
+precision mediump float;
+#if defined(EXTERNAL)
+uniform samplerExternalOES tex;
+#else
+uniform sampler2D tex;
+#endif
+
+uniform float alpha;
+varying vec2 v_coords;
+uniform vec4 geo;
+uniform vec4 win;
+uniform vec4 icon;
+uniform float top;
+uniform float bottom;
+uniform float squeeze;
+
+void main() {
+    vec2 p = geo.xy + v_coords * geo.zw;
+    if (p.y < top || p.y > bottom) {
+        gl_FragColor = vec4(0.0);
+        return;
+    }
+
+    float neck = max(icon.y, win.y + 1.0);
+    float t = clamp((p.y - win.y) / (neck - win.y), 0.0, 1.0);
+    float amount = t * t * (3.0 - 2.0 * t) * squeeze;
+    float left = mix(win.x, icon.x, amount);
+    float right = mix(win.x + win.z, icon.x + icon.z, amount);
+    if (p.x < left || p.x > right) {
+        gl_FragColor = vec4(0.0);
+        return;
+    }
+
+    float u = (p.x - left) / max(right - left, 1.0);
+    float v = (p.y - top) / max(bottom - top, 1.0);
+    vec4 color = texture2D(tex, vec2(u, v));
+#if defined(NO_ALPHA)
+    color = vec4(color.rgb, 1.0);
+#endif
+    gl_FragColor = color * alpha;
+}
+"#;
+
 /// Programmes compilés, partagés par toutes les fenêtres.
 #[derive(Debug, Clone)]
 pub struct Shaders {
@@ -255,6 +309,7 @@ pub struct Shaders {
     pub snap: GlesPixelProgram,
     pub dock: GlesPixelProgram,
     pub rounded: GlesTexProgram,
+    pub genie: GlesTexProgram,
 }
 
 impl Shaders {
@@ -278,10 +333,22 @@ impl Shaders {
             &[vec4("rect"), float("radius"), float("blur"), float("strength")],
         )?;
         let snap = renderer.compile_custom_pixel_shader(format!("{COMMON}{SNAP}"), &[float("scale")])?;
-        let dock = renderer.compile_custom_pixel_shader(format!("{COMMON}{DOCK}"), &[float("scale")])?;
+        let dock = renderer
+            .compile_custom_pixel_shader(format!("{COMMON}{DOCK}"), &[float("scale"), float("dark")])?;
         let rounded = renderer.compile_custom_texture_shader(
             ROUNDED_TEXTURE,
             &[vec4("geo"), vec4("clip"), float("radius"), float("top")],
+        )?;
+        let genie = renderer.compile_custom_texture_shader(
+            GENIE_TEXTURE,
+            &[
+                vec4("geo"),
+                vec4("win"),
+                vec4("icon"),
+                float("top"),
+                float("bottom"),
+                float("squeeze"),
+            ],
         )?;
         Ok(Shaders {
             titlebar,
@@ -289,6 +356,7 @@ impl Shaders {
             snap,
             dock,
             rounded,
+            genie,
         })
     }
 }
@@ -352,6 +420,12 @@ mod tests {
         assert!(source.starts_with("#define RADIUS 11.000\n"));
         assert!(source.contains("#define CLOSE_FILL vec3(1.0000, 0.3725, 0.3412)"));
         assert!(source.find("#define OFF_EDGE").unwrap() < source.find("void main").unwrap());
+    }
+
+    #[test]
+    fn source_du_dock_declare_le_theme_sombre() {
+        assert!(DOCK.contains("uniform float dark;"));
+        assert!(DOCK.contains("mix(vec3(1.0), vec3(0.12), dark)"));
     }
 
     #[test]

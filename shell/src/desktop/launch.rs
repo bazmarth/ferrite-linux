@@ -13,7 +13,7 @@ use tracing::warn;
 use crate::{
     desktop::{
         apps::{App, AppKey},
-        dock::{DockItem, DockLayout},
+        dock::{Bounce, DockItem, DockLayout},
     },
     state::Ferrite,
 };
@@ -64,13 +64,30 @@ impl Ferrite {
         let windows = self
             .space
             .elements()
-            .chain(self.minimized.iter().map(|minimized| &minimized.window));
+            .chain(self.minimized.iter().map(|minimized| &minimized.window))
+            .chain(self.workspaces.all_parked().map(|parked| &parked.window));
         let mut running: Vec<AppKey> = Vec::new();
         for key in windows.filter_map(|window| self.window_app(window)) {
             if !running.contains(&key) {
                 running.push(key);
             }
         }
+        // Une application qui démarre a déjà sa case et son point ; son rebond s'achève
+        // quand sa fenêtre arrive.
+        let now = std::time::Instant::now();
+        let mut bounces = self.dock_bounces.borrow_mut();
+        for (key, bounce) in bounces.iter_mut() {
+            if running.contains(key) {
+                bounce.settle(now);
+            }
+        }
+        bounces.retain(|_, bounce| !bounce.over(now));
+        for key in bounces.keys() {
+            if !running.contains(key) {
+                running.push(key.clone());
+            }
+        }
+        drop(bounces);
         // Ordre stable : une application garde sa place tant qu'elle reste ouverte.
         let mut order = self.dock_order.borrow_mut();
         order.retain(|key| running.contains(key));
@@ -101,10 +118,9 @@ impl Ferrite {
     pub fn dock_geometry(&self) -> Option<(Rectangle<i32, Logical>, Vec<DockItem>, DockLayout)> {
         let output = self.screen_area()?;
         let items = self.dock_items();
-        let pointer = self.seat.get_pointer().map(|pointer| pointer.current_location());
         let geometry = self
             .dock_motion
-            .current_layout(output, self.dock_config, &items, pointer);
+            .current_layout(output, self.dock_config, &items, self.dock_pointer());
         Some((output, items, geometry))
     }
 
@@ -155,6 +171,12 @@ impl Ferrite {
         (mapped, minimized)
     }
 
+    /// Bureau, autre que celui affiché, où l'application a une fenêtre.
+    fn app_parked_page(&self, key: &AppKey) -> Option<usize> {
+        self.workspaces
+            .page_of(|parked| self.window_app(&parked.window).as_ref() == Some(key))
+    }
+
     /// L'application peut-elle ouvrir plusieurs fenêtres (Paramètres) ?
     pub fn allows_multiple_windows(&self, key: &AppKey) -> bool {
         self.multi_window.iter().any(|token| *token == key.token())
@@ -163,8 +185,12 @@ impl Ferrite {
     /// Ouvre une application depuis le menu Applications : si elle est déjà ouverte et
     /// n'a droit qu'à une fenêtre, sa fenêtre revient au premier plan.
     pub fn open_app(&mut self, key: &AppKey) {
+        // Les dernières applications ouvertes sont suggérées en tête du lanceur.
+        self.launcher_recent.retain(|known| known != key);
+        self.launcher_recent.insert(0, key.clone());
+        self.launcher_recent.truncate(10);
         let (mapped, minimized) = self.app_windows(key);
-        let running = !mapped.is_empty() || !minimized.is_empty();
+        let running = !mapped.is_empty() || !minimized.is_empty() || self.app_parked_page(key).is_some();
         if running && !self.allows_multiple_windows(key) {
             self.activate_app(key);
         } else {
@@ -174,36 +200,62 @@ impl Ferrite {
 
     fn launch_app(&mut self, key: &AppKey) {
         let env = self.client_environment();
-        if !key.launch(&self.applications, &env) {
+        if key.launch(&self.applications, &env) {
+            self.dock_bounces
+                .borrow_mut()
+                .entry(key.clone())
+                .or_insert_with(|| Bounce::new(std::time::Instant::now()));
+        } else {
             warn!(?key, "application sans commande de lancement");
         }
     }
 
-    /// Clic sur une icône du Dock : lance l'application fermée ; sinon ramène sa fenêtre,
-    /// réduite comprise ; cliquée alors qu'elle est déjà devant, elle passe à sa fenêtre
-    /// suivante.
+    /// Hauteur de rebond de chaque case du Dock (voir [`Bounce`]).
+    pub fn dock_bounce_heights(&self, items: &[DockItem]) -> Vec<f64> {
+        let now = std::time::Instant::now();
+        let bounces = self.dock_bounces.borrow();
+        items
+            .iter()
+            .map(|item| bounces.get(&item.key).map_or(0.0, |bounce| bounce.height(now)))
+            .collect()
+    }
+
+    /// Clic sur une icône du Dock : lance l'application absente, ramène son application
+    /// au premier plan si elle est ouverte ailleurs, restaure sa dernière fenêtre si elle
+    /// est réduite, ou réduit sa fenêtre active si elle est déjà au premier plan.
     pub fn activate_app(&mut self, key: &AppKey) {
         let (mapped, minimized) = self.app_windows(key);
+        // Sa fenêtre est sur un autre bureau : on y va, comme sur macOS.
+        if mapped.is_empty()
+            && let Some(page) = self.app_parked_page(key)
+        {
+            self.go_to_page(page);
+            let (mapped, _) = self.app_windows(key);
+            if let Some(top) = mapped.first() {
+                self.focus_window(Some(top.clone()));
+            }
+            return;
+        }
         if mapped.is_empty() && minimized.is_empty() {
             self.launch_app(key);
             return;
         }
-        let in_front = self
-            .top_window()
-            .is_some_and(|window| self.window_app(&window).as_ref() == Some(key));
-        match (mapped.first(), minimized.last()) {
-            // Rien de visible : la dernière fenêtre réduite revient.
-            (None, Some(&index)) => self.restore_minimized_at(index),
-            (Some(_), Some(&index)) if in_front => self.restore_minimized_at(index),
-            (Some(_), _) if in_front && mapped.len() > 1 => {
-                let last = mapped.last().cloned();
-                self.focus_window(last);
-            }
-            (Some(top), _) => {
-                let top = top.clone();
-                self.focus_window(Some(top));
-            }
-            (None, None) => {}
+
+        if let Some(top) = self.top_window()
+            && self.window_app(&top).as_ref() == Some(key)
+        {
+            // Comme sur macOS, un deuxième appui sur l'application active la réduit.
+            self.minimize(&top);
+            return;
+        }
+
+        if let Some(top) = mapped.first() {
+            self.focus_window(Some(top.clone()));
+            return;
+        }
+
+        if let Some(&index) = minimized.last() {
+            self.restore_minimized_at(index);
         }
     }
 
@@ -255,7 +307,17 @@ impl Ferrite {
                 let minimized = minimized
                     .iter()
                     .map(|&index| self.minimized[index].window.clone());
-                for window in mapped.into_iter().chain(minimized).collect::<Vec<_>>() {
+                let parked = self
+                    .workspaces
+                    .all_parked()
+                    .filter(|parked| self.window_app(&parked.window).as_ref() == Some(key))
+                    .map(|parked| parked.window.clone());
+                for window in mapped
+                    .into_iter()
+                    .chain(minimized)
+                    .chain(parked)
+                    .collect::<Vec<_>>()
+                {
                     crate::wm::close_window(&window);
                 }
             }

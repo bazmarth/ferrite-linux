@@ -2,7 +2,7 @@
 //!
 //! Phase 2 du plan (`docs/PLAN.md`). Deux modes : en fenêtre (backend winit, pour WSLg)
 //! ou directement sur l'écran (backend DRM/KMS + libinput). Protocoles de base (compositor, shm, seat, output, xdg-shell, data-device),
-//! placement en cascade, déplacement et redimensionnement, fond d'écran Ferrite.
+//! placement centré, déplacement et redimensionnement, fond d'écran Ferrite.
 //! La structure suit d'abord l'exemple `smallvil` de Smithay 0.7.
 
 mod backend;
@@ -57,6 +57,10 @@ fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     let display: Display<Ferrite> = Display::new()?;
     let mut state = Ferrite::new(&mut event_loop, display)?;
     state.popover = options.menu;
+    if let Some(position) = options.demo_page {
+        state.workspaces.freeze(position);
+    }
+    state.genie_demo = options.genie_demo.map(|fraction| (fraction, None));
     match system::start(&event_loop.handle()) {
         Ok(link) => state.system_link = Some(link),
         Err(err) => warn!("services système indisponibles : {err}"),
@@ -64,6 +68,9 @@ fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     match clipboard::start(&event_loop.handle()) {
         Ok(sender) => state.clipboard_sender = Some(sender),
         Err(err) => warn!("historique du presse-papiers indisponible : {err}"),
+    }
+    if let Err(err) = desktop::widgets::start_weather(&event_loop.handle()) {
+        warn!(%err, "météo du tableau de bord indisponible");
     }
 
     let has_display = std::env::var_os("WAYLAND_DISPLAY").is_some() || std::env::var_os("DISPLAY").is_some();
@@ -94,6 +101,7 @@ fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     let loop_result = event_loop.run(None, &mut state, |state| {
         // Après chaque tour de boucle : fenêtres fermées retirées, messages envoyés.
         state.space.refresh();
+        state.sync_desktops();
         state.popups.cleanup();
         let _ = state.display_handle.flush_clients();
     });

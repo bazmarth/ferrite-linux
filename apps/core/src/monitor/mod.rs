@@ -248,13 +248,13 @@ impl MonitorState {
         egui::CentralPanel::no_frame()
             .frame(
                 Frame::new()
-                    .fill(style::BACKGROUND)
+                    .fill(style::background())
                     .inner_margin(Margin::same(14)),
             )
             .show(ui, |ui| {
                 if self.snapshot.is_none() {
                     ui.centered_and_justified(|ui| {
-                        ui.label(RichText::new("Mesure en cours…").color(style::TEXT_SECONDARY));
+                        ui.label(RichText::new("Mesure en cours…").color(style::text_secondary()));
                     });
                     return;
                 }
@@ -282,9 +282,9 @@ impl MonitorState {
         tabs.spacing_mut().item_spacing.x = 0.0;
         for (tab, text) in [(Tab::Processes, "Processus"), (Tab::Resources, "Ressources")] {
             let selected = self.tab == tab;
-            let button = egui::Button::new(RichText::new(text).color(style::TEXT))
+            let button = egui::Button::new(RichText::new(text).color(style::primary_text()))
                 .fill(if selected {
-                    Color32::WHITE
+                    style::background()
                 } else {
                     Color32::TRANSPARENT
                 })
@@ -299,12 +299,12 @@ impl MonitorState {
             if self.tab == Tab::Processes {
                 let enabled = self.selected.is_some();
                 let button = egui::Button::new(RichText::new("Terminer…").color(if enabled {
-                    Color32::WHITE
+                    style::accent_text()
                 } else {
-                    style::TEXT_SECONDARY
+                    style::text_secondary()
                 }))
                 .fill(if enabled {
-                    style::ERROR
+                    style::error()
                 } else {
                     Color32::from_black_alpha(10)
                 });
@@ -341,7 +341,7 @@ impl MonitorState {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if let Some((text, error)) = &message {
                     if *error {
-                        ui.colored_label(style::ERROR, text);
+                        ui.colored_label(style::error(), text);
                     } else {
                         ui.label(text);
                     }
@@ -417,8 +417,8 @@ impl MonitorState {
             (Column::Pid, "PID", fixed[4], true),
         ];
         Frame::new()
-            .fill(Color32::WHITE)
-            .stroke(Stroke::new(1.0, style::SEPARATOR))
+            .fill(style::background())
+            .stroke(Stroke::new(1.0, style::separator()))
             .corner_radius(10.0)
             .show(ui, |ui| {
                 ui.set_width(width);
@@ -443,9 +443,9 @@ impl MonitorState {
                         &format!("{title}{arrow}"),
                         right,
                         if active {
-                            style::TEXT
+                            style::primary_text()
                         } else {
-                            style::TEXT_SECONDARY
+                            style::text_secondary()
                         },
                         11.5,
                     );
@@ -462,7 +462,7 @@ impl MonitorState {
                 ui.painter().hline(
                     header.x_range(),
                     header.bottom(),
-                    Stroke::new(1.0, style::SEPARATOR),
+                    Stroke::new(1.0, style::separator()),
                 );
 
                 egui::ScrollArea::vertical().auto_shrink(false).show_rows(
@@ -477,11 +477,11 @@ impl MonitorState {
                                 ui.allocate_exact_size(egui::vec2(width, ROW), Sense::click());
                             let selected = self.selected == Some(process.pid);
                             let fill = if selected {
-                                Some(style::ACCENT)
+                                Some(style::accent())
                             } else if response.hovered() {
-                                Some(Color32::from_rgb(0xF0, 0xF3, 0xF8))
+                                Some(style::control_hover())
                             } else if index % 2 == 1 {
-                                Some(Color32::from_rgb(0xFA, 0xFA, 0xFB))
+                                Some(style::content_gray())
                             } else {
                                 None
                             };
@@ -489,11 +489,15 @@ impl MonitorState {
                                 ui.painter()
                                     .rect_filled(rect.shrink2(egui::vec2(4.0, 1.0)), 6.0, fill);
                             }
-                            let ink = if selected { Color32::WHITE } else { style::TEXT };
+                            let ink = if selected {
+                                style::accent_text()
+                            } else {
+                                style::primary_text()
+                            };
                             let secondary = if selected {
                                 Color32::from_white_alpha(220)
                             } else {
-                                style::TEXT_SECONDARY
+                                style::text_secondary()
                             };
                             let cells = [
                                 (process.name.clone(), ink),
@@ -629,13 +633,17 @@ Lancé il y a {}",
                 });
                 ui.add_space(10.0);
                 if snapshot.volumes.is_empty() {
-                    ui.label(RichText::new("Aucun disque monté").color(style::TEXT_SECONDARY));
+                    ui.label(RichText::new("Aucun disque monté").color(style::text_secondary()));
                 }
                 for volume in &snapshot.volumes {
                     let fraction = volume.used as f32 / volume.size.max(1) as f32;
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(&volume.mount).family(style::strong_family()));
-                        ui.label(RichText::new(&volume.device).small().color(style::TEXT_SECONDARY));
+                        ui.label(
+                            RichText::new(&volume.device)
+                                .small()
+                                .color(style::text_secondary()),
+                        );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.label(format!(
                                 "{} libres sur {}",
@@ -644,7 +652,11 @@ Lancé il y a {}",
                             ));
                         });
                     });
-                    let color = if fraction > 0.9 { style::ERROR } else { READ_COLOR };
+                    let color = if fraction > 0.9 {
+                        style::error()
+                    } else {
+                        READ_COLOR
+                    };
                     bar(ui, width - 28.0, fraction, color);
                     ui.add_space(8.0);
                 }
@@ -700,7 +712,7 @@ Lancé il y a {}",
                     "Les données non enregistrées de ce programme peuvent être perdues. \
                      « Forcer l'arrêt » sert quand il ne répond plus.",
                 )
-                .color(style::TEXT_SECONDARY),
+                .color(style::text_secondary()),
             );
             ui.add_space(14.0);
             ui.horizontal(|ui| {
@@ -708,8 +720,8 @@ Lancé il y a {}",
                     answer = Some(Some(true));
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let button =
-                        egui::Button::new(RichText::new("Terminer").color(Color32::WHITE)).fill(style::ERROR);
+                    let button = egui::Button::new(RichText::new("Terminer").color(style::accent_text()))
+                        .fill(style::error());
                     if ui.add(button).clicked() {
                         answer = Some(Some(false));
                     }
@@ -742,8 +754,8 @@ fn card(
     max: Option<f32>,
 ) -> egui::Response {
     let response = Frame::new()
-        .fill(Color32::WHITE)
-        .stroke(Stroke::new(1.0, style::SEPARATOR))
+        .fill(style::background())
+        .stroke(Stroke::new(1.0, style::separator()))
         .corner_radius(10.0)
         .inner_margin(Margin::same(12))
         .show(ui, |ui| {
@@ -751,10 +763,10 @@ fn card(
             ui.vertical(|ui| {
                 ui.set_width(width - 26.0);
                 ui.spacing_mut().item_spacing.y = 2.0;
-                ui.label(RichText::new(title).small().color(style::TEXT_SECONDARY));
+                ui.label(RichText::new(title).small().color(style::text_secondary()));
                 ui.label(RichText::new(value).size(20.0).family(style::strong_family()));
                 ui.add(
-                    egui::Label::new(RichText::new(detail).small().color(style::TEXT_SECONDARY)).truncate(),
+                    egui::Label::new(RichText::new(detail).small().color(style::text_secondary())).truncate(),
                 );
                 ui.add_space(6.0);
                 graph(ui, egui::vec2(width - 26.0, 44.0), series, max);
@@ -772,15 +784,15 @@ fn section(ui: &mut egui::Ui, title: &str, value: &str) {
     ui.add_space(6.0);
     ui.horizontal(|ui| {
         ui.label(RichText::new(title).size(15.0).family(style::strong_family()));
-        ui.label(RichText::new(value).color(style::TEXT_SECONDARY));
+        ui.label(RichText::new(value).color(style::text_secondary()));
     });
     ui.add_space(4.0);
 }
 
 fn panel(ui: &mut egui::Ui, width: f32, add: impl FnOnce(&mut egui::Ui)) {
     Frame::new()
-        .fill(Color32::WHITE)
-        .stroke(Stroke::new(1.0, style::SEPARATOR))
+        .fill(style::background())
+        .stroke(Stroke::new(1.0, style::separator()))
         .corner_radius(10.0)
         .inner_margin(Margin::same(14))
         .show(ui, |ui| {
@@ -795,14 +807,10 @@ fn panel(ui: &mut egui::Ui, width: f32, add: impl FnOnce(&mut egui::Ui)) {
 fn graph(ui: &mut egui::Ui, size: egui::Vec2, series: &[(&VecDeque<f32>, Color32)], max: Option<f32>) {
     let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
     let painter = ui.painter();
-    painter.rect_filled(rect, 6.0, Color32::from_rgb(0xF7, 0xF8, 0xFA));
+    painter.rect_filled(rect, 6.0, style::content_gray());
     for fraction in [0.25, 0.5, 0.75] {
         let y = rect.bottom() - rect.height() * fraction;
-        painter.hline(
-            rect.x_range(),
-            y,
-            Stroke::new(1.0, Color32::from_rgb(0xEC, 0xEE, 0xF2)),
-        );
+        painter.hline(rect.x_range(), y, Stroke::new(1.0, style::separator()));
     }
     let scale = max.unwrap_or_else(|| {
         series
@@ -851,7 +859,7 @@ fn meter(ui: &mut egui::Ui, label: &str, value: f32, color: Color32, width: f32)
     ui.vertical(|ui| {
         ui.set_width(width);
         ui.horizontal(|ui| {
-            ui.label(RichText::new(label).small().color(style::TEXT_SECONDARY));
+            ui.label(RichText::new(label).small().color(style::text_secondary()));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(RichText::new(format!("{:.0} %", value * 100.0)).small());
             });
@@ -862,8 +870,7 @@ fn meter(ui: &mut egui::Ui, label: &str, value: f32, color: Color32, width: f32)
 
 fn bar(ui: &mut egui::Ui, width: f32, fraction: f32, color: Color32) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 6.0), Sense::hover());
-    ui.painter()
-        .rect_filled(rect, 3.0, Color32::from_rgb(0xE8, 0xEA, 0xEE));
+    ui.painter().rect_filled(rect, 3.0, style::control_background());
     let filled =
         egui::Rect::from_min_size(rect.min, egui::vec2(rect.width() * fraction.clamp(0.0, 1.0), 6.0));
     ui.painter().rect_filled(filled, CornerRadius::same(3), color);
@@ -872,7 +879,7 @@ fn bar(ui: &mut egui::Ui, width: f32, fraction: f32, color: Color32) {
 fn legend(ui: &mut egui::Ui, color: Color32, label: &str, value: &str) {
     let (dot, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), Sense::hover());
     ui.painter().circle_filled(dot.center(), 4.0, color);
-    ui.label(RichText::new(label).color(style::TEXT_SECONDARY));
+    ui.label(RichText::new(label).color(style::text_secondary()));
     ui.label(value);
     ui.add_space(14.0);
 }

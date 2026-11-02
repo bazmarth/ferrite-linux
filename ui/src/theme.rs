@@ -6,12 +6,14 @@
 
 use std::time::Duration;
 
+use crate::tokens::{colors, motion};
+
 /// Hauteur de la barre du haut.
-pub const MENUBAR_HEIGHT: u32 = 30;
+pub const MENUBAR_HEIGHT: u32 = 34;
 /// Hauteur de la barre de titre des fenêtres.
 pub const TITLEBAR_HEIGHT: u32 = 30;
 /// Rayon des coins des fenêtres.
-pub const WINDOW_RADIUS: u32 = 11;
+pub const WINDOW_RADIUS: u32 = crate::tokens::radius::WINDOW;
 /// Côté des icônes du Dock.
 pub const DOCK_ICON: u32 = 54;
 /// Espace entre deux icônes du Dock.
@@ -35,8 +37,8 @@ pub const FONT_MONO: &str = "JetBrains Mono";
 pub const FONT_SERIF: &str = "Source Serif 4";
 
 /// Durées d'animation : courte (survol, appui) et normale (ouverture, réduction).
-pub const ANIMATION_SHORT: Duration = Duration::from_millis(200);
-pub const ANIMATION_NORMAL: Duration = Duration::from_millis(280);
+pub const ANIMATION_SHORT: Duration = motion::SHORT;
+pub const ANIMATION_NORMAL: Duration = motion::NORMAL;
 
 /// Fond d'écran par défaut : dégradé vertical du bureau Ferrite d'origine (haut, milieu, bas).
 pub const WALLPAPER_GRADIENT: [Color; 3] = [Color::rgb(0x1A2A6C), Color::rgb(0x6A3FA6), Color::rgb(0xF29A7E)];
@@ -120,10 +122,33 @@ pub enum ThemeMode {
 pub struct Palette {
     pub accent: Color,
     pub window_background: Color,
+    pub content_background: Color,
+    pub header_background: Color,
+    pub sidebar_background: Color,
+    pub toolbar_top: Color,
+    pub toolbar_bottom: Color,
     pub titlebar: Color,
+    pub titlebar_active: Color,
+    pub titlebar_active_bottom: Color,
+    pub titlebar_inactive: Color,
+    pub titlebar_inactive_bottom: Color,
+    pub titlebar_active_separator_alpha: u8,
+    pub titlebar_inactive_separator_alpha: u8,
+    pub window_title_active: Color,
+    pub window_title_inactive: Color,
+    pub titlebar_action_active: Color,
+    pub titlebar_action_inactive: Color,
     pub text: Color,
     pub text_secondary: Color,
     pub separator: Color,
+    pub control_separator: Color,
+    pub border: Color,
+    pub border_hover: Color,
+    pub control_hover: Color,
+    pub control_pressed: Color,
+    pub danger: Color,
+    pub success: Color,
+    pub warning: Color,
     /// Teinte posée sur le flou de la barre de menus.
     pub menubar_tint: Color,
     /// Teinte posée sur le flou du Dock.
@@ -143,12 +168,35 @@ const TRAFFIC_LIGHTS: [(Color, Color); 3] = [
 
 impl Palette {
     pub const LIGHT: Palette = Palette {
-        accent: Color::rgb(0x0A7AFF),
+        accent: Color::rgb(colors::ACCENT_LIGHT),
         window_background: Color::rgb(0xFFFFFF),
+        content_background: Color::rgb(0xF5F5F7),
+        header_background: Color::rgb(0xF6F6F8),
+        sidebar_background: Color::rgb(0xEDEDF0),
+        toolbar_top: Color::rgb(0xFBFBFC),
+        toolbar_bottom: Color::rgb(0xF1F1F4),
         titlebar: Color::rgb(0xF6F6F6),
+        titlebar_active: Color::rgb(0xF0EEF1),
+        titlebar_active_bottom: Color::rgb(0xE4E2E5),
+        titlebar_inactive: Color::rgb(0xF6F6F6),
+        titlebar_inactive_bottom: Color::rgb(0xF3F3F3),
+        titlebar_active_separator_alpha: 38,
+        titlebar_inactive_separator_alpha: 22,
+        window_title_active: Color::rgb(0x3A3A3C),
+        window_title_inactive: Color::rgb(0xB0B0B4),
+        titlebar_action_active: Color::rgb(0x74747A),
+        titlebar_action_inactive: Color::rgb(0x9A9A9F),
         text: Color::rgb(0x1C1C1E),
         text_secondary: Color::rgb(0x6E6E73),
         separator: Color::rgb(0xD8D8DC),
+        control_separator: Color::rgb(0xE3E3E8),
+        border: Color::rgb(0xCFCFD3),
+        border_hover: Color::rgb(0xB8B8BE),
+        control_hover: Color::rgb(0xF4F4F6),
+        control_pressed: Color::rgb(0xE6E6EA),
+        danger: Color::rgb(colors::DANGER_LIGHT),
+        success: Color::rgb(colors::SUCCESS_LIGHT),
+        warning: Color::rgb(colors::WARNING_LIGHT),
         menubar_tint: Color::rgb(0xF5F5F7).with_alpha(170),
         dock_tint: Color::rgb(0xF5F5F7).with_alpha(110),
         shadow: Color::BLACK.with_alpha(90),
@@ -157,12 +205,35 @@ impl Palette {
     };
 
     pub const DARK: Palette = Palette {
-        accent: Color::rgb(0x0A84FF),
+        accent: Color::rgb(colors::ACCENT_DARK),
         window_background: Color::rgb(0x1E1E1E),
+        content_background: Color::rgb(0x242426),
+        header_background: Color::rgb(0x2C2C2E),
+        sidebar_background: Color::rgb(0x303033),
+        toolbar_top: Color::rgb(0x343436),
+        toolbar_bottom: Color::rgb(0x29292B),
         titlebar: Color::rgb(0x2C2C2E),
+        titlebar_active: Color::rgb(0x353438),
+        titlebar_active_bottom: Color::rgb(0x2C2C30),
+        titlebar_inactive: Color::rgb(0x2C2C2E),
+        titlebar_inactive_bottom: Color::rgb(0x28282A),
+        titlebar_active_separator_alpha: 70,
+        titlebar_inactive_separator_alpha: 55,
+        window_title_active: Color::rgb(0xF2F2F7),
+        window_title_inactive: Color::rgb(0x98989D),
+        titlebar_action_active: Color::rgb(0xA8A8AE),
+        titlebar_action_inactive: Color::rgb(0x7A7A80),
         text: Color::rgb(0xF2F2F7),
         text_secondary: Color::rgb(0x98989D),
         separator: Color::rgb(0x3A3A3C),
+        control_separator: Color::rgb(0x48484A),
+        border: Color::rgb(0x505054),
+        border_hover: Color::rgb(0x69696F),
+        control_hover: Color::rgb(0x3A3A3C),
+        control_pressed: Color::rgb(0x48484A),
+        danger: Color::rgb(colors::DANGER_DARK),
+        success: Color::rgb(colors::SUCCESS_DARK),
+        warning: Color::rgb(colors::WARNING_DARK),
         menubar_tint: Color::rgb(0x1C1C1E).with_alpha(170),
         dock_tint: Color::rgb(0x2C2C2E).with_alpha(120),
         shadow: Color::BLACK.with_alpha(140),
@@ -278,7 +349,7 @@ mod tests {
         assert_eq!(scale.to_physical(1440), 2880);
         assert_eq!(scale.to_physical(900), 1800);
         assert_eq!(scale.to_logical(2880), 1440);
-        assert_eq!(scale.to_physical(MENUBAR_HEIGHT), 60);
+        assert_eq!(scale.to_physical(MENUBAR_HEIGHT), 68);
         assert_eq!(scale.ceil(), 2);
     }
 
@@ -305,6 +376,10 @@ mod tests {
         assert_eq!(Color::TRANSPARENT.to_argb8888_premultiplied(), 0);
         assert_eq!(Color::BLACK.mix(Color::WHITE, 0.5), Color::rgb(0x808080));
         assert_eq!(Palette::for_mode(ThemeMode::Dark), Palette::DARK);
+        assert_ne!(Palette::LIGHT.window_background, Palette::DARK.window_background);
+        assert_ne!(Palette::LIGHT.text, Palette::DARK.text);
+        assert_ne!(Palette::LIGHT.danger, Palette::DARK.danger);
+        assert_eq!((Palette::LIGHT.border.a, Palette::DARK.border.a), (255, 255));
     }
 
     #[test]

@@ -12,12 +12,16 @@ Options :
   --drm                 directement sur l'écran (session sur un terminal virtuel)
                         Sans l'une ni l'autre : fenêtre si un affichage existe déjà
                         (WAYLAND_DISPLAY ou DISPLAY), écran sinon.
-  --scale FACTEUR       échelle de l'écran (défaut : 1 en fenêtre, selon la densité
+  --scale FACTEUR       échelle de l'écran (défaut : 2 en fenêtre, selon la densité
                         de l'écran sinon, par exemple 2 sur le ThinkBook)
   --capture FICHIER     en fenêtre : enregistre une capture PNG puis quitte
   --capture-delay SEC   délai avant la capture (défaut : 3)
   --menu MENU           ouvre un menu au démarrage, pour les captures
                         (applications, reglages, session ou presse-papiers)
+  --demo-genie FRACTION réduit la première fenêtre ouverte et fige l'animation
+                        « génie » à cette fraction (0 à 1), pour les captures
+  --demo-page POSITION  fige l'affichage à cette position entre les pages (0 : widgets,
+                        1 : bureau principal, 0.5 : à mi-chemin), pour les captures
   -h, --help            affiche cette aide
 
 COMMANDE est lancée comme client une fois le compositeur prêt (ex. -- foot).";
@@ -53,6 +57,10 @@ pub struct Options {
     pub capture_delay: Duration,
     /// Menu ouvert au démarrage.
     pub menu: Option<Popover>,
+    /// Animation « génie » figée à cette fraction sur la première fenêtre.
+    pub genie_demo: Option<f64>,
+    /// Position figée entre les pages.
+    pub demo_page: Option<f64>,
     pub command: Vec<String>,
 }
 
@@ -64,6 +72,8 @@ impl Default for Options {
             capture: None,
             capture_delay: Duration::from_secs(3),
             menu: None,
+            genie_demo: None,
+            demo_page: None,
             command: Vec::new(),
         }
     }
@@ -109,6 +119,24 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
                     "presse-papiers" => Popover::Clipboard,
                     other => return Err(format!("menu inconnu : {other}")),
                 });
+            }
+            "--demo-genie" => {
+                let text = value("--demo-genie")?;
+                options.genie_demo = Some(
+                    text.parse::<f64>()
+                        .ok()
+                        .filter(|fraction| (0.0..=1.0).contains(fraction))
+                        .ok_or_else(|| format!("fraction invalide : {text} (entre 0 et 1)"))?,
+                );
+            }
+            "--demo-page" => {
+                let text = value("--demo-page")?;
+                options.demo_page = Some(
+                    text.parse::<f64>()
+                        .ok()
+                        .filter(|position| (0.0..=16.0).contains(position))
+                        .ok_or_else(|| format!("position invalide : {text} (entre 0 et 16)"))?,
+                );
             }
             "-h" | "--help" => return Ok(Parsed::Help),
             "--" => {

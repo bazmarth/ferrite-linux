@@ -172,9 +172,7 @@ impl VmManager {
     /// Compile le bureau et les applications en mode release (binaires partagés).
     fn start_build(&mut self, relaunch: bool) {
         let mut command = Command::new("sh");
-        command
-            .arg("-c")
-            .arg(". tools/lib.sh && cargo build --release -p ferrite-shell -p ferrite-apps");
+        command.arg("-c").arg("tools/vm-build.sh");
         self.build = self.spawn(command, "Compilation");
         self.relaunch_after_build = relaunch;
     }

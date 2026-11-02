@@ -29,13 +29,18 @@ macro_rules! icons {
 
 icons![
     "app-calculator",
+    "app-calendar",
+    "app-clock",
+    "app-code",
     "app-monitor",
     "app-files",
     "app-search",
     "app-settings",
     "app-terminal",
     "app-text-editor",
+    "app-web",
     "file-generic",
+    "places-trash",
     "status-battery-000",
     "status-battery-010",
     "status-battery-020",
@@ -60,14 +65,13 @@ icons![
     "status-battery-charging-100",
     "status-bluetooth-off",
     "status-bluetooth-on",
-    "status-brightness-0",
-    "status-brightness-1",
-    "status-brightness-2",
-    "status-brightness-3",
-    "status-brightness-4",
-    "status-brightness-5",
+    "status-cloud",
+    "status-download",
+    "status-location",
     "status-network",
+    "status-notifications",
     "status-power",
+    "status-upload",
     "status-update",
     "status-volume-0",
     "status-volume-1",
@@ -80,6 +84,39 @@ icons![
     "status-wifi-2",
     "status-wifi-3",
     "status-wifi-4",
+];
+
+/// Pictogrammes au trait des réglages rapides, dessinés en noir puis teintés comme les
+/// icônes symboliques.
+const GLYPHS: &[(&str, &str)] = &[
+    (
+        "glyph-wifi",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><g fill="none" stroke="#000" stroke-width="2.3" stroke-linecap="round"><path d="M2.6 9.4a13.4 13.4 0 0 1 18.8 0"/><path d="M6.1 12.9a8.4 8.4 0 0 1 11.8 0"/><path d="M9.6 16.4a3.4 3.4 0 0 1 4.8 0"/></g><circle cx="12" cy="19.6" r="1.7" fill="#000"/></svg>"##,
+    ),
+    (
+        "glyph-bluetooth",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M6.8 7.6 17 16.4l-5 4.6V3l5 4.6-10.2 8.8" fill="none" stroke="#000" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "glyph-airplane",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 16v-2l-8-5V3.5a1.5 1.5 0 0 0-3 0V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5z" fill="#000"/></svg>"##,
+    ),
+    (
+        "glyph-sun",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.2" fill="#000"/><g stroke="#000" stroke-width="2" stroke-linecap="round"><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/></g></svg>"##,
+    ),
+    (
+        "glyph-speaker",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 9h4l5-4.2v14.4L7 15H3z" fill="#000"/><path d="M15.4 9a4.2 4.2 0 0 1 0 6M18.2 6.2a8.2 8.2 0 0 1 0 11.6" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round"/></svg>"##,
+    ),
+    (
+        "glyph-clipboard",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><rect x="5" y="4.2" width="14" height="17" rx="2.6" fill="none" stroke="#000" stroke-width="2"/><rect x="8.5" y="2.5" width="7" height="4" rx="1.3" fill="#000"/><path d="M8.6 11.2h6.8M8.6 15.2h4.6" stroke="#000" stroke-width="2" stroke-linecap="round"/></svg>"##,
+    ),
+    (
+        "glyph-gear",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="#000" stroke-width="2.8" stroke-dasharray="3.4 3.35"/><circle cx="12" cy="12" r="5.9" fill="none" stroke="#000" stroke-width="3.2"/></svg>"##,
+    ),
 ];
 
 /// Rendu d'une icône : couleurs d'origine ou teinte unique.
@@ -215,7 +252,11 @@ fn decode_png(data: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
 
 /// Rasterise l'icône `name` en un carré de `side` pixels.
 fn rasterize(name: &str, side: u32, style: Style) -> Option<Pixmap> {
-    let Some((_, source)) = SOURCES.iter().find(|(candidate, _)| *candidate == name) else {
+    let Some((_, source)) = SOURCES
+        .iter()
+        .chain(GLYPHS)
+        .find(|(candidate, _)| *candidate == name)
+    else {
         tracing::warn!(name, "icône inconnue");
         return None;
     };
@@ -280,19 +321,6 @@ pub fn volume_icon(level: u8) -> &'static str {
     NAMES[step(level, 5)]
 }
 
-/// Nom de l'icône de luminosité pour un niveau de 0 à 100.
-pub fn brightness_icon(level: u8) -> &'static str {
-    const NAMES: [&str; 6] = [
-        "status-brightness-0",
-        "status-brightness-1",
-        "status-brightness-2",
-        "status-brightness-3",
-        "status-brightness-4",
-        "status-brightness-5",
-    ];
-    NAMES[step(level, 5)]
-}
-
 /// Nom de l'icône de batterie, arrondie à la dizaine.
 pub fn battery_icon(percent: u8, charging: bool) -> &'static str {
     const NAMES: [&str; 11] = [
@@ -347,7 +375,7 @@ mod tests {
     #[test]
     fn toutes_les_icones_embarquees_sont_lisibles() {
         // Une icône entièrement « éteinte » (Wi-Fi coupé) reste visible, estompée.
-        for (name, _) in SOURCES {
+        for (name, _) in SOURCES.iter().chain(GLYPHS) {
             for style in [Style::Color, Style::Symbolic(Color::WHITE)] {
                 let pixmap = rasterize(name, 32, style).unwrap_or_else(|| panic!("{name} illisible"));
                 assert!(

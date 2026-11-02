@@ -17,6 +17,7 @@ pub mod config;
 pub mod display;
 pub mod network;
 pub mod time;
+pub mod weather;
 
 /// État rapide du système, affiché dans la barre et les réglages rapides. `None` :
 /// matériel ou service absent.

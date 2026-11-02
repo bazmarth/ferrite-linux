@@ -30,7 +30,7 @@ Paquets installés par le script :
 | Polices | `fontconfig-devel freetype-devel` |
 | Applications egui sous X11 | `libxkbcommon-x11 libxcb libXcursor libXrandr libXi` |
 | Image et machine virtuelle | `xorriso squashfs-tools mtools dosfstools qemu-system-x86 qemu-img edk2-ovmf socat podman` |
-| Essais et vérifications | `weston foot ShellCheck` |
+| Essais et vérifications | `weston foot tmux ShellCheck` |
 | Rust | `rustup` : toolchain stable avec `rustfmt` et `clippy` (voir `rust-toolchain.toml`) |
 
 ## 3. Compiler, vérifier, lancer

@@ -21,7 +21,7 @@ if [ "$(id -u)" -eq 0 ]; then
         live-build debootstrap xorriso squashfs-tools mtools dosfstools \
         grub-pc-bin grub-efi-amd64-bin \
         qemu-system-x86 qemu-utils ovmf socat \
-        weston foot shellcheck
+        weston foot tmux shellcheck
     user=${SUDO_USER:-}
     if [ -n "$user" ] && [ "$user" != root ]; then
         usermod -aG kvm "$user"

@@ -576,3 +576,21 @@ Le bureau et les applications reprennent l'apparence du Ferrite d'origine (`D:\O
 Vérifié : clippy, tous les tests ; captures dans QEMU (mode développement, scénario
 `aspect-origine.txt`) : bureau, Fichiers, TextEdit, terminal foot, menu Applications.
 À vérifier : rendu sur l'écran du ThinkBook (échelle 2).
+
+## 2026-10-30 — Tokens visuels partagés
+
+`ferrite-ui` devient la source commune des mesures et des rôles de couleur : espacements,
+rayons, bordures, élévation, typographie, dimensions des contrôles, mouvement et couleurs
+sémantiques. `theme::Palette` définit les variantes claire et sombre sans dépendre d'un moteur
+de rendu. L'adaptateur egui utilise ces valeurs pour les surfaces, la typographie, les
+contrôles et les bordures ; `ferrite-shell` les utilise pour les titres, le rayon et l'ombre
+des fenêtres. Les deux moteurs restent découplés.
+
+Vérifié : `cargo test -p ferrite-ui -p ferrite-apps -p ferrite-shell` (12 tests UI, 40
+applications, 88 shell), `cargo clippy -p ferrite-ui -p ferrite-apps --all-targets -- -D
+warnings`, `cargo fmt --all --check` et `git diff --check`.
+
+La hauteur de barre locale de 34 px est conservée ; le test ThinkBook vérifie désormais ses
+68 px physiques à l'échelle 2. La migration des vues propres aux applications continuera à
+utiliser ces rôles au fil de leur harmonisation, sans importer egui ou Smithay dans
+`ferrite-ui`.

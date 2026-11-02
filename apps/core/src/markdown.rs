@@ -1,6 +1,6 @@
 //! Interpréteur Markdown : blocs (titres, paragraphes, listes, citations,
-//! blocs de code, règles, tableaux) et styles en ligne (gras, italique,
-//! code, liens, barré).
+//! blocs de code, règles, tableaux, images) et styles en ligne (gras, italique,
+//! code, liens, barré). Aussi : l'en-tête YAML (« --- ») en tête de document.
 
 extern crate alloc;
 
@@ -47,7 +47,17 @@ pub struct Item {
 pub enum Block {
     Heading(usize, Vec<Span>),
     Paragraph(Vec<Span>),
-    Code(Vec<String>),
+    Aligned(Align, Vec<Span>),
+    /// Bloc de code, avec la langue annoncée après « ``` » (vide sinon).
+    Code {
+        language: String,
+        lines: Vec<String>,
+    },
+    /// Image seule sur sa ligne : « ![texte](chemin) ».
+    Image {
+        alt: String,
+        path: String,
+    },
     Quote(Vec<Block>),
     List(Vec<Item>),
     Rule,
@@ -195,6 +205,7 @@ fn parse_lines(lines: &[&str]) -> Vec<Block> {
         }
         if let Some(mark) = fence(line) {
             flush(&mut paragraph, &mut blocks);
+            let language = String::from(line.trim_start()[3..].trim());
             let mut code = Vec::new();
             i += 1;
             while i < lines.len() && !lines[i].trim_start().starts_with(mark) {
@@ -202,7 +213,10 @@ fn parse_lines(lines: &[&str]) -> Vec<Block> {
                 i += 1;
             }
             i += 1;
-            blocks.push(Block::Code(code));
+            blocks.push(Block::Code {
+                language,
+                lines: code,
+            });
             continue;
         }
         if paragraph.is_empty() && indent_of(line) >= 4 && list_item(line).is_none() {
@@ -214,7 +228,33 @@ fn parse_lines(lines: &[&str]) -> Vec<Block> {
             while code.last().is_some_and(|l| l.trim().is_empty()) {
                 code.pop();
             }
-            blocks.push(Block::Code(code));
+            blocks.push(Block::Code {
+                language: String::new(),
+                lines: code,
+            });
+            continue;
+        }
+        let aligned_start = line.trim().strip_prefix("::: align=");
+        if let Some(rest) = aligned_start {
+            flush(&mut paragraph, &mut blocks);
+            let alignment = if rest.starts_with("center") {
+                Align::Center
+            } else if rest.starts_with("right") {
+                Align::Right
+            } else {
+                Align::Left
+            };
+            i += 1;
+            let mut text = Vec::new();
+            while i < lines.len() && lines[i].trim() != ":::" {
+                text.push(lines[i]);
+                i += 1;
+            }
+            if i < lines.len() {
+                i += 1;
+            }
+            let spans = inline_lines(&text);
+            blocks.push(Block::Aligned(alignment, spans));
             continue;
         }
         if let Some((level, title)) = heading(line) {
@@ -316,11 +356,60 @@ fn parse_lines(lines: &[&str]) -> Vec<Block> {
             blocks.push(Block::List(items));
             continue;
         }
+        if paragraph.is_empty()
+            && let Some((alt, path)) = image(line)
+        {
+            blocks.push(Block::Image { alt, path });
+            i += 1;
+            continue;
+        }
         paragraph.push(line);
         i += 1;
     }
     flush(&mut paragraph, &mut blocks);
     blocks
+}
+
+/// Image seule sur la ligne : (texte de remplacement, chemin).
+fn image(line: &str) -> Option<(String, String)> {
+    let chars: Vec<char> = line.trim().chars().collect();
+    if chars.first() != Some(&'!') {
+        return None;
+    }
+    let (start, end, after) = link_at(&chars, 1)?;
+    (after == chars.len()).then(|| {
+        let alt = chars[start..end].iter().collect();
+        let path: String = chars[end + 2..after - 1].iter().collect();
+        // « chemin "titre" » : le titre est ignoré.
+        let path = path.split_whitespace().next().unwrap_or("");
+        (alt, String::from(path))
+    })
+}
+
+/// En-tête YAML « --- … --- » en tête de document : ses paires « clé: valeur » (guillemets
+/// ôtés) et le reste du texte. Sans en-tête : rien, et tout le texte.
+pub fn front_matter(text: &str) -> (Vec<(String, String)>, &str) {
+    let Some(body) = text
+        .strip_prefix("---\n")
+        .or_else(|| text.strip_prefix("---\r\n"))
+    else {
+        return (Vec::new(), text);
+    };
+    let mut offset = 0;
+    let mut pairs = Vec::new();
+    for line in body.split_inclusive('\n') {
+        offset += line.len();
+        let trimmed = line.trim();
+        if trimmed == "---" || trimmed == "..." {
+            return (pairs, &body[offset..]);
+        }
+        if let Some((key, value)) = trimmed.split_once(':') {
+            let value = value.trim().trim_matches(|c| c == '"' || c == '\'');
+            pairs.push((String::from(key.trim()), String::from(value)));
+        }
+    }
+    // Jamais refermé : ce n'était pas un en-tête.
+    (Vec::new(), text)
 }
 
 /// Lignes d'un paragraphe : jointes par une espace ; deux espaces ou « \ »

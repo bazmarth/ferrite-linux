@@ -69,6 +69,7 @@ dbus-bin
 
 # Terminal lancé dans le bureau (en attendant le Terminal Ferrite, phase 5)
 foot
+tmux
 
 # Polices
 fonts-noto-core

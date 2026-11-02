@@ -746,7 +746,30 @@ caches={}
             Action::TerminalHere => {
                 let dir = self.current_dir().map(Path::to_path_buf).unwrap_or_else(home);
                 let mut command = Command::new("foot");
-                command.arg(format!("--working-directory={}", dir.display()));
+                command
+                    .arg("-o")
+                    .arg("main.resize-keep-grid=no")
+                    .arg("-o")
+                    .arg("key-bindings.font-increase=Control+plus Control+equal Control+KP_Add")
+                    .arg("-o")
+                    .arg("key-bindings.font-decrease=Control+minus Control+KP_Subtract")
+                    .arg("-o")
+                    .arg("key-bindings.font-reset=Control+0 Control+KP_0")
+                    .arg("-o")
+                    .arg("mouse-bindings.font-increase=Control+BTN_WHEEL_BACK")
+                    .arg("-o")
+                    .arg("mouse-bindings.font-decrease=Control+BTN_WHEEL_FORWARD")
+                    .arg("-o")
+                    .arg("main.pad=12x8 center")
+                    .arg(format!("--working-directory={}", dir.display()));
+                command
+                    .arg("tmux")
+                    .arg("-f")
+                    .arg("/home/bazoum/.config/tmux.conf")
+                    .arg("new-session")
+                    .arg("-A")
+                    .arg("-s")
+                    .arg("ferrite");
                 if let Err(error) = spawn_detached(command) {
                     self.error(format!("Terminal indisponible : {error}"));
                 }
@@ -917,7 +940,7 @@ caches={}
         // Colonne sur toute la hauteur (boutons de fenêtre en haut, sauf dans une feuille),
         // puis barre d'outils et contenu à droite.
         let buttons = self.picker.is_none();
-        style::sidebar(ui, "emplacements", 210.0, style::SIDEBAR, buttons, |ui| {
+        style::sidebar(ui, "emplacements", 210.0, style::sidebar_color(), buttons, |ui| {
             self.sidebar(ui, &mut actions)
         });
         style::toolbar(ui, false, |ui| self.header(ui, &mut actions));
@@ -927,7 +950,7 @@ caches={}
             self.status_bar(ui, &mut actions);
         }
         egui::CentralPanel::no_frame()
-            .frame(Frame::new().fill(style::BACKGROUND))
+            .frame(Frame::new().fill(style::background()))
             .show(ui, |ui| match self.view {
                 View::List => self.list(ui, &mut actions),
                 View::Grid => self.grid(ui, &mut actions),
@@ -1097,7 +1120,7 @@ caches={}
                     .unwrap_or_else(|| "Ordinateur".to_owned())
             };
             if index > 0 {
-                ui.label(RichText::new("›").color(style::TEXT_SECONDARY));
+                ui.label(RichText::new("›").color(style::text_secondary()));
             }
             let text = if index == last {
                 RichText::new(name).family(style::strong_family())
@@ -1136,7 +1159,7 @@ caches={}
                 favorites.push((name, path, icon));
             }
         }
-        let tint = IconStyle::Tinted(style::ACCENT);
+        let tint = IconStyle::Tinted(style::accent());
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
             style::sidebar_heading(ui, "Favoris");
             for (name, path, icon) in favorites {
@@ -1194,9 +1217,9 @@ caches={}
                     Glyph::Eject,
                     eject,
                     if eject_response.hovered() {
-                        style::TEXT
+                        style::primary_text()
                     } else {
-                        style::TEXT_SECONDARY
+                        style::text_secondary()
                     },
                 );
                 if eject_response.clicked() {
@@ -1222,7 +1245,7 @@ caches={}
             .resizable(false)
             .frame(
                 Frame::new()
-                    .fill(style::HEADER)
+                    .fill(style::header_color())
                     .inner_margin(Margin::symmetric(12, 10)),
             )
             .show(ui, |ui| {
@@ -1249,19 +1272,19 @@ caches={}
                                 Some(path) => file_name(path),
                                 None => "Choisis un fichier".to_owned(),
                             };
-                            ui.label(RichText::new(text).color(style::TEXT_SECONDARY));
+                            ui.label(RichText::new(text).color(style::text_secondary()));
                         }
                     }
                     if let Some((text, true)) = &message {
-                        ui.colored_label(style::ERROR, text);
+                        ui.colored_label(style::error(), text);
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let (label, enabled) = match picker.mode {
                             PickerMode::Save => ("Enregistrer", !picker.name.trim().is_empty()),
                             PickerMode::Open => ("Ouvrir", chosen_file.is_some()),
                         };
-                        let button = egui::Button::new(RichText::new(label).color(Color32::WHITE))
-                            .fill(style::ACCENT)
+                        let button = egui::Button::new(RichText::new(label).color(style::accent_text()))
+                            .fill(style::accent())
                             .min_size(egui::vec2(96.0, 0.0));
                         if ui.add_enabled(enabled, button).clicked() {
                             actions.push(match (&chosen_file, picker.mode) {
@@ -1333,7 +1356,7 @@ caches={}
             if let Some((text, error)) = &message {
                 ui.label("·");
                 if *error {
-                    ui.colored_label(style::ERROR, text);
+                    ui.colored_label(style::error(), text);
                 } else {
                     ui.label(text);
                 }
@@ -1516,9 +1539,9 @@ caches={}
                 let width = columns[index] - if index == 0 { 46.0 } else { 0.0 };
                 let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 28.0), Sense::click());
                 let color = if self.sort == key {
-                    style::TEXT
+                    style::primary_text()
                 } else {
-                    style::TEXT_SECONDARY
+                    style::text_secondary()
                 };
                 ui.painter().text(
                     egui::pos2(rect.left(), rect.center().y),
@@ -1533,8 +1556,11 @@ caches={}
             }
         });
         let line = ui.cursor().top();
-        ui.painter()
-            .hline(ui.max_rect().x_range(), line, Stroke::new(1.0, style::SEPARATOR));
+        ui.painter().hline(
+            ui.max_rect().x_range(),
+            line,
+            Stroke::new(1.0, style::separator()),
+        );
 
         let visible = self.visible();
         let scroll = egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
@@ -1544,11 +1570,11 @@ caches={}
                 let (rect, response) = ui.allocate_exact_size(egui::vec2(width, ROW), Sense::click());
                 let selected = self.selected.contains(&entry.path);
                 let fill = if selected {
-                    Some(style::ACCENT)
+                    Some(style::accent())
                 } else if response.hovered() {
-                    Some(Color32::from_rgb(0xF0, 0xF3, 0xF8))
+                    Some(style::control_hover())
                 } else if row_index % 2 == 1 {
-                    Some(Color32::from_rgb(0xF4, 0xF4, 0xF6))
+                    Some(style::content_gray())
                 } else {
                     None
                 };
@@ -1556,11 +1582,15 @@ caches={}
                     ui.painter()
                         .rect_filled(rect.shrink2(egui::vec2(8.0, 0.0)), 5.0, fill);
                 }
-                let ink = if selected { Color32::WHITE } else { style::TEXT };
-                let secondary = if selected {
-                    Color32::from_white_alpha(220)
+                let ink = if selected {
+                    style::accent_text()
                 } else {
-                    style::TEXT_SECONDARY
+                    style::primary_text()
+                };
+                let secondary = if selected {
+                    style::accent_text().gamma_multiply(0.82)
+                } else {
+                    style::text_secondary()
                 };
                 let icon = egui::Rect::from_center_size(
                     egui::pos2(rect.left() + 28.0, rect.center().y),
@@ -1680,7 +1710,7 @@ caches={}
                                 &entry.name,
                                 label_center,
                                 GRID_CELL.x - 10.0,
-                                style::TEXT,
+                                style::primary_text(),
                                 true,
                             );
                             if selected {
@@ -1688,7 +1718,7 @@ caches={}
                                     label_center,
                                     egui::vec2(galley_width + 12.0, 20.0),
                                 );
-                                ui.painter().rect_filled(pill, 6.0, style::ACCENT);
+                                ui.painter().rect_filled(pill, 6.0, style::accent());
                                 paint_text(
                                     ui,
                                     &entry.name,
@@ -1727,7 +1757,7 @@ caches={}
                     } else {
                         format!("Supprimer définitivement {} éléments ?", paths.len())
                     });
-                    ui.label(RichText::new("Cette action est irréversible.").color(style::TEXT_SECONDARY));
+                    ui.label(RichText::new("Cette action est irréversible.").color(style::text_secondary()));
                     ui.add_space(12.0);
                     match dialog_buttons(ui, "Supprimer") {
                         Some(true) => actions.push(Action::ConfirmDeleteForever(paths.clone())),
@@ -1739,7 +1769,7 @@ caches={}
                     ui.heading("Vider la Corbeille ?");
                     ui.label(
                         RichText::new("Tous ses éléments seront supprimés définitivement.")
-                            .color(style::TEXT_SECONDARY),
+                            .color(style::text_secondary()),
                     );
                     ui.add_space(12.0);
                     match dialog_buttons(ui, "Vider") {
@@ -1761,7 +1791,7 @@ caches={}
                         .spacing([16.0, 8.0])
                         .show(ui, |ui| {
                             let mut row = |title: &str, value: String| {
-                                ui.label(RichText::new(title).color(style::TEXT_SECONDARY));
+                                ui.label(RichText::new(title).color(style::text_secondary()));
                                 ui.label(value);
                                 ui.end_row();
                             };
@@ -1802,7 +1832,7 @@ caches={}
                     ui.heading(format!("Remplacer « {} » ?", file_name(path)));
                     ui.label(
                         RichText::new("Un fichier de ce nom existe déjà ; son contenu sera remplacé.")
-                            .color(style::TEXT_SECONDARY),
+                            .color(style::text_secondary()),
                     );
                     ui.add_space(12.0);
                     match dialog_buttons(ui, "Remplacer") {
@@ -1819,7 +1849,7 @@ caches={}
                                 .map(|n| n.to_string_lossy().into_owned())
                                 .unwrap_or_default(),
                         )
-                        .color(style::TEXT_SECONDARY),
+                        .color(style::text_secondary()),
                     );
                     ui.add_space(8.0);
                     egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
@@ -1839,6 +1869,7 @@ caches={}
                                 terminal: false,
                                 icon: None,
                                 wm_class: None,
+                                categories: Vec::new(),
                             };
                             actions.push(Action::LaunchWith(path.clone(), app));
                         }
@@ -1869,7 +1900,7 @@ caches={}
 /// Boutons d'une confirmation destructrice : `Some(true)` pour confirmer, `Some(false)` pour annuler.
 fn dialog_buttons(ui: &mut egui::Ui, confirm: &str) -> Option<bool> {
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        let button = egui::Button::new(RichText::new(confirm).color(Color32::WHITE)).fill(style::ERROR);
+        let button = egui::Button::new(RichText::new(confirm).color(Color32::WHITE)).fill(style::error());
         if ui.add(button).clicked() {
             Some(true)
         } else if ui.button("Annuler").clicked() {
@@ -1895,7 +1926,7 @@ fn empty_state(ui: &mut egui::Ui, search: &str, trash: bool) {
         egui::Align2::CENTER_CENTER,
         text,
         egui::FontId::proportional(15.0),
-        style::TEXT_SECONDARY,
+        style::text_secondary(),
     );
 }
 
@@ -1982,12 +2013,12 @@ fn nav_button(ui: &mut egui::Ui, glyph: Glyph, enabled: bool, hint: &str) -> egu
     );
     if enabled && response.hovered() {
         ui.painter()
-            .rect_filled(rect.shrink(1.0), 13.0, Color32::from_black_alpha(10));
+            .rect_filled(rect.shrink(1.0), 13.0, style::control_hover());
     }
     let color = if enabled {
-        Color32::from_rgb(0x3A, 0x3A, 0x3F)
+        style::primary_text()
     } else {
-        Color32::from_rgb(0xC2, 0xC2, 0xC8)
+        style::text_secondary()
     };
     paint_glyph(ui, glyph, rect, color);
     response.on_hover_text(hint)
@@ -1997,7 +2028,7 @@ fn nav_button(ui: &mut egui::Ui, glyph: Glyph, enabled: bool, hint: &str) -> egu
 fn view_button(ui: &mut egui::Ui, glyph: Glyph, active: bool, hint: &str) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(36.0, 22.0), Sense::click());
     style::segment_background(ui, rect, active, response.hovered());
-    paint_glyph(ui, glyph, rect, Color32::from_rgb(0x3A, 0x3A, 0x3F));
+    paint_glyph(ui, glyph, rect, style::primary_text());
     response.on_hover_text(hint)
 }
 

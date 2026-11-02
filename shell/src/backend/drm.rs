@@ -356,6 +356,7 @@ fn render(drm: &mut Drm, state: &mut Ferrite) -> bool {
         frame_pending,
         ..
     } = drm;
+    state.run_genie_demo();
     let elements = render::output_elements(renderer, state, assets, output, true);
     let sent = match compositor.render_frame(renderer, &elements, [0.0, 0.0, 0.0, 1.0], FrameFlags::DEFAULT) {
         Ok(result) if !result.is_empty => match compositor.queue_frame(()) {

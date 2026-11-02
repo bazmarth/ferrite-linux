@@ -32,6 +32,7 @@ Liste : `image/config/package-lists/ferrite.list.chroot`. Points notables :
 | `xwayland`, `mesa-vulkan-drivers`, `libegl1`, `libgles2` | préparés pour le compositeur (phase 2) |
 | `xdg-desktop-portal`, `xdg-desktop-portal-gtk` | dialogues de fichiers et ouverture de liens des applications (navigateurs, Flatpak) |
 | `dbus-bin` | `dbus-update-activation-environment` : transmet `WAYLAND_DISPLAY` et `DISPLAY` aux services D-Bus |
+| `foot`, `tmux` | terminal du bureau ; `tmux` conserve la session et fournit les nouveaux onglets |
 | `fonts-jetbrains-mono` | police du terminal `foot` (`/etc/xdg/foot/foot.ini`) |
 
 ## Ressources

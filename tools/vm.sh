@@ -26,9 +26,9 @@ fi
 iso=${1:-$BUILD/ferrite-live.iso}
 [ -f "$iso" ] || die "ISO introuvable : $iso (construis-la avec « sudo tools/usb.sh »)"
 
-code=/usr/share/OVMF/OVMF_CODE_4M.fd
-vars_template=/usr/share/OVMF/OVMF_VARS_4M.fd
-[ -f "$code" ] || die "OVMF absent (sudo tools/setup-wsl.sh)"
+set_ovmf_files
+code=$OVMF_CODE
+vars_template=$OVMF_VARS_TEMPLATE
 mkdir -p "$BUILD"
 vars="$BUILD/vm-ovmf-vars.fd"
 cp "$vars_template" "$vars"

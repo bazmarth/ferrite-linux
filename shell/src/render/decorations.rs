@@ -5,7 +5,10 @@
 
 use std::cell::RefCell;
 
-use ferrite_ui::theme::{Color, TRAFFIC_LIGHT_FIRST_X, TRAFFIC_LIGHT_STEP, WINDOW_RADIUS};
+use ferrite_ui::{
+    theme::{Color, Palette, TRAFFIC_LIGHT_FIRST_X, TRAFFIC_LIGHT_STEP},
+    tokens::{elevation, radius::WINDOW as WINDOW_RADIUS},
+};
 use smithay::{
     backend::{
         allocator::Fourcc,
@@ -31,14 +34,11 @@ use super::{
 use crate::wm::decoration;
 
 /// Ombre : débord autour du cadre, décalage vers le bas, flou et intensité.
-const SHADOW_MARGIN: i32 = 48;
-const SHADOW_OFFSET_Y: f32 = 10.0;
-const SHADOW_BLUR: f32 = 26.0;
-const SHADOW_ACTIVE: f32 = 0.42;
-const SHADOW_INACTIVE: f32 = 0.22;
-/// Titre de la barre, comme dans le Ferrite d'origine : gris foncé, ou clair si inactive.
-const TITLE_ACTIVE: Color = Color::rgb(0x3A3A3C);
-const TITLE_INACTIVE: Color = Color::rgb(0xB0B0B4);
+const SHADOW_MARGIN: i32 = elevation::WINDOW_MARGIN;
+const SHADOW_OFFSET_Y: f32 = elevation::WINDOW_OFFSET_Y;
+const SHADOW_BLUR: f32 = elevation::WINDOW_BLUR;
+const SHADOW_ACTIVE: f32 = elevation::WINDOW_ACTIVE_ALPHA;
+const SHADOW_INACTIVE: f32 = elevation::WINDOW_INACTIVE_ALPHA;
 
 /// Ressources partagées des décorations.
 #[derive(Debug)]
@@ -52,6 +52,7 @@ pub struct Decorations {
 struct Look {
     active: bool,
     hover: bool,
+    dark_theme: bool,
     scale: f64,
 }
 
@@ -91,11 +92,17 @@ impl Decorations {
         content: Rectangle<i32, Logical>,
         look: (bool, bool),
         titlebar: bool,
+        dark_theme: bool,
         scale: f64,
         out: &mut Vec<OutputElement>,
     ) {
         let (active, hover) = look;
-        let look = Look { active, hover, scale };
+        let look = Look {
+            active,
+            hover,
+            dark_theme,
+            scale,
+        };
         window
             .user_data()
             .insert_if_missing(|| RefCell::new(Cache::default()));
@@ -121,7 +128,13 @@ impl Decorations {
         cache: &mut Cache,
         out: &mut Vec<OutputElement>,
     ) {
-        let Look { active, hover, .. } = look;
+        let Look {
+            active,
+            hover,
+            dark_theme,
+            ..
+        } = look;
+        let palette = if dark_theme { Palette::DARK } else { Palette::LIGHT };
         let bar = decoration::titlebar(content);
 
         // Titre, centré dans la barre, sans empiéter sur les feux.
@@ -132,7 +145,11 @@ impl Decorations {
             t.text != text || t.active != active || t.scale != scale || t.max_width != max_width
         });
         if stale {
-            let color = if active { TITLE_ACTIVE } else { TITLE_INACTIVE };
+            let color = if active {
+                palette.window_title_active
+            } else {
+                palette.window_title_inactive
+            };
             let image = self
                 .font
                 .render(&text, TITLE_SIZE * scale as f32, color, max_width)
@@ -180,12 +197,65 @@ impl Decorations {
             }
         }
 
+        if crate::render::app_id(window).is_some_and(|id| {
+            let id = id.to_lowercase();
+            id == "foot" || id == "footclient" || id.contains("terminal")
+        }) {
+            let plus_color = if active {
+                palette.titlebar_action_active
+            } else {
+                palette.titlebar_action_inactive
+            };
+            if let Some(bitmap) = self
+                .font
+                .render("+", (TITLE_SIZE + 4.0) * scale as f32, plus_color, 100)
+            {
+                let buffer = MemoryRenderBuffer::from_slice(
+                    &bitmap.pixels,
+                    Fourcc::Argb8888,
+                    (bitmap.width as i32, bitmap.height as i32),
+                    1,
+                    Transform::Normal,
+                    None,
+                );
+                let center = decoration::plus_center(content);
+                let size = (
+                    (bitmap.width as f64 / scale).round() as i32,
+                    (bitmap.height as f64 / scale).round() as i32,
+                );
+                let point = Point::from((
+                    (center.x * scale - bitmap.width as f64 / 2.0).round(),
+                    (center.y * scale - bitmap.height as f64 / 2.0).round(),
+                ));
+                match MemoryRenderBufferRenderElement::from_buffer(
+                    renderer,
+                    point,
+                    &buffer,
+                    None,
+                    None,
+                    Some(size.into()),
+                    Kind::Unspecified,
+                ) {
+                    Ok(element) => out.push(OutputElement::Memory(element)),
+                    Err(err) => warn!("bouton Terminal non importé : {err:?}"),
+                }
+            }
+        }
+
         // Barre de titre.
         // Dégradé du Ferrite d'origine : plus soutenu sur la fenêtre active, trait dessous.
         let (top, bottom, line) = if active {
-            (Color::rgb(0xF0EEF1), Color::rgb(0xE4E2E5), 38u8)
+            (
+                palette.titlebar_active,
+                palette.titlebar_active_bottom,
+                palette.titlebar_active_separator_alpha,
+            )
         } else {
-            (Color::rgb(0xF6F6F6), Color::rgb(0xF3F3F3), 22u8)
+            (
+                palette.titlebar_inactive,
+                palette.titlebar_inactive_bottom,
+                palette.titlebar_inactive_separator_alpha,
+            )
         };
         let uniforms = || {
             vec![

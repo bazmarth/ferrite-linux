@@ -1,7 +1,12 @@
 //! Réglages de l'utilisateur partagés entre le compositeur et Paramètres, dans
 //! `$XDG_CONFIG_HOME/ferrite/reglages` (une ligne `clé = valeur` par réglage).
 
-use std::{collections::BTreeMap, env, fs, path::PathBuf, time::SystemTime};
+use std::{
+    collections::BTreeMap,
+    env, fs,
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 /// Disposition du clavier par défaut (voir `docs/PLAN.md` §1.2).
 pub const DEFAULT_KEYBOARD_LAYOUT: &str = "us";
@@ -111,6 +116,48 @@ impl Settings {
             Some(value) if !value.is_empty() => DockHiding::parse(value),
             _ => DockHiding::Never,
         }
+    }
+
+    /// Mode d'apparence choisi dans Paramètres (clair par défaut).
+    pub fn appearance(&self) -> Appearance {
+        Appearance::parse(self.get("apparence").unwrap_or_default())
+    }
+
+    /// Couleur d'accentuation (celle de Ferrite par défaut).
+    pub fn accent(&self) -> Accent {
+        Accent::parse(self.get("accent").unwrap_or_default())
+    }
+
+    /// Couleur de surlignage du texte ; `None` : celle d'accentuation.
+    pub fn highlight(&self) -> Option<Accent> {
+        self.get("surlignage")
+            .filter(|value| !value.is_empty() && *value != "accent")
+            .map(Accent::parse)
+    }
+
+    /// Taille des icônes des barres latérales.
+    pub fn sidebar_icons(&self) -> DockSize {
+        DockSize::parse(self.get("barre_laterale_icones").unwrap_or_default())
+    }
+
+    /// Hauteur totale du Dock, en pixels logiques.
+    pub fn dock_height(&self) -> u32 {
+        parse_height(self.get("dock_hauteur"), 68, 68, 120)
+    }
+
+    /// Hauteur de la barre des menus, en pixels logiques.
+    pub fn bar_height(&self) -> u32 {
+        parse_height(self.get("barre_hauteur"), 34, 24, 60)
+    }
+
+    pub fn scroll_bars(&self) -> ScrollBars {
+        ScrollBars::parse(self.get("barres_defilement").unwrap_or_default())
+    }
+
+    /// Fond d'écran : nom d'un fond de Ferrite, ou chemin absolu d'une image (vide : le
+    /// fond Ferrite).
+    pub fn wallpaper(&self) -> &str {
+        self.get("fond_ecran").unwrap_or_default()
     }
 
     /// Écrit le fichier entier (via un fichier temporaire, pour ne jamais le laisser à moitié).
@@ -225,6 +272,182 @@ impl DockHiding {
     }
 }
 
+/// Apparence des fenêtres.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Appearance {
+    #[default]
+    Light,
+    Dark,
+    /// Clair le jour, sombre la nuit.
+    Auto,
+}
+
+impl Appearance {
+    pub const ALL: [Appearance; 3] = [Appearance::Light, Appearance::Dark, Appearance::Auto];
+
+    fn parse(value: &str) -> Self {
+        match value {
+            "sombre" => Appearance::Dark,
+            "auto" => Appearance::Auto,
+            _ => Appearance::Light,
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Appearance::Light => "clair",
+            Appearance::Dark => "sombre",
+            Appearance::Auto => "auto",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Appearance::Light => "Clair",
+            Appearance::Dark => "Sombre",
+            Appearance::Auto => "Auto",
+        }
+    }
+
+    /// Résout le mode automatique selon l'heure UTC : sombre entre 19 h et 7 h.
+    pub fn is_dark(self) -> bool {
+        match self {
+            Appearance::Light => false,
+            Appearance::Dark => true,
+            Appearance::Auto => {
+                let seconds = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                Self::is_dark_at_hour((seconds / 3600 % 24) as u8)
+            }
+        }
+    }
+
+    fn is_dark_at_hour(hour: u8) -> bool {
+        !(7..19).contains(&hour)
+    }
+}
+
+/// Couleur d'accentuation, comme dans les Réglages de macOS.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Accent {
+    /// Chaque application garde sa couleur (le bleu Ferrite pour les nôtres).
+    #[default]
+    Multicolor,
+    Blue,
+    Purple,
+    Pink,
+    Red,
+    Orange,
+    Yellow,
+    Green,
+    Graphite,
+}
+
+impl Accent {
+    pub const ALL: [Accent; 9] = [
+        Accent::Multicolor,
+        Accent::Blue,
+        Accent::Purple,
+        Accent::Pink,
+        Accent::Red,
+        Accent::Orange,
+        Accent::Yellow,
+        Accent::Green,
+        Accent::Graphite,
+    ];
+
+    fn parse(value: &str) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|accent| accent.key() == value)
+            .unwrap_or_default()
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Accent::Multicolor => "multicolore",
+            Accent::Blue => "bleu",
+            Accent::Purple => "violet",
+            Accent::Pink => "rose",
+            Accent::Red => "rouge",
+            Accent::Orange => "orange",
+            Accent::Yellow => "jaune",
+            Accent::Green => "vert",
+            Accent::Graphite => "graphite",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Accent::Multicolor => "Multicolore",
+            Accent::Blue => "Bleu",
+            Accent::Purple => "Violet",
+            Accent::Pink => "Rose",
+            Accent::Red => "Rouge",
+            Accent::Orange => "Orange",
+            Accent::Yellow => "Jaune",
+            Accent::Green => "Vert",
+            Accent::Graphite => "Graphite",
+        }
+    }
+
+    /// Couleur `0xRRGGBB` ; `None` pour « Multicolore ».
+    pub fn rgb(self) -> Option<u32> {
+        match self {
+            Accent::Multicolor => None,
+            Accent::Blue => Some(0x007AFF),
+            Accent::Purple => Some(0x953D96),
+            Accent::Pink => Some(0xF74F9E),
+            Accent::Red => Some(0xE0383E),
+            Accent::Orange => Some(0xF7821B),
+            Accent::Yellow => Some(0xFFC600),
+            Accent::Green => Some(0x62BA46),
+            Accent::Graphite => Some(0x8C8C8C),
+        }
+    }
+}
+
+/// Affichage des barres de défilement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ScrollBars {
+    /// Fines et toujours visibles avec une souris, comme sur un PC.
+    #[default]
+    Auto,
+    /// Seulement quand la souris survole la zone qui défile.
+    WhenScrolling,
+    Always,
+}
+
+impl ScrollBars {
+    pub const ALL: [ScrollBars; 3] = [ScrollBars::Auto, ScrollBars::WhenScrolling, ScrollBars::Always];
+
+    fn parse(value: &str) -> Self {
+        match value {
+            "defilement" => ScrollBars::WhenScrolling,
+            "toujours" => ScrollBars::Always,
+            _ => ScrollBars::Auto,
+        }
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            ScrollBars::Auto => "auto",
+            ScrollBars::WhenScrolling => "defilement",
+            ScrollBars::Always => "toujours",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ScrollBars::Auto => "Automatiquement selon la souris ou le pavé tactile",
+            ScrollBars::WhenScrolling => "Pendant le défilement",
+            ScrollBars::Always => "Toujours",
+        }
+    }
+}
+
 /// Liste séparée par des virgules, sans éléments vides.
 fn split_list(value: &str) -> Vec<String> {
     value
@@ -233,6 +456,13 @@ fn split_list(value: &str) -> Vec<String> {
         .filter(|item| !item.is_empty())
         .map(str::to_owned)
         .collect()
+}
+
+fn parse_height(value: Option<&str>, default: u32, min: u32, max: u32) -> u32 {
+    value
+        .and_then(|value| value.parse::<u32>().ok())
+        .unwrap_or(default)
+        .clamp(min, max)
 }
 
 /// Sépare « ch(fr) » en disposition « ch » et variante « fr » pour XKB.
@@ -246,6 +476,38 @@ pub fn split_layout(layout: &str) -> (String, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reglages_d_apparence() {
+        let defaults = Settings::default();
+        assert_eq!(defaults.appearance(), Appearance::Light);
+        assert_eq!(defaults.accent(), Accent::Multicolor);
+        assert_eq!(defaults.highlight(), None);
+        assert_eq!(defaults.sidebar_icons(), DockSize::Medium);
+        assert_eq!(defaults.scroll_bars(), ScrollBars::Auto);
+        let chosen = Settings::parse(
+            "apparence = sombre\naccent = violet\nsurlignage = vert\nbarre_laterale_icones = petit\nbarres_defilement = toujours\n",
+        );
+        assert_eq!(chosen.appearance(), Appearance::Dark);
+        assert_eq!(chosen.accent(), Accent::Purple);
+        assert_eq!(chosen.highlight(), Some(Accent::Green));
+        assert_eq!(chosen.sidebar_icons(), DockSize::Small);
+        assert_eq!(chosen.scroll_bars(), ScrollBars::Always);
+        assert_eq!(Settings::parse("surlignage = accent\n").highlight(), None);
+        for accent in Accent::ALL {
+            assert_eq!(Accent::parse(accent.key()), accent);
+        }
+    }
+
+    #[test]
+    fn apparence_auto_suit_une_plage_nocturne() {
+        assert!(Appearance::is_dark_at_hour(0));
+        assert!(Appearance::is_dark_at_hour(6));
+        assert!(!Appearance::is_dark_at_hour(7));
+        assert!(!Appearance::is_dark_at_hour(18));
+        assert!(Appearance::is_dark_at_hour(19));
+        assert!(Appearance::is_dark_at_hour(23));
+    }
 
     #[test]
     fn lecture_des_reglages() {

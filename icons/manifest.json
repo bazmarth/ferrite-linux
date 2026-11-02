@@ -556,5 +556,71 @@
     "label": "Document texte",
     "category": "Fichiers",
     "description": ""
+  },
+  {
+    "name": "settings-computer",
+    "label": "Ordinateur",
+    "category": "Système",
+    "description": ""
+  },
+  {
+    "name": "settings-wifi",
+    "label": "Wi-Fi",
+    "category": "Système",
+    "description": ""
+  },
+  {
+    "name": "settings-bluetooth",
+    "label": "Bluetooth",
+    "category": "Système",
+    "description": ""
+  },
+  {
+    "name": "settings-sound",
+    "label": "Son",
+    "category": "Système",
+    "description": ""
+  },
+  {
+    "name": "settings-dock",
+    "label": "Dock et barre des menus",
+    "category": "Système",
+    "description": ""
+  },
+  {
+    "name": "settings-desktop",
+    "label": "Réglages du bureau",
+    "category": "Système",
+    "description": ""
+  },
+  {
+    "name": "settings-keyboard",
+    "label": "Clavier",
+    "category": "Système",
+    "description": ""
+  },
+  {
+    "name": "settings-clock",
+    "label": "Date et heure",
+    "category": "Système",
+    "description": ""
+  },
+  {
+    "name": "device-headphones",
+    "label": "Casque",
+    "category": "Système",
+    "description": ""
+  },
+  {
+    "name": "device-mouse",
+    "label": "Souris",
+    "category": "Système",
+    "description": ""
+  },
+  {
+    "name": "device-phone",
+    "label": "Téléphone",
+    "category": "Système",
+    "description": ""
   }
 ]

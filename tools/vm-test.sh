@@ -19,9 +19,10 @@ iso=${2:-$BUILD/ferrite-live.iso}
 [ -f "$iso" ] || die "ISO introuvable : $iso (construis-la avec tools/usb.sh)"
 command -v socat >/dev/null 2>&1 || die "socat absent (sudo apt install socat)"
 
-code=/usr/share/OVMF/OVMF_CODE_4M.fd
+set_ovmf_files
+code=$OVMF_CODE
 vars="$BUILD/vm-ovmf-vars.fd"
-cp /usr/share/OVMF/OVMF_VARS_4M.fd "$vars"
+cp "$OVMF_VARS_TEMPLATE" "$vars"
 if [ -w /dev/kvm ]; then
     accel="-accel kvm -cpu host"
 else

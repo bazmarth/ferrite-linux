@@ -1,6 +1,11 @@
 //! Dock Ferrite, comme sur macOS : les applications épinglées, puis (après un trait) les
 //! applications ouvertes qui ne le sont pas ; un point sous celles qui ont une fenêtre.
-//! Sous la souris, les icônes grossissent un peu, sur place ; le fond garde sa taille.
+//! Sous la souris, les icônes grossissent comme sur macOS : la plus proche double
+//! presque, ses voisines grandissent en vague, toutes s'écartent et le fond s'élargit,
+//! sans que le point sous la souris ne bouge.
+//!
+//! Une application qu'on lance rebondit dans le Dock, son point déjà allumé, jusqu'à
+//! l'arrivée de sa première fenêtre ([`Bounce`]).
 //!
 //! Sa taille, son masquage et l'agrandissement se règlent dans Paramètres (`DockConfig`).
 //! Masqué, il glisse sous le bord de l'écran et revient quand la souris touche le bas,
@@ -21,7 +26,7 @@ use crate::desktop::{
     apps::{AppIcon, AppKey},
     svg::{IconCache, Style},
 };
-use ferrite_system::config::{DockHiding, DockSize};
+use ferrite_system::config::{DockHiding, DockSize, Settings};
 use ferrite_ui::theme::Color;
 use smithay::{
     backend::{
@@ -47,13 +52,66 @@ const RUNNING_DOT: f64 = 4.0;
 const SEPARATOR: f64 = 13.0;
 /// Hauteur de la bande du bas qui fait revenir un Dock masqué.
 const REVEAL_EDGE: f64 = 3.0;
+/// Zone d'approche où un mouvement rapide vers le bas rappelle le Dock.
+const REVEAL_APPROACH_ZONE: f64 = 20.0;
+const REVEAL_APPROACH_SPEED: f64 = 650.0;
+const REVEAL_APPROACH_DISTANCE: f64 = 8.0;
+/// Temps laissé pour rejoindre le Dock après une approche rapide.
+pub(crate) const REVEAL_APPROACH_GRACE: Duration = Duration::from_millis(600);
+/// Temps minimum pendant lequel le pointeur doit rester au bord inférieur.
+pub const REVEAL_DELAY: Duration = Duration::from_millis(350);
 /// Durée du glissement du Dock.
 const SLIDE: Duration = Duration::from_millis(180);
-/// Agrandissement maximal d'une icône sous la souris, et portée de l'effet (en icônes).
-const MAGNIFY: f64 = 1.22;
-const MAGNIFY_RANGE: f64 = 1.6;
+/// Agrandissement maximal d'une icône sous la souris, et portée de l'effet (en icônes,
+/// de chaque côté du pointeur).
+const MAGNIFY: f64 = 1.9;
+const MAGNIFY_RANGE: f64 = 2.5;
 /// Durée de l'entrée et de la sortie de l'agrandissement.
-const MAGNIFY_EASE: Duration = Duration::from_millis(140);
+const MAGNIFY_EASE: Duration = Duration::from_millis(160);
+
+/// Rebond d'une application qui démarre : durée d'un saut, hauteur (en icônes), et
+/// délai au-delà duquel on renonce à attendre sa fenêtre.
+const BOUNCE_PERIOD: Duration = Duration::from_millis(640);
+const BOUNCE_HEIGHT: f64 = 0.5;
+const BOUNCE_TIMEOUT: Duration = Duration::from_secs(12);
+
+/// Rebond d'une icône pendant le démarrage de son application, comme sur macOS : elle
+/// saute tant que l'application n'a pas de fenêtre, puis finit son saut en cours.
+#[derive(Debug, Clone, Copy)]
+pub struct Bounce {
+    start: Instant,
+    /// Fin du dernier saut, fixée quand la fenêtre arrive.
+    end: Option<Instant>,
+}
+
+impl Bounce {
+    pub fn new(start: Instant) -> Self {
+        Self { start, end: None }
+    }
+
+    /// L'application a sa fenêtre : le saut en cours (au moins un) sera le dernier.
+    pub fn settle(&mut self, now: Instant) {
+        if self.end.is_none() {
+            let elapsed = now.duration_since(self.start).as_secs_f64();
+            let jumps = (elapsed / BOUNCE_PERIOD.as_secs_f64()).ceil().max(1.0);
+            self.end = Some(self.start + BOUNCE_PERIOD.mul_f64(jumps));
+        }
+    }
+
+    pub fn over(&self, now: Instant) -> bool {
+        self.end.is_some_and(|end| now >= end) || now.duration_since(self.start) >= BOUNCE_TIMEOUT
+    }
+
+    /// Hauteur de l'icône au-dessus de sa place, en icônes : une parabole par saut,
+    /// rapide au départ et ralentie en haut.
+    pub fn height(&self, now: Instant) -> f64 {
+        if self.over(now) {
+            return 0.0;
+        }
+        let t = (now.duration_since(self.start).as_secs_f64() / BOUNCE_PERIOD.as_secs_f64()).fract();
+        4.0 * t * (1.0 - t) * BOUNCE_HEIGHT
+    }
+}
 
 /// Réglages du Dock et de la barre du haut, lus dans `~/.config/ferrite/reglages`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,6 +120,9 @@ pub struct DockConfig {
     pub hiding: DockHiding,
     /// Masquage de la barre du haut.
     pub bar: DockHiding,
+    /// Hauteur du Dock et de la barre du haut, en pixels logiques.
+    pub dock_height: u32,
+    pub bar_height: u32,
     /// Agrandissement des icônes sous la souris.
     pub magnify: bool,
 }
@@ -72,30 +133,48 @@ impl Default for DockConfig {
             size: DockSize::default(),
             hiding: DockHiding::default(),
             bar: DockHiding::Never,
+            dock_height: 68,
+            bar_height: 34,
             magnify: true,
         }
     }
 }
 
 impl DockConfig {
+    pub fn from_settings(settings: &Settings) -> Self {
+        Self {
+            size: settings.dock_size(),
+            hiding: settings.dock_hiding(),
+            bar: settings.bar_hiding(),
+            dock_height: settings.dock_height(),
+            bar_height: settings.bar_height(),
+            magnify: settings.dock_magnify(),
+        }
+    }
+
     /// Bande du haut que les fenêtres laissent libre : seulement si la barre ne se cache
     /// jamais (hors plein écran).
     pub fn bar_reserved_height(self) -> i32 {
         match self.bar {
-            DockHiding::Never => ferrite_ui::theme::MENUBAR_HEIGHT as i32,
+            DockHiding::Never => self.bar_height as i32,
             DockHiding::Smart | DockHiding::Always => 0,
         }
     }
 
-    fn icon(self) -> f64 {
+    pub(crate) fn icon(self) -> f64 {
         self.size.icon() as f64
     }
 
     pub fn height(self) -> i32 {
-        (self.icon() + 2.0 * PAD_Y) as i32
+        self.dock_height.max((self.icon() + 2.0 * PAD_Y) as u32) as i32
     }
 
     /// Bande du bas que les fenêtres laissent libre : seulement si le Dock ne se cache jamais.
+    /// Bande occupée par le Dock quand il est sorti, qu'il se cache ou non.
+    pub fn shown_height(self) -> i32 {
+        self.height() + BOTTOM_MARGIN
+    }
+
     pub fn reserved_height(self) -> i32 {
         match self.hiding {
             DockHiding::Never => self.height() + BOTTOM_MARGIN + 6,
@@ -110,7 +189,7 @@ pub struct DockItem {
     pub key: AppKey,
     pub icon: AppIcon,
     pub pinned: bool,
-    /// Au moins une fenêtre, visible ou réduite.
+    /// Au moins une fenêtre, visible ou réduite, ou en train de démarrer.
     pub running: bool,
 }
 
@@ -150,11 +229,12 @@ pub fn layout(
     }
     let base_width = (x - ICON_GAP + PAD_X).max(2.0 * PAD_X + icon);
     let left = output.loc.x as f64 + (output.size.w as f64 - base_width) / 2.0;
-    let height = icon + 2.0 * PAD_Y;
+    let height = config.height() as f64;
     let hidden_by = (height + BOTTOM_MARGIN as f64) * (1.0 - reveal);
     let top = output.loc.y as f64 + output.size.h as f64 - height - BOTTOM_MARGIN as f64 + hidden_by;
 
-    // Agrandissement : chaque icône selon sa distance au pointeur (en largeurs d'icône).
+    // Agrandissement : chaque icône selon la distance de sa case au pointeur (en
+    // largeurs d'icône), en vague de cosinus.
     let scales: Vec<f64> = base
         .iter()
         .map(|center| match pointer {
@@ -170,27 +250,73 @@ pub fn layout(
             _ => 1.0,
         })
         .collect();
-    // Le fond garde sa taille ; chaque icône grandit sur place, centrée sur sa case et
-    // posée sur le bas du Dock (elle déborde vers le haut).
+    // Les icônes agrandies s'écartent : centres recalculés de proche en proche.
+    let mut centers = Vec::with_capacity(count);
+    let mut x = 0.0;
+    for (index, scale) in scales.iter().enumerate() {
+        if separator_after == Some(index) {
+            x += SEPARATOR;
+        }
+        centers.push(x + icon * scale / 2.0);
+        x += icon * scale + ICON_GAP;
+    }
+    // Recalage : le point sous la souris reste sous la souris (le Dock grandit des deux
+    // côtés), sinon le Dock reste centré.
+    let shift = match pointer.filter(|_| zoom > 0.0 && count > 0) {
+        Some(pointer) => {
+            let flat: Vec<f64> = base.iter().map(|center| left + center).collect();
+            pointer.x - follow(&flat, &centers, pointer.x)
+        }
+        None => left + PAD_X - centers.first().map_or(0.0, |first| first - icon / 2.0),
+    };
     let bottom = top + height - PAD_Y + 2.0;
-    let icons = base
+    let icons: Vec<Rectangle<f64, Logical>> = centers
         .iter()
         .zip(&scales)
         .map(|(center, scale)| {
             let size = icon * scale;
             Rectangle::new(
-                Point::from((left + center - size / 2.0, bottom - size)),
+                Point::from((shift + center - size / 2.0, bottom - size)),
                 Size::from((size, size)),
             )
         })
         .collect();
-    let separator =
-        separator_after.map(|index| left + base[index] - icon / 2.0 - SEPARATOR / 2.0 - ICON_GAP / 2.0);
+    // Le fond suit les icônes, sans jamais être plus étroit qu'au repos.
+    let (plate_left, plate_right) = match (icons.first(), icons.last()) {
+        (Some(first), Some(last)) => (
+            (first.loc.x - PAD_X).min(left),
+            (last.loc.x + last.size.w + PAD_X).max(left + base_width),
+        ),
+        _ => (left, left + base_width),
+    };
+    let separator = separator_after.map(|index| {
+        let before = icons[index - 1];
+        (before.loc.x + before.size.w + icons[index].loc.x) / 2.0
+    });
     DockLayout {
-        plate: Rectangle::new(Point::from((left, top)), Size::from((base_width, height))),
+        plate: Rectangle::new(
+            Point::from((plate_left, top)),
+            Size::from((plate_right - plate_left, height)),
+        ),
         icons,
         separator,
     }
+}
+
+/// Position, dans la disposition agrandie, du point `x` de la disposition au repos :
+/// interpolée entre les centres d'icônes qui l'encadrent (`flat` : centres au repos,
+/// `zoomed` : centres agrandis, relatifs au début du Dock).
+fn follow(flat: &[f64], zoomed: &[f64], x: f64) -> f64 {
+    let last = flat.len() - 1;
+    if x <= flat[0] {
+        return zoomed[0] - (flat[0] - x);
+    }
+    if x >= flat[last] {
+        return zoomed[last] + (x - flat[last]);
+    }
+    let index = flat.windows(2).position(|pair| x <= pair[1]).unwrap_or(last - 1);
+    let t = (x - flat[index]) / (flat[index + 1] - flat[index]);
+    zoomed[index] + (zoomed[index + 1] - zoomed[index]) * t
 }
 
 impl DockLayout {
@@ -201,19 +327,45 @@ impl DockLayout {
         self.icons.iter().position(|icon| {
             let column = position.x >= icon.loc.x - ICON_GAP / 2.0
                 && position.x < icon.loc.x + icon.size.w + ICON_GAP / 2.0;
-            column && (in_plate || (position.y >= icon.loc.y && position.y < plate.loc.y + plate.size.h))
+            column
+                && (in_plate
+                    || (position.y >= icon.loc.y
+                        && position.y < plate.loc.y + plate.size.h + BOTTOM_MARGIN as f64))
         })
     }
 
     /// Zone où la souris agrandit les icônes : le fond, et au-dessus la hauteur des
     /// icônes agrandies.
     fn hover_area(&self, icon: f64) -> Rectangle<f64, Logical> {
-        let rise = icon * (MAGNIFY - 1.0);
-        Rectangle::new(
-            Point::from((self.plate.loc.x, self.plate.loc.y - rise)),
-            Size::from((self.plate.size.w, self.plate.size.h + rise + BOTTOM_MARGIN as f64)),
-        )
+        dock_hover_area(self.plate, icon)
     }
+}
+
+pub(crate) fn dock_hover_area(plate: Rectangle<f64, Logical>, icon: f64) -> Rectangle<f64, Logical> {
+    let rise = icon * (MAGNIFY - 1.0);
+    // Le Dock agrandi déborde de son fond au repos : la zone aussi, sur les côtés.
+    let side = icon * (MAGNIFY - 1.0);
+    Rectangle::new(
+        Point::from((plate.loc.x - side, plate.loc.y - rise)),
+        Size::from((
+            plate.size.w + 2.0 * side,
+            plate.size.h + rise + BOTTOM_MARGIN as f64,
+        )),
+    )
+}
+
+/// L'approche descendante est-elle assez rapide et proche du bord pour rappeler le Dock ?
+pub(crate) fn fast_approach(
+    from: Point<f64, Logical>,
+    to: Point<f64, Logical>,
+    bottom: f64,
+    elapsed: Duration,
+) -> bool {
+    let distance = to.y - from.y;
+    distance >= REVEAL_APPROACH_DISTANCE
+        && bottom - to.y <= REVEAL_APPROACH_ZONE
+        && elapsed.as_secs_f64() > 0.0
+        && distance / elapsed.as_secs_f64() >= REVEAL_APPROACH_SPEED
 }
 
 /// Ce qui décide si le Dock est visible.
@@ -224,6 +376,8 @@ pub struct Visibility<'a> {
     /// Fond du Dock sorti, sans agrandissement.
     pub dock: Rectangle<f64, Logical>,
     pub pointer: Option<Point<f64, Logical>>,
+    /// Le pointeur est sur le Dock actuellement affiché.
+    pub pointer_over_dock: bool,
     /// Cadres des fenêtres affichées (barre de titre comprise).
     pub windows: &'a [Rectangle<i32, Logical>],
     /// La fenêtre du dessus est en plein écran.
@@ -237,7 +391,7 @@ pub fn should_show(v: Visibility<'_>) -> bool {
     let pointer_calls = v.pointer.is_some_and(|pointer| {
         let bottom = (v.output.loc.y + v.output.size.h) as f64;
         pointer.y >= bottom - REVEAL_EDGE || v.dock.contains(pointer)
-    });
+    }) || v.pointer_over_dock;
     if pointer_calls || v.launcher_open {
         return true;
     }
@@ -274,7 +428,7 @@ impl Default for DockMotion {
 
 impl DockMotion {
     /// Fait avancer `value` vers `target` à la vitesse d'une course complète en `duration`.
-    fn step(cell: &Cell<(f64, Option<Instant>)>, target: f64, duration: Duration) -> f64 {
+    pub(crate) fn step(cell: &Cell<(f64, Option<Instant>)>, target: f64, duration: Duration) -> f64 {
         let (value, last) = cell.get();
         let now = Instant::now();
         let step = last.map_or(1.0, |last| {
@@ -354,6 +508,8 @@ impl Dock {
         items: &[DockItem],
         config: DockConfig,
         geometry: &DockLayout,
+        bounces: &[f64],
+        dark_theme: bool,
         out: &mut Vec<super::super::render::OutputElement>,
     ) {
         let local =
@@ -382,7 +538,7 @@ impl Dock {
         // Icônes nettes même agrandies : texture à la taille maximale.
         let side = (config.icon() * MAGNIFY * scale).round() as u32;
         let (dot, line) = self.marks(scale);
-        for (item, rect) in items.iter().zip(&geometry.icons) {
+        for (index, (item, rect)) in items.iter().zip(&geometry.icons).enumerate() {
             if item.running {
                 let size = RUNNING_DOT;
                 let center = rect.loc.x + rect.size.w / 2.0;
@@ -394,8 +550,10 @@ impl Dock {
                 let physical = (RUNNING_DOT * scale).round().max(1.0);
                 push(&dot, mark, (physical, physical));
             }
+            let mut rect = *rect;
+            rect.loc.y -= bounces.get(index).copied().unwrap_or(0.0) * rect.size.h;
             let texture = self.texture(&item.icon, side);
-            push(&texture, *rect, (side as f64, side as f64));
+            push(&texture, rect, (side as f64, side as f64));
         }
         if let Some(x) = geometry.separator {
             let plate = geometry.plate;
@@ -415,7 +573,10 @@ impl Dock {
                     element.resize(plate, None);
                     *area = plate;
                 }
-                element.update_uniforms(vec![Uniform::new("scale", scale as f32)]);
+                element.update_uniforms(vec![
+                    Uniform::new("scale", scale as f32),
+                    Uniform::new("dark", if dark_theme { 1.0f32 } else { 0.0 }),
+                ]);
             }
             None => {
                 let element = PixelShaderElement::new(
@@ -423,7 +584,10 @@ impl Dock {
                     plate,
                     None,
                     1.0,
-                    vec![Uniform::new("scale", scale as f32)],
+                    vec![
+                        Uniform::new("scale", scale as f32),
+                        Uniform::new("dark", if dark_theme { 1.0f32 } else { 0.0 }),
+                    ],
                     Kind::Unspecified,
                 );
                 *cached = Some((plate, element));
@@ -524,7 +688,7 @@ impl Dock {
 }
 
 /// Courbe des animations : rapide au départ, douce à l'arrivée.
-fn ease(t: f64) -> f64 {
+pub(crate) fn ease(t: f64) -> f64 {
     1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(3)
 }
 
@@ -637,26 +801,44 @@ mod tests {
         let flat = layout(output(), medium(), &list, 1.0, None, 0.0);
         let pointer = Point::from((flat.icons[2].loc.x + 26.0, 670.0));
         let zoomed = layout(output(), medium(), &list, 1.0, Some(pointer), 1.0);
-        // L'icône sous la souris est la plus grande, ses voisines un peu moins.
+        // L'icône sous la souris est la plus grande, ses voisines en vague décroissante.
         let sizes: Vec<f64> = zoomed.icons.iter().map(|icon| icon.size.w).collect();
         assert!((sizes[2] - 52.0 * MAGNIFY).abs() < 0.5, "{sizes:?}");
-        assert!(sizes[1] > 52.0 && sizes[1] < sizes[2]);
+        assert!(sizes[1] > 52.0 && sizes[1] < sizes[2] && sizes[0] < sizes[1]);
         assert!((sizes[1] - sizes[3]).abs() < 0.5);
-        // Le fond ne bouge pas ; les icônes grandissent sur place, posées en bas.
-        assert_eq!(zoomed.plate, flat.plate);
+        // Les icônes s'écartent sans se chevaucher, et le fond s'élargit pour les contenir.
+        for pair in zoomed.icons.windows(2) {
+            let gap = pair[1].loc.x - (pair[0].loc.x + pair[0].size.w);
+            assert!((gap - ICON_GAP).abs() < 0.01, "écart {gap}");
+        }
+        assert!(zoomed.plate.size.w > flat.plate.size.w + 52.0);
+        assert!(zoomed.plate.loc.x <= zoomed.icons[0].loc.x - PAD_X + 0.01);
+        assert_eq!(zoomed.plate.size.h, flat.plate.size.h);
+        // Le point sous la souris ne bouge pas : l'icône du milieu reste centrée dessous.
         let center = |icon: Rectangle<f64, Logical>| icon.loc.x + icon.size.w / 2.0;
-        assert!((center(zoomed.icons[2]) - center(flat.icons[2])).abs() < 0.01);
-        assert!((center(zoomed.icons[0]) - center(flat.icons[0])).abs() < 0.01);
-        // Un peu seulement : deux voisines ne se chevauchent presque pas.
-        let overlap = zoomed.icons[2].loc.x - (zoomed.icons[1].loc.x + zoomed.icons[1].size.w);
-        assert!(overlap > -2.0, "chevauchement {overlap}");
+        assert!((center(zoomed.icons[2]) - pointer.x).abs() < 0.01);
+        // Les icônes restent posées en bas et débordent vers le haut.
         assert_eq!(
             zoomed.icons[2].loc.y + zoomed.icons[2].size.h,
             flat.icons[2].loc.y + flat.icons[2].size.h
         );
         // L'icône agrandie se clique là où on la voit, même au-dessus du fond.
-        let above = Point::from((zoomed.icons[2].loc.x + 40.0, zoomed.icons[2].loc.y + 5.0));
+        let above = Point::from((center(zoomed.icons[2]), zoomed.icons[2].loc.y + 5.0));
         assert_eq!(zoomed.item_at(above), Some(2));
+        // Sans souris, retour exact à la disposition au repos.
+        assert_eq!(layout(output(), medium(), &list, 1.0, Some(pointer), 0.0), flat);
+    }
+
+    #[test]
+    fn le_point_sous_la_souris_reste_fixe_entre_deux_icones() {
+        let list = items(&App::DOCK, &["vlc"]);
+        let flat = layout(output(), medium(), &list, 1.0, None, 0.0);
+        let x = flat.icons[1].loc.x + 52.0 + ICON_GAP / 2.0;
+        let zoomed = layout(output(), medium(), &list, 1.0, Some(Point::from((x, 670.0))), 1.0);
+        // À mi-chemin entre deux icônes, elles sont de même taille, de part et d'autre.
+        assert!((zoomed.icons[1].size.w - zoomed.icons[2].size.w).abs() < 0.5);
+        let middle = (zoomed.icons[1].loc.x + zoomed.icons[1].size.w + zoomed.icons[2].loc.x) / 2.0;
+        assert!((middle - x).abs() < 0.01);
     }
 
     #[test]
@@ -669,6 +851,7 @@ mod tests {
             output: output(),
             dock,
             pointer: Some(Point::from((640.0, 300.0))),
+            pointer_over_dock: false,
             windows: &far,
             fullscreen: false,
             launcher_open: false,
@@ -688,6 +871,29 @@ mod tests {
             windows: &over,
             fullscreen: true,
             pointer: bottom,
+            ..base
+        }));
+        let on_dock = Some(Point::from((
+            dock.loc.x + dock.size.w / 2.0,
+            dock.loc.y + dock.size.h / 2.0,
+        )));
+        assert!(should_show(Visibility {
+            windows: &over,
+            fullscreen: true,
+            pointer: on_dock,
+            ..base
+        }));
+        let above_dock = Some(Point::from((dock.loc.x + dock.size.w / 2.0, dock.loc.y - 20.0)));
+        assert!(!should_show(Visibility {
+            windows: &over,
+            fullscreen: true,
+            pointer: above_dock,
+            ..base
+        }));
+        assert!(should_show(Visibility {
+            windows: &over,
+            fullscreen: true,
+            pointer_over_dock: true,
             ..base
         }));
         assert!(should_show(Visibility {
@@ -719,5 +925,59 @@ mod tests {
             ..medium()
         };
         assert!(large.height() > medium().height());
+    }
+
+    #[test]
+    fn une_approche_rapide_pres_de_la_zone_rappelle_le_dock() {
+        let bottom = 720.0;
+        assert!(fast_approach(
+            Point::from((640.0, 680.0)),
+            Point::from((640.0, 705.0)),
+            bottom,
+            Duration::from_millis(25),
+        ));
+        assert!(!fast_approach(
+            Point::from((640.0, 680.0)),
+            Point::from((640.0, 705.0)),
+            bottom,
+            Duration::from_millis(100),
+        ));
+        assert!(!fast_approach(
+            Point::from((640.0, 580.0)),
+            Point::from((640.0, 620.0)),
+            bottom,
+            Duration::from_millis(20),
+        ));
+        assert!(!fast_approach(
+            Point::from((640.0, 680.0)),
+            Point::from((640.0, 620.0)),
+            bottom,
+            Duration::from_millis(20),
+        ));
+    }
+
+    #[test]
+    fn les_icones_restent_cliquables_jusqu_au_bord_bas() {
+        let list = items(&App::DOCK, &["vlc"]);
+        let dock = layout(output(), medium(), &list, 1.0, None, 0.0);
+        let x = dock.icons[0].loc.x + dock.icons[0].size.w / 2.0;
+        assert_eq!(dock.item_at(Point::from((x, 719.0))), Some(0));
+    }
+
+    #[test]
+    fn l_icone_rebondit_jusqu_a_la_fenetre_puis_finit_son_saut() {
+        let start = Instant::now();
+        let mut bounce = Bounce::new(start);
+        assert_eq!(bounce.height(start), 0.0);
+        // En haut au milieu du saut, de retour en bas à la fin.
+        assert!((bounce.height(start + BOUNCE_PERIOD / 2) - BOUNCE_HEIGHT).abs() < 1e-9);
+        assert!(bounce.height(start + BOUNCE_PERIOD * 3 + BOUNCE_PERIOD / 4) > 0.0);
+        // La fenêtre arrive pendant le quatrième saut : il va jusqu'au bout.
+        let window = start + BOUNCE_PERIOD * 3 + BOUNCE_PERIOD / 4;
+        bounce.settle(window);
+        assert!(!bounce.over(window + BOUNCE_PERIOD / 2));
+        assert!(bounce.over(start + BOUNCE_PERIOD * 4));
+        // Sans fenêtre, on finit par abandonner.
+        assert!(Bounce::new(start).over(start + BOUNCE_TIMEOUT));
     }
 }

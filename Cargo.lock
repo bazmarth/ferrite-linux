@@ -814,6 +814,7 @@ dependencies = [
  "eframe",
  "ferrite-system",
  "ferrite-ui",
+ "png",
  "resvg",
 ]
 
@@ -825,6 +826,7 @@ dependencies = [
  "ferrite-system",
  "ferrite-ui",
  "fontdue",
+ "libc",
  "png",
  "resvg",
  "smithay",
@@ -839,6 +841,10 @@ version = "0.1.0"
 [[package]]
 name = "ferrite-ui"
 version = "0.1.0"
+dependencies = [
+ "png",
+ "zune-jpeg",
+]
 
 [[package]]
 name = "ferrite-vm"

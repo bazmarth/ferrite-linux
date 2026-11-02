@@ -22,6 +22,8 @@ pub struct DesktopEntry {
     pub icon: Option<PathBuf>,
     /// Classe de fenêtre annoncée (`StartupWMClass`), pour reconnaître ses fenêtres.
     pub wm_class: Option<String>,
+    /// Catégories freedesktop (`Categories`), pour ranger le lanceur par rubriques.
+    pub categories: Vec<String>,
 }
 
 /// Entrées déjà fournies par le bureau Ferrite lui-même (Dock, menu).
@@ -161,6 +163,15 @@ pub fn parse(text: &str, id: &str) -> Option<DesktopEntry> {
             .filter(|icon| !icon.is_empty())
             .map(PathBuf::from),
         wm_class: keys.get("StartupWMClass").cloned(),
+        categories: keys
+            .get("Categories")
+            .map(|list| {
+                list.split(';')
+                    .filter(|category| !category.is_empty())
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default(),
     })
 }
 
@@ -251,6 +262,7 @@ Name[fr]=Lecteur multimédia VLC
 Exec=/usr/bin/vlc --started-from-file %U
 Icon=vlc
 StartupWMClass=vlc
+Categories=AudioVideo;Player;Recorder;
 
 [Desktop Action new]
 Name=Nouvelle fenêtre
@@ -261,6 +273,7 @@ Exec=vlc --other
         assert_eq!(entry.exec, vec!["/usr/bin/vlc", "--started-from-file"]);
         assert_eq!(entry.icon, Some(PathBuf::from("vlc")));
         assert_eq!(entry.wm_class.as_deref(), Some("vlc"));
+        assert_eq!(entry.categories, ["AudioVideo", "Player", "Recorder"]);
         assert!(!entry.terminal);
     }
 

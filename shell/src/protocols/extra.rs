@@ -57,6 +57,12 @@ impl XdgActivationHandler for Ferrite {
             } else if let Some(index) = self.minimized_index(&surface) {
                 // Une application réduite qui demande à revenir (relancée) ressort du Dock.
                 self.restore_minimized_at(index);
+            } else if let Some(page) = self.parked_page(&surface) {
+                // Sa fenêtre est sur un autre bureau : on y va, comme sur macOS.
+                self.go_to_page(page);
+                if let Some(window) = self.window_for_surface(&surface) {
+                    self.focus_window(Some(window));
+                }
             }
         }
         self.activation_state.remove_token(&token);

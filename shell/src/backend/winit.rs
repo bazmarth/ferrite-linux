@@ -15,6 +15,8 @@ use smithay::{
 };
 use tracing::{error, info, warn};
 
+use smithay::reexports::winit::window::CursorIcon;
+
 use crate::{
     options::Options,
     render::{self, RenderAssets, capture},
@@ -112,6 +114,16 @@ pub fn init(
     Ok(())
 }
 
+fn host_cursor_icon(shape: render::CursorShape) -> CursorIcon {
+    match shape {
+        render::CursorShape::Horizontal => CursorIcon::EwResize,
+        render::CursorShape::Vertical => CursorIcon::NsResize,
+        render::CursorShape::DiagonalDown => CursorIcon::NwseResize,
+        render::CursorShape::DiagonalUp => CursorIcon::NeswResize,
+        render::CursorShape::Arrow => CursorIcon::Default,
+    }
+}
+
 fn redraw(
     backend: &mut WinitGraphicsBackend<GlesRenderer>,
     state: &mut Ferrite,
@@ -120,6 +132,10 @@ fn redraw(
     assets: &RenderAssets,
     pending_capture: &mut Option<PendingCapture>,
 ) {
+    backend
+        .window()
+        .set_cursor(host_cursor_icon(state.cursor_shape()));
+    state.run_genie_demo();
     let size = backend.window_size();
     let capture_now = pending_capture
         .as_ref()

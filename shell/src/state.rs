@@ -39,12 +39,13 @@ use smithay::{
 use tracing::{info, warn};
 
 use crate::desktop::panels::Popover;
-use crate::system::SystemLink;
+use crate::desktop::widgets::{Dashboard, DashboardEdit};
+use crate::system::{SystemLink, WallpaperChoice};
 use crate::wm::{Hit, Minimized, Placement, decoration::TrafficLight};
 use ferrite_system::{
     Snapshot,
     applications::DesktopEntry,
-    config::{Settings, split_layout},
+    config::{Accent, Appearance, Settings, split_layout},
 };
 
 /// Répétition des touches : délai (ms) et fréquence (par seconde).
@@ -65,7 +66,10 @@ pub struct Ferrite {
     pub applications: Vec<DesktopEntry>,
     /// Recherche tapée dans le menu Applications.
     pub launcher_query: String,
-    pub launcher_page: usize,
+    /// Rubrique choisie dans le lanceur, et éléments récemment ouverts.
+    pub launcher_section: Option<crate::desktop::apps::Section>,
+    pub launcher_recent: Vec<crate::desktop::apps::AppKey>,
+    pub launcher_scroll: u32,
     /// Volume et luminosité réglés à la main récemment : la relecture du système attend.
     pub volume_held_until: Option<Instant>,
     pub brightness_held_until: Option<Instant>,
@@ -80,6 +84,8 @@ pub struct Ferrite {
     pub clipboard_sender: Option<smithay::reexports::calloop::channel::Sender<crate::clipboard::Content>>,
     pub clipboard_selected: usize,
     pub clipboard_first: usize,
+    pub clipboard_position: Option<(i32, i32)>,
+    pub clipboard_drag_offset: Option<(i32, i32)>,
     /// Touche Super enfoncée, et utilisée avec une autre touche (Super+V) : relâchée
     /// seule, elle ouvre le menu Applications, comme sous Windows.
     pub super_held: bool,
@@ -90,8 +96,13 @@ pub struct Ferrite {
     pub dock_pinned: Option<Vec<String>>,
     pub multi_window: Vec<String>,
     pub dock_order: std::cell::RefCell<Vec<crate::desktop::apps::AppKey>>,
+    pub dock_bounces: std::cell::RefCell<
+        std::collections::HashMap<crate::desktop::apps::AppKey, crate::desktop::dock::Bounce>,
+    >,
     /// Glissement et agrandissement du Dock.
     pub dock_motion: crate::desktop::dock::DockMotion,
+    pub dock_pointer_motion_at: std::cell::Cell<Option<Instant>>,
+    pub dock_fast_approach_until: std::cell::Cell<Option<Instant>>,
     /// Menu d'une icône du Dock (clic droit) : application, choix, et position.
     pub dock_menu: Option<(
         crate::desktop::apps::AppKey,
@@ -110,13 +121,21 @@ pub struct Ferrite {
     pub system_error: Option<String>,
     pub system_link: Option<SystemLink>,
     pub pending_power: Option<PowerAction>,
+    pub appearance: Appearance,
+    pub accent: Accent,
+    pub wallpaper: WallpaperChoice,
 
     /// Plan 2D sur lequel sont posées les fenêtres et les écrans.
     pub space: Space<Window>,
+    pub workspaces: crate::wm::workspaces::Workspaces<crate::wm::workspaces::Parked>,
+    pub swipe: Option<crate::wm::workspaces::Swipe>,
+    pub overview: bool,
     pub popups: PopupManager,
     pub placement: Placement,
     /// Fenêtres réduites (la plus récente en dernier).
     pub minimized: Vec<Minimized>,
+    pub dashboard: Dashboard,
+    pub dashboard_editing: Option<DashboardEdit>,
     /// Dernier clic sur une barre de titre, pour reconnaître le double-clic.
     pub last_titlebar_click: Option<(Instant, Window)>,
     /// Feu tricolore enfoncé : l'action a lieu au relâchement, s'il est toujours dessus.
@@ -126,6 +145,8 @@ pub struct Ferrite {
     pub cursor_status: CursorImageStatus,
     /// Changement de terminal virtuel (Ctrl+Alt+F1…F12), fourni par le backend DRM.
     pub change_vt: Option<Box<dyn FnMut(i32)>>,
+    /// Fraction figée pour la démonstration `--demo-genie`.
+    pub genie_demo: Option<(f64, Option<Instant>)>,
 
     pub compositor_state: CompositorState,
     pub xdg_shell_state: XdgShellState,
@@ -179,11 +200,12 @@ impl Ferrite {
             FractionalScaleManagerState::new::<Self>(&dh),
             RelativePointerManagerState::new::<Self>(&dh),
         );
+        let settings = Settings::load();
 
         let mut seat_state = SeatState::new();
         let mut seat: Seat<Self> = seat_state.new_wl_seat(&dh, "seat0");
         // Disposition choisie dans Paramètres (QWERTY américain par défaut).
-        let layout = Settings::load().keyboard_layout().to_owned();
+        let layout = settings.keyboard_layout().to_owned();
         let (base, variant) = split_layout(&layout);
         let xkb = XkbConfig {
             layout: &base,
@@ -207,22 +229,29 @@ impl Ferrite {
             popover: None,
             applications: Vec::new(),
             launcher_query: String::new(),
-            launcher_page: 0,
+            launcher_section: None,
+            launcher_recent: Vec::new(),
+            launcher_scroll: 0,
             slider_drag: None,
-            dock_config: Default::default(),
+            dock_config: crate::desktop::dock::DockConfig::from_settings(&settings),
             bar_revealed: Default::default(),
             snap_preview: None,
             clipboard: crate::clipboard::History::load(),
             clipboard_sender: None,
             clipboard_selected: 0,
             clipboard_first: 0,
+            clipboard_position: None,
+            clipboard_drag_offset: None,
             super_held: false,
             super_used: false,
             loop_handle: event_loop.handle(),
-            dock_pinned: Settings::load().dock_pinned(),
-            multi_window: Settings::load().multi_window_apps(),
+            dock_pinned: settings.dock_pinned(),
+            multi_window: settings.multi_window_apps(),
             dock_order: Default::default(),
+            dock_bounces: Default::default(),
             dock_motion: Default::default(),
+            dock_pointer_motion_at: Default::default(),
+            dock_fast_approach_until: Default::default(),
             dock_menu: None,
             window_animations: Default::default(),
             resizing: None,
@@ -232,10 +261,18 @@ impl Ferrite {
             system_error: None,
             system_link: None,
             pending_power: None,
+            appearance: settings.appearance(),
+            accent: settings.accent(),
+            wallpaper: WallpaperChoice::default(),
             space: Space::default(),
+            workspaces: Default::default(),
+            swipe: None,
+            overview: false,
             popups: PopupManager::default(),
             placement: Placement::default(),
             minimized: Vec::new(),
+            dashboard: Dashboard::load(),
+            dashboard_editing: None,
             last_titlebar_click: None,
             pressed_light: None,
             cursor_status: CursorImageStatus::default_named(),
@@ -256,6 +293,7 @@ impl Ferrite {
             xwm: None,
             x_display: None,
             seat,
+            genie_demo: None,
         })
     }
 
@@ -316,6 +354,90 @@ impl Ferrite {
     /// Cases du menu Applications, selon la recherche en cours.
     pub fn launcher_entries(&self) -> Vec<crate::desktop::apps::LauncherEntry<'_>> {
         crate::desktop::apps::launcher_entries(&self.applications, &self.launcher_query)
+    }
+
+    pub fn dock_pointer(&self) -> Option<Point<f64, Logical>> {
+        self.pointer_location()
+    }
+
+    pub fn animate_opening(&mut self, window: &Window) {
+        let Some(rect) = self.space.element_geometry(window) else {
+            return;
+        };
+        let rect = crate::wm::animation_frame(window, rect);
+        let mut animations = self.window_animations.borrow_mut();
+        animations.retain(|animation| animation.window != *window);
+        animations.push(crate::wm::animation::WindowAnimation::new(
+            window.clone(),
+            crate::wm::animation::Motion::Open,
+            rect.to_f64(),
+            rect.to_f64(),
+        ));
+    }
+
+    pub fn animate_frame_change(&mut self, window: &Window, change: impl FnOnce(&mut Self)) {
+        let before = self
+            .space
+            .element_geometry(window)
+            .map(|rect| crate::wm::animation_frame(window, rect));
+        change(self);
+        let (Some(before), Some(after)) = (before, self.space.element_geometry(window)) else {
+            return;
+        };
+        let after = crate::wm::animation_frame(window, after);
+        if before == after {
+            return;
+        }
+        let mut animations = self.window_animations.borrow_mut();
+        animations.retain(|animation| animation.window != *window);
+        animations.push(crate::wm::animation::WindowAnimation::new(
+            window.clone(),
+            crate::wm::animation::Motion::Zoom,
+            before,
+            after,
+        ));
+    }
+
+    /// Ajoute un nouvel onglet au serveur tmux partagé par les terminaux Ferrite.
+    pub fn new_terminal_tmux_window(&self) {
+        let mut command = std::process::Command::new("tmux");
+        command.args([
+            "-f",
+            "/home/bazoum/.config/tmux.conf",
+            "new-window",
+            "-t",
+            "ferrite",
+        ]);
+        if let Err(err) = ferrite_system::command::spawn_detached(command) {
+            warn!(%err, "nouvel onglet du Terminal indisponible");
+        }
+    }
+
+    pub fn run_genie_demo(&mut self) {
+        let Some((fraction, None)) = self.genie_demo else {
+            return;
+        };
+        let Some(window) = self.top_window() else {
+            return;
+        };
+        let Some(window_rect) = self.space.element_geometry(&window) else {
+            return;
+        };
+        let key = self.window_app(&window);
+        let Some(dock_rect) = self.dock_icon_rect(key.as_ref()) else {
+            return;
+        };
+        let now = Instant::now();
+        let frame = crate::wm::animation_frame(&window, window_rect);
+        let mut animation = crate::wm::animation::WindowAnimation::new(
+            window,
+            crate::wm::animation::Motion::Minimize,
+            frame,
+            dock_rect,
+        );
+        animation.frozen = Some(fraction);
+        self.window_animations.borrow_mut().push(animation);
+        self.genie_demo = Some((fraction, Some(now)));
     }
 
     /// Change la disposition du clavier (choisie dans Paramètres).

@@ -1,12 +1,12 @@
 //! Rendu du titre des fenêtres avec la police Inter (fontdue).
 
-use ferrite_ui::theme::Color;
+use ferrite_ui::{theme::Color, tokens::typography::WINDOW_TITLE};
 use fontdue::{Font, FontSettings};
 
 /// Police des titres : Inter demi-gras, comme les barres de titre de macOS.
 const TITLE_FONT: &[u8] = include_bytes!("../../../assets/fonts/Inter-SemiBold.ttf");
 /// Taille du titre en pixels logiques.
-pub const TITLE_SIZE: f32 = 13.0;
+pub const TITLE_SIZE: f32 = WINDOW_TITLE;
 const ELLIPSIS: char = '…';
 
 /// Image du titre : pixels `ARGB8888` prémultipliés, petit-boutistes.

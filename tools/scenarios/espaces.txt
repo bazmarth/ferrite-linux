@@ -1,0 +1,58 @@
+# Espaces de travail : deux bureaux avec chacun leur fenêtre, la page des widgets à gauche,
+# changement au clavier puis par un vrai geste à trois doigts (faux pavé tactile uinput,
+# voir swipe-trois-doigts.c ; à compiler dans build/swipe avant de lancer le scénario).
+sleep 75
+shot espaces-0-depart
+# Bureau principal : Moniteur d'activité.
+key meta_l
+sleep 1
+type moni
+key ret
+sleep 5
+shot espaces-1-bureau1
+# Bureau suivant, vide, créé tout seul ; TextEdit s'y ouvre.
+key ctrl-alt-right
+sleep 1
+shot espaces-2-bureau2-vide
+key meta_l
+sleep 1
+type textedit
+key ret
+sleep 5
+shot espaces-3-bureau2
+# Retour : Moniteur seul.
+key ctrl-alt-left
+sleep 1
+shot espaces-4-retour-bureau1
+# Widgets : aucune fenêtre.
+key ctrl-alt-left
+sleep 1
+shot espaces-5-widgets
+# Le faux pavé tactile est récupéré par la console série (compte du système live).
+serial ferrite
+serial live
+serve build/swipe
+sleep 1
+serial sudo bash -c 'modprobe uinput; cat </dev/tcp/10.0.2.2/8765 >/tmp/swipe; chmod +x /tmp/swipe; ls -l /dev/uinput /tmp/swipe'
+sleep 2
+# Trois doigts vers la gauche : bureau principal.
+serial sudo /tmp/swipe -480 0
+sleep 3
+shot espaces-6-geste-bureau1
+# Encore : bureau 2, avec TextEdit.
+serial sudo /tmp/swipe -480 0
+sleep 3
+shot espaces-7-geste-bureau2
+# Geste court, doigts maintenus : les deux pages sont visibles, puis retour en place.
+serial sudo /tmp/swipe 100 4000 &
+sleep 2
+shot espaces-8-geste-en-cours
+sleep 5
+shot espaces-9-geste-annule
+# Le menu Applications ramène le Moniteur : on passe sur son bureau.
+key meta_l
+sleep 1
+type moni
+key ret
+sleep 2
+shot espaces-a-retour-par-le-menu

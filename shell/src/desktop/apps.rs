@@ -30,6 +30,108 @@ impl LauncherEntry<'_> {
     }
 }
 
+impl LauncherEntry<'_> {
+    /// Rubrique du lanceur, d'après les catégories freedesktop de l'application.
+    pub fn section(&self) -> Section {
+        match self {
+            LauncherEntry::Builtin(App::TextEdit) => Section::Productivity,
+            LauncherEntry::Builtin(_) => Section::Utilities,
+            LauncherEntry::Installed(entry) => Section::of(&entry.categories),
+        }
+    }
+}
+
+/// Rubriques du lanceur, dans l'ordre d'affichage (après les suggestions).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Section {
+    Productivity,
+    Internet,
+    Creation,
+    Entertainment,
+    Development,
+    Utilities,
+    Other,
+}
+
+impl Section {
+    pub const ALL: [Section; 7] = [
+        Section::Productivity,
+        Section::Internet,
+        Section::Creation,
+        Section::Entertainment,
+        Section::Development,
+        Section::Utilities,
+        Section::Other,
+    ];
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Section::Productivity => "Productivité",
+            Section::Internet => "Internet",
+            Section::Creation => "Création",
+            Section::Entertainment => "Divertissement",
+            Section::Development => "Développement",
+            Section::Utilities => "Utilitaires",
+            Section::Other => "Autres",
+        }
+    }
+
+    /// Rubrique d'une liste de catégories freedesktop : la première règle qui s'applique,
+    /// des plus précises (développement, jeux) aux plus générales (utilitaires).
+    fn of(categories: &[String]) -> Section {
+        let has = |names: &[&str]| {
+            categories
+                .iter()
+                .any(|category| names.contains(&category.as_str()))
+        };
+        if has(&["Development", "IDE"]) {
+            Section::Development
+        } else if has(&["Game", "AudioVideo", "Audio", "Video", "Player", "Music", "TV"]) {
+            Section::Entertainment
+        } else if has(&[
+            "Graphics",
+            "Photography",
+            "2DGraphics",
+            "3DGraphics",
+            "RasterGraphics",
+            "VectorGraphics",
+        ]) {
+            Section::Creation
+        } else if has(&[
+            "Network",
+            "WebBrowser",
+            "Email",
+            "Chat",
+            "InstantMessaging",
+            "FileTransfer",
+        ]) {
+            Section::Internet
+        } else if has(&[
+            "Office",
+            "TextEditor",
+            "WordProcessor",
+            "Spreadsheet",
+            "Presentation",
+            "Education",
+            "Science",
+        ]) {
+            Section::Productivity
+        } else if has(&[
+            "System",
+            "Utility",
+            "Settings",
+            "Monitor",
+            "FileManager",
+            "TerminalEmulator",
+            "Accessibility",
+        ]) {
+            Section::Utilities
+        } else {
+            Section::Other
+        }
+    }
+}
+
 /// Les applications Ferrite d'abord, puis les applications installées, filtrées par
 /// `query` (sans tenir compte de la casse).
 pub fn launcher_entries<'a>(installed: &'a [DesktopEntry], query: &str) -> Vec<LauncherEntry<'a>> {
@@ -44,12 +146,31 @@ pub fn launcher_entries<'a>(installed: &'a [DesktopEntry], query: &str) -> Vec<L
 
 /// Lance une application installée ; les programmes en mode texte s'ouvrent dans le
 /// Terminal.
+fn configure_terminal_zoom(command: &mut Command) {
+    command
+        .arg("-o")
+        .arg("main.resize-keep-grid=no")
+        .arg("-o")
+        .arg("key-bindings.font-increase=Control+plus Control+equal Control+KP_Add")
+        .arg("-o")
+        .arg("key-bindings.font-decrease=Control+minus Control+KP_Subtract")
+        .arg("-o")
+        .arg("key-bindings.font-reset=Control+0 Control+KP_0")
+        .arg("-o")
+        .arg("mouse-bindings.font-increase=Control+BTN_WHEEL_BACK")
+        .arg("-o")
+        .arg("mouse-bindings.font-decrease=Control+BTN_WHEEL_FORWARD")
+        .arg("-o")
+        .arg("main.pad=12x8 center");
+}
+
 fn launch_entry(entry: &DesktopEntry, env: &[(String, String)]) {
     let Some((program, args)) = entry.exec.split_first() else {
         return;
     };
     let mut command = if entry.terminal {
         let mut command = Command::new("foot");
+        configure_terminal_zoom(&mut command);
         command.arg("--").arg(program).args(args);
         command
     } else {
@@ -268,6 +389,17 @@ impl App {
             .filter(|path| path.is_file())
             .map(Command::new)
             .unwrap_or_else(|| Command::new(program));
+        if self == App::Terminal {
+            configure_terminal_zoom(&mut command);
+            command
+                .arg("tmux")
+                .arg("-f")
+                .arg("/home/bazoum/.config/tmux.conf")
+                .arg("new-session")
+                .arg("-A")
+                .arg("-s")
+                .arg("ferrite");
+        }
         if let Some(argument) = argument {
             command.arg(argument);
         }
@@ -291,7 +423,25 @@ mod tests {
             terminal: false,
             icon: None,
             wm_class: None,
+            categories: Vec::new(),
         }
+    }
+
+    #[test]
+    fn rubriques_d_apres_les_categories() {
+        let with =
+            |categories: &[&str]| Section::of(&categories.iter().map(|c| c.to_string()).collect::<Vec<_>>());
+        assert_eq!(with(&["AudioVideo", "Player"]), Section::Entertainment);
+        assert_eq!(with(&["Network", "WebBrowser"]), Section::Internet);
+        assert_eq!(with(&["Development", "TextEditor"]), Section::Development);
+        assert_eq!(with(&["Graphics", "Photography"]), Section::Creation);
+        assert_eq!(with(&["Office", "Spreadsheet"]), Section::Productivity);
+        assert_eq!(with(&["GTK", "System", "Settings"]), Section::Utilities);
+        assert_eq!(with(&[]), Section::Other);
+        assert_eq!(
+            LauncherEntry::Builtin(App::Calculator).section(),
+            Section::Utilities
+        );
     }
 
     #[test]

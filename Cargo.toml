@@ -18,3 +18,11 @@ all = { level = "warn", priority = -1 }
 [profile.release]
 lto = "thin"
 strip = true
+
+# Le shell dessine ses panneaux pixel par pixel sur le processeur : sans optimisation, une
+# image du lanceur prend plusieurs centaines de millisecondes et le défilement gèle tout.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2

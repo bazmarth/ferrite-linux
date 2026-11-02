@@ -39,6 +39,7 @@ impl TrafficLight {
 pub enum Part {
     Titlebar,
     Light(TrafficLight),
+    Plus,
     Border(ResizeEdge),
 }
 
@@ -61,6 +62,14 @@ pub fn frame(content: Rectangle<i32, Logical>) -> Rectangle<i32, Logical> {
 }
 
 /// Centre d'un feu, en coordonnées globales.
+pub fn plus_center(content: Rectangle<i32, Logical>) -> Point<f64, Logical> {
+    let bar = titlebar(content);
+    Point::from((
+        bar.loc.x as f64 + bar.size.w as f64 - 28.0,
+        bar.loc.y as f64 + TITLEBAR_HEIGHT as f64 / 2.0,
+    ))
+}
+
 pub fn light_center(content: Rectangle<i32, Logical>, light: TrafficLight) -> Point<f64, Logical> {
     let bar = titlebar(content);
     let x = bar.loc.x + (TRAFFIC_LIGHT_FIRST_X + TRAFFIC_LIGHT_STEP * light.index() as u32) as i32;
@@ -134,6 +143,11 @@ fn hit_frame(
 
     if pos.y >= content.loc.y as f64 {
         return None;
+    }
+    let plus = plus_center(content);
+    let (dx, dy) = (pos.x - plus.x, pos.y - plus.y);
+    if dx * dx + dy * dy <= LIGHT_HIT_RADIUS * LIGHT_HIT_RADIUS {
+        return Some(Part::Plus);
     }
     for light in TrafficLight::ALL {
         let center = light_center(content, light);

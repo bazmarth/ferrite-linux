@@ -6,6 +6,7 @@
 //! lui-même toutes les quelques secondes pour suivre les changements faits ailleurs.
 
 use std::{
+    sync::Arc,
     sync::mpsc::{self, RecvTimeoutError},
     thread,
     time::{Duration, Instant, SystemTime},
@@ -15,9 +16,10 @@ use ferrite_system::{
     Snapshot,
     applications::{self, DesktopEntry},
     audio, bluetooth, command,
-    config::Settings,
+    config::{Accent, Appearance, Settings},
     display, network,
 };
+use ferrite_ui::wallpaper::{self, Builtin, Image, Source};
 use smithay::reexports::calloop::{
     LoopHandle,
     channel::{self, Channel},
@@ -60,10 +62,61 @@ pub enum Event {
     Failed(String),
     KeyboardLayout(String),
     Dock(DockConfig),
+    Theme(Appearance, Accent),
+    Wallpaper(WallpaperChoice),
     /// Applications épinglées dans le Dock, et applications à plusieurs fenêtres.
     DockApps(Option<Vec<String>>, Vec<String>),
     Applications(Vec<DesktopEntry>),
     PowerAccepted,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WallpaperChoice {
+    pub source: Source,
+    pub image: Option<Image>,
+    pub generation: u64,
+    pub bar_dark: bool,
+    pub backdrop: Option<Arc<Image>>,
+}
+
+impl WallpaperChoice {
+    pub fn from_settings(settings: &Settings, generation: u64) -> Self {
+        let source = Source::parse(settings.wallpaper());
+        let image = match &source {
+            Source::Builtin(_) => None,
+            Source::File(path) => match wallpaper::decode(path) {
+                Ok(image) => Some(image),
+                Err(error) => {
+                    warn!(%error, "fond d'écran illisible ; fond Ferrite utilisé");
+                    None
+                }
+            },
+        };
+        Self::from_parts(source, image, generation)
+    }
+
+    fn from_parts(source: Source, image: Option<Image>, generation: u64) -> Self {
+        let preview = match (&source, &image) {
+            (Source::Builtin(builtin), _) => wallpaper::waves(*builtin, 320, 200),
+            (Source::File(_), Some(image)) => wallpaper::cover(image, 320, 200),
+            (Source::File(_), None) => wallpaper::waves(Builtin::Ferrite, 320, 200),
+        };
+        let bar_dark = preview.top_is_dark(24);
+        let backdrop = Some(Arc::new(wallpaper::blur(&preview, 10)));
+        Self {
+            source,
+            image,
+            generation,
+            bar_dark,
+            backdrop,
+        }
+    }
+}
+
+impl Default for WallpaperChoice {
+    fn default() -> Self {
+        Self::from_parts(Source::default(), None, 0)
+    }
 }
 
 /// Côté compositeur du lien : envoie les demandes au fil système.
@@ -100,6 +153,10 @@ pub fn start(handle: &LoopHandle<'static, Ferrite>) -> Result<SystemLink, String
 
 fn worker(receiver: mpsc::Receiver<Change>, events: channel::Sender<Event>) {
     let mut layout_stamp: Option<SystemTime> = None;
+    let mut settings_initialized = false;
+    let mut known_theme = None;
+    let mut known_wallpaper = None;
+    let mut wallpaper_generation = 0u64;
     let mut last_snapshot: Option<Instant> = None;
     let mut layout = String::new();
     let mut applications_stamp = None;
@@ -118,7 +175,8 @@ fn worker(receiver: mpsc::Receiver<Change>, events: channel::Sender<Event>) {
         // Réglages (clavier, Dock) : appliqués sans redémarrer, une seconde au plus après
         // leur changement dans Paramètres.
         let stamp = Settings::modified();
-        if stamp != layout_stamp {
+        if !settings_initialized || stamp != layout_stamp {
+            settings_initialized = true;
             layout_stamp = stamp;
             let settings = Settings::load();
             let current = settings.keyboard_layout().to_owned();
@@ -128,14 +186,30 @@ fn worker(receiver: mpsc::Receiver<Change>, events: channel::Sender<Event>) {
                     return;
                 }
             }
-            let dock = DockConfig {
-                size: settings.dock_size(),
-                hiding: settings.dock_hiding(),
-                bar: settings.bar_hiding(),
-                magnify: settings.dock_magnify(),
-            };
+            let dock = DockConfig::from_settings(&settings);
             if events.send(Event::Dock(dock)).is_err() {
                 return;
+            }
+            let theme = (settings.appearance(), settings.accent());
+            if known_theme != Some(theme) {
+                known_theme = Some(theme);
+                if events.send(Event::Theme(theme.0, theme.1)).is_err() {
+                    return;
+                }
+            }
+            let wallpaper_key = Source::parse(settings.wallpaper()).key();
+            if known_wallpaper.as_deref() != Some(wallpaper_key.as_str()) {
+                known_wallpaper = Some(wallpaper_key);
+                wallpaper_generation = wallpaper_generation.wrapping_add(1);
+                if events
+                    .send(Event::Wallpaper(WallpaperChoice::from_settings(
+                        &settings,
+                        wallpaper_generation,
+                    )))
+                    .is_err()
+                {
+                    return;
+                }
             }
             let apps = Event::DockApps(settings.dock_pinned(), settings.multi_window_apps());
             if events.send(apps).is_err() {
@@ -213,6 +287,11 @@ impl Ferrite {
             Event::Failed(message) => self.system_error = Some(message),
             Event::KeyboardLayout(layout) => self.set_keyboard_layout(&layout),
             Event::Dock(config) => self.dock_config = config,
+            Event::Theme(appearance, accent) => {
+                self.appearance = appearance;
+                self.accent = accent;
+            }
+            Event::Wallpaper(wallpaper) => self.wallpaper = wallpaper,
             Event::DockApps(pinned, multi) => {
                 self.dock_pinned = pinned;
                 self.multi_window = multi;

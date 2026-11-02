@@ -5,3 +5,4 @@ pub mod dock;
 pub mod launch;
 pub mod panels;
 pub mod svg;
+pub mod widgets;

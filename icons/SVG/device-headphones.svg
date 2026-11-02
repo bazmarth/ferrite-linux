@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 100 100" role="img" aria-label="Casque">
+<path d="M18 62V50a32 32 0 0 1 64 0v12" fill="none" stroke="#000" stroke-width="8" stroke-linecap="round"/>
+<rect x="12" y="56" width="20" height="30" rx="8" fill="#000"/>
+<rect x="68" y="56" width="20" height="30" rx="8" fill="#000"/>
+</svg>

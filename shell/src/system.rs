@@ -324,6 +324,8 @@ fn apply(change: Change) -> Result<(), String> {
             &[match power {
                 PowerAction::PowerOff => "poweroff",
                 PowerAction::Restart => "reboot",
+                // Gérées par le bureau lui-même (voir `PowerAction::exit_code`).
+                PowerAction::LogOut | PowerAction::RelaunchDesktop => return Ok(()),
             }],
         )
         .map(drop),

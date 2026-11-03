@@ -670,3 +670,19 @@ Vérifié :
 
 Reste : installer la nouvelle `ferrite-session` dans `/usr/local/bin` (sudo) et faire un
 vrai relancement du bureau avec `dev-on.sh`.
+
+## 2026-11-03 — Se déconnecter et relancer le bureau sans commande
+
+Fait :
+- Dialogue d'arrêt (bouton rouge du centre de contrôle, écran de verrouillage) : rangée
+  « Se déconnecter » et « Relancer le bureau », voir DECISIONS. `PowerAction::LogOut` et
+  `RelaunchDesktop` ne passent pas par systemd ; `run` renvoie le code de sortie choisi.
+- `--demo-power` ouvre ce dialogue au démarrage, pour les captures.
+
+Vérifié :
+- Tests (136, dont les clics sur les deux nouveaux boutons), clippy, fmt.
+- Capture en fenêtre avec `--demo-power` : deux rangées alignées, sans chevauchement.
+- `ferrite-session` simulé : code 3 → relance ; code 4 puis Entrée → session rouverte
+  (Fichiers ouvert comme au démarrage) ; code 4 puis « console » → console.
+
+Reste : essai réel sur le ThinkBook (nouvelle `ferrite-session` à installer avec sudo).

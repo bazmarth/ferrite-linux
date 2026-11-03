@@ -1232,9 +1232,16 @@ impl Ferrite {
             }
             DesktopAction::CancelPower => self.pending_power = None,
             DesktopAction::ConfirmPower(power) => {
-                // Le bureau se ferme quand systemd accepte l'arrêt (voir `system.rs`).
                 self.pending_power = None;
-                self.request_system_change(Change::Power(power));
+                if let Some(code) = power.exit_code() {
+                    info!(code, ?power, "fin de la session demandée");
+                    self.exit_code = code;
+                    self.request_exit();
+                    self.loop_signal.stop();
+                } else {
+                    // Le bureau se ferme quand systemd accepte l'arrêt (voir `system.rs`).
+                    self.request_system_change(Change::Power(power));
+                }
             }
             DesktopAction::ClipboardPaste(index) => self.paste_history(index),
             DesktopAction::ClipboardPin(index) => {

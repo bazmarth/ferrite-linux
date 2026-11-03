@@ -162,3 +162,10 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
   rtw89), elle provoquait des coupures et des pics de latence jusqu'à 110 ms vers la box
   (0 % de pertes et ~1 ms une fois coupée). L'image la désactive dans le pilote
   (`modprobe.d/ferrite-rtw89.conf`) et dans NetworkManager ; un peu plus de consommation.
+- **2026-11-03 — Déconnexion et relance du bureau par code de sortie.** Le dialogue d'arrêt
+  propose « Se déconnecter » et « Relancer le bureau » au-dessus des boutons de l'ordinateur.
+  ferrite-shell se ferme avec le code 4 ou 3, que `ferrite-session` comprend : 3 relance le
+  bureau (avec la dernière copie de `tools/dev-on.sh`), 4 affiche « Session fermée » et
+  rouvre la session à l'appui sur Entrée (« console » pour rester sur la console). 0 reste
+  Ctrl+Alt+Retour arrière et 1 un plantage. Pas de gestionnaire de connexion avant la phase 8 :
+  la session tourne sur tty1 en connexion automatique, un code de sortie suffit.

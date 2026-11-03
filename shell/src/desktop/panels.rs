@@ -108,7 +108,7 @@ pub fn clipboard_height(screen_h: f64) -> f64 {
 pub fn clipboard_list_height(screen_h: f64) -> f64 {
     clipboard_height(screen_h) - CLIPBOARD_HEAD - CLIPBOARD_FOOT - CLIPBOARD_LIST_PAD.0 - CLIPBOARD_LIST_PAD.1
 }
-const DIALOG: (f64, f64) = (420.0, 168.0);
+const DIALOG: (f64, f64) = (420.0, 210.0);
 /// Fréquence de relecture de l'état de la batterie.
 const BATTERY_REFRESH: Duration = Duration::from_secs(20);
 
@@ -2814,12 +2814,12 @@ impl Panels {
         canvas.fill(badge, 20.0, themed(Color::rgb(0xE4EEFB), Color::rgb(0x23395B)));
         canvas.icon("cc-power", badge.center(), 20.0, Style::Symbolic(accent()));
         let (title, text) = match power {
-            PowerAction::PowerOff => (
-                "Éteindre l’ordinateur ?",
-                "Les applications ouvertes seront fermées.",
-            ),
             PowerAction::Restart => (
                 "Redémarrer l’ordinateur ?",
+                "Les applications ouvertes seront fermées.",
+            ),
+            _ => (
+                "Éteindre l’ordinateur ?",
                 "Les applications ouvertes seront fermées.",
             ),
         };
@@ -2838,6 +2838,19 @@ impl Panels {
             dialog.y + 76.0,
             px(13.0),
             themed(Color::rgb(0x374151), Color::rgb(0xD1D5DB)),
+        );
+        // Fin de session seule, sans toucher à l'ordinateur.
+        canvas.button(
+            layout.dialog_logout(),
+            "Se déconnecter",
+            control_fill(),
+            primary_text(),
+        );
+        canvas.button(
+            layout.dialog_relaunch(),
+            "Relancer le bureau",
+            control_fill(),
+            primary_text(),
         );
         canvas.button(layout.dialog_cancel(), "Annuler", control_fill(), primary_text());
         canvas.button(
@@ -2896,6 +2909,10 @@ pub fn action_at(
             DesktopAction::ConfirmPower(PowerAction::Restart)
         } else if layout.dialog_confirm().contains(pos) {
             DesktopAction::ConfirmPower(PowerAction::PowerOff)
+        } else if layout.dialog_logout().contains(pos) {
+            DesktopAction::ConfirmPower(PowerAction::LogOut)
+        } else if layout.dialog_relaunch().contains(pos) {
+            DesktopAction::ConfirmPower(PowerAction::RelaunchDesktop)
         } else if layout.dialog().contains(pos) {
             DesktopAction::Consume
         } else {
@@ -3772,6 +3789,18 @@ impl Layout {
     fn dialog_cancel(&self) -> Rect {
         let restart = self.dialog_restart();
         Rect::new(restart.x - 8.0 - 84.0, restart.y, 84.0, restart.h)
+    }
+
+    /// Rangée de la session, au-dessus des boutons de l'ordinateur, alignée à gauche.
+    fn dialog_logout(&self) -> Rect {
+        let dialog = self.dialog();
+        let confirm = self.dialog_confirm();
+        Rect::new(dialog.x + 20.0, confirm.y - 8.0 - confirm.h, 136.0, confirm.h)
+    }
+
+    fn dialog_relaunch(&self) -> Rect {
+        let logout = self.dialog_logout();
+        Rect::new(logout.right() + 8.0, logout.y, 156.0, logout.h)
     }
 
     fn new(w: f64, h: f64, view: &DesktopView) -> Self {
@@ -5527,6 +5556,20 @@ mod tests {
         );
         let cancel = layout.dialog_cancel().center();
         assert_eq!(at(cancel.0, cancel.1), Some(DesktopAction::CancelPower));
+        let logout = layout.dialog_logout().center();
+        assert_eq!(
+            at(logout.0, logout.1),
+            Some(DesktopAction::ConfirmPower(PowerAction::LogOut))
+        );
+        let relaunch = layout.dialog_relaunch().center();
+        assert_eq!(
+            at(relaunch.0, relaunch.1),
+            Some(DesktopAction::ConfirmPower(PowerAction::RelaunchDesktop))
+        );
+        // Les deux rangées ne se chevauchent pas et restent dans le dialogue.
+        assert!(layout.dialog_logout().bottom() < layout.dialog_cancel().y);
+        assert!(layout.dialog_relaunch().right() <= layout.dialog().right() - 20.0);
+        assert!(layout.dialog_logout().y > layout.dialog().y + 76.0 + 20.0);
         let inside = layout.dialog();
         assert_eq!(at(inside.x + 10.0, inside.y + 10.0), Some(DesktopAction::Consume));
         assert_eq!(at(5.0, 700.0), Some(DesktopAction::CancelPower));

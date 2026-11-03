@@ -24,6 +24,7 @@ Options :
   --demo-switcher       ouvre le sélecteur Alt+Tab dès qu'une fenêtre existe (pour les captures)
   --demo-controls LISTE ouvre le centre de contrôle sur sa liste (wifi ou bluetooth)
   --demo-lock           affiche l'écran de verrouillage au démarrage (pour les captures)
+  --demo-power          ouvre le dialogue d'arrêt au démarrage (pour les captures)
   --demo-region         ouvre la sélection d'une zone à capturer au démarrage
   --demo-screenshot     enregistre une capture dans le dossier Images dès qu'une fenêtre existe
   --demo-page POSITION  fige l'affichage à cette position entre les bureaux (0 : le premier,
@@ -73,6 +74,8 @@ pub struct Options {
     pub demo_switcher: bool,
     pub demo_region: bool,
     pub demo_lock: bool,
+    /// Ouvre le dialogue d'arrêt au démarrage (`--demo-power`).
+    pub demo_power: bool,
     pub demo_controls: Option<ControlsPage>,
     pub demo_screenshot: bool,
     pub command: Vec<String>,
@@ -92,6 +95,7 @@ impl Default for Options {
             demo_switcher: false,
             demo_region: false,
             demo_lock: false,
+            demo_power: false,
             demo_controls: None,
             demo_screenshot: false,
             command: Vec::new(),
@@ -153,6 +157,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
             "--demo-switcher" => options.demo_switcher = true,
             "--demo-region" => options.demo_region = true,
             "--demo-lock" => options.demo_lock = true,
+            "--demo-power" => options.demo_power = true,
             "--demo-controls" => {
                 options.demo_controls = Some(match value("--demo-controls")?.as_str() {
                     "wifi" => ControlsPage::Wifi,

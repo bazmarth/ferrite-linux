@@ -44,7 +44,7 @@ fn main() -> ExitCode {
     };
 
     match run(options) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(code) => ExitCode::from(code),
         Err(err) => {
             error!("{err}");
             ExitCode::FAILURE
@@ -52,7 +52,8 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
+/// Renvoie le code de sortie choisi par l'utilisateur (voir `PowerAction::exit_code`).
+fn run(options: Options) -> Result<u8, Box<dyn std::error::Error>> {
     let mut event_loop: EventLoop<'static, Ferrite> = EventLoop::try_new()?;
     let display: Display<Ferrite> = Display::new()?;
     let mut state = Ferrite::new(&mut event_loop, display)?;
@@ -95,6 +96,9 @@ fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(page) = options.demo_controls {
         state.popover = Some(desktop::panels::Popover::Controls);
         state.controls.page = page;
+    }
+    if options.demo_power {
+        state.pending_power = Some(crate::state::PowerAction::PowerOff);
     }
     if options.demo_lock {
         state.lock_session();
@@ -144,9 +148,9 @@ fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     if let Err(err) = loop_result {
         if state.expected_exit {
             info!(%err, "erreur de fermeture du backend ignorée après une fermeture demandée");
-            return Ok(());
+            return Ok(state.exit_code);
         }
         return Err(Box::new(err));
     }
-    Ok(())
+    Ok(state.exit_code)
 }

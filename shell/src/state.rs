@@ -72,6 +72,8 @@ pub struct Ferrite {
     /// Une fermeture explicite a été demandée ; les erreurs tardives du backend winit
     /// pendant sa destruction ne doivent pas transformer une fermeture normale en crash.
     pub expected_exit: bool,
+    /// Code de sortie demandé par « Se déconnecter » ou « Relancer le bureau ».
+    pub exit_code: u8,
     /// Menu déroulant ouvert depuis la barre du haut.
     pub popover: Option<Popover>,
     /// Applications installées (fichiers `.desktop`), relues par le fil système.
@@ -296,6 +298,7 @@ impl Ferrite {
             display_handle: dh,
             loop_signal: event_loop.get_signal(),
             expected_exit: false,
+            exit_code: 0,
             popover: None,
             applications: Vec::new(),
             launcher_query: String::new(),
@@ -600,6 +603,22 @@ impl Ferrite {
 pub enum PowerAction {
     PowerOff,
     Restart,
+    /// Ferme le bureau et revient à la console de `ferrite-session`.
+    LogOut,
+    /// Ferme le bureau ; `ferrite-session` le relance aussitôt.
+    RelaunchDesktop,
+}
+
+impl PowerAction {
+    /// Code de sortie de ferrite-shell lu par `ferrite-session`, pour les actions qui ne
+    /// touchent que la session (0 reste Ctrl+Alt+Retour arrière, 1 un plantage).
+    pub fn exit_code(self) -> Option<u8> {
+        match self {
+            PowerAction::PowerOff | PowerAction::Restart => None,
+            PowerAction::RelaunchDesktop => Some(3),
+            PowerAction::LogOut => Some(4),
+        }
+    }
 }
 
 /// Ouvre le socket Wayland (`wayland-N` libre suivant) et branche les clients sur la boucle.

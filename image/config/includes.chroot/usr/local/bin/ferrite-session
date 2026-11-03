@@ -63,6 +63,27 @@ while [ -x "$bin/ferrite-shell" ]; do
     # shellcheck disable=SC2086 # $client est vide ou une commande et son argument.
     dbus-run-session -- "$bin/ferrite-shell" --drm ${client:+-- $client} >"$log" 2>&1
     status=$?
+    # Codes choisis dans le dialogue d'arrêt du bureau (voir PowerAction::exit_code).
+    if [ "$status" -eq 3 ]; then
+        # « Relancer le bureau » : prend aussi la dernière copie de tools/dev-on.sh.
+        crashes=0
+        dev_crashes=0
+        choose_bin
+        continue
+    fi
+    if [ "$status" -eq 4 ]; then
+        # « Se déconnecter » : rien d'autre à taper que Entrée pour revenir.
+        printf '\n  \033[1mSession fermée.\033[0m\n\n'
+        printf '  Entrée : rouvrir la session\n'
+        printf '  console puis Entrée : rester sur la console\n\n  '
+        read -r answer || answer=console
+        [ "$answer" = console ] && break
+        crashes=0
+        dev_crashes=0
+        first=1
+        choose_bin
+        continue
+    fi
     if [ "$status" -eq 0 ]; then
         # En développement, quitter le bureau sert à le relancer ; Ctrl+Alt+F2 donne une console.
         [ "$dev" = 1 ] || break

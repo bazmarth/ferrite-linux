@@ -4,10 +4,7 @@
 //! Les distances sont calculées en pixels logiques ; `scale` (pixels physiques par pixel
 //! logique) sert à l'anticrénelage, sur un pixel physique.
 
-use ferrite_ui::theme::{
-    Color, Palette, TITLEBAR_HEIGHT, TRAFFIC_LIGHT_FIRST_X, TRAFFIC_LIGHT_RADIUS, TRAFFIC_LIGHT_STEP,
-    WINDOW_RADIUS,
-};
+use ferrite_ui::theme::{Color, WINDOW_BUTTON_INSET, WINDOW_BUTTON_RADIUS};
 use smithay::backend::renderer::gles::{
     GlesError, GlesPixelProgram, GlesRenderer, GlesTexProgram, UniformName, UniformType,
 };
@@ -45,10 +42,13 @@ vec4 finish(vec4 color) {
 const TITLEBAR: &str = r#"
 uniform float scale;
 uniform vec4 background;
-uniform vec4 background_bottom;
 uniform vec4 separator;
-uniform float lit;
+uniform vec4 button;
+uniform vec4 glyph;
+uniform vec4 danger;
+uniform vec4 accent;
 uniform float hover;
+uniform float corner;
 
 float segment(vec2 p, vec2 a, vec2 b) {
     vec2 pa = p - a;
@@ -57,60 +57,43 @@ float segment(vec2 p, vec2 a, vec2 b) {
     return length(pa - ba * h);
 }
 
-vec4 light(vec4 color, vec2 p, vec2 c, vec3 fill, vec3 edge, float kind) {
-    float d = length(p - c);
-    color = over(color, edge, coverage(d - LIGHT_RADIUS, scale));
-    color = over(color, fill, coverage(d - (LIGHT_RADIUS - 0.6), scale));
-    if (hover > 0.5) {
-        // Symboles au survol : × fermer, − réduire, + plein écran.
-        vec2 q = p - c;
-        float s;
-        if (kind < 0.5) {
-            s = min(segment(q, vec2(-2.2, -2.2), vec2(2.2, 2.2)), segment(q, vec2(-2.2, 2.2), vec2(2.2, -2.2)));
-        } else if (kind < 1.5) {
-            s = segment(q, vec2(-3.0, 0.0), vec2(3.0, 0.0));
-        } else {
-            s = min(segment(q, vec2(-3.0, 0.0), vec2(3.0, 0.0)), segment(q, vec2(0.0, -3.0), vec2(0.0, 3.0)));
-        }
-        color = over(color, edge * 0.4, coverage(s - 0.55, scale));
-    }
-    return color;
-}
-
 void main() {
     vec2 p = v_coords * size;
 
-    // Fond, coins du haut arrondis.
+    // Fond, coins du haut arrondis (droits si la fenêtre est agrandie).
     float d = -1.0;
-    vec2 left = vec2(RADIUS, RADIUS);
-    vec2 right = vec2(size.x - RADIUS, RADIUS);
-    if (p.y < RADIUS && p.x < left.x) {
-        d = length(p - left) - RADIUS;
-    } else if (p.y < RADIUS && p.x > right.x) {
-        d = length(p - right) - RADIUS;
+    vec2 left = vec2(corner, corner);
+    vec2 right = vec2(size.x - corner, corner);
+    if (p.y < corner && p.x < left.x) {
+        d = length(p - left) - corner;
+    } else if (p.y < corner && p.x > right.x) {
+        d = length(p - right) - corner;
     }
-    // Dégradé vertical, reflet blanc d'un pixel en haut.
-    vec4 color = mix(background, background_bottom, v_coords.y) * coverage(d, scale);
-    if (p.y < 1.0 / scale) {
-        color = over(color, vec3(1.0), 0.78 * coverage(d, scale));
-    }
+    vec4 color = background * coverage(d, scale);
 
-    // Séparateur d'un pixel physique en bas.
+    // Filet d'un pixel physique en bas.
     if (p.y > size.y - 1.0 / scale) {
         color = separator;
     }
 
-    // Feux tricolores : en couleur si la fenêtre est active ou survolée, gris sinon.
+    // Fermer à gauche : pastille et croix de 6 px dans un carré de 10 px.
     float y = size.y * 0.5;
-    if (lit > 0.5 || hover > 0.5) {
-        color = light(color, p, vec2(LIGHT_X, y), CLOSE_FILL, CLOSE_EDGE, 0.0);
-        color = light(color, p, vec2(LIGHT_X + LIGHT_STEP, y), MIN_FILL, MIN_EDGE, 1.0);
-        color = light(color, p, vec2(LIGHT_X + 2.0 * LIGHT_STEP, y), ZOOM_FILL, ZOOM_EDGE, 2.0);
-    } else {
-        color = light(color, p, vec2(LIGHT_X, y), OFF_FILL, OFF_EDGE, 0.0);
-        color = light(color, p, vec2(LIGHT_X + LIGHT_STEP, y), OFF_FILL, OFF_EDGE, 1.0);
-        color = light(color, p, vec2(LIGHT_X + 2.0 * LIGHT_STEP, y), OFF_FILL, OFF_EDGE, 2.0);
-    }
+    vec2 q = p - vec2(BUTTON_INSET, y);
+    bool lit = hover > 0.5 && hover < 1.5;
+    color = over(color, lit ? danger.rgb : button.rgb, coverage(length(q) - BUTTON_RADIUS, scale));
+    float s = min(segment(q, vec2(-3.0, -3.0), vec2(3.0, 3.0)), segment(q, vec2(3.0, -3.0), vec2(-3.0, 3.0)));
+    color = over(color, lit ? vec3(1.0) : glyph.rgb, coverage(s - 0.8, scale));
+
+    // Agrandir à droite : deux flèches opposées.
+    q = p - vec2(size.x - BUTTON_INSET, y);
+    lit = hover > 1.5;
+    color = over(color, lit ? accent.rgb : button.rgb, coverage(length(q) - BUTTON_RADIUS, scale));
+    s = min(segment(q, vec2(-3.0, 1.0), vec2(-3.0, 3.0)), segment(q, vec2(-3.0, 3.0), vec2(-1.0, 3.0)));
+    s = min(s, segment(q, vec2(1.0, -3.0), vec2(3.0, -3.0)));
+    s = min(s, segment(q, vec2(3.0, -3.0), vec2(3.0, -1.0)));
+    s = min(s, segment(q, vec2(-3.0, 3.0), vec2(-0.5, 0.5)));
+    s = min(s, segment(q, vec2(3.0, -3.0), vec2(0.5, -0.5)));
+    color = over(color, lit ? vec3(1.0) : glyph.rgb, coverage(s - 0.75, scale));
 
     gl_FragColor = finish(color);
 }
@@ -118,9 +101,11 @@ void main() {
 
 const SHADOW: &str = r#"
 uniform vec4 rect;
+uniform float offset_y;
 uniform float radius;
 uniform float blur;
 uniform float strength;
+uniform vec4 ring;
 
 float rounded_box(vec2 p, vec2 half_size, float r) {
     vec2 q = abs(p) - half_size + r;
@@ -129,9 +114,15 @@ float rounded_box(vec2 p, vec2 half_size, float r) {
 
 void main() {
     vec2 p = v_coords * size;
-    float d = rounded_box(p - (rect.xy + rect.zw * 0.5), rect.zw * 0.5, radius);
-    float a = 1.0 - smoothstep(-blur * 0.5, blur, d);
-    gl_FragColor = finish(vec4(0.0, 0.0, 0.0, strength * a * a));
+    vec2 center = rect.xy + rect.zw * 0.5;
+    // Le flou CSS s'étale de part et d'autre du bord, sur la valeur du flou en tout.
+    float d = rounded_box(p - center - vec2(0.0, offset_y), rect.zw * 0.5, radius);
+    float a = 1.0 - smoothstep(-blur * 0.5, blur * 0.5, d);
+    vec4 color = vec4(0.0, 0.0, 0.0, strength * a);
+    // Bordure d'un pixel logique, juste à l'extérieur du cadre.
+    float edge = rounded_box(p - center, rect.zw * 0.5, radius);
+    float line = clamp(edge + 0.5, 0.0, 1.0) * clamp(1.5 - edge, 0.0, 1.0);
+    gl_FragColor = finish(color * (1.0 - ring.a * line) + ring * line);
 }
 "#;
 
@@ -147,18 +138,17 @@ float rounded_box(vec2 p, vec2 half_size, float r) {
 void main() {
     vec2 p = v_coords * size;
     float d = rounded_box(p - size * 0.5, size * 0.5 - 6.0, 12.0);
-    vec3 accent = vec3(0.212, 0.537, 0.902);
+    vec3 accent = vec3(0.153, 0.475, 0.878);
     vec4 color = over(vec4(0.0), accent, 0.20 * coverage(d, scale));
     color = over(color, accent, 0.75 * coverage(abs(d + 1.0) - 1.0, scale));
     gl_FragColor = finish(color);
 }
 "#;
 
-/// Fond du Dock, comme celui du Ferrite d'origine : verre blanc translucide aux coins
-/// arrondis (rayon 20), liseré blanc à l'intérieur et contour sombre très léger dehors.
+/// Fond du Dock : blanc à 16 %, filet blanc à 28 %, rayon 24, ombre 0 12 32 noir 25 %. La
+/// zone dessinée déborde du fond de `MARGIN` de chaque côté, pour l'ombre.
 const DOCK: &str = r#"
 uniform float scale;
-uniform float dark;
 
 float rounded_box(vec2 p, vec2 half_size, float r) {
     vec2 q = abs(p) - half_size + r;
@@ -167,15 +157,13 @@ float rounded_box(vec2 p, vec2 half_size, float r) {
 
 void main() {
     vec2 p = v_coords * size;
-    float d = rounded_box(p - size * 0.5, size * 0.5, 20.0);
-    float outside = coverage(d, scale);
-    float body = coverage(d + 1.0, scale);
-    float inner = coverage(d + 2.0, scale);
-    vec3 glass = mix(vec3(1.0), vec3(0.12), dark);
-    vec3 rim = mix(vec3(1.0), vec3(0.48), dark);
-    vec4 color = over(vec4(0.0), vec3(0.0), 0.11 * (outside - body));
-    color = over(color, glass, 0.36 * body);
-    color = over(color, rim, 0.43 * (body - inner));
+    vec2 half_plate = size * 0.5 - MARGIN;
+    float d = rounded_box(p - size * 0.5, half_plate, 24.0);
+    float shadow = rounded_box(p - size * 0.5 - vec2(0.0, 12.0), half_plate, 24.0);
+    float outside = 1.0 - coverage(d, scale);
+    vec4 color = vec4(0.0, 0.0, 0.0, 0.25 * (1.0 - smoothstep(-16.0, 16.0, shadow)) * outside);
+    color = over(color, vec3(1.0), 0.16 * coverage(d, scale));
+    color = over(color, vec3(1.0), 0.28 * coverage(abs(d + 0.5) - 0.5, scale));
     gl_FragColor = finish(color);
 }
 "#;
@@ -322,19 +310,34 @@ impl Shaders {
             &[
                 float("scale"),
                 vec4("background"),
-                vec4("background_bottom"),
                 vec4("separator"),
-                float("lit"),
+                vec4("button"),
+                vec4("glyph"),
+                vec4("danger"),
+                vec4("accent"),
                 float("hover"),
+                float("corner"),
             ],
         )?;
         let shadow = renderer.compile_custom_pixel_shader(
             format!("{COMMON}{SHADOW}"),
-            &[vec4("rect"), float("radius"), float("blur"), float("strength")],
+            &[
+                vec4("rect"),
+                float("offset_y"),
+                float("radius"),
+                float("blur"),
+                float("strength"),
+                vec4("ring"),
+            ],
         )?;
         let snap = renderer.compile_custom_pixel_shader(format!("{COMMON}{SNAP}"), &[float("scale")])?;
-        let dock = renderer
-            .compile_custom_pixel_shader(format!("{COMMON}{DOCK}"), &[float("scale"), float("dark")])?;
+        let dock = renderer.compile_custom_pixel_shader(
+            format!(
+                "#define MARGIN {}\n{COMMON}{DOCK}",
+                self::float(crate::desktop::dock::PLATE_SHADOW_MARGIN as f32)
+            ),
+            &[float("scale")],
+        )?;
         let rounded = renderer.compile_custom_texture_shader(
             ROUNDED_TEXTURE,
             &[vec4("geo"), vec4("clip"), float("radius"), float("top")],
@@ -363,43 +366,15 @@ impl Shaders {
 
 /// Source du shader de barre de titre, constantes de la charte comprises.
 fn titlebar_source() -> String {
-    let palette = Palette::LIGHT;
-    let [close, minimize, zoom] = palette.traffic_lights;
-    let (off_fill, off_edge) = palette.traffic_light_inactive;
-    let defines = [
-        ("RADIUS", float(WINDOW_RADIUS as f32)),
-        ("LIGHT_RADIUS", float(TRAFFIC_LIGHT_RADIUS as f32 + 0.25)),
-        ("LIGHT_X", float(TRAFFIC_LIGHT_FIRST_X as f32)),
-        ("LIGHT_STEP", float(TRAFFIC_LIGHT_STEP as f32)),
-        ("CLOSE_FILL", vec3(close.0)),
-        ("CLOSE_EDGE", vec3(close.1)),
-        ("MIN_FILL", vec3(minimize.0)),
-        ("MIN_EDGE", vec3(minimize.1)),
-        ("ZOOM_FILL", vec3(zoom.0)),
-        ("ZOOM_EDGE", vec3(zoom.1)),
-        ("OFF_FILL", vec3(off_fill)),
-        ("OFF_EDGE", vec3(off_edge)),
-    ];
-    let mut source = String::new();
-    for (name, value) in defines {
-        source.push_str(&format!("#define {name} {value}\n"));
-    }
-    debug_assert_eq!(
-        TITLEBAR_HEIGHT, 30,
-        "les feux sont centrés sur la hauteur de la barre"
-    );
-    source.push_str(COMMON);
-    source.push_str(TITLEBAR);
-    source
+    format!(
+        "#define BUTTON_RADIUS {}\n#define BUTTON_INSET {}\n{COMMON}{TITLEBAR}",
+        float(WINDOW_BUTTON_RADIUS as f32),
+        float(WINDOW_BUTTON_INSET as f32),
+    )
 }
 
 fn float(value: f32) -> String {
     format!("{value:.3}")
-}
-
-fn vec3(color: Color) -> String {
-    let c = |v: u8| v as f32 / 255.0;
-    format!("vec3({:.4}, {:.4}, {:.4})", c(color.r), c(color.g), c(color.b))
 }
 
 /// Couleur en `vec4` prémultiplié, pour les uniformes.
@@ -417,15 +392,8 @@ mod tests {
     fn source_de_la_barre_de_titre() {
         let source = titlebar_source();
         // Les constantes sont définies avant d'être utilisées par le code.
-        assert!(source.starts_with("#define RADIUS 11.000\n"));
-        assert!(source.contains("#define CLOSE_FILL vec3(1.0000, 0.3725, 0.3412)"));
-        assert!(source.find("#define OFF_EDGE").unwrap() < source.find("void main").unwrap());
-    }
-
-    #[test]
-    fn source_du_dock_declare_le_theme_sombre() {
-        assert!(DOCK.contains("uniform float dark;"));
-        assert!(DOCK.contains("mix(vec3(1.0), vec3(0.12), dark)"));
+        assert!(source.starts_with("#define BUTTON_RADIUS 11.000\n"));
+        assert!(source.find("#define BUTTON_INSET 23.000").unwrap() < source.find("void main").unwrap());
     }
 
     #[test]

@@ -5,6 +5,7 @@ pub mod animation;
 pub mod decoration;
 mod move_grab;
 mod resize_grab;
+pub mod switcher;
 pub mod workspaces;
 
 pub use move_grab::{BTN_LEFT, BTN_RIGHT, MoveSurfaceGrab};
@@ -28,13 +29,11 @@ use smithay::{
 };
 use tracing::info;
 
-use self::decoration::{Part, TrafficLight};
+use self::decoration::{Part, WindowButton};
 use crate::state::Ferrite;
 
-/// Décalage entre deux fenêtres ouvertes à la suite.
-const CASCADE_STEP: i32 = 30;
 /// Marge entre la première fenêtre et le coin de la zone utile.
-const CASCADE_MARGIN: i32 = 40;
+const WINDOW_MARGIN: i32 = 40;
 /// Délai maximal entre deux clics pour un double-clic.
 const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 /// Distance du bord de l'écran qui déclenche l'accrochage d'une fenêtre.
@@ -52,6 +51,91 @@ pub enum Snap {
     BottomLeft,
     BottomRight,
     Maximize,
+    /// Deux tiers ou tiers d'écran, à gauche ou à droite (Super+← ou → répété).
+    TwoThirdsLeft,
+    TwoThirdsRight,
+    ThirdLeft,
+    ThirdRight,
+    /// Tiers de l'écran, de 0 à 2 (Super+Alt+1, 2, 3).
+    Third(u8),
+    /// Centrée sur 64 % de la largeur (Super+C).
+    Center,
+    /// Part de la zone utile, en millièmes : x, y, largeur, hauteur (tuilage automatique).
+    Part([u16; 4]),
+}
+
+impl Snap {
+    /// Part de la zone utile qu'occupe la fenêtre, en millièmes : x, y, largeur, hauteur.
+    pub fn part(self) -> [u16; 4] {
+        match self {
+            Snap::Maximize => [0, 0, 1000, 1000],
+            Snap::Left => [0, 0, 500, 1000],
+            Snap::Right => [500, 0, 500, 1000],
+            Snap::TopLeft => [0, 0, 500, 500],
+            Snap::TopRight => [500, 0, 500, 500],
+            Snap::BottomLeft => [0, 500, 500, 500],
+            Snap::BottomRight => [500, 500, 500, 500],
+            Snap::TwoThirdsLeft => [0, 0, 660, 1000],
+            Snap::TwoThirdsRight => [340, 0, 660, 1000],
+            Snap::ThirdLeft => [0, 0, 340, 1000],
+            Snap::ThirdRight => [660, 0, 340, 1000],
+            Snap::Third(index) => [u16::from(index.min(2)) * 333, 0, 334, 1000],
+            Snap::Center => [180, 0, 640, 1000],
+            Snap::Part(part) => part,
+        }
+    }
+
+    /// Accrochage suivant quand Super+← ou → est répété : moitié, deux tiers, puis tiers.
+    pub fn next_on_repeat(self, left: bool) -> Snap {
+        match (self, left) {
+            (Snap::Left, true) => Snap::TwoThirdsLeft,
+            (Snap::TwoThirdsLeft, true) => Snap::ThirdLeft,
+            (Snap::Right, false) => Snap::TwoThirdsRight,
+            (Snap::TwoThirdsRight, false) => Snap::ThirdRight,
+            (_, true) => Snap::Left,
+            (_, false) => Snap::Right,
+        }
+    }
+}
+
+/// Angle de l'écran où se trouve `at` : 0 haut gauche, 1 haut droit, 2 bas gauche, 3 bas droit.
+pub fn screen_corner(area: Rectangle<i32, Logical>, at: Point<f64, Logical>) -> Option<usize> {
+    let (left, top) = (f64::from(area.loc.x), f64::from(area.loc.y));
+    let (right, bottom) = (
+        left + f64::from(area.size.w) - 1.0,
+        top + f64::from(area.size.h) - 1.0,
+    );
+    match (at.x <= left, at.x >= right, at.y <= top, at.y >= bottom) {
+        (true, _, true, _) => Some(0),
+        (_, true, true, _) => Some(1),
+        (true, _, _, true) => Some(2),
+        (_, true, _, true) => Some(3),
+        _ => None,
+    }
+}
+
+/// Marge autour de la zone de travail, et espacement entre deux fenêtres aimantées.
+pub const SNAP_GAP: i32 = 12;
+
+/// Cadre d'une part (millièmes) de `area` : marges de 12 px et écart de 12 px entre voisines.
+pub fn part_zone(area: Rectangle<i32, Logical>, part: [u16; 4]) -> Rectangle<i32, Logical> {
+    let gap = SNAP_GAP as f64;
+    let (aw, ah) = (area.size.w as f64 - 2.0 * gap, area.size.h as f64 - 2.0 * gap);
+    let [fx, fy, fw, fh] = part.map(|value| f64::from(value) / 1000.0);
+    let split = |start: f64, length: f64, total: f64| {
+        let before = if start > 0.0 { gap / 2.0 } else { 0.0 };
+        let after = if start + length < 0.999 { gap / 2.0 } else { 0.0 };
+        (start * total + before, length * total - before - after)
+    };
+    let (x, w) = split(fx, fw, aw);
+    let (y, h) = split(fy, fh, ah);
+    Rectangle::new(
+        Point::from((
+            area.loc.x + SNAP_GAP + x.round() as i32,
+            area.loc.y + SNAP_GAP + y.round() as i32,
+        )),
+        Size::from((w.round() as i32, h.round() as i32)),
+    )
 }
 
 /// Accrochage proposé quand on lâche une fenêtre avec le pointeur en `pointer` : bord
@@ -95,20 +179,9 @@ pub fn snap_at(
 
 /// Cadre (barre de titre comprise) d'une fenêtre accrochée en `snap` dans `area`.
 pub fn snap_zone(area: Rectangle<i32, Logical>, snap: Snap) -> Rectangle<i32, Logical> {
-    let left_width = area.size.w / 2;
-    let top_height = area.size.h / 2;
-    let (x, y) = (area.loc.x, area.loc.y);
-    let (right_x, bottom_y) = (x + left_width, y + top_height);
-    let (right_width, bottom_height) = (area.size.w - left_width, area.size.h - top_height);
-    let rect = |x, y, w, h| Rectangle::new(Point::from((x, y)), Size::from((w, h)));
     match snap {
         Snap::Maximize => area,
-        Snap::Left => rect(x, y, left_width, area.size.h),
-        Snap::Right => rect(right_x, y, right_width, area.size.h),
-        Snap::TopLeft => rect(x, y, left_width, top_height),
-        Snap::TopRight => rect(right_x, y, right_width, top_height),
-        Snap::BottomLeft => rect(x, bottom_y, left_width, bottom_height),
-        Snap::BottomRight => rect(right_x, bottom_y, right_width, bottom_height),
+        other => part_zone(area, other.part()),
     }
 }
 
@@ -133,35 +206,11 @@ pub fn snapped_content(
     maximized_content(snap_zone(area, snap), decorated)
 }
 
-/// Placement en cascade des nouvelles fenêtres, comme sur macOS : chaque fenêtre est
-/// décalée vers le bas et la droite ; on repart du coin quand elle sortirait de l'écran.
-#[derive(Debug, Default)]
-pub struct Placement {
-    next: u32,
-}
-
-impl Placement {
-    /// Position du cadre de la prochaine fenêtre dans la zone `area` (l'écran sous la
-    /// barre de menus).
-    pub fn next_position(
-        &mut self,
-        area: Rectangle<i32, Logical>,
-        window: Size<i32, Logical>,
-    ) -> Point<i32, Logical> {
-        let origin = centered_position(area, window);
-        let room = |total: i32, used: i32| (total - 2 * CASCADE_MARGIN - used).max(0) / (CASCADE_STEP * 2);
-        let steps = room(area.size.w, window.w).min(room(area.size.h, window.h)) as u32;
-        let index = if steps == 0 { 0 } else { self.next % (steps + 1) };
-        self.next = self.next.wrapping_add(1);
-        let offset = index as i32 * CASCADE_STEP;
-        origin + Point::from((offset, offset))
-    }
-}
-
-/// Cadre de taille `window` centré dans `area`, en gardant la marge de cascade.
+/// Cadre de taille `window` centré dans `area` : toute fenêtre s'ouvre ainsi, en gardant la
+/// marge si elle est trop grande.
 pub fn centered_position(area: Rectangle<i32, Logical>, window: Size<i32, Logical>) -> Point<i32, Logical> {
     let centered =
-        |total: i32, used: i32| (CASCADE_MARGIN + (total - 2 * CASCADE_MARGIN - used).max(0) / 2).max(0);
+        |total: i32, used: i32| (WINDOW_MARGIN + (total - 2 * WINDOW_MARGIN - used).max(0) / 2).max(0);
     area.loc + Point::from((centered(area.size.w, window.w), centered(area.size.h, window.h)))
 }
 
@@ -208,6 +257,32 @@ pub fn is_fullscreen(window: &Window) -> bool {
     })
 }
 
+/// La fenêtre est-elle agrandie (coins droits, sans ombre) ?
+pub fn is_maximized(window: &Window) -> bool {
+    if let Some(x11) = window.x11_surface() {
+        return x11.is_maximized();
+    }
+    window.toplevel().is_some_and(|toplevel| {
+        toplevel
+            .current_state()
+            .states
+            .contains(xdg_toplevel::State::Maximized)
+    })
+}
+
+/// La fenêtre est-elle aimantée à un bord (ombre réduite) ?
+pub fn is_tiled(window: &Window) -> bool {
+    window.toplevel().is_some_and(|toplevel| {
+        let states = toplevel.current_state().states;
+        // Une fenêtre agrandie depuis une moitié peut garder ces états : elle n'est plus aimantée.
+        !states.contains(xdg_toplevel::State::Maximized)
+            && (states.contains(xdg_toplevel::State::TiledLeft)
+                || states.contains(xdg_toplevel::State::TiledRight)
+                || states.contains(xdg_toplevel::State::TiledTop)
+                || states.contains(xdg_toplevel::State::TiledBottom))
+    })
+}
+
 /// Contenu d'une fenêtre agrandie dans `area` : sous la barre de titre si elle est décorée.
 pub fn maximized_content(area: Rectangle<i32, Logical>, decorated: bool) -> Rectangle<i32, Logical> {
     if !decorated {
@@ -240,7 +315,7 @@ pub fn is_ferrite_app(surface: &smithay::wayland::shell::xdg::ToplevelSurface) -
 pub fn is_unified(window: &Window) -> bool {
     window.toplevel().is_some_and(|toplevel| {
         let state = toplevel.current_state();
-        is_ferrite_app(&toplevel)
+        is_ferrite_app(toplevel)
             && state.decoration_mode == Some(DecorationMode::ClientSide)
             && !state.states.contains(xdg_toplevel::State::Fullscreen)
     })
@@ -313,6 +388,13 @@ impl Ferrite {
     /// Met `window` au premier plan et lui donne le clavier (ou retire le focus si `None`).
     pub fn focus_window(&mut self, window: Option<Window>) {
         let serial = SERIAL_COUNTER.next_serial();
+        // Verrouillé : aucune fenêtre, même nouvelle, ne reçoit le clavier.
+        let window = window.filter(|_| self.lock.is_none());
+        // Une fenêtre qui prend la main renvoie les widgets derrière et clôt leur saisie.
+        if window.is_some() {
+            self.widgets_front = false;
+            self.stop_dashboard_editing();
+        }
         // Les menus X11 ne prennent jamais le clavier.
         let window = window.filter(|w| !w.x11_surface().is_some_and(|x11| x11.is_override_redirect()));
         let surface: Option<WlSurface> = window
@@ -369,6 +451,11 @@ impl Ferrite {
     /// Recherche de ce qui est sous `pos`, de la fenêtre du dessus vers celle du dessous :
     /// la barre de titre d'une fenêtre masque le contenu des fenêtres placées dessous.
     pub fn hit_test(&self, pos: Point<f64, Logical>) -> Option<Hit> {
+        // Ni les aperçus de la vue d'ensemble, ni les fenêtres sous la sélection d'une zone
+        // à capturer ou sous l'écran de verrouillage ne reçoivent de survol ou de clic.
+        if self.overview || self.region_select.is_some() || self.lock.is_some() {
+            return None;
+        }
         for window in self.space.elements().rev() {
             let Some(content) = self.space.element_geometry(window) else {
                 continue;
@@ -551,12 +638,11 @@ impl Ferrite {
             .position(|minimized| minimized.window.wl_surface().is_some_and(|own| *own == *surface))
     }
 
-    /// Action d'un feu tricolore cliqué.
-    pub fn activate_light(&mut self, window: &Window, light: TrafficLight) {
-        match light {
-            TrafficLight::Close => close_window(window),
-            TrafficLight::Minimize => self.minimize(window),
-            TrafficLight::Zoom => self.toggle_maximize(window),
+    /// Action d'un bouton de fenêtre cliqué.
+    pub fn activate_light(&mut self, window: &Window, button: WindowButton) {
+        match button {
+            WindowButton::Close => close_window(window),
+            WindowButton::Zoom => self.toggle_maximize(window),
         }
     }
 
@@ -594,22 +680,33 @@ mod tests {
     #[test]
     fn agrandissement_sous_la_barre_de_titre() {
         let area = rect(0, 30, 1440, 870);
-        assert_eq!(maximized_content(area, true), rect(0, 60, 1440, 840));
+        assert_eq!(maximized_content(area, true), rect(0, 76, 1440, 824));
         assert_eq!(maximized_content(area, false), area);
     }
 
     #[test]
-    fn cascade() {
+    fn angles_de_l_ecran() {
+        let area = rect(0, 0, 1440, 900);
+        let at = |x: f64, y: f64| screen_corner(area, Point::from((x, y)));
+        assert_eq!(at(0.0, 0.0), Some(0));
+        assert_eq!(at(1439.0, 0.0), Some(1));
+        assert_eq!(at(0.0, 899.0), Some(2));
+        assert_eq!(at(1439.0, 899.0), Some(3));
+        assert_eq!(at(700.0, 0.0), None);
+    }
+
+    #[test]
+    fn une_fenetre_s_ouvre_au_centre() {
         let area = rect(0, 30, 1440, 870);
-        let mut placement = Placement::default();
-        let size = Size::from((800, 600));
-        assert_eq!(placement.next_position(area, size), Point::from((320, 165)));
-        assert_eq!(placement.next_position(area, size), Point::from((350, 195)));
-        // Zone trop petite : toutes les fenêtres au même endroit.
-        let mut placement = Placement::default();
-        let big = Size::from((1400, 900));
-        assert_eq!(placement.next_position(area, big), Point::from((40, 70)));
-        assert_eq!(placement.next_position(area, big), Point::from((40, 70)));
+        assert_eq!(
+            centered_position(area, Size::from((800, 600))),
+            Point::from((320, 165))
+        );
+        // Trop grande : la marge reste en haut à gauche.
+        assert_eq!(
+            centered_position(area, Size::from((1400, 900))),
+            Point::from((WINDOW_MARGIN, 30 + WINDOW_MARGIN))
+        );
     }
 
     #[test]
@@ -628,30 +725,25 @@ mod tests {
     }
 
     #[test]
-    fn la_cascade_reste_dans_l_ecran() {
-        let area = rect(0, 25, 1000, 700);
-        let size = Size::from((600, 400));
-        let mut placement = Placement::default();
-        for _ in 0..50 {
-            let pos = placement.next_position(area, size);
-            assert!(pos.x + size.w <= area.loc.x + area.size.w - CASCADE_MARGIN);
-            assert!(pos.y + size.h <= area.loc.y + area.size.h - CASCADE_MARGIN);
-        }
+    fn accrochage_garde_les_marges_et_l_ecart_de_12_px() {
+        let area = rect(0, 30, 1440, 870);
+        assert_eq!(snapped_content(area, Snap::Left, true), rect(12, 88, 702, 800));
+        assert_eq!(snapped_content(area, Snap::Right, true), rect(726, 88, 702, 800));
+        // Quarts : 12 px entre les fenêtres, et autour de la zone.
+        assert_eq!(snap_zone(area, Snap::TopLeft), rect(12, 42, 702, 417));
+        assert_eq!(snap_zone(area, Snap::BottomRight), rect(726, 471, 702, 417));
+        assert_eq!(snap_zone(area, Snap::Maximize), area);
+        // Centrée : 64 % de la largeur.
+        let center = snap_zone(area, Snap::Center);
+        assert_eq!(center.loc.x + center.size.w / 2, 720);
     }
 
     #[test]
-    fn accrochage_partage_la_zone_utile_sans_couvrir_la_barre() {
-        let area = rect(0, 30, 1440, 870);
-        assert_eq!(snapped_content(area, Snap::Left, true), rect(0, 60, 720, 840));
-        assert_eq!(snapped_content(area, Snap::Right, true), rect(720, 60, 720, 840));
-        assert_eq!(
-            snapped_content(rect(0, 25, 1441, 875), Snap::Right, false),
-            rect(720, 25, 721, 875)
-        );
-        // Quarts : les deux moitiés de la hauteur se partagent la zone sans trou.
-        assert_eq!(snap_zone(area, Snap::TopLeft), rect(0, 30, 720, 435));
-        assert_eq!(snap_zone(area, Snap::BottomRight), rect(720, 465, 720, 435));
-        assert_eq!(snap_zone(area, Snap::Maximize), area);
+    fn super_fleche_repetee_passe_par_les_deux_tiers_puis_le_tiers() {
+        assert_eq!(Snap::Left.next_on_repeat(true), Snap::TwoThirdsLeft);
+        assert_eq!(Snap::TwoThirdsLeft.next_on_repeat(true), Snap::ThirdLeft);
+        assert_eq!(Snap::ThirdLeft.next_on_repeat(true), Snap::Left);
+        assert_eq!(Snap::Left.next_on_repeat(false), Snap::Right);
     }
 
     #[test]

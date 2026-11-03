@@ -1,0 +1,15 @@
+/* Ferrite — jetons de couleur (GTK @define-color + variables CSS) */
+@define-color ferrite_accent #2779E0;
+@define-color ferrite_accent_light #6CB8FF;
+@define-color ferrite_ink #16181C;
+@define-color ferrite_surface #F2F3F6;
+@define-color ferrite_surface_alt #FFFFFF;
+@define-color ferrite_border #D5D9E0;
+@define-color ferrite_muted #4B5563;
+@define-color ferrite_success #1F9D63;
+@define-color ferrite_warning #FF9F0A;
+@define-color ferrite_danger #E5372B;
+
+@define-color accent_bg_color @ferrite_accent;
+@define-color accent_color @ferrite_accent;
+@define-color accent_fg_color #FFFFFF;

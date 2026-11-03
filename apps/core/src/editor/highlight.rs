@@ -33,20 +33,36 @@ pub enum Kind {
     Type,
 }
 
-pub const MATCH: Color32 = Color32::from_rgb(0xFF, 0xEE, 0xA0);
-pub const MATCH_CURRENT: Color32 = Color32::from_rgb(0xFF, 0xBE, 0x4D);
+/// Fond d'une occurrence de la recherche, plus fort pour l'occurrence courante.
+fn match_background(current: bool) -> Color32 {
+    match current {
+        false => shade((0xFF, 0xEE, 0xA0), (0x5C, 0x4A, 0x00)),
+        true => shade((0xFF, 0xBE, 0x4D), (0x9A, 0x6A, 0x00)),
+    }
+}
+
+/// Couleur des clés et du code en ligne.
+pub fn code_color() -> Color32 {
+    shade((0xC8, 0x36, 0x6B), (0xFF, 0x7A, 0xA2))
+}
+
+fn shade(light: (u8, u8, u8), dark: (u8, u8, u8)) -> Color32 {
+    let (r, g, b) = style::themed(light, dark);
+    Color32::from_rgb(r, g, b)
+}
+
 fn format(kind: Kind, font: &FontId) -> TextFormat {
     let color = match kind {
         Kind::Plain | Kind::Emphasis => style::primary_text(),
         Kind::Heading | Kind::Strong | Kind::Value | Kind::Link | Kind::Function => style::accent(),
-        Kind::Key | Kind::Code => Color32::from_rgb(0xC8, 0x36, 0x6B),
-        Kind::String => Color32::from_rgb(0x1F, 0x7F, 0x4C),
-        Kind::Number => Color32::from_rgb(0xB5, 0x53, 0x1A),
-        Kind::Keyword => Color32::from_rgb(0x8B, 0x3F, 0xD9),
-        Kind::Comment => Color32::from_rgb(0x8C, 0x93, 0x9D),
-        Kind::Muted => Color32::from_rgb(0x9A, 0xA1, 0xAC),
+        Kind::Key | Kind::Code => code_color(),
+        Kind::String => shade((0x1F, 0x7F, 0x4C), (0x7F, 0xD6, 0xA0)),
+        Kind::Number => shade((0xB5, 0x53, 0x1A), (0xF0, 0xA3, 0x6B)),
+        Kind::Keyword => shade((0x8B, 0x3F, 0xD9), (0xC3, 0x9B, 0xFF)),
+        Kind::Comment => shade((0x8C, 0x93, 0x9D), (0x8C, 0x93, 0x9D)),
+        Kind::Muted => shade((0x9A, 0xA1, 0xAC), (0x7A, 0x81, 0x8C)),
         Kind::Marker => style::accent(),
-        Kind::Type => Color32::from_rgb(0x0F, 0x7B, 0x8A),
+        Kind::Type => shade((0x0F, 0x7B, 0x8A), (0x5C, 0xC8, 0xD6)),
     };
     let mut format = TextFormat::simple(font.clone(), color);
     format.italics = matches!(kind, Kind::Emphasis | Kind::Comment);
@@ -74,10 +90,9 @@ pub fn layout_job(
                 m += 1;
             }
             let (end, background) = match matches.get(m) {
-                Some(found) if found.start <= start => (
-                    found.end.min(range.end),
-                    Some(if m == current { MATCH_CURRENT } else { MATCH }),
-                ),
+                Some(found) if found.start <= start => {
+                    (found.end.min(range.end), Some(match_background(m == current)))
+                }
                 Some(found) if found.start < range.end => (found.start, None),
                 _ => (range.end, None),
             };
@@ -619,7 +634,7 @@ mod tests {
         assert_eq!(job.text, text);
         assert_eq!(
             job.sections.last().map(|section| section.format.background),
-            Some(MATCH_CURRENT)
+            Some(match_background(true))
         );
     }
 }

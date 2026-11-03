@@ -11,6 +11,7 @@ name = "ferrite-apps"
 path = "src/main.rs"
 
 [dependencies]
+alacritty_terminal = "0.26"
 eframe = { version = "0.37", default-features = false, features = ["clipboard", "default_fonts", "glow", "wayland", "x11"] }
 ferrite-system = { path = "../../services/system" }
 ferrite-ui = { path = "../../ui" }

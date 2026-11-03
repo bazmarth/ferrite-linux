@@ -23,10 +23,10 @@ use std::{
 };
 
 use crate::desktop::{
-    apps::{AppIcon, AppKey},
+    apps::{App, AppIcon, AppKey},
     svg::{IconCache, Style},
 };
-use ferrite_system::config::{DockHiding, DockSize, Settings};
+use ferrite_system::config::{ClockStyle, CornerAction, DockHiding, DoubleClick, Settings};
 use ferrite_ui::theme::Color;
 use smithay::{
     backend::{
@@ -43,13 +43,19 @@ use smithay::{
     utils::{Logical, Point, Rectangle, Size},
 };
 
-const ICON_GAP: f64 = 6.0;
-const PAD_X: f64 = 10.0;
-const PAD_Y: f64 = 8.0;
-const BOTTOM_MARGIN: i32 = 10;
-const RUNNING_DOT: f64 = 4.0;
-/// Largeur du trait entre applications épinglées et autres applications ouvertes.
-const SEPARATOR: f64 = 13.0;
+const ICON_GAP: f64 = 10.0;
+const PAD_X: f64 = 12.0;
+/// Marge du haut et du bas du fond, identique : les icônes sont centrées, et le point des
+/// applications ouvertes se pose dans la marge du bas.
+const PAD_Y: f64 = 14.0;
+const DOT_BOTTOM: f64 = 4.0;
+const BOTTOM_MARGIN: i32 = 18;
+const RUNNING_DOT: f64 = 5.0;
+/// Place ajoutée pour le trait qui sépare la corbeille des applications.
+const SEPARATOR: f64 = 9.0;
+const SEPARATOR_HEIGHT: f64 = 54.0;
+/// Débord du fond du Dock pour son ombre (0 12 32).
+pub const PLATE_SHADOW_MARGIN: i32 = 44;
 /// Hauteur de la bande du bas qui fait revenir un Dock masqué.
 const REVEAL_EDGE: f64 = 3.0;
 /// Zone d'approche où un mouvement rapide vers le bas rappelle le Dock.
@@ -58,8 +64,6 @@ const REVEAL_APPROACH_SPEED: f64 = 650.0;
 const REVEAL_APPROACH_DISTANCE: f64 = 8.0;
 /// Temps laissé pour rejoindre le Dock après une approche rapide.
 pub(crate) const REVEAL_APPROACH_GRACE: Duration = Duration::from_millis(600);
-/// Temps minimum pendant lequel le pointeur doit rester au bord inférieur.
-pub const REVEAL_DELAY: Duration = Duration::from_millis(350);
 /// Durée du glissement du Dock.
 const SLIDE: Duration = Duration::from_millis(180);
 /// Agrandissement maximal d'une icône sous la souris, et portée de l'effet (en icônes,
@@ -116,26 +120,56 @@ impl Bounce {
 /// Réglages du Dock et de la barre du haut, lus dans `~/.config/ferrite/reglages`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DockConfig {
-    pub size: DockSize,
+    /// Côté des icônes, en pixels logiques.
+    pub icon_px: u32,
     pub hiding: DockHiding,
     /// Masquage de la barre du haut.
     pub bar: DockHiding,
-    /// Hauteur du Dock et de la barre du haut, en pixels logiques.
-    pub dock_height: u32,
+    /// Hauteur de la barre du haut, en pixels logiques.
     pub bar_height: u32,
     /// Agrandissement des icônes sous la souris.
     pub magnify: bool,
+    /// Point sous les applications ouvertes, et applications ouvertes non épinglées.
+    pub dots: bool,
+    pub recents: bool,
+    /// Barre du haut : translucide, pourcentage de batterie, icône Bluetooth, horloge.
+    pub bar_translucent: bool,
+    pub battery_percent: bool,
+    pub bluetooth_icon: bool,
+    pub clock: ClockStyle,
+    /// Coins actifs : haut gauche, haut droit, bas gauche, bas droit.
+    pub corners: [CornerAction; 4],
+    /// Fenêtres : aimantation, tuilage, double-clic sur la barre de titre, animations.
+    pub snapping: bool,
+    pub tiling: bool,
+    pub double_click: DoubleClick,
+    pub reduce_motion: bool,
 }
 
 impl Default for DockConfig {
     fn default() -> Self {
         Self {
-            size: DockSize::default(),
+            icon_px: 58,
             hiding: DockHiding::default(),
             bar: DockHiding::Never,
-            dock_height: 68,
             bar_height: 34,
             magnify: true,
+            dots: true,
+            recents: true,
+            bar_translucent: true,
+            battery_percent: false,
+            bluetooth_icon: true,
+            clock: ClockStyle::Full,
+            corners: [
+                CornerAction::Overview,
+                CornerAction::None,
+                CornerAction::None,
+                CornerAction::ShowDesktop,
+            ],
+            snapping: true,
+            tiling: false,
+            double_click: DoubleClick::Maximize,
+            reduce_motion: false,
         }
     }
 }
@@ -143,12 +177,22 @@ impl Default for DockConfig {
 impl DockConfig {
     pub fn from_settings(settings: &Settings) -> Self {
         Self {
-            size: settings.dock_size(),
+            icon_px: settings.dock_icon(),
             hiding: settings.dock_hiding(),
             bar: settings.bar_hiding(),
-            dock_height: settings.dock_height(),
             bar_height: settings.bar_height(),
             magnify: settings.dock_magnify(),
+            dots: settings.flag("dock_points", true),
+            recents: settings.flag("dock_recentes", true),
+            bar_translucent: settings.flag("barre_translucide", true),
+            battery_percent: settings.flag("barre_pourcentage", false),
+            bluetooth_icon: settings.flag("barre_bluetooth", true),
+            clock: settings.clock_style(),
+            corners: ["hg", "hd", "bg", "bd"].map(|corner| settings.hot_corner(corner)),
+            snapping: settings.flag("aimantation", true),
+            tiling: settings.flag("tuilage", false),
+            double_click: settings.double_click(),
+            reduce_motion: settings.flag("reduire_animations", false),
         }
     }
 
@@ -162,11 +206,11 @@ impl DockConfig {
     }
 
     pub(crate) fn icon(self) -> f64 {
-        self.size.icon() as f64
+        f64::from(self.icon_px)
     }
 
     pub fn height(self) -> i32 {
-        self.dock_height.max((self.icon() + 2.0 * PAD_Y) as u32) as i32
+        (self.icon() + 2.0 * PAD_Y) as i32
     }
 
     /// Bande du bas que les fenêtres laissent libre : seulement si le Dock ne se cache jamais.
@@ -191,6 +235,8 @@ pub struct DockItem {
     pub pinned: bool,
     /// Au moins une fenêtre, visible ou réduite, ou en train de démarrer.
     pub running: bool,
+    /// Plusieurs fenêtres : deux points au lieu d'un.
+    pub several: bool,
 }
 
 /// Géométrie du Dock à un instant donné, en pixels logiques de l'écran.
@@ -200,7 +246,7 @@ pub struct DockLayout {
     pub plate: Rectangle<f64, Logical>,
     /// Icônes, dans l'ordre des cases (carrés, posés sur le bas du fond).
     pub icons: Vec<Rectangle<f64, Logical>>,
-    /// Trait entre applications épinglées et autres.
+    /// Trait devant la corbeille.
     pub separator: Option<f64>,
 }
 
@@ -215,8 +261,11 @@ pub fn layout(
 ) -> DockLayout {
     let icon = config.icon();
     let count = items.len();
-    let pinned = items.iter().take_while(|item| item.pinned).count();
-    let separator_after = (pinned > 0 && pinned < count).then_some(pinned);
+    // Le trait précède la corbeille, dernière case du Dock.
+    let separator_after = items
+        .iter()
+        .position(|item| item.key == AppKey::Builtin(App::Trash))
+        .filter(|index| *index > 0);
     // Centres des icônes sans agrandissement, relatifs au bord gauche du fond.
     let mut base = Vec::with_capacity(count);
     let mut x = PAD_X;
@@ -269,7 +318,7 @@ pub fn layout(
         }
         None => left + PAD_X - centers.first().map_or(0.0, |first| first - icon / 2.0),
     };
-    let bottom = top + height - PAD_Y + 2.0;
+    let bottom = top + height - PAD_Y;
     let icons: Vec<Rectangle<f64, Logical>> = centers
         .iter()
         .zip(&scales)
@@ -509,7 +558,6 @@ impl Dock {
         config: DockConfig,
         geometry: &DockLayout,
         bounces: &[f64],
-        dark_theme: bool,
         out: &mut Vec<super::super::render::OutputElement>,
     ) {
         let local =
@@ -539,16 +587,19 @@ impl Dock {
         let side = (config.icon() * MAGNIFY * scale).round() as u32;
         let (dot, line) = self.marks(scale);
         for (index, (item, rect)) in items.iter().zip(&geometry.icons).enumerate() {
-            if item.running {
+            if item.running && config.dots {
                 let size = RUNNING_DOT;
                 let center = rect.loc.x + rect.size.w / 2.0;
                 let bottom = geometry.plate.loc.y + geometry.plate.size.h;
-                let mark = Rectangle::new(
-                    Point::from((center - size / 2.0, bottom - 3.0 - size)),
-                    Size::from((size, size)),
-                );
-                let physical = (RUNNING_DOT * scale).round().max(1.0);
-                push(&dot, mark, (physical, physical));
+                let offsets: &[f64] = if item.several { &[-4.5, 4.5] } else { &[0.0] };
+                for offset in offsets {
+                    let mark = Rectangle::new(
+                        Point::from((center + offset - size / 2.0, bottom - DOT_BOTTOM - size)),
+                        Size::from((size, size)),
+                    );
+                    let physical = (RUNNING_DOT * scale).round().max(1.0);
+                    push(&dot, mark, (physical, physical));
+                }
             }
             let mut rect = *rect;
             rect.loc.y -= bounces.get(index).copied().unwrap_or(0.0) * rect.size.h;
@@ -558,14 +609,19 @@ impl Dock {
         if let Some(x) = geometry.separator {
             let plate = geometry.plate;
             let rect = Rectangle::new(
-                Point::from((x, plate.loc.y + 12.0)),
-                Size::from((1.0, plate.size.h - 24.0)),
+                Point::from((x, plate.loc.y + (plate.size.h - SEPARATOR_HEIGHT) / 2.0)),
+                Size::from((1.0, SEPARATOR_HEIGHT)),
             );
             push(&line, rect, (1.0, 1.0));
         }
 
         // Fond, sous les icônes.
+        let margin = PLATE_SHADOW_MARGIN;
         let plate = local(geometry.plate).to_i32_round();
+        let plate = Rectangle::new(
+            plate.loc - Point::from((margin, margin)),
+            Size::from((plate.size.w + 2 * margin, plate.size.h + 2 * margin)),
+        );
         let mut cached = self.plate.borrow_mut();
         match cached.as_mut() {
             Some((area, element)) => {
@@ -573,10 +629,7 @@ impl Dock {
                     element.resize(plate, None);
                     *area = plate;
                 }
-                element.update_uniforms(vec![
-                    Uniform::new("scale", scale as f32),
-                    Uniform::new("dark", if dark_theme { 1.0f32 } else { 0.0 }),
-                ]);
+                element.update_uniforms(vec![Uniform::new("scale", scale as f32)]);
             }
             None => {
                 let element = PixelShaderElement::new(
@@ -584,10 +637,7 @@ impl Dock {
                     plate,
                     None,
                     1.0,
-                    vec![
-                        Uniform::new("scale", scale as f32),
-                        Uniform::new("dark", if dark_theme { 1.0f32 } else { 0.0 }),
-                    ],
+                    vec![Uniform::new("scale", scale as f32)],
                     Kind::Unspecified,
                 );
                 *cached = Some((plate, element));
@@ -661,7 +711,7 @@ impl Dock {
                     s,
                     s,
                     s / 2.0,
-                    Color::rgb(0x1C1C1E).with_alpha(230),
+                    Color::WHITE.with_alpha(217),
                 );
                 let dot = MemoryRenderBuffer::from_slice(
                     &pixels,
@@ -671,10 +721,10 @@ impl Dock {
                     smithay::utils::Transform::Normal,
                     None,
                 );
-                let gray = Color::BLACK.with_alpha(60);
-                let a = gray.a;
+                // Blanc à 30 %, prémultiplié.
+                let a = 77;
                 let line = MemoryRenderBuffer::from_slice(
-                    &[0, 0, 0, a],
+                    &[a, a, a, a],
                     Fourcc::Argb8888,
                     (1, 1),
                     1,
@@ -733,7 +783,6 @@ fn put_pixel_coverage(pixels: &mut [u8], width: u32, x: u32, y: u32, color: Colo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::desktop::apps::App;
 
     fn output() -> Rectangle<i32, Logical> {
         Rectangle::new((0, 0).into(), (1280, 720).into())
@@ -751,12 +800,14 @@ mod tests {
                 icon: AppIcon::Builtin(app.icon()),
                 pinned: true,
                 running: false,
+                several: false,
             })
             .chain(others.iter().map(|id| DockItem {
                 key: AppKey::Other(id.to_string()),
                 icon: AppIcon::Missing,
                 pinned: false,
                 running: true,
+                several: false,
             }))
             .collect()
     }
@@ -764,9 +815,14 @@ mod tests {
     #[test]
     fn dock_centre_et_laisse_une_marge_en_bas() {
         let dock = layout(output(), medium(), &items(&App::DOCK, &[]), 1.0, None, 0.0);
-        assert_eq!(dock.plate.size.w, 304.0);
-        assert_eq!(dock.plate.size.h, 68.0);
-        assert_eq!(dock.plate.loc, Point::from((488.0, 642.0)));
+        assert_eq!(dock.plate.size.w, 354.0);
+        assert_eq!(dock.plate.size.h, 86.0);
+        assert_eq!(dock.plate.loc, Point::from((463.0, 616.0)));
+        // Icônes au milieu du fond : autant de marge en haut qu'en bas.
+        let icon = dock.icons[0];
+        let above = icon.loc.y - dock.plate.loc.y;
+        let below = dock.plate.loc.y + dock.plate.size.h - icon.loc.y - icon.size.h;
+        assert_eq!(above, below);
         assert_eq!(dock.separator, None);
         // Caché : entièrement sous le bord de l'écran.
         let hidden = layout(output(), medium(), &items(&App::DOCK, &[]), 0.0, None, 0.0);
@@ -774,13 +830,20 @@ mod tests {
     }
 
     #[test]
-    fn applications_ouvertes_apres_un_trait() {
-        let list = items(&App::DOCK, &["vlc", "brave"]);
+    fn le_trait_precede_la_corbeille() {
+        let mut list = items(&App::DOCK, &["vlc", "brave"]);
+        list.push(DockItem {
+            key: AppKey::Builtin(App::Trash),
+            icon: AppIcon::Builtin(App::Trash.icon()),
+            pinned: true,
+            running: false,
+            several: false,
+        });
         let dock = layout(output(), medium(), &list, 1.0, None, 0.0);
-        assert_eq!(dock.icons.len(), 7);
-        assert_eq!(dock.plate.size.w, 304.0 + 2.0 * (52.0 + ICON_GAP) + SEPARATOR);
-        let separator = dock.separator.expect("trait entre les deux groupes");
-        assert!(separator > dock.icons[4].loc.x + 52.0 && separator < dock.icons[5].loc.x);
+        assert_eq!(dock.icons.len(), 8);
+        assert_eq!(dock.plate.size.w, 354.0 + 3.0 * (58.0 + ICON_GAP) + SEPARATOR);
+        let separator = dock.separator.expect("trait devant la corbeille");
+        assert!(separator > dock.icons[6].loc.x + 58.0 && separator < dock.icons[7].loc.x);
     }
 
     #[test]
@@ -791,27 +854,27 @@ mod tests {
         let at = |dx: f64| dock.item_at(Point::from((x0 + dx, 660.0)));
         assert_eq!(at(20.0), Some(0));
         assert_eq!(at(80.0), Some(1));
-        assert_eq!(at(260.0), Some(4));
-        assert_eq!(at(320.0), None);
+        assert_eq!(at(330.0), Some(4));
+        assert_eq!(at(360.0), None);
     }
 
     #[test]
     fn agrandissement_sous_la_souris() {
         let list = items(&App::DOCK, &[]);
         let flat = layout(output(), medium(), &list, 1.0, None, 0.0);
-        let pointer = Point::from((flat.icons[2].loc.x + 26.0, 670.0));
+        let pointer = Point::from((flat.icons[2].loc.x + 29.0, 670.0));
         let zoomed = layout(output(), medium(), &list, 1.0, Some(pointer), 1.0);
         // L'icône sous la souris est la plus grande, ses voisines en vague décroissante.
         let sizes: Vec<f64> = zoomed.icons.iter().map(|icon| icon.size.w).collect();
-        assert!((sizes[2] - 52.0 * MAGNIFY).abs() < 0.5, "{sizes:?}");
-        assert!(sizes[1] > 52.0 && sizes[1] < sizes[2] && sizes[0] < sizes[1]);
+        assert!((sizes[2] - 58.0 * MAGNIFY).abs() < 0.5, "{sizes:?}");
+        assert!(sizes[1] > 58.0 && sizes[1] < sizes[2] && sizes[0] < sizes[1]);
         assert!((sizes[1] - sizes[3]).abs() < 0.5);
         // Les icônes s'écartent sans se chevaucher, et le fond s'élargit pour les contenir.
         for pair in zoomed.icons.windows(2) {
             let gap = pair[1].loc.x - (pair[0].loc.x + pair[0].size.w);
             assert!((gap - ICON_GAP).abs() < 0.01, "écart {gap}");
         }
-        assert!(zoomed.plate.size.w > flat.plate.size.w + 52.0);
+        assert!(zoomed.plate.size.w > flat.plate.size.w + 58.0);
         assert!(zoomed.plate.loc.x <= zoomed.icons[0].loc.x - PAD_X + 0.01);
         assert_eq!(zoomed.plate.size.h, flat.plate.size.h);
         // Le point sous la souris ne bouge pas : l'icône du milieu reste centrée dessous.
@@ -833,7 +896,7 @@ mod tests {
     fn le_point_sous_la_souris_reste_fixe_entre_deux_icones() {
         let list = items(&App::DOCK, &["vlc"]);
         let flat = layout(output(), medium(), &list, 1.0, None, 0.0);
-        let x = flat.icons[1].loc.x + 52.0 + ICON_GAP / 2.0;
+        let x = flat.icons[1].loc.x + 58.0 + ICON_GAP / 2.0;
         let zoomed = layout(output(), medium(), &list, 1.0, Some(Point::from((x, 670.0))), 1.0);
         // À mi-chemin entre deux icônes, elles sont de même taille, de part et d'autre.
         assert!((zoomed.icons[1].size.w - zoomed.icons[2].size.w).abs() < 0.5);
@@ -910,7 +973,7 @@ mod tests {
             windows: &over,
             ..base
         }));
-        assert_eq!(never.reserved_height(), 84);
+        assert_eq!(never.reserved_height(), 110);
         assert_eq!(medium().reserved_height(), 0);
         let always = DockConfig {
             hiding: DockHiding::Always,
@@ -921,7 +984,7 @@ mod tests {
             ..base
         }));
         let large = DockConfig {
-            size: DockSize::Large,
+            icon_px: 72,
             ..medium()
         };
         assert!(large.height() > medium().height());

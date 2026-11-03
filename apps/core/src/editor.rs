@@ -1391,7 +1391,7 @@ impl EditorState {
                                 ui.painter().rect_filled(
                                     egui::Rect::from_center_size(rect.center(), egui::vec2(30.0, 30.0)),
                                     7.0,
-                                    Color32::from_black_alpha(10),
+                                    style::tint(10),
                                 );
                             }
                             icons::paint(ui.painter(), rect, Icon::Plus, icon_color());
@@ -1419,7 +1419,7 @@ impl EditorState {
             // Le trait du bas s'interrompt sous l'onglet actif.
             painter.rect_filled(rect.expand2(egui::vec2(0.0, 0.5)), 0.0, style::background());
         } else if response.hovered() {
-            painter.rect_filled(rect, 0.0, Color32::from_black_alpha(6));
+            painter.rect_filled(rect, 0.0, style::tint(6));
         }
         painter.vline(
             rect.right() - 0.5,
@@ -1455,7 +1455,7 @@ impl EditorState {
             painter.circle_filled(close.center(), 4.0, icon_color());
         } else if active || hovered {
             if close_response.hovered() {
-                painter.rect_filled(close, 5.0, Color32::from_black_alpha(14));
+                painter.rect_filled(close, 5.0, style::tint(14));
             }
             icons::paint(painter, close, Icon::Close, icon_color());
         }
@@ -2564,7 +2564,7 @@ fn markdown_job(ui: &egui::Ui, spans: &[markdown::Span], size: f32, color: Color
         }
         if span.style & markdown::CODE != 0 {
             format.font_id = FontId::monospace(size * 0.9);
-            format.color = Color32::from_rgb(0xC8, 0x36, 0x6B);
+            format.color = highlight::code_color();
             format.background = style::content_gray();
         }
         if span.style & markdown::LINK != 0 {
@@ -2613,7 +2613,7 @@ impl Row<'_> {
         if self.selected {
             painter.rect_filled(back, 7.0, selected());
         } else if response.hovered() {
-            painter.rect_filled(back, 7.0, Color32::from_black_alpha(8));
+            painter.rect_filled(back, 7.0, style::tint(8));
         }
         let y = rect.center().y;
         let mut x = rect.left() + 14.0 + self.depth as f32 * 14.0;
@@ -2677,7 +2677,7 @@ fn icon_button(ui: &mut egui::Ui, icon: Icon, active: bool, hint: &str) -> egui:
     if active {
         ui.painter().rect_filled(back, 8.0, selected());
     } else if response.hovered() {
-        ui.painter().rect_filled(back, 8.0, Color32::from_black_alpha(10));
+        ui.painter().rect_filled(back, 8.0, style::tint(10));
     }
     let color = if active { style::accent() } else { icon_color() };
     icons::paint(ui.painter(), rect, icon, color);
@@ -2690,7 +2690,7 @@ fn rail_button(ui: &mut egui::Ui, icon: Icon, active: bool, hint: &str) -> egui:
     if active {
         ui.painter().rect_filled(rect, 10.0, selected());
     } else if response.hovered() {
-        ui.painter().rect_filled(rect, 10.0, Color32::from_black_alpha(9));
+        ui.painter().rect_filled(rect, 10.0, style::tint(9));
     }
     let color = if active { style::accent() } else { icon_color() };
     icons::paint(ui.painter(), rect, icon, color);

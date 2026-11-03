@@ -594,3 +594,57 @@ La hauteur de barre locale de 34 px est conservée ; le test ThinkBook vérifie 
 68 px physiques à l'échelle 2. La migration des vues propres aux applications continuera à
 utiliser ces rôles au fil de leur harmonisation, sans importer egui ou Smithay dans
 `ferrite-ui`.
+
+## 2026-11-02 — Thème de la spécification, raccourcis, notifications, verrouillage
+
+Fait :
+- Bureau et applications refaits d'après la « Spécification des fenêtres et dispositions » et
+  ses planches : palette et accents, deux boutons de fenêtre, barre de titre de 46 px, ombres,
+  fond hexagonal, barre du haut (horloge centrée), Dock avec corbeille, centre de contrôle,
+  calendrier et notifications, lanceur, Alt+Tab, vue d'ensemble avec bande des espaces,
+  dialogues, écran de verrouillage ; Fichiers en grille, Terminal sombre, Paramètres par
+  catégories avec page Apparence. Super+V, animations du Dock, génie et widgets conservés.
+- Alt+Tab et Alt+`, tous les raccourcis Super (voir `RACCOURCIS.md`), aimantation à 12 px
+  d'écart (moitiés, deux tiers, tiers, centrée), tuilage automatique, afficher le bureau,
+  envoi sur un espace, coin actif, captures d'écran (écran et zone).
+- Serveur de notifications sur le bus de session, verrouillage (Super+L et avant la veille).
+
+Vérifié :
+- `cargo fmt`, clippy et les tests de tout l'espace de travail ; rendu en fenêtre.
+- Dans QEMU (`tools/scenarios/theme.txt`, mode développement), avec de vraies touches sur le
+  backend DRM : Alt+Tab, aimantation, agrandissement, tuilage, vue d'ensemble, centre de
+  contrôle, calendrier, captures écrites dans `~/Images`, refus puis acceptation du mot de
+  passe par `unix_chkpwd`, Super+D, Super+Q.
+- Notifications : `notify-send` et `gdbus` sur un bus isolé, bannières, urgence, fin d'une
+  bannière et historique.
+
+Non vérifié : ThinkBook réel (échelle 2, fluidité, pavé tactile), veille réelle.
+
+Reste de la spécification : Mail, Musique, Photos, Vidéos, Navigateur et Logithèque ;
+rubriques manquantes de Paramètres et réglages Taille du texte, Barre translucide, Réduire les
+animations ; OSD et touches de volume ; menu de fenêtre, appui long sur agrandir, épinglage ;
+glisser une fenêtre vers un espace ; recherche de fichiers, réglages et calculs dans le lanceur ; notifications groupées ; thème de curseurs Ferrite ; thème GTK ; écran de
+connexion ; accessibilité ; surcouche de débogage.
+
+Puis, à la demande : lanceur en une seule liste de A à Z, fenêtres toujours centrées à
+l'ouverture, icônes du Dock qui ne passent plus devant leur menu. Vérifié : CI complète, rendu
+en fenêtre pour la liste et le centrage ; le menu du Dock n'a pas été revu à l'écran.
+
+Puis, d'après les nouvelles planches et les captures reçues : Paramètres à 19 rubriques (les 18
+de la maquette, plus Date et heure), pages Wi-Fi, Bluetooth, Son, Bureau et dock et Apparence en
+groupes de lignes ; centre de contrôle avec listes Wi-Fi et Bluetooth dans le panneau, mot de
+passe sur place ; tuile Clavier qui bascule entre français et américain ; icônes centrées dans
+le Dock ; agrandissement figé sous le menu d'une icône. Les lignes sans fonction réelle sont
+grisées : Position du Dock, Nombre fixe d'espaces, Écran principal uniquement, réception de
+fichiers Bluetooth, niveau d'entrée, sons système, thème et taille de curseur, taille du texte.
+Rubriques vides, annoncées comme telles : Notifications, Énergie, Imprimantes, Confidentialité,
+Accessibilité, Mises à jour.
+
+Puis, d'après les planches « Widgets — refonte », « Verrouillage » et « Surfaces système » :
+widgets en grille de 4 colonnes de 170 px sur le côté gauche de chaque bureau, en verre sombre,
+sous les fenêtres ; estompe quand une fenêtre les recouvre, Super+W pour les ramener devant ; clic
+droit sur le bureau, puis retirer, ajouter, déplacer et redimensionner librement (à la demande, sans grille : la grille reste la disposition d'origine). La page des widgets
+disparaît : le premier bureau est la page 0. Écran de verrouillage au repos et en saisie, thème et
+quatre fonds propres, notifications sans contenu, lecture en cours (MPRIS), secousse au refus.
+Menus contextuels de 32 px et popover « Trier » (tri par type ajouté) dans Fichiers, survol
+accentué dans les menus du bureau et du Dock. `curl` manquait à l'ISO : la météo n'y arrivait pas.

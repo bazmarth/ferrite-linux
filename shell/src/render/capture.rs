@@ -1,7 +1,108 @@
-//! Capture d'écran PNG du compositeur (option `--capture`), pour vérifier le rendu
-//! automatiquement. Les captures demandées par l'utilisateur passeront par screencopy.
+//! Captures d'écran PNG : option `--capture` pour vérifier le rendu automatiquement, et
+//! captures demandées au clavier (tout l'écran ou une zone), rangées dans le dossier Images.
 
-use std::{fs::File, io::BufWriter, path::Path};
+use std::{
+    fs::File,
+    io::BufWriter,
+    path::{Path, PathBuf},
+};
+
+use smithay::utils::{Logical, Point, Rectangle};
+
+/// Capture à faire à la prochaine image ; `region` : zone logique, tout l'écran sinon.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Request {
+    pub region: Option<Rectangle<i32, Logical>>,
+}
+
+/// Sélection de la zone à capturer : `start` est connu une fois le bouton enfoncé.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct RegionSelect {
+    pub start: Option<Point<f64, Logical>>,
+}
+
+/// Rectangle entre deux coins quelconques, en pixels entiers.
+pub fn region_between(a: Point<f64, Logical>, b: Point<f64, Logical>) -> Rectangle<i32, Logical> {
+    let (left, top) = (a.x.min(b.x).round() as i32, a.y.min(b.y).round() as i32);
+    let (right, bottom) = (a.x.max(b.x).round() as i32, a.y.max(b.y).round() as i32);
+    Rectangle::new((left, top).into(), (right - left, bottom - top).into())
+}
+
+/// Découpe `(x, y, largeur, hauteur)` dans une image RVBA, de haut en bas et opaque (la
+/// composition laisse parfois un alpha partiel, sans signification dans un fichier). La
+/// zone est ramenée dans l'image ; renvoie les pixels, la largeur et la hauteur obtenues.
+pub fn crop(
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+    flip_y: bool,
+    (x, y, w, h): (u32, u32, u32, u32),
+) -> (Vec<u8>, u32, u32) {
+    let (x, y) = (x.min(width), y.min(height));
+    let (w, h) = (w.min(width - x), h.min(height - y));
+    let mut out = Vec::with_capacity(w as usize * h as usize * 4);
+    for line in y..y + h {
+        let source = if flip_y { height - 1 - line } else { line } as usize;
+        let start = (source * width as usize + x as usize) * 4;
+        for pixel in rgba[start..start + w as usize * 4].chunks_exact(4) {
+            out.extend_from_slice(&[pixel[0], pixel[1], pixel[2], 255]);
+        }
+    }
+    (out, w, h)
+}
+
+/// Dossier Images de l'utilisateur (`XDG_PICTURES_DIR`, sinon `~/Images`).
+pub fn pictures_dir() -> PathBuf {
+    let home = std::env::var_os("HOME").map_or_else(|| PathBuf::from("/tmp"), PathBuf::from);
+    let config = std::env::var_os("XDG_CONFIG_HOME").map_or_else(|| home.join(".config"), PathBuf::from);
+    std::fs::read_to_string(config.join("user-dirs.dirs"))
+        .ok()
+        .and_then(|text| parse_pictures_dir(&text, &home))
+        .unwrap_or_else(|| home.join("Images"))
+}
+
+fn parse_pictures_dir(text: &str, home: &Path) -> Option<PathBuf> {
+    let value = text
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("XDG_PICTURES_DIR="))?
+        .trim()
+        .trim_matches('"');
+    match value.strip_prefix("$HOME") {
+        Some(rest) => Some(home.join(rest.trim_start_matches('/'))),
+        None => value.starts_with('/').then(|| PathBuf::from(value)),
+    }
+}
+
+/// Chemin libre dans `dir` pour une capture prise à `stamp`.
+fn free_path(dir: &Path, stamp: &str) -> PathBuf {
+    let first = dir.join(format!("Capture du {stamp}.png"));
+    if !first.exists() {
+        return first;
+    }
+    (2..)
+        .map(|number| dir.join(format!("Capture du {stamp} ({number}).png")))
+        .find(|path| !path.exists())
+        .unwrap_or(first)
+}
+
+/// Enregistre l'image dans le dossier Images, sans bloquer le rendu pendant la compression.
+pub fn save_in_background(
+    pixels: Vec<u8>,
+    width: u32,
+    height: u32,
+    done: impl FnOnce(Result<PathBuf, String>) + Send + 'static,
+) {
+    let stamp = crate::desktop::panels::file_timestamp(std::time::SystemTime::now());
+    std::thread::spawn(move || {
+        let dir = pictures_dir();
+        let path = free_path(&dir, &stamp);
+        let result = std::fs::create_dir_all(&dir)
+            .map_err(|err| format!("{}: {err}", dir.display()))
+            .and_then(|()| write_png(&path, width, height, &pixels, false))
+            .map(|()| path);
+        done(result);
+    });
+}
 
 /// Écrit une image RVBA 8 bits en PNG. Si `flip_y`, les lignes sont prises de bas en haut
 /// (tampons OpenGL, dont l'origine est en bas à gauche).
@@ -31,6 +132,41 @@ pub fn write_png(path: &Path, width: u32, height: u32, rgba: &[u8], flip_y: bool
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decoupe_d_une_zone() {
+        // Deux lignes de deux pixels, numérotés dans le rouge ; alpha partiel à corriger.
+        let image = [1, 0, 0, 9, 2, 0, 0, 9, 3, 0, 0, 9, 4, 0, 0, 9];
+        let (pixels, w, h) = crop(&image, 2, 2, false, (1, 0, 1, 2));
+        assert_eq!((w, h), (1, 2));
+        assert_eq!(pixels, [2, 0, 0, 255, 4, 0, 0, 255]);
+        // Retournée : la première ligne vue est la dernière du tampon.
+        let (pixels, ..) = crop(&image, 2, 2, true, (0, 0, 2, 1));
+        assert_eq!(pixels, [3, 0, 0, 255, 4, 0, 0, 255]);
+        // Une zone qui déborde est ramenée dans l'image.
+        assert_eq!(crop(&image, 2, 2, false, (1, 1, 9, 9)).1, 1);
+        assert_eq!(crop(&image, 2, 2, false, (5, 5, 1, 1)).1, 0);
+    }
+
+    #[test]
+    fn zone_entre_deux_coins() {
+        let region = region_between((30.0, 5.0).into(), (10.0, 25.0).into());
+        assert_eq!(region, Rectangle::new((10, 5).into(), (20, 20).into()));
+    }
+
+    #[test]
+    fn dossier_images() {
+        let home = Path::new("/home/moi");
+        assert_eq!(
+            parse_pictures_dir("# x\nXDG_PICTURES_DIR=\"$HOME/Photos\"\n", home),
+            Some(PathBuf::from("/home/moi/Photos"))
+        );
+        assert_eq!(
+            parse_pictures_dir("XDG_PICTURES_DIR=\"/data/img\"", home),
+            Some(PathBuf::from("/data/img"))
+        );
+        assert_eq!(parse_pictures_dir("XDG_MUSIC_DIR=\"$HOME/M\"", home), None);
+    }
 
     #[test]
     fn png_retourne() {

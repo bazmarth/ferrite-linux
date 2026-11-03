@@ -17,7 +17,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use ferrite_system::config::Accent;
+use ferrite_system::config::{Accent, ClockStyle};
 use ferrite_ui::{
     theme::{Color, Palette},
     wallpaper::Image,
@@ -38,45 +38,57 @@ use smithay::{
     utils::{Logical, Point, Rectangle, Size},
 };
 
+mod cards;
+mod lock_screen;
+
+pub use cards::{tasks_scroll_limit, widget_at, widget_edges_at, widgets_areas};
+pub use lock_screen::{LOCK_WALLS, LockAction, lock_action_at};
+
+use cards::dashboard_action_at;
+
 use crate::clipboard::{Thumbnail, VISIBLE as CLIPBOARD_VISIBLE};
-use crate::desktop::{
-    apps::{App, Section},
-    svg::{self, IconCache, Style},
-};
+use crate::desktop::svg::{self, IconCache, Style};
 use crate::state::PowerAction;
 
 const FONT_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/Inter-Medium.ttf");
 const FONT_BOLD: &[u8] = include_bytes!("../../../assets/fonts/Inter-SemiBold.ttf");
+/// Grande heure de l'écran de verrouillage.
+const FONT_LIGHT: &[u8] = include_bytes!("../../../assets/fonts/InterDisplay-Light.ttf");
 
 /// Écart entre la barre (ou le bord de l'écran) et un menu déroulant.
-const POPOVER_MARGIN: f64 = 6.0;
-const INDICATOR_WIDTH: f64 = 30.0;
+const POPOVER_MARGIN: f64 = 8.0;
+/// Icône de 18 px et écart de 16 px entre deux indicateurs.
+const INDICATOR_WIDTH: f64 = 34.0;
 /// Lanceur : icônes par ligne, case d'une application, marges et hauteurs.
-const LAUNCHER_COLUMNS: usize = 5;
-const LAUNCHER_CELL: (f64, f64) = (120.0, 122.0);
-const LAUNCHER_PAD: f64 = 28.0;
+const LAUNCHER_COLUMNS: usize = 6;
+const LAUNCHER_CELL: (f64, f64) = (114.0, 118.0);
+const LAUNCHER_PAD: f64 = 18.0;
 /// Hauteur du champ de recherche, en haut du lanceur.
-const LAUNCHER_HEADER: f64 = 70.0;
+const LAUNCHER_HEADER: f64 = 76.0;
 /// Hauteur du titre d'une rubrique, et espace entre deux rubriques.
 const LAUNCHER_TITLE: f64 = 40.0;
 const LAUNCHER_GAP: f64 = 14.0;
-const LAUNCHER_MAX_HEIGHT: f64 = 620.0;
-const LAUNCHER_RADIUS: f32 = 26.0;
-/// Voile blanc posé sur le fond d'écran flouté (0 : fond seul, 1 : blanc).
-const FROST_VEIL: f32 = 0.6;
+const LAUNCHER_MAX_HEIGHT: f64 = 560.0;
+const LAUNCHER_RADIUS: f32 = 16.0;
 /// Défilement d'un cran de molette, en pixels.
 pub const LAUNCHER_SCROLL_STEP: f64 = 48.0;
-const CONTROLS_WIDTH: f64 = 400.0;
+const CONTROLS_WIDTH: f64 = 380.0;
 /// Écart entre les modules des réglages rapides, et entre eux et le bord du panneau.
-const CONTROLS_GAP: f64 = 12.0;
-/// Hauteur du module Wi-Fi / Bluetooth / mode avion, et d'un module à curseur.
-const CONTROLS_RADIOS: f64 = 156.0;
-const CONTROLS_SLIDER: f64 = 74.0;
+const CONTROLS_GAP: f64 = 14.0;
+const CONTROLS_PAD: f64 = 16.0;
+const CONTROLS_TILE: f64 = 64.0;
+const CONTROLS_ROW: f64 = 36.0;
+/// Listes Wi-Fi et Bluetooth : haut (retour, titre), bas (état, lien), ligne, titre de groupe,
+/// et place du mot de passe demandé sur une ligne.
+const CONTROLS_LIST_TOP: f64 = 62.0;
+const CONTROLS_LIST_BOTTOM: f64 = 46.0;
+const CONTROLS_LIST_ROW: f64 = 54.0;
+const CONTROLS_HEADING: f64 = 26.0;
+const CONTROLS_PASSWORD: f64 = 118.0;
 const CLIPBOARD_WIDTH: f64 = 380.0;
 const CLIPBOARD_HEADER: f64 = 50.0;
 const CLIPBOARD_ROW: f64 = 70.0;
 const CLIPBOARD_GAP: f64 = 6.0;
-const SESSION_WIDTH: f64 = 230.0;
 const DIALOG: (f64, f64) = (420.0, 168.0);
 /// Fréquence de relecture de l'état de la batterie.
 const BATTERY_REFRESH: Duration = Duration::from_secs(20);
@@ -88,39 +100,40 @@ static DARK_THEME: AtomicBool = AtomicBool::new(false);
 static ACCENT_RGB: AtomicU32 = AtomicU32::new(0);
 
 fn palette() -> Palette {
+    themed(Palette::LIGHT, Palette::DARK)
+}
+
+fn themed<T>(light: T, dark: T) -> T {
     if DARK_THEME.load(Ordering::Relaxed) {
-        Palette::DARK
+        dark
     } else {
-        Palette::LIGHT
+        light
     }
 }
 
-fn glass() -> Color {
-    palette().header_background.with_alpha(232)
+/// Voile qui contraste avec le fond : noir en thème clair, blanc en thème sombre. Pour les
+/// filets, les survols et les pastilles ; les ombres, elles, restent noires.
+fn tint(alpha: u8) -> Color {
+    themed(Color::BLACK, Color::WHITE).with_alpha(alpha)
 }
 
-fn glass_rim() -> Color {
-    Color::WHITE.with_alpha(110)
+/// Barre du haut : #0A0E14 à 55 % sur le fond d'écran, écriture blanche.
+const BAR_VEIL: Color = Color::rgb(0x0A0E14).with_alpha(140);
+
+/// Taille à donner à `Canvas::label` pour un texte de `css` pixels (la police y est agrandie
+/// de 1,22 fois).
+const fn px(css: f32) -> f32 {
+    css / 1.22
 }
 
-fn glass_edge() -> Color {
-    (if DARK_THEME.load(Ordering::Relaxed) {
-        Color::WHITE
-    } else {
-        Color::BLACK
-    })
-    .with_alpha(28)
+/// Fond des panneaux système : #FAFBFC à 97 %, ou la surface sombre.
+fn panel_fill() -> Color {
+    themed(Color::rgb(0xFAFBFC), Color::rgb(0x2A2E35)).with_alpha(247)
 }
 
-fn bar_ink() -> Color {
-    palette().text
-}
-/// Barre du haut, presque transparente comme sur macOS : un voile très léger sur le fond
-/// d'écran, et un texte blanc quand le fond est sombre derrière elle.
-const BAR_VEIL_LIGHT: Color = Color::WHITE.with_alpha(60);
-const BAR_VEIL_DARK: Color = Color::BLACK.with_alpha(22);
-fn card() -> Color {
-    palette().window_background
+/// Fond des boutons et des tuiles éteintes.
+fn control_fill() -> Color {
+    themed(Color::rgb(0xEEF0F4), Color::rgb(0x353A42))
 }
 
 fn primary_text() -> Color {
@@ -148,58 +161,50 @@ fn text_strong() -> Color {
     palette().text
 }
 
-fn text_blue() -> Color {
-    palette().text
-}
-
-fn text_muted_blue() -> Color {
-    palette().text_secondary
-}
-
-fn controls_module() -> Color {
-    palette().header_background.with_alpha(170)
-}
-
-fn controls_track() -> Color {
-    (if DARK_THEME.load(Ordering::Relaxed) {
-        Color::WHITE
-    } else {
-        Color::BLACK
-    })
-    .with_alpha(16)
-}
-
-fn controls_on() -> Color {
-    palette().accent
-}
-
 /// Menu déroulant ouvert depuis la barre.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Popover {
     Launcher,
     Controls,
-    Session,
     /// Historique du presse-papiers (Super+V).
     Clipboard,
     /// Menu d'une icône du Dock (clic droit).
     DockMenu,
+    /// Menu du bureau (clic droit).
+    DesktopMenu,
+    /// Historique des notifications, ouvert depuis l'horloge ou Super+N.
+    Notifications,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DesktopAction {
     TogglePopover(Popover),
     ClosePopover,
-    Launch(App),
     /// Application du lanceur : position dans la liste (filtrée) des applications.
     LaunchTile(usize),
-    /// « Plus » ou « Moins » à droite du titre d'une rubrique.
-    LauncherLink(SectionLink),
     ToggleWifi,
     ToggleBluetooth,
-    /// Coupe (ou rallume) toutes les radios présentes.
-    ToggleAirplane,
     SetVolume(u8),
     SetBrightness(u8),
+    NotificationActivate(u32),
+    /// Bouton d'action `index` d'une bannière.
+    NotificationAction(u32, usize),
+    NotificationsClear,
+    ToggleDoNotDisturb,
+    ToggleDarkMode,
+    TogglePowerSaver,
+    /// Tuile Clavier : passe à l'autre disposition.
+    ToggleKeyboardLayout,
+    /// Chevron d'une tuile, ou retour aux tuiles.
+    ControlsPage(ControlsPage),
+    NetworkJoin(usize),
+    PasswordCancel,
+    PasswordSubmit,
+    DeviceAction(usize),
+    /// Ouvre Paramètres : lien du centre de contrôle, ou sur une rubrique.
+    OpenSettings,
+    OpenSettingsPage(&'static str),
+    Lock,
     RequestPower(PowerAction),
     ConfirmPower(PowerAction),
     CancelPower,
@@ -218,12 +223,21 @@ pub enum DesktopAction {
     DashboardDeleteTask(usize),
     DashboardMonth(i32),
     DashboardConsume,
-    DashboardLaunch(App),
-    DashboardShortcut(usize),
-    /// Point de la barre : aller à cette page (widgets ou bureau).
+    /// Note précédente ou suivante du widget Notes.
+    DashboardNoteStep(i32),
+    /// Mode d'édition des widgets.
+    WidgetsDone,
+    WidgetAdd(crate::desktop::widgets::WidgetKind),
+    WidgetRemove(usize),
+    WidgetsReset,
+    /// Appui sur un widget : déplacement, ou redimensionnement par les bords donnés.
+    WidgetDragStart(usize, crate::desktop::widgets::WidgetEdges),
+    /// Marque de la barre : aller à ce bureau.
     GoToPage(usize),
     /// Choix `index` du menu d'une icône du Dock.
     DockMenu(usize),
+    /// Choix `index` du menu du bureau.
+    DesktopMenu(usize),
     /// Clic absorbé par un panneau, sans effet.
     Consume,
 }
@@ -285,21 +299,11 @@ pub struct Tile {
     pub index: usize,
 }
 
-/// Lien à droite du titre d'une rubrique.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SectionLink {
-    /// Affiche toute la rubrique.
-    More(Section),
-    /// Revient à la vue d'ensemble.
-    Less,
-}
-
 /// Rubrique du lanceur : titre, applications, et lien éventuel.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LauncherSection {
     pub title: String,
     pub tiles: Vec<Tile>,
-    pub link: Option<SectionLink>,
 }
 
 /// Contenu du lanceur : recherche, rubriques et défilement.
@@ -329,6 +333,156 @@ pub struct DashboardNoteView {
     pub updated: u64,
 }
 
+/// Habillage d'un aperçu de la vue d'ensemble ; `frame` : x, y, largeur, hauteur logiques.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OverviewTile {
+    pub frame: (i32, i32, i32, i32),
+    pub title: String,
+    pub icon: crate::desktop::apps::AppIcon,
+    pub hovered: bool,
+    pub close_hovered: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct OverviewView {
+    pub tiles: Vec<OverviewTile>,
+    pub spaces: Vec<SpaceThumb>,
+}
+
+/// Ce que montre le centre de contrôle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ControlsPage {
+    #[default]
+    Main,
+    Wifi,
+    Bluetooth,
+}
+
+/// Réseau de la liste Wi-Fi.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NetworkRow {
+    pub index: usize,
+    pub ssid: String,
+    pub level: u8,
+    pub secured: bool,
+    pub connected: bool,
+    pub hint: String,
+}
+
+/// Mot de passe demandé sur la ligne d'un réseau : seule sa longueur arrive au dessin.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PasswordRow {
+    pub ssid: String,
+    pub length: usize,
+}
+
+/// Appareil de la liste Bluetooth.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeviceRow {
+    pub index: usize,
+    pub name: String,
+    pub paired: bool,
+    pub connected: bool,
+    pub hint: String,
+    pub glyph: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ControlsView {
+    pub page: ControlsPage,
+    pub networks: Vec<NetworkRow>,
+    pub devices: Vec<DeviceRow>,
+    pub password: Option<PasswordRow>,
+    pub scanning: bool,
+    pub current_network: Option<String>,
+    pub connected_devices: usize,
+}
+
+/// Une notification à l'écran ; sans icône, une cloche.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotificationView {
+    pub id: u32,
+    pub app: String,
+    pub summary: String,
+    pub body: String,
+    pub icon: Option<crate::desktop::apps::AppIcon>,
+    /// « maintenant », « il y a 5 min », « 18:30 ».
+    pub when: String,
+    /// Libellés des boutons d'action.
+    pub actions: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct NotificationsView {
+    pub bubbles: Vec<NotificationView>,
+    pub history: Vec<NotificationView>,
+    pub do_not_disturb: bool,
+}
+
+/// Écran de verrouillage.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LockView {
+    pub user: String,
+    pub initial: char,
+    /// Nombre de caractères tapés : le mot de passe n'arrive jamais jusqu'au dessin.
+    pub length: usize,
+    pub field: bool,
+    /// Part du passage à la saisie, de 0 à 1000.
+    pub progress: u16,
+    pub checking: bool,
+    pub welcome: bool,
+    pub message: LockMessage,
+    /// Secousse du champ après un refus, en dixièmes de point.
+    pub shake: i16,
+    pub pulse: u8,
+    pub spin: u8,
+    pub dark: bool,
+    pub wall: usize,
+    pub weather: Option<ferrite_system::weather::Weather>,
+    pub place: String,
+    pub notice: Option<LockNotice>,
+    pub media: Option<crate::desktop::lock::Media>,
+}
+
+/// Message sous le champ du mot de passe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LockMessage {
+    Hint,
+    Empty,
+    Wrong,
+}
+
+/// Notifications reçues : l'application et leur nombre, jamais leur contenu.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LockNotice {
+    pub app: String,
+    pub icon: Option<crate::desktop::apps::AppIcon>,
+    pub count: usize,
+    pub when: String,
+}
+
+/// Vignette d'un espace de travail dans la vue d'ensemble.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpaceThumb {
+    pub page: usize,
+    pub windows: usize,
+    pub current: bool,
+}
+
+/// Sélecteur Alt+Tab : une icône par fenêtre.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SwitcherView {
+    pub icons: Vec<crate::desktop::apps::AppIcon>,
+    pub selected: usize,
+    pub title: String,
+}
+
+/// Sélection d'une zone à capturer ; `rect` : x, y, largeur, hauteur logiques.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RegionView {
+    pub rect: Option<(i32, i32, i32, i32)>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DashboardView {
     pub notes: Vec<DashboardNoteView>,
@@ -338,11 +492,28 @@ pub struct DashboardView {
     pub month_offset: i32,
     pub weather: Option<ferrite_system::weather::Weather>,
     pub place: String,
+    /// Fond d'écran à peine flouté, vu au travers des cartes.
+    pub backdrop: Option<Arc<Image>>,
+    pub layout: Vec<crate::desktop::widgets::WidgetSlot>,
+    pub note_shown: usize,
+    pub tasks_scroll: usize,
+    /// Widgets affichés et cliquables (pas dans la vue d'ensemble).
+    pub shown: bool,
+    /// Ramenés devant les fenêtres par Super+W.
+    pub front: bool,
+    /// Mode d'édition, et widget en train d'être déplacé.
+    pub edit: bool,
+    pub drag: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DesktopView {
     pub dark_theme: bool,
+    pub overview: Option<OverviewView>,
+    pub switcher: Option<SwitcherView>,
+    pub lock: Option<LockView>,
+    pub notifications: NotificationsView,
+    pub region: Option<RegionView>,
     pub popover: Option<Popover>,
     pub wifi: Option<bool>,
     pub bluetooth: Option<bool>,
@@ -353,8 +524,15 @@ pub struct DesktopView {
     pub error: Option<String>,
     /// Barre du haut affichée (masquée quand une application est en plein écran).
     pub bar_visible: bool,
-    /// Le fond d'écran est sombre sous la barre : elle écrit en blanc.
-    pub bar_dark: bool,
+    /// Une fenêtre agrandie touche la barre : elle devient opaque.
+    pub bar_opaque: bool,
+    /// Réglages rapides qui ne viennent pas du fil système.
+    pub controls: ControlsView,
+    pub power_saver: bool,
+    pub battery_percent: bool,
+    pub bluetooth_icon: bool,
+    pub clock_style: ClockStyle,
+    pub keyboard: String,
     /// Hauteur configurable de la barre du haut.
     pub bar_height: u32,
     /// Page affichée (0 : widgets) et nombre de pages ; 0 page : pas de points dans la barre.
@@ -366,6 +544,10 @@ pub struct DesktopView {
     pub clipboard: ClipboardView,
     pub dashboard: DashboardView,
     pub dock_menu: Option<DockMenuView>,
+    /// Coin du menu du bureau.
+    pub desktop_menu: Option<(i32, i32)>,
+    /// Pointeur, connu seulement quand un menu est ouvert : il en surligne la ligne.
+    pub menu_pointer: Option<(i32, i32)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -420,11 +602,12 @@ struct Battery {
 pub struct Panels {
     regular: Font,
     bold: Font,
+    light: Font,
     icons: IconCache,
     battery: RefCell<(Option<Instant>, Option<Battery>)>,
     system: RefCell<SystemMonitor>,
     cached: RefCell<Option<(VisualState, MemoryRenderBuffer, Option<PopoverLayer>)>>,
-    /// Page des widgets, dessinée à part : elle passe sous les fenêtres et glisse.
+    /// Widgets, dessinés à part : ils passent sous les fenêtres.
     dashboard: RefCell<Option<(VisualState, MemoryRenderBuffer)>>,
     /// Dernier panneau animé affiché (centre de contrôle, session), gardé pour s'effacer
     /// après sa fermeture, et sa part d'apparition (0 à 1).
@@ -432,11 +615,17 @@ pub struct Panels {
     layer_shown: Cell<(f64, Option<Instant>)>,
     /// Verre du lanceur, dernier calculé.
     frost: RefCell<Option<(FrostKey, Arc<Frost>)>>,
+    /// Fond de l'écran de verrouillage.
+    lock_wall: RefCell<Option<(LockWallKey, Vec<u8>)>>,
 }
 
 /// Durées de l'apparition et de la disparition d'un panneau, et sa taille de départ.
-/// Module Raccourcis : marge sur les côtés et début des icônes, sous le titre.
-const SHORTCUTS_PAD: f64 = 12.0;
+/// Choix du menu du bureau.
+const DESKTOP_MENU: [&str; 2] = ["Modifier les widgets", "Changer le fond d’écran…"];
+/// Marques des bureaux dans la barre.
+const PAGE_MARK: f64 = 6.0;
+const PAGE_MARK_ACTIVE: f64 = 16.0;
+const PAGE_MARK_GAP: f64 = 6.0;
 const LAYER_IN: Duration = Duration::from_millis(200);
 const LAYER_OUT: Duration = Duration::from_millis(150);
 const LAYER_SCALE: f64 = 0.94;
@@ -452,9 +641,11 @@ struct PopoverLayer {
 /// Panneaux qui apparaissent et disparaissent en fondu, grandissant depuis leur coin
 /// haut droit (sous leur bouton de la barre), comme sur macOS.
 fn animated(popover: Option<Popover>) -> bool {
-    matches!(popover, Some(Popover::Controls | Popover::Session))
+    matches!(popover, Some(Popover::Controls))
 }
 
+/// Taille (pixels physiques), thème et choix du fond de l'écran de verrouillage.
+type LockWallKey = (u32, u32, bool, usize);
 /// Place (pixels physiques), échelle et fond d'écran d'un verre calculé.
 type FrostKey = ([u32; 4], u32, Option<usize>);
 
@@ -478,9 +669,11 @@ impl Panels {
     pub fn new() -> Result<Self, String> {
         let regular = Font::from_bytes(FONT_REGULAR, FontSettings::default()).map_err(|e| e.to_string())?;
         let bold = Font::from_bytes(FONT_BOLD, FontSettings::default()).map_err(|e| e.to_string())?;
+        let light = Font::from_bytes(FONT_LIGHT, FontSettings::default()).map_err(|e| e.to_string())?;
         Ok(Self {
             regular,
             bold,
+            light,
             icons: IconCache::default(),
             battery: RefCell::new((None, None)),
             system: RefCell::new(SystemMonitor::default()),
@@ -489,6 +682,7 @@ impl Panels {
             layer: RefCell::new(None),
             layer_shown: Cell::new((0.0, None)),
             frost: RefCell::new(None),
+            lock_wall: RefCell::new(None),
         })
     }
 
@@ -573,8 +767,8 @@ impl Panels {
         }
     }
 
-    /// Page des widgets, décalée de `shift` pixels logiques quand elle glisse.
-    #[allow(clippy::too_many_arguments)] // Rendu, écran, état et décalage.
+    /// Widgets, avec l'opacité `alpha` : ils s'estompent quand une fenêtre les recouvre.
+    #[allow(clippy::too_many_arguments)] // Rendu, écran, état et opacité.
     pub fn push_dashboard(
         &self,
         renderer: &mut GlesRenderer,
@@ -582,7 +776,7 @@ impl Panels {
         output_geo: Rectangle<i32, Logical>,
         scale: f64,
         view: &DesktopView,
-        shift: i32,
+        alpha: f32,
         out: &mut Vec<super::super::render::OutputElement>,
     ) {
         let state = VisualState {
@@ -612,9 +806,9 @@ impl Panels {
         let physical_size = (output_geo.size.w as f64 * scale, output_geo.size.h as f64 * scale);
         match MemoryRenderBufferRenderElement::from_buffer(
             renderer,
-            Point::from((shift as f64 * scale, 0.0)),
+            Point::from((0.0, 0.0)),
             buffer,
-            None,
+            Some(alpha),
             Some(Rectangle::<f64, Logical>::from_size(physical_size.into())),
             Some(output_geo.size),
             Kind::Unspecified,
@@ -627,12 +821,12 @@ impl Panels {
     fn rasterize_dashboard(&self, state: &VisualState, scale: f64) -> MemoryRenderBuffer {
         let width = (state.width as f64 * scale).round().max(1.0) as u32;
         let height = (state.height as f64 * scale).round().max(1.0) as u32;
-        let (layout, design_scale) = dashboard_layout(state.width as f64, state.height as f64, &state.view);
+        let layout = Layout::new(state.width as f64, state.height as f64, &state.view);
         let mut canvas = Canvas {
             pixels: vec![0; width as usize * height as usize * 4],
             width,
             height,
-            scale: (scale * design_scale) as f32,
+            scale: scale as f32,
             bold: &self.bold,
             icons: &self.icons,
         };
@@ -671,11 +865,10 @@ impl Panels {
                 if let Some((previous_total, previous_idle)) = monitor.previous_cpu {
                     let elapsed = total.saturating_sub(previous_total);
                     let busy = elapsed.saturating_sub(idle.saturating_sub(previous_idle));
-                    monitor.metrics.cpu = if elapsed == 0 {
-                        0
-                    } else {
-                        (busy.saturating_mul(100) / elapsed).min(100) as u8
-                    };
+                    monitor.metrics.cpu = busy
+                        .saturating_mul(100)
+                        .checked_div(elapsed)
+                        .map_or(0, |percent| percent.min(100) as u8);
                 }
                 monitor.previous_cpu = Some((total, idle));
             }
@@ -724,6 +917,26 @@ impl Panels {
         let view = &state.view;
         let layout = Layout::new(state.width as f64, state.height as f64, view);
 
+        // L'écran de verrouillage ne laisse rien voir d'autre.
+        if let Some(lock) = &view.lock {
+            canvas.pixels = self.lock_wall(width, height, lock);
+            canvas.scale = (scale * lock_screen::lock_scale(state.width as f64, state.height as f64)) as f32;
+            self.draw_lock(&mut canvas, state.width as f64, state.height as f64, state, lock);
+            canvas.scale = scale as f32;
+            // Arrêt demandé depuis l'écran verrouillé : la confirmation passe devant.
+            if let Some(power) = view.power {
+                self.draw_dialog(&mut canvas, &layout, power);
+            }
+            return MemoryRenderBuffer::from_slice(
+                &canvas.pixels,
+                Fourcc::Argb8888,
+                (width as i32, height as i32),
+                1,
+                smithay::utils::Transform::Normal,
+                None,
+            );
+        }
+
         // Barre du haut (sauf en plein écran, tant que la souris ne la rappelle pas).
         if view.bar_visible {
             self.draw_bar(&mut canvas, &layout, state);
@@ -732,14 +945,51 @@ impl Panels {
         match view.popover {
             Some(Popover::Launcher) => self.draw_launcher(&mut canvas, &layout, &view.launcher),
             // Dessinés à part, par `rasterize_layer`.
-            Some(Popover::Controls | Popover::Session) => {}
+            Some(Popover::Controls) => {}
             Some(Popover::Clipboard) => self.draw_clipboard(&mut canvas, &layout, &view.clipboard),
+            Some(Popover::Notifications) => {
+                self.draw_notification_center(&mut canvas, &layout, &view.notifications);
+            }
             Some(Popover::DockMenu) => {
                 if let Some(menu) = &view.dock_menu {
-                    self.draw_dock_menu(&mut canvas, &layout, menu);
+                    self.draw_dock_menu(&mut canvas, &layout, menu, view.menu_pointer);
+                }
+            }
+            Some(Popover::DesktopMenu) => {
+                if let Some(anchor) = view.desktop_menu {
+                    self.draw_desktop_menu(&mut canvas, &layout, anchor, view.menu_pointer);
                 }
             }
             None => {}
+        }
+
+        for (notification, bubble) in view
+            .notifications
+            .bubbles
+            .iter()
+            .zip(layout.notification_bubbles(&view.notifications.bubbles))
+        {
+            canvas.glass(bubble, 14.0);
+            self.draw_notification(&mut canvas, bubble, notification);
+            for (index, label) in notification.actions.iter().enumerate() {
+                let button = notification_action(bubble, index);
+                let (fill, ink) = if index == 0 {
+                    (accent(), Color::WHITE)
+                } else {
+                    (control_fill(), primary_text())
+                };
+                canvas.button(button, label, fill, ink);
+            }
+        }
+
+        if let Some(overview) = &view.overview {
+            self.draw_overview(&mut canvas, &layout, overview);
+        }
+        if let Some(switcher) = &view.switcher {
+            self.draw_switcher(&mut canvas, &layout, switcher);
+        }
+        if let Some(region) = view.region {
+            self.draw_region(&mut canvas, &layout, region);
         }
 
         // Confirmation explicite, pour éviter un arrêt accidentel.
@@ -774,16 +1024,8 @@ impl Panels {
             icons: &self.icons,
         };
         let layout = Layout::new(state.width as f64, state.height as f64, view);
-        let card = match view.popover {
-            Some(Popover::Controls) => {
-                self.draw_controls(&mut canvas, &layout, view);
-                layout.controls()
-            }
-            _ => {
-                self.draw_session(&mut canvas, &layout);
-                layout.session()
-            }
-        };
+        self.draw_controls(&mut canvas, &layout, state);
+        let card = layout.controls();
         // Marge pour l'ombre, en pixels physiques entiers.
         let left = ((card.x - 16.0) * scale).floor().max(0.0) as u32;
         let top = ((card.y - 16.0) * scale).floor().max(0.0) as u32;
@@ -816,617 +1058,7 @@ impl Panels {
         })
     }
 
-    fn draw_dashboard(&self, canvas: &mut Canvas, layout: &Layout, state: &VisualState) {
-        let view = &state.view.dashboard;
-        let [clock, weather, calendar, notes, tasks, system, shortcuts, quote] = layout.dashboard_cards();
-        let cards = [clock, weather, calendar, notes, tasks, system, shortcuts, quote];
-        for card in cards {
-            canvas.card_shadow(card, 16.0);
-            let alpha = if card == quote { 184 } else { 238 };
-            canvas.fill(card, 16.0, Color::WHITE.with_alpha(alpha));
-            canvas.fill(
-                Rect::new(card.x + 16.0, card.y + 1.0, card.w - 32.0, 1.0),
-                0.5,
-                Color::WHITE.with_alpha(180),
-            );
-        }
-        self.quote_landscape(canvas, quote);
-
-        let months = [
-            "janvier",
-            "février",
-            "mars",
-            "avril",
-            "mai",
-            "juin",
-            "juillet",
-            "août",
-            "septembre",
-            "octobre",
-            "novembre",
-            "décembre",
-        ];
-        let weekdays = ["Dim.", "Lun.", "Mar.", "Mer.", "Jeu.", "Ven.", "Sam."];
-
-        canvas.icon(
-            "app-calendar",
-            (clock.x + 30.0, clock.y + 28.0),
-            20.0,
-            Style::Color,
-        );
-        let date = format!(
-            "{} {} {} {}",
-            weekdays[state.clock.weekday],
-            state.clock.day,
-            months[state.clock.month.saturating_sub(1) as usize],
-            state.clock.year
-        );
-        canvas.label(
-            &self.regular,
-            &date,
-            clock.x + 51.0,
-            clock.y + 20.0,
-            13.0,
-            text_blue(),
-        );
-        canvas.icon(
-            "app-settings",
-            (clock.right() - 26.0, clock.y + 27.0),
-            18.0,
-            Style::Color,
-        );
-        let hour = match state.clock.hour % 12 {
-            0 => 12,
-            hour => hour,
-        };
-        let meridiem = if state.clock.hour < 12 { "AM" } else { "PM" };
-        canvas.label(
-            &self.bold,
-            &format!("{hour}:{:02}", state.clock.minute),
-            clock.x + 20.0,
-            clock.y + 53.0,
-            62.0,
-            text_blue(),
-        );
-        canvas.label(
-            &self.bold,
-            meridiem,
-            clock.x + 194.0,
-            clock.y + 109.0,
-            15.0,
-            text_muted_blue(),
-        );
-        canvas.icon(
-            "status-location",
-            (clock.x + 30.0, clock.y + 152.0),
-            15.0,
-            Style::Color,
-        );
-        canvas.label(
-            &self.regular,
-            &view.place,
-            clock.x + 43.0,
-            clock.y + 146.0,
-            13.0,
-            text_blue(),
-        );
-        self.sun(
-            canvas,
-            (clock.right() - 48.0, clock.y + 132.0),
-            17.0,
-            Color::rgb(0xFFC83D),
-        );
-        canvas.icon(
-            "status-cloud",
-            (clock.right() - 36.0, clock.y + 159.0),
-            38.0,
-            Style::Color,
-        );
-        canvas.fill(
-            Rect::new(clock.x + 20.0, clock.y + clock.h - 51.0, clock.w - 40.0, 1.0),
-            0.0,
-            Color::BLACK.with_alpha(14),
-        );
-        canvas.label(
-            &self.regular,
-            "« Chaque petit pas compte. »",
-            clock.x + 22.0,
-            clock.bottom() - 36.0,
-            13.0,
-            text_muted_blue(),
-        );
-
-        self.sun_icon(canvas, (weather.x + 38.0, weather.y + 29.0), 12.0);
-        canvas.label(
-            &self.bold,
-            &view.place,
-            weather.x + 66.0,
-            weather.y + 19.0,
-            15.0,
-            text_blue(),
-        );
-        canvas.icon(
-            "status-location",
-            (
-                weather.x + 66.0 + canvas.text_width(&self.bold, &view.place, 15.0) + 10.0,
-                weather.y + 28.0,
-            ),
-            12.0,
-            Style::Color,
-        );
-        let weather_data = view.weather.as_ref();
-        let temperature = weather_data.map_or_else(|| "--".to_owned(), |data| data.temperature.to_string());
-        canvas.label(
-            &self.bold,
-            &format!("{temperature}°C"),
-            weather.x + 20.0,
-            weather.y + 47.0,
-            48.0,
-            text_blue(),
-        );
-        self.sun(
-            canvas,
-            (weather.right() - 56.0, weather.y + 94.0),
-            25.0,
-            Color::rgb(0xFFC83D),
-        );
-        let sky = weather_data.map_or("Chargement…", |data| data.sky.label());
-        let feels_like =
-            weather_data.map_or_else(String::new, |data| format!("Ressentie : {}°C", data.feels_like));
-        canvas.label(
-            &self.bold,
-            sky,
-            weather.x + 22.0,
-            weather.y + 105.0,
-            13.0,
-            text_blue(),
-        );
-        canvas.label(
-            &self.regular,
-            &feels_like,
-            weather.x + 22.0,
-            weather.y + 124.0,
-            12.0,
-            text_muted_blue(),
-        );
-        let forecast = Rect::new(weather.x + 12.0, weather.bottom() - 87.0, weather.w - 24.0, 76.0);
-        canvas.fill(forecast, 14.0, Color::rgb(0xEAF3FF).with_alpha(180));
-        if let Some(data) = weather_data {
-            for (index, day) in data.days.iter().take(4).enumerate() {
-                let cell_width = forecast.w / 4.0;
-                let center = forecast.x + cell_width * (index as f64 + 0.5);
-                let weekday = weekday_for(day.date.0, day.date.1, day.date.2);
-                canvas.label(
-                    &self.regular,
-                    weekday,
-                    center - canvas.text_width(&self.regular, weekday, 10.0) / 2.0,
-                    forecast.y + 8.0,
-                    10.0,
-                    text_blue(),
-                );
-                self.weather_symbol(canvas, (center, forecast.y + 37.0), day.sky);
-                let range = format!("{}° / {}°", day.max, day.min);
-                let width = canvas.text_width(&self.regular, &range, 10.0);
-                canvas.label(
-                    &self.regular,
-                    &range,
-                    center - width / 2.0,
-                    forecast.y + 57.0,
-                    10.0,
-                    text_muted_blue(),
-                );
-                if index > 0 {
-                    canvas.fill(
-                        Rect::new(
-                            forecast.x + cell_width * index as f64,
-                            forecast.y + 12.0,
-                            1.0,
-                            forecast.h - 24.0,
-                        ),
-                        0.0,
-                        Color::WHITE.with_alpha(180),
-                    );
-                }
-            }
-        }
-
-        let (year, month) = shift_month(state.clock.year, state.clock.month, view.month_offset);
-        canvas.label(
-            &self.bold,
-            &format!("{} {}", capitalize(months[month as usize - 1]), year),
-            calendar.x + 20.0,
-            calendar.y + 19.0,
-            16.0,
-            text_blue(),
-        );
-        canvas.label(
-            &self.bold,
-            "‹",
-            calendar.right() - 58.0,
-            calendar.y + 14.0,
-            23.0,
-            text_blue(),
-        );
-        canvas.label(
-            &self.bold,
-            "›",
-            calendar.right() - 30.0,
-            calendar.y + 14.0,
-            23.0,
-            text_blue(),
-        );
-        let grid_left = calendar.x + 16.0;
-        let grid_width = calendar.w - 32.0;
-        let cell_width = grid_width / 7.0;
-        let week_y = calendar.y + 49.0;
-        for (index, label) in ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"]
-            .iter()
-            .enumerate()
-        {
-            let x = grid_left + cell_width * (index as f64 + 0.5);
-            let width = canvas.text_width(&self.regular, label, 10.0);
-            canvas.label(&self.regular, label, x - width / 2.0, week_y, 10.0, text_blue());
-        }
-        let first_weekday = (days_from_civil(year, month, 1) + 3).rem_euclid(7) as usize;
-        let days_in_month = days_in_month(year, month);
-        let row_height = ((calendar.bottom() - week_y - 29.0) / 6.0).clamp(15.0, 25.0);
-        for day in 1..=days_in_month {
-            let cell = first_weekday + day as usize - 1;
-            let row = cell / 7;
-            let column = cell % 7;
-            let center = (
-                grid_left + cell_width * (column as f64 + 0.5),
-                week_y + 25.0 + row_height * row as f64,
-            );
-            let today = view.month_offset == 0 && day == state.clock.day;
-            if today {
-                canvas.fill(
-                    Rect::new(center.0 - 14.0, center.1 - 12.0, 28.0, 25.0),
-                    12.0,
-                    accent(),
-                );
-            }
-            let text = day.to_string();
-            let width = canvas.text_width(&self.regular, &text, 11.0);
-            canvas.label(
-                &self.regular,
-                &text,
-                center.0 - width / 2.0,
-                center.1 - 7.0,
-                11.0,
-                if today { Color::WHITE } else { text_blue() },
-            );
-        }
-
-        self.dashboard_title(canvas, notes, "Mes notes", "app-text-editor");
-        let add_note = Rect::new(notes.right() - 44.0, notes.y + 10.0, 34.0, 34.0);
-        canvas.label(
-            &self.bold,
-            "+",
-            add_note.x + 7.0,
-            add_note.y - 3.0,
-            24.0,
-            text_blue(),
-        );
-        let notes_top = notes.y + 56.0;
-        let note_height = (notes.bottom() - notes_top - 8.0).max(0.0) / 4.0;
-        let accents = [
-            Color::rgb(0x348AF0),
-            Color::rgb(0x22BA80),
-            Color::rgb(0x973CF2),
-            Color::rgb(0xF5A000),
-        ];
-        for index in 0..4 {
-            let row = Rect::new(
-                notes.x + 12.0,
-                notes_top + index as f64 * note_height,
-                notes.w - 24.0,
-                note_height - 4.0,
-            );
-            let Some(note) = view.notes.get(index) else {
-                if index == 0 && view.notes.is_empty() {
-                    canvas.label(
-                        &self.regular,
-                        "Cliquez sur + pour créer une note",
-                        row.x + 10.0,
-                        row.y + 11.0,
-                        11.0,
-                        text_muted_blue(),
-                    );
-                }
-                continue;
-            };
-            canvas.fill(row, 10.0, Color::rgb(0xF1F6FC).with_alpha(210));
-            canvas.fill(
-                Rect::new(row.x + 6.0, row.y + 6.0, 5.0, row.h - 12.0),
-                3.0,
-                accents[index % accents.len()],
-            );
-            let editing = view.editing == Some(crate::desktop::widgets::DashboardEdit::Note(index));
-            let title = if editing && note.title.is_empty() {
-                "Écrire une note…"
-            } else {
-                note.title.as_str()
-            };
-            let title = canvas.fit_text(&self.bold, title, 12.0, row.w - 75.0);
-            canvas.label(&self.bold, &title, row.x + 21.0, row.y + 6.0, 12.0, text_blue());
-            let preview = if editing && note.preview.is_empty() {
-                "Saisir le contenu…"
-            } else {
-                note.preview.as_str()
-            };
-            let preview = canvas.fit_text(&self.regular, preview, 10.5, row.w - 35.0);
-            canvas.label(
-                &self.regular,
-                &preview,
-                row.x + 21.0,
-                row.y + 23.0,
-                10.5,
-                text_muted_blue(),
-            );
-            let updated = note_timestamp(note.updated, state.clock);
-            let width = canvas.text_width(&self.regular, &updated, 9.0);
-            canvas.label(
-                &self.regular,
-                &updated,
-                row.right() - width - 8.0,
-                row.y + 8.0,
-                9.0,
-                text_muted_blue(),
-            );
-        }
-
-        self.dashboard_title(canvas, tasks, "Ma To-Do Liste", "status-notifications");
-        let add = Rect::new(tasks.right() - 44.0, tasks.y + 10.0, 34.0, 34.0);
-        canvas.label(&self.bold, "+", add.x + 7.0, add.y - 3.0, 24.0, text_blue());
-        let row_top = tasks.y + 53.0;
-        let row_height = ((tasks.bottom() - row_top - 8.0) / 6.0).clamp(25.0, 34.0);
-        let visible = ((tasks.bottom() - row_top - 5.0) / row_height).floor().max(0.0) as usize;
-        for (index, task) in view.tasks.iter().take(visible).enumerate() {
-            let y = row_top + index as f64 * row_height;
-            let checkbox = Rect::new(tasks.x + 20.0, y + 5.0, 17.0, 17.0);
-            canvas.fill(
-                checkbox,
-                4.0,
-                if task.done {
-                    Color::rgb(0x1767FF)
-                } else {
-                    Color::WHITE
-                },
-            );
-            canvas.stroke(checkbox, 4.0, Color::rgb(0x183365), 1.5);
-            if task.done {
-                canvas.label(
-                    &self.bold,
-                    "✓",
-                    checkbox.x + 3.0,
-                    checkbox.y - 1.0,
-                    13.0,
-                    Color::WHITE,
-                );
-            }
-            let label = canvas.fit_text(&self.regular, &task.text, 11.5, tasks.w - 125.0);
-            canvas.label(
-                &self.regular,
-                &label,
-                checkbox.right() + 14.0,
-                y + 6.0,
-                11.5,
-                if task.done { text_muted_blue() } else { text_blue() },
-            );
-            let (priority_text, background, ink) = match task.priority {
-                crate::desktop::widgets::Priority::High => {
-                    ("Haute", Color::rgb(0xFFE0E2), Color::rgb(0xE6444C))
-                }
-                crate::desktop::widgets::Priority::Medium => {
-                    ("Moyenne", Color::rgb(0xFFF0C8), Color::rgb(0xD78600))
-                }
-                crate::desktop::widgets::Priority::Low => {
-                    ("Basse", Color::rgb(0xD7F3E6), Color::rgb(0x18996A))
-                }
-            };
-            let priority_width = canvas.text_width(&self.regular, priority_text, 10.0);
-            let pill = Rect::new(
-                tasks.right() - priority_width - 30.0,
-                y + 3.0,
-                priority_width + 18.0,
-                22.0,
-            );
-            canvas.fill(pill, 11.0, background);
-            canvas.label(
-                &self.regular,
-                priority_text,
-                pill.x + (pill.w - priority_width) / 2.0,
-                pill.y + 4.0,
-                10.0,
-                ink,
-            );
-            canvas.fill(
-                Rect::new(tasks.x + 18.0, y + row_height - 1.0, tasks.w - 36.0, 1.0),
-                0.0,
-                Color::rgb(0xDCE6F3),
-            );
-        }
-        if view.tasks.is_empty() {
-            canvas.label(
-                &self.regular,
-                "Aucune tâche. Cliquez sur + pour en ajouter.",
-                tasks.x + 20.0,
-                row_top + 12.0,
-                11.0,
-                text_muted_blue(),
-            );
-        }
-        if view.editing == Some(crate::desktop::widgets::DashboardEdit::NewTask) {
-            let draft = if view.draft.is_empty() {
-                "Saisir une tâche puis Entrée".to_owned()
-            } else {
-                canvas.fit_text(&self.regular, &view.draft, 12.0, tasks.w - 60.0)
-            };
-            canvas.label(
-                &self.regular,
-                &format!("› {draft}"),
-                tasks.x + 18.0,
-                tasks.bottom() - 28.0,
-                12.0,
-                accent(),
-            );
-        }
-
-        self.dashboard_title(canvas, system, "Système", "app-monitor");
-        let ring_y = system.y + 91.0;
-        let metrics = state.system.clone();
-        let values = [
-            ("CPU", metrics.cpu, Color::rgb(0x25B978)),
-            ("RAM", metrics.memory, Color::rgb(0x2584F5)),
-            ("Disque", metrics.disk, Color::rgb(0x8B3FF2)),
-        ];
-        for (index, (label, value, color)) in values.into_iter().enumerate() {
-            let center = (system.x + system.w * (index as f64 + 0.5) / 3.0, ring_y);
-            canvas.progress_ring(center, 28.0, 5.0, value, color);
-            let text = format!("{value}%");
-            let width = canvas.text_width(&self.bold, &text, 11.0);
-            canvas.label(
-                &self.bold,
-                &text,
-                center.0 - width / 2.0,
-                center.1 - 5.0,
-                11.0,
-                text_blue(),
-            );
-            let width = canvas.text_width(&self.regular, label, 10.0);
-            canvas.label(
-                &self.regular,
-                label,
-                center.0 - width / 2.0,
-                center.1 + 32.0,
-                10.0,
-                text_blue(),
-            );
-        }
-        canvas.fill(
-            Rect::new(system.x + 16.0, system.y + 150.0, system.w - 32.0, 1.0),
-            0.0,
-            Color::rgb(0xDFE8F4),
-        );
-        canvas.label(
-            &self.bold,
-            "Réseau",
-            system.x + 18.0,
-            system.y + 161.0,
-            12.0,
-            text_blue(),
-        );
-        let (download, download_unit) = network_rate(metrics.download_kib);
-        let (upload, upload_unit) = network_rate(metrics.upload_kib);
-        canvas.icon(
-            "status-download",
-            (system.x + 25.0, system.y + 190.0),
-            16.0,
-            Style::Color,
-        );
-        canvas.label(
-            &self.regular,
-            &format!("{download} {download_unit}/s"),
-            system.x + 42.0,
-            system.y + 181.0,
-            10.0,
-            text_blue(),
-        );
-        canvas.icon(
-            "status-upload",
-            (system.x + 25.0, system.y + 217.0),
-            16.0,
-            Style::Color,
-        );
-        canvas.label(
-            &self.regular,
-            &format!("{upload} {upload_unit}/s"),
-            system.x + 42.0,
-            system.y + 208.0,
-            10.0,
-            text_blue(),
-        );
-        let chart = Rect::new(
-            system.x + system.w * 0.43,
-            system.y + 176.0,
-            system.w * 0.52,
-            48.0,
-        );
-        canvas.network_chart(chart, &metrics.network_history);
-
-        canvas.icon(
-            "app-search",
-            (shortcuts.x + 25.0, shortcuts.y + 26.0),
-            19.0,
-            Style::Color,
-        );
-        canvas.label(
-            &self.bold,
-            "Raccourcis",
-            shortcuts.x + 42.0,
-            shortcuts.y + 18.0,
-            14.0,
-            text_blue(),
-        );
-        let apps = [
-            ("Fichiers", "app-files"),
-            ("Terminal", "app-terminal"),
-            ("Navigateur", "app-web"),
-            ("Code", "app-code"),
-            ("Paramètres", "app-settings"),
-            ("Corbeille", "places-trash"),
-        ];
-        let item_width = (shortcuts.w - 2.0 * SHORTCUTS_PAD) / apps.len() as f64;
-        let top = shortcuts.y + 42.0;
-        for (index, (label, icon)) in apps.into_iter().enumerate() {
-            let center_x = shortcuts.x + SHORTCUTS_PAD + item_width * (index as f64 + 0.5);
-            let tile = Rect::new(center_x - 27.0, top, 54.0, 54.0);
-            canvas.fill(tile, 15.0, Color::rgb(0xEAF3FF).with_alpha(230));
-            canvas.icon(icon, (center_x, top + 27.0), 34.0, Style::Color);
-            let label = canvas.fit_text(&self.regular, label, 10.0, item_width - 4.0);
-            let width = canvas.text_width(&self.regular, &label, 10.0);
-            canvas.label(
-                &self.regular,
-                &label,
-                center_x - width / 2.0,
-                top + 60.0,
-                10.0,
-                text_blue(),
-            );
-        }
-
-        canvas.icon("app-clock", (quote.x + 25.0, quote.y + 24.0), 19.0, Style::Color);
-        canvas.label(
-            &self.bold,
-            "Citation du jour",
-            quote.x + 42.0,
-            quote.y + 18.0,
-            14.0,
-            text_blue(),
-        );
-        let citation = "« Les grandes choses ne viennent pas du confort, mais de l’effort. »";
-        let lines = wrap_dashboard_text(&self.regular, citation, 12.0, quote.w * 0.49);
-        for (index, line) in lines.into_iter().take(3).enumerate() {
-            canvas.label(
-                &self.regular,
-                &line,
-                quote.x + 18.0,
-                quote.y + 48.0 + index as f64 * 15.0,
-                12.0,
-                text_blue(),
-            );
-        }
-        canvas.label(
-            &self.regular,
-            "— Inconnu",
-            quote.x + 18.0,
-            quote.bottom() - 20.0,
-            9.0,
-            text_muted_blue(),
-        );
-    }
-
+    /// Soleil : rayons proportionnels au disque, comme sur la maquette.
     fn sun(&self, canvas: &mut Canvas, center: (f64, f64), radius: f64, color: Color) {
         canvas.fill(
             Rect::new(center.0 - radius, center.1 - radius, radius * 2.0, radius * 2.0),
@@ -1434,46 +1066,42 @@ impl Panels {
             color,
         );
         for angle in 0..8 {
-            let radians = std::f64::consts::TAU * angle as f64 / 8.0;
-            let start = (
-                center.0 + radians.cos() * (radius + 4.0),
-                center.1 + radians.sin() * (radius + 4.0),
+            let (sin, cos) = (std::f64::consts::TAU * f64::from(angle) / 8.0).sin_cos();
+            canvas.line(
+                (center.0 + cos * radius * 1.5, center.1 + sin * radius * 1.5),
+                (center.0 + cos * radius * 2.0, center.1 + sin * radius * 2.0),
+                (radius * 0.3).max(1.0),
+                color,
             );
-            let end = (
-                center.0 + radians.cos() * (radius + 9.0),
-                center.1 + radians.sin() * (radius + 9.0),
-            );
-            canvas.line(start, end, 2.0, color);
         }
     }
 
-    fn sun_icon(&self, canvas: &mut Canvas, center: (f64, f64), radius: f64) {
-        self.sun(canvas, center, radius, Color::rgb(0xFFB91F));
-    }
-
-    fn weather_symbol(&self, canvas: &mut Canvas, center: (f64, f64), sky: ferrite_system::weather::Sky) {
+    /// Symbole du temps ; `k` : son échelle (1 : celle des prévisions).
+    fn weather_symbol(
+        &self,
+        canvas: &mut Canvas,
+        center: (f64, f64),
+        sky: ferrite_system::weather::Sky,
+        k: f64,
+    ) {
         use ferrite_system::weather::Sky;
+        let sun = Color::rgb(0xFFC53D);
         match sky {
-            Sky::Clear => self.sun_icon(canvas, center, 8.0),
+            Sky::Clear => self.sun(canvas, center, 4.8 * k, sun),
             Sky::Partly => {
-                self.sun(
-                    canvas,
-                    (center.0 - 4.0, center.1 - 2.0),
-                    7.0,
-                    Color::rgb(0xFFB91F),
-                );
+                self.sun(canvas, (center.0 - 4.0 * k, center.1 - 2.0 * k), 4.0 * k, sun);
                 canvas.icon(
                     "status-cloud",
-                    (center.0 + 3.0, center.1 + 4.0),
-                    21.0,
+                    (center.0 + 3.0 * k, center.1 + 4.0 * k),
+                    21.0 * k,
                     Style::Color,
                 );
             }
             Sky::Cloudy | Sky::Fog => {
-                canvas.icon("status-cloud", center, 22.0, Style::Color);
+                canvas.icon("status-cloud", center, 22.0 * k, Style::Color);
             }
             Sky::Rain | Sky::Storm | Sky::Snow => {
-                canvas.icon("status-cloud", center, 21.0, Style::Color);
+                canvas.icon("status-cloud", center, 21.0 * k, Style::Color);
                 let precipitation = if sky == Sky::Snow {
                     Color::rgb(0x74AFFF)
                 } else {
@@ -1481,8 +1109,8 @@ impl Panels {
                 };
                 for offset in [-5.0, 3.0] {
                     canvas.line(
-                        (center.0 + offset, center.1 + 6.0),
-                        (center.0 + offset - 2.0, center.1 + 11.0),
+                        (center.0 + offset * k, center.1 + 6.0 * k),
+                        (center.0 + (offset - 2.0) * k, center.1 + 11.0 * k),
                         1.8,
                         precipitation,
                     );
@@ -1491,138 +1119,61 @@ impl Panels {
         }
     }
 
-    fn quote_landscape(&self, canvas: &mut Canvas, quote: Rect) {
-        let scene = Rect::new(
-            quote.x + quote.w * 0.53,
-            quote.y + 8.0,
-            quote.w * 0.45,
-            quote.h - 16.0,
-        );
-        canvas.fill(scene, 12.0, Color::rgb(0xA9DDF7));
-        self.sun(
-            canvas,
-            (scene.x + scene.w * 0.78, scene.y + scene.h * 0.23),
-            scene.h * 0.09,
-            Color::rgb(0xFFE07A),
-        );
-        let left = scene.x;
-        let right = scene.right();
-        let horizon = scene.y + scene.h * 0.66;
-        canvas.polygon(
-            &[
-                (left, horizon),
-                (left + scene.w * 0.24, scene.y + scene.h * 0.24),
-                (left + scene.w * 0.42, scene.y + scene.h * 0.57),
-                (left + scene.w * 0.61, scene.y + scene.h * 0.31),
-                (right, horizon),
-                (right, scene.bottom()),
-                (left, scene.bottom()),
-            ],
-            Color::rgb(0x8AB9D7),
-        );
-        canvas.polygon(
-            &[
-                (left + scene.w * 0.17, scene.bottom()),
-                (left + scene.w * 0.48, scene.y + scene.h * 0.36),
-                (left + scene.w * 0.67, scene.bottom()),
-            ],
-            Color::rgb(0x668EAE),
-        );
-        canvas.polygon(
-            &[
-                (left + scene.w * 0.47, scene.bottom()),
-                (left + scene.w * 0.76, scene.y + scene.h * 0.33),
-                (right, scene.bottom()),
-            ],
-            Color::rgb(0x729BB6),
-        );
-        canvas.polygon(
-            &[
-                (left, scene.y + scene.h * 0.78),
-                (left + scene.w * 0.22, scene.y + scene.h * 0.68),
-                (left + scene.w * 0.48, scene.y + scene.h * 0.82),
-                (left + scene.w * 0.76, scene.y + scene.h * 0.69),
-                (right, scene.y + scene.h * 0.77),
-                (right, scene.bottom()),
-                (left, scene.bottom()),
-            ],
-            Color::rgb(0x76B88D),
-        );
-        canvas.fill(
-            Rect::new(scene.x + 14.0, scene.y + 14.0, scene.w * 0.2, 5.0),
-            3.0,
-            Color::WHITE.with_alpha(180),
-        );
-        canvas.fill(
-            Rect::new(scene.x + 22.0, scene.y + 22.0, scene.w * 0.13, 4.0),
-            2.0,
-            Color::WHITE.with_alpha(150),
-        );
-    }
-
-    fn dashboard_title(&self, canvas: &mut Canvas, card: Rect, title: &str, icon: &'static str) {
-        canvas.icon(icon, (card.x + 27.0, card.y + 28.0), 21.0, Style::Color);
-        canvas.label(&self.bold, title, card.x + 48.0, card.y + 19.0, 15.0, text_blue());
-        canvas.fill(
-            Rect::new(card.x + 16.0, card.y + 48.0, card.w - 32.0, 1.0),
-            0.0,
-            Color::BLACK.with_alpha(15),
-        );
-    }
-
     fn draw_bar(&self, canvas: &mut Canvas, layout: &Layout, state: &VisualState) {
         let view = &state.view;
-        let (veil, ink, pill) = if view.bar_dark {
-            (BAR_VEIL_DARK, Color::WHITE, Color::WHITE.with_alpha(45))
+        let (veil, ink, pill) = if view.bar_opaque {
+            (palette().titlebar, primary_text(), tint(26))
         } else {
-            (BAR_VEIL_LIGHT, bar_ink(), Color::BLACK.with_alpha(30))
+            (BAR_VEIL, Color::WHITE, Color::WHITE.with_alpha(46))
         };
-        // Le fond d'écran passe sous la barre : seul un voile léger la distingue.
         canvas.fill(Rect::new(0.0, 0.0, layout.w, layout.bar), 0.0, veil);
         let applications = layout.applications_button();
-        // Pastille sous l'élément de la barre dont le menu est ouvert.
+        // Pastille sous l'élément de la barre dont le panneau est ouvert.
         let open = view.popover.and_then(|popover| match popover {
             Popover::Launcher => Some(applications),
             Popover::Controls => Some(layout.indicators_group()),
-            Popover::Session => Some(layout.indicator(Indicator::Power)),
-            Popover::Clipboard | Popover::DockMenu => None,
+            Popover::Notifications => Some(layout.clock_button()),
+            Popover::Clipboard | Popover::DockMenu | Popover::DesktopMenu => None,
         });
         if let Some(rect) = open {
-            canvas.fill(
-                Rect::new(rect.x + 2.0, 4.0, rect.w - 4.0, layout.bar - 8.0),
-                6.0,
-                pill,
-            );
+            canvas.fill(Rect::new(rect.x, 4.0, rect.w, layout.bar - 8.0), 8.0, pill);
         }
-        canvas.logo((applications.x + 16.0, layout.bar / 2.0), ink);
+        canvas.icon(
+            "ferrite-logo",
+            (applications.x + 20.0, layout.bar / 2.0),
+            20.0,
+            Style::Color,
+        );
         canvas.bar_label(
             &self.bold,
             "Applications",
-            applications.x + 32.0,
-            11.5,
+            applications.x + 40.0,
+            px(14.0),
             ink,
             layout.bar,
         );
-        // Une marque par page : carrée pour les widgets, ronde pour les bureaux.
+        // Une marque par bureau : une pilule pour celui qui est affiché.
         for page in 0..view.page_count {
-            let dot = layout.page_dot(page);
-            let (center_x, center_y) = dot.center();
-            let color = if page == view.page {
-                ink
+            let slot = layout.page_dot(page);
+            let (center_x, center_y) = slot.center();
+            let (width, color) = if page == view.page {
+                (PAGE_MARK_ACTIVE, ink)
             } else {
-                ink.with_alpha(90)
+                (PAGE_MARK, ink.with_alpha(102))
             };
-            let radius = if page == 0 { 1.5 } else { 3.5 };
-            canvas.fill(Rect::new(center_x - 3.5, center_y - 3.5, 7.0, 7.0), radius, color);
+            canvas.fill(
+                Rect::new(center_x - width / 2.0, center_y - 3.0, width, 6.0),
+                3.0,
+                color,
+            );
         }
-        let clock = clock_label(SystemTime::now(), local_offset());
-        let clock_width = canvas.text_width(&self.regular, &clock, 11.5);
-        let clock_right = layout.indicators_group().x - 10.0;
+        let clock = clock_text(view.clock_style, clock_label(SystemTime::now(), local_offset()));
+        let clock_width = canvas.text_width(&self.bold, &clock, px(14.0));
         canvas.bar_label(
-            &self.regular,
+            &self.bold,
             &clock,
-            clock_right - clock_width,
-            11.5,
+            (layout.w - clock_width) / 2.0,
+            px(14.0),
             ink,
             layout.bar,
         );
@@ -1639,10 +1190,9 @@ impl Panels {
                     Some(battery) => svg::battery_icon(battery.percent, battery.charging),
                     None => continue,
                 },
-                Indicator::Power => "status-power",
             };
-            // Les tracés Wi-Fi et Bluetooth remplissent leur dessin : plus petits, ils
-            // gardent le même poids visuel que le son et la batterie.
+            // Les tracés du Wi-Fi remplissent leur dessin : plus petits, ils gardent le même
+            // poids visuel que le son et la batterie.
             let size = match indicator {
                 Indicator::Bluetooth => 19.0,
                 Indicator::Network if view.wifi.is_some() => 21.0,
@@ -1650,10 +1200,17 @@ impl Panels {
             };
             canvas.icon(name, rect.center(), size, Style::Symbolic(ink));
         }
-        if let Some(battery) = state.battery {
+        if let (true, Some(battery)) = (view.battery_percent, state.battery) {
             let rect = layout.indicator(Indicator::Battery);
             let text = format!("{} %", battery.percent);
-            canvas.bar_label(&self.regular, &text, rect.right() + 2.0, 10.5, ink, layout.bar);
+            canvas.bar_label(
+                &self.regular,
+                &text,
+                rect.right() - 2.0,
+                px(12.0),
+                ink,
+                layout.bar,
+            );
         }
     }
 
@@ -1663,9 +1220,14 @@ impl Panels {
     fn draw_launcher(&self, canvas: &mut Canvas, layout: &Layout, launcher: &LauncherView) {
         let card = layout.launcher();
         let content = layout.launcher_content();
-        // Le verre, opaque, recouvre tout le fond de la carte : seule l'ombre est utile.
-        canvas.card_shadow(card, LAUNCHER_RADIUS);
-        let frost = self.frost(canvas, card, launcher.backdrop.as_deref(), (layout.w, layout.h));
+        // Voile de 40 % sur tout le bureau, sous la carte.
+        canvas.fill(
+            Rect::new(0.0, 0.0, layout.w, layout.h),
+            0.0,
+            Color::BLACK.with_alpha(102),
+        );
+        canvas.panel_shadow(card, LAUNCHER_RADIUS);
+        let frost = self.frost(canvas, card);
         canvas.blit_frost(&frost, None);
 
         // Ce qui défile peut déborder du panneau : l'écran autour est gardé puis remis.
@@ -1677,24 +1239,15 @@ impl Panels {
                 _ if !item.visible_in(content) => {}
                 LauncherItem::Title { section, rect } => {
                     let title = &launcher.sections[section].title;
-                    canvas.label(&self.bold, title, rect.x, rect.y + 13.0, 13.0, text_strong());
-                }
-                LauncherItem::Link { link, rect } => {
-                    let text = match link {
-                        SectionLink::More(_) => "Plus",
-                        SectionLink::Less => "Moins",
-                    };
-                    let width = canvas.text_width(&self.bold, text, 12.5);
                     canvas.label(
                         &self.bold,
-                        text,
-                        rect.right() - width,
-                        rect.y + 13.5,
-                        12.5,
+                        &title.to_uppercase(),
+                        rect.x,
+                        rect.y + 15.0,
+                        px(11.0),
                         text_secondary(),
                     );
                 }
-                LauncherItem::Rule(rect) => canvas.fill(rect, 0.0, Color::BLACK.with_alpha(26)),
                 LauncherItem::Tile { section, slot, rect } => {
                     self.draw_tile(canvas, &launcher.sections[section].tiles[slot], rect);
                 }
@@ -1707,22 +1260,24 @@ impl Panels {
         canvas.restore_rows(below);
         canvas.blit_frost(&frost, Some((card.y, content.y)));
         canvas.blit_frost(&frost, Some((content.bottom(), card.bottom())));
-        let header_y = card.y + LAUNCHER_HEADER / 2.0;
+        // Champ de recherche de 48 px.
+        let field = Rect::new(card.x + 16.0, card.y + 16.0, card.w - 32.0, 48.0);
+        canvas.fill(field, 10.0, control_fill());
         canvas.icon(
-            "app-search",
-            (card.x + LAUNCHER_PAD + 13.0, header_y),
-            36.0,
+            "cc-search",
+            (field.x + 24.0, field.y + 24.0),
+            18.0,
             Style::Symbolic(text_secondary()),
         );
-        let text_x = card.x + LAUNCHER_PAD + 40.0;
-        let text_y = header_y - 20.0 * 1.22 / 2.0 - 1.0;
+        let text_x = field.x + 44.0;
+        let text_y = field.y + (field.h - 15.0 * 1.0 - 4.0) / 2.0;
         let caret = if launcher.query.is_empty() {
             canvas.label(
                 &self.regular,
-                "Applications",
+                "Rechercher des apps, fichiers, réglages",
                 text_x + 4.0,
                 text_y,
-                20.0,
+                px(15.0),
                 text_secondary(),
             );
             text_x
@@ -1732,22 +1287,12 @@ impl Panels {
                 &launcher.query,
                 text_x,
                 text_y,
-                20.0,
+                px(15.0),
                 text_strong(),
             );
-            text_x + 2.0 + canvas.text_width(&self.regular, &launcher.query, 20.0)
+            text_x + 2.0 + canvas.text_width(&self.regular, &launcher.query, px(15.0))
         };
-        canvas.fill(Rect::new(caret, header_y - 15.0, 2.0, 30.0), 1.0, text_strong());
-        canvas.fill(
-            Rect::new(
-                card.x + LAUNCHER_PAD,
-                content.y - 1.0,
-                card.w - 2.0 * LAUNCHER_PAD,
-                1.0,
-            ),
-            0.0,
-            Color::BLACK.with_alpha(30),
-        );
+        canvas.fill(Rect::new(caret, field.y + 13.0, 2.0, 22.0), 1.0, accent());
     }
 
     /// Case d'une application : grande icône, nom sur deux lignes au plus, centré.
@@ -1755,41 +1300,42 @@ impl Panels {
         let center = (rect.x + rect.w / 2.0, rect.y + 42.0);
         let drawn = match &tile.icon {
             TileIcon::Builtin(name) => {
-                canvas.icon(name, center, 70.0, Style::Color);
+                canvas.icon(name, center, 72.0, Style::Color);
                 true
             }
-            TileIcon::File(path) => canvas.icon_file(path, center, 60.0),
+            TileIcon::File(path) => canvas.icon_file(path, center, 72.0),
             TileIcon::Missing => false,
         };
         if !drawn {
-            canvas.icon("file-generic", center, 70.0, Style::Color);
+            canvas.icon("file-generic", center, 72.0, Style::Color);
         }
-        let lines = wrap_two_lines(canvas, &self.regular, &tile.name, 12.0, rect.w - 8.0);
+        let lines = wrap_two_lines(canvas, &self.regular, &tile.name, px(12.0), rect.w - 8.0);
         for (index, line) in lines.iter().enumerate() {
-            let width = canvas.text_width(&self.regular, line, 12.0);
+            let width = canvas.text_width(&self.regular, line, px(12.0));
             canvas.label(
                 &self.regular,
                 line,
                 rect.x + (rect.w - width) / 2.0,
-                rect.y + 84.0 + index as f64 * 16.0,
-                12.0,
-                text_strong(),
+                rect.y + 82.0 + index as f64 * 15.0,
+                px(12.0),
+                primary_text(),
             );
         }
     }
 
-    /// Verre du lanceur : le fond d'écran flouté sous un voile blanc, dans le rectangle
-    /// arrondi `card`. Gardé tant que la place, l'échelle et le fond ne changent pas.
-    fn frost(&self, canvas: &Canvas, card: Rect, backdrop: Option<&Image>, screen: (f64, f64)) -> Arc<Frost> {
+    /// Fond du lanceur dans le rectangle arrondi `card`, gardé pour recouvrir ce qui déborde
+    /// au défilement, tant que la place, l'échelle et le thème ne changent pas.
+    fn frost(&self, canvas: &Canvas, card: Rect) -> Arc<Frost> {
         let s = canvas.scale as f64;
         let left = (card.x * s).floor().max(0.0) as u32;
         let top = (card.y * s).floor().max(0.0) as u32;
         let right = ((card.right() * s).ceil() as u32).min(canvas.width);
         let bottom = ((card.bottom() * s).ceil() as u32).min(canvas.height);
+        let fill = panel_fill();
         let key = (
             [left, top, right, bottom],
             canvas.scale.to_bits(),
-            backdrop.map(|image| image as *const Image as usize),
+            Some(u32::from(fill.r) as usize),
         );
         let mut cache = self.frost.borrow_mut();
         if let Some((known, frost)) = cache.as_ref()
@@ -1806,28 +1352,23 @@ impl Panels {
             card.w as f32 * canvas.scale,
             card.h as f32 * canvas.scale,
         );
+        let alpha = f32::from(fill.a) / 255.0;
         for py in 0..height {
             for px in 0..width {
                 let (sx, sy) = ((left + px) as f32 + 0.5, (top + py) as f32 + 0.5);
                 let qx = (sx - (x + w * 0.5)).abs() - (w * 0.5 - radius);
                 let qy = (sy - (y + h * 0.5)).abs() - (h * 0.5 - radius);
                 let distance = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - radius;
-                let coverage = (0.5 - distance).clamp(0.0, 1.0);
+                let coverage = (0.5 - distance).clamp(0.0, 1.0) * alpha;
                 if coverage == 0.0 {
                     continue;
                 }
-                let behind = backdrop.map_or([236.0, 236.0, 240.0], |image| {
-                    sample(image, sx as f64 / s / screen.0, sy as f64 / s / screen.1)
-                });
-                // Liseré clair d'un pixel le long du bord, comme le verre de macOS.
-                let rim = if distance > -1.5 * canvas.scale { 0.35 } else { 0.0 };
-                let veil = FROST_VEIL + (1.0 - FROST_VEIL) * rim;
                 let offset = (py as usize * width as usize + px as usize) * 4;
-                let [r, g, b] = behind.map(|channel| (channel + (255.0 - channel) * veil) * coverage);
+                let channel = |value: u8| (f32::from(value) * coverage).round() as u8;
                 pixels[offset..offset + 4].copy_from_slice(&[
-                    b.round() as u8,
-                    g.round() as u8,
-                    r.round() as u8,
+                    channel(fill.b),
+                    channel(fill.g),
+                    channel(fill.r),
                     (255.0 * coverage).round() as u8,
                 ]);
             }
@@ -1845,142 +1386,515 @@ impl Panels {
 
     /// Réglages rapides, à la manière du Centre de contrôle de macOS : modules clairs
     /// posés sur un panneau gris, interrupteurs ronds et curseurs épais.
-    fn draw_controls(&self, canvas: &mut Canvas, layout: &Layout, view: &DesktopView) {
-        let card = layout.controls();
-        canvas.glass(card, 22.0);
+    /// Centre de contrôle : six tuiles, curseurs du son et de la luminosité, sortie du son,
+    /// batterie et boutons de session.
+    fn draw_controls(&self, canvas: &mut Canvas, layout: &Layout, state: &VisualState) {
+        let view = &state.view;
+        canvas.glass(layout.controls(), 16.0);
+        match view.controls.page {
+            ControlsPage::Main => self.draw_controls_main(canvas, layout, state),
+            ControlsPage::Wifi => self.draw_controls_wifi(canvas, layout, view),
+            ControlsPage::Bluetooth => self.draw_controls_bluetooth(canvas, layout, view),
+        }
+    }
 
-        let status = |state: Option<bool>| match state {
-            Some(true) => "Activé",
-            Some(false) => "Désactivé",
-            None => "Aucun adaptateur",
+    fn draw_controls_main(&self, canvas: &mut Canvas, layout: &Layout, state: &VisualState) {
+        let view = &state.view;
+        let on_off = |on: bool| if on { "Activé" } else { "Désactivé" };
+        let plural = if view.controls.connected_devices > 1 {
+            "s"
+        } else {
+            ""
         };
-        canvas.module(layout.controls_radios());
-        let radios = [
-            (Control::Wifi, "glyph-wifi", "Wi-Fi", view.wifi),
-            (Control::Bluetooth, "glyph-bluetooth", "Bluetooth", view.bluetooth),
-            (Control::Airplane, "glyph-airplane", "Mode avion", airplane(view)),
+        let devices = format!("{} appareil{plural}", view.controls.connected_devices);
+        let wifi_state = match (view.wifi, &view.controls.current_network) {
+            (None, _) => "Aucun adaptateur",
+            (Some(true), Some(name)) => name.as_str(),
+            (Some(on), _) => on_off(on),
+        };
+        let bluetooth_state = match view.bluetooth {
+            None => "Aucun adaptateur",
+            Some(true) if view.controls.connected_devices > 0 => devices.as_str(),
+            Some(on) => on_off(on),
+        };
+        let dark = if view.dark_theme { "Activé" } else { "Désactivé" };
+        let dnd = on_off(view.notifications.do_not_disturb);
+        let saver = if view.power_saver {
+            "Activée"
+        } else {
+            "Désactivée"
+        };
+        let tiles: [(Control, &str, &str, &str, bool); 6] = [
+            (
+                Control::Wifi,
+                "cc-wifi",
+                "Wi-Fi",
+                wifi_state,
+                view.wifi == Some(true),
+            ),
+            (
+                Control::Bluetooth,
+                "cc-bluetooth",
+                "Bluetooth",
+                bluetooth_state,
+                view.bluetooth == Some(true),
+            ),
+            (Control::Dark, "cc-dark", "Mode sombre", dark, view.dark_theme),
+            (
+                Control::DoNotDisturb,
+                "cc-dnd",
+                "Ne pas déranger",
+                dnd,
+                view.notifications.do_not_disturb,
+            ),
+            (
+                Control::Saver,
+                "cc-saver",
+                "Économie d’énergie",
+                saver,
+                view.power_saver,
+            ),
+            (Control::Keyboard, "cc-keyboard", "Clavier", &view.keyboard, false),
         ];
-        for (control, glyph, title, state) in radios {
-            let row = layout.control_row(control);
-            let center = (row.x + 30.0, row.y + row.h / 2.0);
-            canvas.toggle_circle(center, glyph, state);
-            let ink = if state.is_some() {
-                text_strong()
+        for (control, glyph, name, status, on) in tiles {
+            let tile = layout.control_row(control);
+            let (fill, disc, ink, title, sub) = if on {
+                let white = Color::WHITE;
+                (accent(), white.with_alpha(56), white, white, Color::rgb(0xE4EEFB))
             } else {
-                text_secondary()
+                (
+                    control_fill(),
+                    themed(Color::WHITE, Color::rgb(0x22262D)),
+                    themed(Color::rgb(0x374151), Color::rgb(0xE5E7EB)),
+                    primary_text(),
+                    text_secondary(),
+                )
             };
-            canvas.label(&self.bold, title, row.x + 56.0, center.1 - 18.0, 14.0, ink);
+            canvas.fill(tile, 16.0, fill);
+            let center = (tile.x + 29.0, tile.y + tile.h / 2.0);
+            canvas.fill(
+                Rect::new(center.0 - 17.0, center.1 - 17.0, 34.0, 34.0),
+                17.0,
+                disc,
+            );
+            canvas.icon(glyph, center, 18.0, Style::Symbolic(ink));
+            // Wi-Fi et Bluetooth : la tuile active, le chevron ouvre la liste.
+            let chevron = match control {
+                Control::Wifi => Some(layout.control_row(Control::WifiMore)),
+                Control::Bluetooth => Some(layout.control_row(Control::BluetoothMore)),
+                _ => None,
+            };
+            let mut room = tile.w - 56.0 - 8.0;
+            if let Some(more) = chevron {
+                room -= more.w;
+                let line = if on { Color::WHITE.with_alpha(51) } else { tint(26) };
+                canvas.fill(Rect::new(more.x, tile.y, 1.0, tile.h), 0.0, line);
+                canvas.icon("cc-chevron", more.center(), 14.0, Style::Symbolic(ink));
+            }
+            let name = canvas.fit_text(&self.bold, name, px(13.0), room);
+            canvas.label(&self.bold, &name, tile.x + 56.0, tile.y + 14.0, px(13.0), title);
+            let status = canvas.fit_text(&self.regular, status, px(12.0), room);
             canvas.label(
                 &self.regular,
-                status(state),
-                row.x + 56.0,
-                center.1 + 1.5,
-                11.5,
-                text_secondary(),
-            );
-        }
-
-        for (control, glyph, title) in [
-            (Control::Clipboard, "glyph-clipboard", "Presse-papiers"),
-            (Control::Settings, "glyph-gear", "Paramètres"),
-        ] {
-            let tile = layout.control_row(control);
-            canvas.module(tile);
-            let center = (tile.x + 28.0, tile.y + tile.h / 2.0);
-            canvas.toggle_circle(center, glyph, Some(false));
-            // Le titre garde une marge à droite : un peu plus petit s'il le faut.
-            let (x, room) = (tile.x + 52.0, tile.w - 52.0 - 14.0);
-            let mut size = 13.5;
-            while size > 11.0 && canvas.text_width(&self.bold, title, size) > room {
-                size -= 0.5;
-            }
-            canvas.label(
-                &self.bold,
-                title,
-                x,
-                center.1 - size as f64 * 0.66,
-                size,
-                text_strong(),
+                &status,
+                tile.x + 56.0,
+                tile.y + 33.0,
+                px(12.0),
+                sub,
             );
         }
 
         let sliders = [
-            (Control::Brightness, "Moniteur", "glyph-sun", view.brightness),
-            (Control::Volume, "Son", "glyph-speaker", view.volume),
+            (Control::Volume, "cc-volume", view.volume),
+            (Control::Brightness, "cc-brightness", view.brightness),
         ];
-        for (control, title, glyph, value) in sliders {
-            // Pas de module pour un réglage que la machine n'offre pas.
+        for (control, glyph, value) in sliders {
+            // Pas de curseur pour un réglage que la machine n'offre pas.
             let Some(value) = value else { continue };
-            let module = layout.control_row(control);
-            canvas.module(module);
-            canvas.label(
-                &self.bold,
-                title,
-                module.x + 15.0,
-                module.y + 10.0,
-                14.0,
-                text_strong(),
+            let row = layout.control_row(control);
+            let ink = themed(Color::rgb(0x374151), Color::rgb(0xE5E7EB));
+            canvas.icon(
+                glyph,
+                (row.x + 10.0, row.y + row.h / 2.0),
+                20.0,
+                Style::Symbolic(ink),
             );
-            canvas.slider(layout.slider_track(control), value, glyph);
+            canvas.slider(layout.slider_track(control), value);
+            let text = format!("{value} %");
+            let width = canvas.text_width(&self.regular, &text, px(12.0));
+            canvas.label(
+                &self.regular,
+                &text,
+                row.right() - width,
+                row.y + 11.0,
+                px(12.0),
+                text_secondary(),
+            );
+        }
+
+        let footer = layout.controls_footer();
+        canvas.fill(
+            Rect::new(footer.x, footer.y, footer.w, 1.0),
+            0.0,
+            palette().separator,
+        );
+        let battery = state.battery.map_or(String::new(), |battery| {
+            let status = if battery.charging { " · en charge" } else { "" };
+            format!("{} %{status}", battery.percent)
+        });
+        canvas.label(
+            &self.regular,
+            &battery,
+            footer.x,
+            footer.y + 23.0,
+            px(13.0),
+            themed(Color::rgb(0x374151), Color::rgb(0xE5E7EB)),
+        );
+        let link = layout.control_row(Control::Settings);
+        let width = canvas.text_width(&self.bold, "Paramètres…", px(13.0));
+        canvas.label(
+            &self.bold,
+            "Paramètres…",
+            link.right() - width,
+            footer.y + 23.0,
+            px(13.0),
+            accent(),
+        );
+        let round = [
+            (Control::Lock, "cc-lock", control_fill()),
+            (Control::Power, "cc-power", destructive()),
+        ];
+        for (control, glyph, fill) in round {
+            let button = layout.control_row(control);
+            canvas.fill(button, button.h as f32 / 2.0, fill);
+            let ink = if control == Control::Power {
+                Color::WHITE
+            } else {
+                themed(Color::rgb(0x374151), Color::rgb(0xE5E7EB))
+            };
+            canvas.icon(glyph, button.center(), 16.0, Style::Symbolic(ink));
         }
 
         if let Some(error) = &view.error {
             let line = layout.controls_error();
             canvas.label(
                 &self.regular,
-                &ellipsize(error, 46),
+                &ellipsize(error, 52),
                 line.x,
-                line.y + 2.0,
-                10.0,
+                line.y,
+                px(12.0),
                 destructive(),
             );
         }
     }
 
-    fn draw_session(&self, canvas: &mut Canvas, layout: &Layout) {
-        canvas.card(layout.session(), 12.0);
-        let rows = [
-            (PowerAction::Restart, "status-update", "Redémarrer…"),
-            (PowerAction::PowerOff, "status-power", "Éteindre…"),
-        ];
-        for (index, (_, icon, text)) in rows.into_iter().enumerate() {
-            let row = layout.session_row(index);
-            canvas.icon(
-                icon,
-                (row.x + 20.0, row.y + row.h / 2.0),
-                26.0,
-                Style::Symbolic(primary_text()),
-            );
+    /// Haut d'une liste : retour, titre et interrupteur.
+    fn draw_controls_header(&self, canvas: &mut Canvas, layout: &Layout, title: &str, on: bool) {
+        let back = layout.controls_back();
+        canvas.fill(back, 17.0, control_fill());
+        canvas.icon("cc-back", back.center(), 16.0, Style::Symbolic(primary_text()));
+        canvas.label(
+            &self.bold,
+            title,
+            back.right() + 12.0,
+            back.y + 6.0,
+            px(18.0),
+            primary_text(),
+        );
+        let switch = layout.controls_switch();
+        let track = if on {
+            accent()
+        } else {
+            themed(Color::rgb(0xD5D9E0), Color::rgb(0x4B5360))
+        };
+        canvas.fill(switch, (switch.h / 2.0) as f32, track);
+        let knob = switch.h - 4.0;
+        let x = if on {
+            switch.right() - knob - 2.0
+        } else {
+            switch.x + 2.0
+        };
+        canvas.fill(
+            Rect::new(x, switch.y + 2.0, knob, knob),
+            (knob / 2.0) as f32,
+            Color::WHITE,
+        );
+    }
+
+    /// Bas d'une liste : état à gauche, lien vers Paramètres à droite.
+    fn draw_controls_bottom(
+        &self,
+        canvas: &mut Canvas,
+        layout: &Layout,
+        status: &str,
+        link: &str,
+        spin: bool,
+    ) {
+        let bottom = layout.controls_bottom();
+        let mut x = bottom.x;
+        if spin {
+            canvas.stroke(Rect::new(x, bottom.y + 9.0, 14.0, 14.0), 7.0, accent(), 2.0);
+            x += 22.0;
+        }
+        canvas.label(
+            &self.regular,
+            status,
+            x,
+            bottom.y + 7.0,
+            px(13.0),
+            text_secondary(),
+        );
+        let width = canvas.text_width(&self.bold, link, px(13.0));
+        canvas.label(
+            &self.bold,
+            link,
+            bottom.right() - width,
+            bottom.y + 7.0,
+            px(13.0),
+            accent(),
+        );
+    }
+
+    fn draw_controls_wifi(&self, canvas: &mut Canvas, layout: &Layout, view: &DesktopView) {
+        let controls = &view.controls;
+        self.draw_controls_header(canvas, layout, "Wi-Fi", view.wifi == Some(true));
+        let list = layout.wifi_list();
+        canvas.fill(list, 14.0, themed(Color::WHITE, Color::rgb(0x22262D)));
+        if controls.networks.is_empty() {
+            let text = match view.wifi {
+                Some(true) => "Analyse en cours…",
+                Some(false) => "Wi-Fi désactivé",
+                None => "Aucune carte Wi-Fi détectée",
+            };
             canvas.label(
                 &self.regular,
                 text,
-                row.x + 40.0,
-                row.y + 10.0,
-                11.5,
+                list.x + 16.0,
+                list.y + 16.0,
+                px(13.0),
+                text_secondary(),
+            );
+        }
+        for (slot, network) in controls.networks.iter().enumerate() {
+            let row = layout.wifi_row(slot);
+            if slot > 0 {
+                canvas.fill(Rect::new(row.x, row.y, row.w, 1.0), 0.0, palette().separator);
+            }
+            let center = row.y + CONTROLS_LIST_ROW / 2.0;
+            for (index, height) in [4.0, 7.0, 10.0, 13.0].into_iter().enumerate() {
+                let bar = Rect::new(
+                    row.x + 16.0 + index as f64 * 6.0,
+                    center + 7.0 - height,
+                    4.0,
+                    height,
+                );
+                let color = if (index as u8) < network.level {
+                    primary_text()
+                } else {
+                    themed(Color::rgb(0xD5D9E0), Color::rgb(0x4B5360))
+                };
+                canvas.fill(bar, 1.0, color);
+            }
+            let x = row.x + 48.0;
+            let name = canvas.fit_text(&self.bold, &network.ssid, px(14.0), row.w - 48.0 - 64.0);
+            canvas.label(&self.bold, &name, x, row.y + 8.0, px(14.0), primary_text());
+            let hint = if network.connected {
+                themed(Color::rgb(0x1F7A4D), Color::rgb(0x4ADE80))
+            } else {
+                text_secondary()
+            };
+            canvas.label(&self.regular, &network.hint, x, row.y + 28.0, px(12.0), hint);
+            let mut right = row.right() - 26.0;
+            if network.connected {
+                canvas.icon("cc-check", (right, center), 16.0, Style::Symbolic(accent()));
+                right -= 28.0;
+            }
+            if network.secured {
+                canvas.icon(
+                    "cc-lock",
+                    (right, center),
+                    14.0,
+                    Style::Symbolic(text_secondary()),
+                );
+            }
+            if controls
+                .password
+                .as_ref()
+                .is_some_and(|entry| entry.ssid == network.ssid)
+            {
+                self.draw_password(canvas, layout, controls);
+            }
+        }
+        self.draw_controls_bottom(
+            canvas,
+            layout,
+            "Analyse auto toutes les 10 s",
+            "Paramètres Wi-Fi…",
+            false,
+        );
+    }
+
+    fn draw_password(&self, canvas: &mut Canvas, layout: &Layout, controls: &ControlsView) {
+        let Some(entry) = &controls.password else {
+            return;
+        };
+        let field = layout.password_field();
+        let label = format!("Mot de passe de « {} »", entry.ssid);
+        let label = canvas.fit_text(&self.regular, &label, px(12.0), field.w);
+        canvas.label(
+            &self.regular,
+            &label,
+            field.x,
+            field.y - 20.0,
+            px(12.0),
+            text_secondary(),
+        );
+        canvas.fill(field, 10.0, palette().window_background);
+        canvas.stroke(field, 10.0, accent(), 2.0);
+        if entry.length == 0 {
+            canvas.fill(
+                Rect::new(field.x + 12.0, field.y + 10.0, 2.0, 20.0),
+                1.0,
+                accent(),
+            );
+            canvas.label(
+                &self.regular,
+                "Mot de passe",
+                field.x + 18.0,
+                field.y + 11.0,
+                px(13.0),
+                text_secondary(),
+            );
+        } else {
+            for index in 0..entry.length.min(32) {
+                let dot = Rect::new(field.x + 14.0 + index as f64 * 9.0, field.y + 17.0, 6.0, 6.0);
+                canvas.fill(dot, 3.0, primary_text());
+            }
+        }
+        canvas.button(
+            layout.password_cancel(),
+            "Annuler",
+            control_fill(),
+            primary_text(),
+        );
+        canvas.button(layout.password_submit(), "Se connecter", accent(), Color::WHITE);
+    }
+
+    fn draw_controls_bluetooth(&self, canvas: &mut Canvas, layout: &Layout, view: &DesktopView) {
+        let controls = &view.controls;
+        self.draw_controls_header(canvas, layout, "Bluetooth", view.bluetooth == Some(true));
+        for (title, paired) in [("Mes appareils", true), ("Appareils à proximité", false)] {
+            let Some((heading, list)) = layout.bluetooth_group(paired) else {
+                continue;
+            };
+            canvas.label(
+                &self.bold,
+                title,
+                heading.x,
+                heading.y,
+                px(13.0),
+                text_secondary(),
+            );
+            canvas.fill(list, 14.0, themed(Color::WHITE, Color::rgb(0x22262D)));
+        }
+        for (slot, device) in controls.devices.iter().enumerate() {
+            let row = layout.bluetooth_row(slot);
+            let first = slot == 0 || controls.devices[slot - 1].paired != device.paired;
+            if !first {
+                canvas.fill(Rect::new(row.x, row.y, row.w, 1.0), 0.0, palette().separator);
+            }
+            let center = (row.x + 33.0, row.y + CONTROLS_LIST_ROW / 2.0);
+            let (disc, ink) = if device.connected {
+                (accent(), Color::WHITE)
+            } else {
+                (control_fill(), primary_text())
+            };
+            canvas.fill(
+                Rect::new(center.0 - 17.0, center.1 - 17.0, 34.0, 34.0),
+                17.0,
+                disc,
+            );
+            canvas.icon(device.glyph, center, 18.0, Style::Symbolic(ink));
+            let button = layout.bluetooth_button(slot);
+            let name = canvas.fit_text(&self.bold, &device.name, px(14.0), button.x - row.x - 66.0);
+            canvas.label(
+                &self.bold,
+                &name,
+                row.x + 60.0,
+                row.y + 8.0,
+                px(14.0),
                 primary_text(),
             );
+            let hint = if device.connected {
+                themed(Color::rgb(0x1F7A4D), Color::rgb(0x4ADE80))
+            } else {
+                text_secondary()
+            };
+            canvas.label(
+                &self.regular,
+                &device.hint,
+                row.x + 60.0,
+                row.y + 28.0,
+                px(12.0),
+                hint,
+            );
+            let (text, fill, text_ink) = match (device.connected, device.paired) {
+                (true, _) => ("Déconnecter", control_fill(), primary_text()),
+                (false, true) => ("Connecter", accent(), Color::WHITE),
+                (false, false) => ("Associer", accent(), Color::WHITE),
+            };
+            canvas.button(button, text, fill, text_ink);
+        }
+        let status = if view.bluetooth != Some(true) {
+            "Bluetooth désactivé"
+        } else if controls.scanning {
+            "Recherche d’appareils…"
+        } else {
+            "Recherche terminée"
+        };
+        self.draw_controls_bottom(canvas, layout, status, "Paramètres Bluetooth…", controls.scanning);
+    }
+
+    fn draw_desktop_menu(
+        &self,
+        canvas: &mut Canvas,
+        layout: &Layout,
+        anchor: (i32, i32),
+        pointer: Option<(i32, i32)>,
+    ) {
+        canvas.glass(layout.desktop_menu(anchor), 10.0);
+        for (index, entry) in DESKTOP_MENU.iter().enumerate() {
+            self.menu_row(canvas, layout.desktop_menu_row(anchor, index), entry, pointer);
         }
     }
 
-    fn draw_dock_menu(&self, canvas: &mut Canvas, layout: &Layout, menu: &DockMenuView) {
-        canvas.card(layout.dock_menu(menu), 10.0);
+    fn draw_dock_menu(
+        &self,
+        canvas: &mut Canvas,
+        layout: &Layout,
+        menu: &DockMenuView,
+        pointer: Option<(i32, i32)>,
+    ) {
+        canvas.glass(layout.dock_menu(menu), 10.0);
         for (index, entry) in menu.entries.iter().enumerate() {
-            let row = layout.dock_menu_row(menu, index);
-            canvas.label(
-                &self.regular,
-                entry,
-                row.x + 12.0,
-                row.y + 8.0,
-                11.5,
-                primary_text(),
-            );
+            self.menu_row(canvas, layout.dock_menu_row(menu, index), entry, pointer);
         }
+    }
+
+    /// Ligne de menu de 32 : surlignée sous le pointeur.
+    fn menu_row(&self, canvas: &mut Canvas, row: Rect, text: &str, pointer: Option<(i32, i32)>) {
+        let hovered = pointer.is_some_and(|(x, y)| row.contains(Point::from((f64::from(x), f64::from(y)))));
+        if hovered {
+            canvas.fill(row, 6.0, Color::rgb(0x2779E0));
+        }
+        let ink = if hovered { Color::WHITE } else { primary_text() };
+        canvas.label(&self.regular, text, row.x + 10.0, row.y + 8.0, px(13.0), ink);
     }
 
     /// Historique du presse-papiers, comme Windows + V.
     fn draw_clipboard(&self, canvas: &mut Canvas, layout: &Layout, view: &ClipboardView) {
         let card = layout.clipboard();
-        canvas.card(card, 14.0);
+        canvas.glass(card, 14.0);
         canvas.label(
             &self.bold,
             "Presse-papiers",
@@ -2023,9 +1937,9 @@ impl Panels {
                 row,
                 9.0,
                 if selected {
-                    Color::rgb(0xDCE8F8)
+                    themed(Color::rgb(0xDCE8F8), accent().with_alpha(70))
                 } else {
-                    Color::rgb(0xF0F0F2)
+                    themed(Color::rgb(0xF0F0F2), palette().control_hover)
                 },
             );
             if selected {
@@ -2088,47 +2002,394 @@ impl Panels {
         }
     }
 
+    /// Sur chaque aperçu : l'icône de l'application à cheval sur le bas ; au survol, un
+    /// contour, le titre et le bouton de fermeture.
+    fn draw_overview(&self, canvas: &mut Canvas, layout: &Layout, overview: &OverviewView) {
+        const ICON: f64 = 56.0;
+        // Bande des espaces de travail ; le dernier, vide, est le « nouvel espace ».
+        for (index, space) in overview.spaces.iter().enumerate() {
+            let thumb = overview_space_rect(layout.w, layout.bar, overview.spaces.len(), index);
+            if space.windows == 0 && index + 1 == overview.spaces.len() {
+                canvas.stroke(thumb, 8.0, Color::WHITE.with_alpha(90), 1.5);
+                let center = thumb.center();
+                canvas.line(
+                    (center.0 - 6.0, center.1),
+                    (center.0 + 6.0, center.1),
+                    2.0,
+                    Color::rgb(0xC9D4E3),
+                );
+                canvas.line(
+                    (center.0, center.1 - 6.0),
+                    (center.0, center.1 + 6.0),
+                    2.0,
+                    Color::rgb(0xC9D4E3),
+                );
+                continue;
+            }
+            canvas.fill(thumb, 8.0, Color::rgb(0x16202D));
+            if space.current {
+                canvas.stroke(thumb.expand(2.0), 10.0, Color::rgb(0x6CB8FF), 2.0);
+            }
+            let shown = space.windows.min(3);
+            for slot in 0..shown {
+                let w = (thumb.w - 8.0 * (shown as f64 + 1.0)) / shown as f64;
+                let window = Rect::new(
+                    thumb.x + 8.0 + slot as f64 * (w + 8.0),
+                    thumb.y + 9.0,
+                    w,
+                    thumb.h - 18.0,
+                );
+                canvas.fill(window, 3.0, Color::WHITE.with_alpha(230));
+            }
+            let name = format!("Espace {}", space.page + 1);
+            let width = canvas.text_width(&self.regular, &name, px(11.0));
+            canvas.label(
+                &self.regular,
+                &name,
+                thumb.x + (thumb.w - width) / 2.0,
+                thumb.bottom() + 4.0,
+                px(11.0),
+                Color::rgb(0xC9D4E3),
+            );
+        }
+        if overview.tiles.is_empty() {
+            let text = "Aucune fenêtre ouverte sur ce bureau";
+            let width = canvas.text_width(&self.regular, text, 15.0);
+            canvas.label(
+                &self.regular,
+                text,
+                (layout.w - width) / 2.0,
+                layout.h / 2.0 - 10.0,
+                15.0,
+                Color::WHITE,
+            );
+            return;
+        }
+        for tile in &overview.tiles {
+            let (x, y, w, h) = tile.frame;
+            let frame = Rect::new(x as f64, y as f64, w as f64, h as f64);
+            let center = (frame.x + frame.w / 2.0, frame.bottom() - ICON / 6.0);
+            if tile.hovered {
+                canvas.stroke(frame.expand(3.0), 11.0, Color::rgb(0x6CB8FF), 3.0);
+            }
+            canvas.app_icon(&tile.icon, center, ICON);
+            if !tile.title.is_empty() {
+                let text = canvas.fit_text(&self.bold, &tile.title, px(12.0), frame.w.max(120.0));
+                let width = canvas.text_width(&self.bold, &text, px(12.0));
+                canvas.label(
+                    &self.bold,
+                    &text,
+                    center.0 - width / 2.0,
+                    center.1 + ICON / 2.0 + 8.0,
+                    px(12.0),
+                    Color::WHITE,
+                );
+            }
+            if !tile.hovered {
+                continue;
+            }
+            let close = crate::wm::workspaces::overview_close_button(Rectangle::new(
+                (frame.x, frame.y).into(),
+                (frame.w, frame.h).into(),
+            ));
+            let close = Rect::new(close.loc.x, close.loc.y, close.size.w, close.size.h);
+            let disc = if tile.close_hovered {
+                destructive()
+            } else {
+                Color::rgb(0x2C2C2E).with_alpha(235)
+            };
+            canvas.fill(close, (close.w / 2.0) as f32, disc);
+            let (cx, cy, arm) = (close.x + close.w / 2.0, close.y + close.h / 2.0, 5.0);
+            canvas.line((cx - arm, cy - arm), (cx + arm, cy + arm), 1.8, Color::WHITE);
+            canvas.line((cx - arm, cy + arm), (cx + arm, cy - arm), 1.8, Color::WHITE);
+        }
+    }
+
+    /// Contenu d'une notification dans `rect` : icône, application, titre, deux lignes, croix.
+    fn draw_notification(&self, canvas: &mut Canvas, rect: Rect, notification: &NotificationView) {
+        let center = (rect.x + 14.0 + 16.0, rect.y + 14.0 + 16.0);
+        match &notification.icon {
+            Some(icon) => canvas.app_icon(icon, center, 32.0),
+            None => canvas.icon(
+                "status-notifications",
+                center,
+                32.0,
+                Style::Symbolic(primary_text()),
+            ),
+        }
+        let x = rect.x + 58.0;
+        let right = rect.right() - 14.0;
+        let when = &notification.when;
+        let when_width = canvas.text_width(&self.regular, when, px(11.0));
+        canvas.label(
+            &self.regular,
+            when,
+            right - when_width,
+            rect.y + 14.0,
+            px(11.0),
+            text_secondary(),
+        );
+        let title = if notification.summary.is_empty() {
+            &notification.app
+        } else {
+            &notification.summary
+        };
+        let title = canvas.fit_text(&self.bold, title, px(13.0), right - when_width - 8.0 - x);
+        canvas.label(&self.bold, &title, x, rect.y + 13.0, px(13.0), primary_text());
+        let ink = themed(Color::rgb(0x374151), Color::rgb(0xD1D5DB));
+        for (index, line) in wrap_two_lines(canvas, &self.regular, &notification.body, px(13.0), right - x)
+            .iter()
+            .enumerate()
+        {
+            canvas.label(
+                &self.regular,
+                line,
+                x,
+                rect.y + 33.0 + index as f64 * 17.0,
+                px(13.0),
+                ink,
+            );
+        }
+    }
+
+    /// Historique des notifications, avec « Ne pas déranger » et « Tout effacer ».
+    fn draw_notification_center(&self, canvas: &mut Canvas, layout: &Layout, view: &NotificationsView) {
+        let card = layout.calendar(view.history.len());
+        canvas.glass(card, 16.0);
+        let clock = clock_snapshot(SystemTime::now());
+        const MONTHS: [&str; 12] = [
+            "Janvier",
+            "Février",
+            "Mars",
+            "Avril",
+            "Mai",
+            "Juin",
+            "Juillet",
+            "Août",
+            "Septembre",
+            "Octobre",
+            "Novembre",
+            "Décembre",
+        ];
+        const DAYS: [&str; 7] = [
+            "Dimanche", "Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi",
+        ];
+        let title = format!("{} {}", MONTHS[clock.month as usize - 1], clock.year);
+        canvas.label(
+            &self.bold,
+            &title,
+            card.x + 18.0,
+            card.y + 16.0,
+            px(18.0),
+            primary_text(),
+        );
+        let today = format!("{} {}", DAYS[clock.weekday], clock.day);
+        let width = canvas.text_width(&self.regular, &today, px(13.0));
+        canvas.label(
+            &self.regular,
+            &today,
+            card.right() - 18.0 - width,
+            card.y + 20.0,
+            px(13.0),
+            text_secondary(),
+        );
+        let cell = (card.w - 36.0) / 7.0;
+        let grid = card.y + 52.0;
+        for (index, name) in ["L", "M", "M", "J", "V", "S", "D"].into_iter().enumerate() {
+            let width = canvas.text_width(&self.bold, name, px(11.0));
+            canvas.label(
+                &self.bold,
+                name,
+                card.x + 18.0 + cell * (index as f64 + 0.5) - width / 2.0,
+                grid,
+                px(11.0),
+                text_secondary(),
+            );
+        }
+        // Lundi en première colonne.
+        let first = (days_from_civil(clock.year, clock.month, 1) + 3).rem_euclid(7);
+        for day in 1..=days_in_month(clock.year, clock.month) {
+            let slot = first + i64::from(day) - 1;
+            let center = (
+                card.x + 18.0 + cell * ((slot % 7) as f64 + 0.5),
+                grid + 22.0 + CALENDAR_ROW * ((slot / 7) as f64 + 0.5),
+            );
+            let text = day.to_string();
+            let current = day == clock.day;
+            if current {
+                canvas.fill(
+                    Rect::new(center.0 - 16.0, center.1 - 16.0, 32.0, 32.0),
+                    16.0,
+                    accent(),
+                );
+            }
+            let (font, ink) = if current {
+                (&self.bold, Color::WHITE)
+            } else {
+                (&self.regular, primary_text())
+            };
+            let width = canvas.text_width(font, &text, px(13.0));
+            canvas.label(font, &text, center.0 - width / 2.0, center.1 - 9.0, px(13.0), ink);
+        }
+
+        let rule = layout.calendar_rule(view.history.len());
+        canvas.fill(Rect::new(rule.x, rule.y, rule.w, 1.0), 0.0, palette().separator);
+        canvas.label(
+            &self.bold,
+            "Notifications",
+            rule.x,
+            rule.y + 20.0,
+            px(13.0),
+            text_secondary(),
+        );
+        if view.history.is_empty() {
+            canvas.label(
+                &self.regular,
+                "Aucune notification",
+                rule.x,
+                rule.y + 50.0,
+                px(13.0),
+                text_secondary(),
+            );
+            return;
+        }
+        canvas.button(
+            layout.notifications_clear(view.history.len()),
+            "Tout effacer",
+            control_fill(),
+            primary_text(),
+        );
+        for (slot, notification) in view.history.iter().take(layout.notification_rows()).enumerate() {
+            let row = layout.notification_row(view.history.len(), slot);
+            canvas.fill(row, 12.0, themed(Color::WHITE, Color::rgb(0x22262D)));
+            canvas.stroke(row, 12.0, palette().separator, 1.0);
+            self.draw_notification(canvas, row, notification);
+        }
+    }
+
+    /// Sélecteur Alt+Tab, au centre de l'écran : les icônes et le titre de la fenêtre choisie.
+    fn draw_switcher(&self, canvas: &mut Canvas, layout: &Layout, switcher: &SwitcherView) {
+        let (card, tile) = switcher_card(layout.w, layout.h, switcher.icons.len());
+        canvas.fill(card, 20.0, Color::rgb(0x16181C).with_alpha(224));
+        for (index, icon) in switcher.icons.iter().enumerate() {
+            let cell = Rect::new(
+                card.x + SWITCHER_PADDING + index as f64 * (tile + SWITCHER_GAP),
+                card.y + SWITCHER_PADDING,
+                tile,
+                tile,
+            );
+            if index == switcher.selected {
+                canvas.fill(cell, 14.0, Color::WHITE.with_alpha(46));
+            }
+            canvas.app_icon(icon, cell.center(), tile * 0.8);
+        }
+        let text = canvas.fit_text(
+            &self.bold,
+            &switcher.title,
+            px(13.0),
+            card.w - 2.0 * SWITCHER_PADDING,
+        );
+        let width = canvas.text_width(&self.bold, &text, px(13.0));
+        canvas.label(
+            &self.bold,
+            &text,
+            card.x + (card.w - width) / 2.0,
+            card.y + SWITCHER_PADDING + tile + 10.0,
+            px(13.0),
+            Color::WHITE,
+        );
+    }
+
+    /// Voile sur l'écran, sauf sur la zone choisie, pendant la sélection d'une capture.
+    fn draw_region(&self, canvas: &mut Canvas, layout: &Layout, region: RegionView) {
+        let veil = Color::BLACK.with_alpha(90);
+        let Some((x, y, w, h)) = region.rect else {
+            canvas.fill(Rect::new(0.0, 0.0, layout.w, layout.h), 0.0, veil);
+            let text = "Glissez pour choisir la zone à capturer — Échap pour annuler";
+            let width = canvas.text_width(&self.bold, text, 13.0);
+            let pill = Rect::new(
+                (layout.w - width) / 2.0 - 16.0,
+                layout.bar + 20.0,
+                width + 32.0,
+                34.0,
+            );
+            canvas.fill(pill, 17.0, Color::BLACK.with_alpha(205));
+            canvas.label(&self.bold, text, pill.x + 16.0, pill.y + 9.0, 13.0, Color::WHITE);
+            return;
+        };
+        let zone = Rect::new(x as f64, y as f64, w as f64, h as f64);
+        canvas.fill(Rect::new(0.0, 0.0, layout.w, zone.y), 0.0, veil);
+        canvas.fill(
+            Rect::new(0.0, zone.bottom(), layout.w, layout.h - zone.bottom()),
+            0.0,
+            veil,
+        );
+        canvas.fill(Rect::new(0.0, zone.y, zone.x, zone.h), 0.0, veil);
+        canvas.fill(
+            Rect::new(zone.right(), zone.y, layout.w - zone.right(), zone.h),
+            0.0,
+            veil,
+        );
+        canvas.stroke(zone, 0.0, Color::WHITE, 1.5);
+        let text = format!("{w} × {h}");
+        let width = canvas.text_width(&self.bold, &text, 12.0);
+        let pill = Rect::new(
+            zone.x,
+            (zone.bottom() + 8.0).min(layout.h - 34.0),
+            width + 20.0,
+            26.0,
+        );
+        canvas.fill(pill, 13.0, Color::BLACK.with_alpha(205));
+        canvas.label(&self.bold, &text, pill.x + 10.0, pill.y + 5.0, 12.0, Color::WHITE);
+    }
+
+    /// Dialogue système : 420 px, centré, voile de 40 % sur tout l'écran.
     fn draw_dialog(&self, canvas: &mut Canvas, layout: &Layout, power: PowerAction) {
         canvas.fill(
             Rect::new(0.0, 0.0, layout.w, layout.h),
             0.0,
-            Color::BLACK.with_alpha(70),
+            Color::BLACK.with_alpha(102),
         );
         let dialog = layout.dialog();
-        canvas.card(dialog, 14.0);
-        canvas.icon(
-            "status-power",
-            (dialog.x + 52.0, dialog.y + 54.0),
-            64.0,
-            Style::Symbolic(primary_text()),
-        );
-        let (title, confirm, color) = match power {
-            PowerAction::PowerOff => ("Éteindre l’ordinateur ?", "Éteindre", destructive()),
-            PowerAction::Restart => ("Redémarrer l’ordinateur ?", "Redémarrer", accent()),
+        canvas.panel_shadow(dialog, 14.0);
+        canvas.fill(dialog, 14.0, palette().window_background);
+        let badge = Rect::new(dialog.x + 20.0, dialog.y + 20.0, 40.0, 40.0);
+        canvas.fill(badge, 20.0, themed(Color::rgb(0xE4EEFB), Color::rgb(0x23395B)));
+        canvas.icon("cc-power", badge.center(), 20.0, Style::Symbolic(accent()));
+        let (title, text) = match power {
+            PowerAction::PowerOff => (
+                "Éteindre l’ordinateur ?",
+                "Les applications ouvertes seront fermées.",
+            ),
+            PowerAction::Restart => (
+                "Redémarrer l’ordinateur ?",
+                "Les applications ouvertes seront fermées.",
+            ),
         };
         canvas.label(
             &self.bold,
             title,
-            dialog.x + 96.0,
+            dialog.x + 72.0,
             dialog.y + 30.0,
-            15.0,
+            px(16.0),
             primary_text(),
         );
         canvas.label(
             &self.regular,
-            "Les applications ouvertes seront fermées.",
-            dialog.x + 96.0,
-            dialog.y + 58.0,
-            11.0,
-            text_secondary(),
+            text,
+            dialog.x + 20.0,
+            dialog.y + 76.0,
+            px(13.0),
+            themed(Color::rgb(0x374151), Color::rgb(0xD1D5DB)),
         );
+        canvas.button(layout.dialog_cancel(), "Annuler", control_fill(), primary_text());
         canvas.button(
-            layout.dialog_cancel(),
-            "Annuler",
-            Color::rgb(0xE8E8E8),
+            layout.dialog_restart(),
+            "Redémarrer",
+            control_fill(),
             primary_text(),
         );
-        canvas.button(layout.dialog_confirm(), confirm, color, Color::WHITE);
+        canvas.button(layout.dialog_confirm(), "Éteindre", destructive(), Color::WHITE);
     }
 }
 
@@ -2147,24 +2408,37 @@ pub fn action_at(
     }
     let pos = Point::from((pos.x - output.loc.x as f64, pos.y - output.loc.y as f64));
 
+    if pending_power.is_none() {
+        let bubbles = &view.notifications.bubbles;
+        for (notification, bubble) in bubbles.iter().zip(layout.notification_bubbles(bubbles)) {
+            if !bubble.contains(pos) {
+                continue;
+            }
+            let action = (0..notification.actions.len())
+                .find(|index| notification_action(bubble, *index).contains(pos));
+            return Some(match action {
+                Some(index) => DesktopAction::NotificationAction(notification.id, index),
+                None => DesktopAction::NotificationActivate(notification.id),
+            });
+        }
+    }
+
     if popover.is_none()
         && pending_power.is_none()
-        && view.page == 0
-        && let Some(action) = {
-            let (dashboard_layout, scale) =
-                dashboard_layout(output.size.w as f64, output.size.h as f64, view);
-            let dashboard_pos = Point::from((pos.x / scale, pos.y / scale));
-            dashboard_action_at(&dashboard_layout, view, dashboard_pos)
-        }
+        && view.dashboard.shown
+        && let Some(action) = dashboard_action_at(&layout, view, pos)
     {
         return Some(action);
     }
 
     if let Some(power) = pending_power {
+        let _ = power;
         return Some(if layout.dialog_cancel().contains(pos) {
             DesktopAction::CancelPower
+        } else if layout.dialog_restart().contains(pos) {
+            DesktopAction::ConfirmPower(PowerAction::Restart)
         } else if layout.dialog_confirm().contains(pos) {
-            DesktopAction::ConfirmPower(power)
+            DesktopAction::ConfirmPower(PowerAction::PowerOff)
         } else if layout.dialog().contains(pos) {
             DesktopAction::Consume
         } else {
@@ -2179,8 +2453,8 @@ pub fn action_at(
         if let Some(page) = (0..view.page_count).find(|&page| layout.page_dot(page).contains(pos)) {
             return Some(DesktopAction::GoToPage(page));
         }
-        if layout.indicator(Indicator::Power).contains(pos) {
-            return Some(DesktopAction::TogglePopover(Popover::Session));
+        if layout.clock_button().contains(pos) {
+            return Some(DesktopAction::TogglePopover(Popover::Notifications));
         }
         if layout.indicators_group().contains(pos) {
             return Some(DesktopAction::TogglePopover(Popover::Controls));
@@ -2200,6 +2474,12 @@ pub fn action_at(
                 .map_or(DesktopAction::Consume, DesktopAction::DockMenu),
             _ => DesktopAction::ClosePopover,
         },
+        Popover::DesktopMenu => match view.desktop_menu {
+            Some(anchor) if layout.desktop_menu(anchor).contains(pos) => (0..DESKTOP_MENU.len())
+                .find(|&index| layout.desktop_menu_row(anchor, index).contains(pos))
+                .map_or(DesktopAction::Consume, DesktopAction::DesktopMenu),
+            _ => DesktopAction::ClosePopover,
+        },
         Popover::Launcher if layout.launcher().contains(pos) => {
             let launcher = &view.launcher;
             if !layout.launcher_content().contains(pos) {
@@ -2212,35 +2492,88 @@ pub fn action_at(
                         LauncherItem::Tile { section, slot, rect } if rect.contains(pos) => Some(
                             DesktopAction::LaunchTile(launcher.sections[section].tiles[slot].index),
                         ),
-                        LauncherItem::Link { link, rect } if rect.contains(pos) => {
-                            Some(DesktopAction::LauncherLink(link))
-                        }
                         _ => None,
                     })
                     .unwrap_or(DesktopAction::Consume)
             }
         }
-        Popover::Controls if layout.controls().contains(pos) => {
-            let on = |control| layout.control_row(control).contains(pos);
-            let percent = |control| slider_percent(layout.slider_track(control), pos.x);
-            if on(Control::Wifi) && view.wifi.is_some() {
-                DesktopAction::ToggleWifi
-            } else if on(Control::Bluetooth) && view.bluetooth.is_some() {
-                DesktopAction::ToggleBluetooth
-            } else if on(Control::Airplane) && airplane(view).is_some() {
-                DesktopAction::ToggleAirplane
-            } else if on(Control::Clipboard) {
-                DesktopAction::TogglePopover(Popover::Clipboard)
-            } else if on(Control::Settings) {
-                DesktopAction::Launch(App::Settings)
-            } else if on(Control::Volume) && view.volume.is_some() {
-                DesktopAction::SetVolume(percent(Control::Volume))
-            } else if on(Control::Brightness) && view.brightness.is_some() {
-                DesktopAction::SetBrightness(percent(Control::Brightness))
-            } else {
-                DesktopAction::Consume
+        Popover::Controls if layout.controls().contains(pos) => match view.controls.page {
+            ControlsPage::Main => {
+                let on = |control| layout.control_row(control).contains(pos);
+                let percent = |control| slider_percent(layout.slider_track(control), pos.x);
+                if on(Control::WifiMore) && view.wifi.is_some() {
+                    DesktopAction::ControlsPage(ControlsPage::Wifi)
+                } else if on(Control::BluetoothMore) && view.bluetooth.is_some() {
+                    DesktopAction::ControlsPage(ControlsPage::Bluetooth)
+                } else if on(Control::Wifi) && view.wifi.is_some() {
+                    DesktopAction::ToggleWifi
+                } else if on(Control::Bluetooth) && view.bluetooth.is_some() {
+                    DesktopAction::ToggleBluetooth
+                } else if on(Control::Dark) {
+                    DesktopAction::ToggleDarkMode
+                } else if on(Control::DoNotDisturb) {
+                    DesktopAction::ToggleDoNotDisturb
+                } else if on(Control::Saver) {
+                    DesktopAction::TogglePowerSaver
+                } else if on(Control::Keyboard) {
+                    DesktopAction::ToggleKeyboardLayout
+                } else if on(Control::Settings) {
+                    DesktopAction::OpenSettings
+                } else if on(Control::Lock) {
+                    DesktopAction::Lock
+                } else if on(Control::Power) {
+                    DesktopAction::RequestPower(PowerAction::PowerOff)
+                } else if on(Control::Volume) && view.volume.is_some() {
+                    DesktopAction::SetVolume(percent(Control::Volume))
+                } else if on(Control::Brightness) && view.brightness.is_some() {
+                    DesktopAction::SetBrightness(percent(Control::Brightness))
+                } else {
+                    DesktopAction::Consume
+                }
             }
-        }
+            ControlsPage::Wifi => {
+                let networks = &view.controls.networks;
+                if layout.controls_back().contains(pos) {
+                    DesktopAction::ControlsPage(ControlsPage::Main)
+                } else if layout.controls_switch().contains(pos) && view.wifi.is_some() {
+                    DesktopAction::ToggleWifi
+                } else if view.controls.password.is_some() && layout.password_cancel().contains(pos) {
+                    DesktopAction::PasswordCancel
+                } else if view.controls.password.is_some() && layout.password_submit().contains(pos) {
+                    DesktopAction::PasswordSubmit
+                } else if layout.controls_bottom().contains(pos) {
+                    DesktopAction::OpenSettingsPage("wifi")
+                } else if let Some(network) = networks
+                    .iter()
+                    .enumerate()
+                    .find(|(slot, _)| layout.wifi_row(*slot).contains(pos))
+                    .map(|(_, network)| network)
+                {
+                    DesktopAction::NetworkJoin(network.index)
+                } else {
+                    DesktopAction::Consume
+                }
+            }
+            ControlsPage::Bluetooth => {
+                let devices = &view.controls.devices;
+                if layout.controls_back().contains(pos) {
+                    DesktopAction::ControlsPage(ControlsPage::Main)
+                } else if layout.controls_switch().contains(pos) && view.bluetooth.is_some() {
+                    DesktopAction::ToggleBluetooth
+                } else if layout.controls_bottom().contains(pos) {
+                    DesktopAction::OpenSettingsPage("bluetooth")
+                } else if let Some(device) = devices
+                    .iter()
+                    .enumerate()
+                    .find(|(slot, _)| layout.bluetooth_button(*slot).contains(pos))
+                    .map(|(_, device)| device)
+                {
+                    DesktopAction::DeviceAction(device.index)
+                } else {
+                    DesktopAction::Consume
+                }
+            }
+        },
         Popover::Clipboard if layout.clipboard().contains(pos) => {
             let clipboard = &view.clipboard;
             if layout.clipboard_header().contains(pos) {
@@ -2270,11 +2603,17 @@ pub fn action_at(
                 }
             }
         }
-        Popover::Session if layout.session().contains(pos) => {
-            if layout.session_row(0).contains(pos) {
-                DesktopAction::RequestPower(PowerAction::Restart)
-            } else if layout.session_row(1).contains(pos) {
-                DesktopAction::RequestPower(PowerAction::PowerOff)
+        Popover::Notifications if layout.calendar(view.notifications.history.len()).contains(pos) => {
+            let history = &view.notifications.history;
+            let row = history
+                .iter()
+                .take(layout.notification_rows())
+                .enumerate()
+                .find(|(slot, _)| layout.notification_row(history.len(), *slot).contains(pos));
+            if !history.is_empty() && layout.notifications_clear(history.len()).contains(pos) {
+                DesktopAction::NotificationsClear
+            } else if let Some((_, notification)) = row {
+                DesktopAction::NotificationActivate(notification.id)
             } else {
                 DesktopAction::Consume
             }
@@ -2284,103 +2623,11 @@ pub fn action_at(
     Some(action)
 }
 
-fn dashboard_layout(width: f64, height: f64, view: &DesktopView) -> (Layout, f64) {
-    let scale = dashboard_scale(width, height);
-    let mut scaled_view = view.clone();
-    scaled_view.bar_height = (view.bar_height as f64 / scale).round() as u32;
-    scaled_view.dock_height = (view.dock_height as f64 / scale).round() as i32;
-    (Layout::new(width / scale, height / scale, &scaled_view), scale)
-}
-
-fn dashboard_scale(width: f64, height: f64) -> f64 {
-    (width / 1152.0).min(height / 768.0).clamp(0.75, 2.0)
-}
-
-fn dashboard_action_at(
-    layout: &Layout,
-    view: &DesktopView,
-    pos: Point<f64, Logical>,
-) -> Option<DesktopAction> {
-    let [clock, weather, calendar, notes, tasks, system, shortcuts, quote] = layout.dashboard_cards();
-    if clock.contains(pos) {
-        if Rect::new(clock.right() - 48.0, clock.y + 8.0, 40.0, 40.0).contains(pos) {
-            return Some(DesktopAction::DashboardLaunch(App::Settings));
-        }
-        return Some(DesktopAction::DashboardConsume);
-    }
-    if weather.contains(pos) {
-        return Some(DesktopAction::DashboardConsume);
-    }
-    if calendar.contains(pos) {
-        if Rect::new(calendar.right() - 66.0, calendar.y + 8.0, 24.0, 38.0).contains(pos) {
-            return Some(DesktopAction::DashboardMonth(-1));
-        }
-        if Rect::new(calendar.right() - 38.0, calendar.y + 8.0, 24.0, 38.0).contains(pos) {
-            return Some(DesktopAction::DashboardMonth(1));
-        }
-        return Some(DesktopAction::DashboardConsume);
-    }
-    if notes.contains(pos) {
-        if Rect::new(notes.right() - 48.0, notes.y + 7.0, 42.0, 42.0).contains(pos) {
-            return Some(DesktopAction::DashboardAddNote);
-        }
-        let row_height = (notes.bottom() - (notes.y + 56.0) - 8.0).max(0.0) / 4.0;
-        if row_height > 0.0 && pos.y >= notes.y + 56.0 {
-            let index = ((pos.y - notes.y - 56.0) / row_height).floor() as usize;
-            if index < view.dashboard.notes.len().min(4) {
-                return Some(DesktopAction::DashboardEditNote(index));
-            }
-        }
-        return Some(DesktopAction::DashboardConsume);
-    }
-    if tasks.contains(pos) {
-        let add = Rect::new(tasks.right() - 48.0, tasks.y + 7.0, 42.0, 42.0);
-        if add.contains(pos) {
-            return Some(DesktopAction::DashboardAddTask);
-        }
-        let row_top = tasks.y + 53.0;
-        let row_height = ((tasks.bottom() - row_top - 8.0) / 6.0).clamp(25.0, 34.0);
-        if pos.y >= row_top {
-            let index = ((pos.y - row_top) / row_height).floor() as usize;
-            if let Some(task) = view.dashboard.tasks.get(index) {
-                if pos.x >= tasks.right() - 100.0 {
-                    return Some(DesktopAction::DashboardCyclePriority(index));
-                }
-                if !task.text.is_empty() {
-                    return Some(DesktopAction::DashboardToggleTask(index));
-                }
-            }
-        }
-        return Some(DesktopAction::DashboardConsume);
-    }
-    if system.contains(pos) {
-        return Some(DesktopAction::DashboardConsume);
-    }
-    if shortcuts.contains(pos) {
-        let item_width = (shortcuts.w - 2.0 * SHORTCUTS_PAD) / 6.0;
-        let index = ((pos.x - shortcuts.x - SHORTCUTS_PAD) / item_width).floor();
-        if index < 0.0 || pos.y < shortcuts.y + 42.0 {
-            return Some(DesktopAction::DashboardConsume);
-        }
-        return (index < 6.0)
-            .then_some(DesktopAction::DashboardShortcut(index as usize))
-            .or(Some(DesktopAction::DashboardConsume));
-    }
-    if quote.contains(pos) {
-        return Some(DesktopAction::DashboardConsume);
-    }
-    None
-}
-
 /// Élément du lanceur, placé par [`launcher_flow`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum LauncherItem {
     Title {
         section: usize,
-        rect: Rect,
-    },
-    Link {
-        link: SectionLink,
         rect: Rect,
     },
     /// Case `slot` de la rubrique `section`.
@@ -2389,16 +2636,12 @@ enum LauncherItem {
         slot: usize,
         rect: Rect,
     },
-    Rule(Rect),
 }
 
 impl LauncherItem {
     /// Au moins en partie dans la zone visible `content` (seuls ceux-là sont dessinés).
     fn visible_in(&self, content: Rect) -> bool {
-        let (LauncherItem::Title { rect, .. }
-        | LauncherItem::Link { rect, .. }
-        | LauncherItem::Tile { rect, .. }
-        | LauncherItem::Rule(rect)) = *self;
+        let (LauncherItem::Title { rect, .. } | LauncherItem::Tile { rect, .. }) = *self;
         rect.bottom() > content.y && rect.y < content.bottom()
     }
 }
@@ -2410,26 +2653,13 @@ fn launcher_flow(launcher: &LauncherView) -> (Vec<LauncherItem>, f64) {
     let mut items = Vec::new();
     let mut y = 4.0;
     for (index, section) in launcher.sections.iter().enumerate() {
-        if index > 0 {
-            items.push(LauncherItem::Rule(Rect::new(
-                0.0,
-                y + LAUNCHER_GAP / 2.0,
-                width,
-                1.0,
-            )));
-            y += LAUNCHER_GAP;
-        }
-        items.push(LauncherItem::Title {
-            section: index,
-            rect: Rect::new(0.0, y, width - 80.0, LAUNCHER_TITLE),
-        });
-        if let Some(link) = section.link {
-            items.push(LauncherItem::Link {
-                link,
-                rect: Rect::new(width - 80.0, y, 80.0, LAUNCHER_TITLE),
+        if !section.title.is_empty() {
+            items.push(LauncherItem::Title {
+                section: index,
+                rect: Rect::new(0.0, y, width, LAUNCHER_TITLE),
             });
+            y += LAUNCHER_TITLE;
         }
-        y += LAUNCHER_TITLE;
         for slot in 0..section.tiles.len() {
             let (column, row) = (slot % LAUNCHER_COLUMNS, slot / LAUNCHER_COLUMNS);
             items.push(LauncherItem::Tile {
@@ -2531,15 +2761,6 @@ fn slider_percent(track: Rect, x: f64) -> u8 {
     (((x - track.x - knob / 2.0) / (track.w - knob)).clamp(0.0, 1.0) * 100.0).round() as u8
 }
 
-/// Mode avion : actif quand toutes les radios présentes sont coupées ; `None` sans radio.
-fn airplane(view: &DesktopView) -> Option<bool> {
-    let radios = [view.wifi, view.bluetooth];
-    radios
-        .iter()
-        .any(Option::is_some)
-        .then(|| !radios.contains(&Some(true)))
-}
-
 /// Indicateurs de la barre, de gauche à droite.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Indicator {
@@ -2548,18 +2769,24 @@ enum Indicator {
     Network,
     Volume,
     Battery,
-    Power,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Control {
     Wifi,
     Bluetooth,
-    Airplane,
-    Clipboard,
-    Settings,
-    Brightness,
+    Dark,
+    DoNotDisturb,
+    Saver,
+    Keyboard,
     Volume,
+    Brightness,
+    /// Chevrons des tuiles Wi-Fi et Bluetooth.
+    WifiMore,
+    BluetoothMore,
+    Settings,
+    Lock,
+    Power,
 }
 
 /// Géométrie du bureau, en pixels logiques relatifs à l'écran.
@@ -2567,9 +2794,12 @@ struct Layout {
     w: f64,
     h: f64,
     bar: f64,
-    dock: f64,
+    dock_height: f64,
+    page: usize,
     clipboard_position: Option<(i32, i32)>,
+    controls_view: ControlsView,
     battery: bool,
+    battery_percent: bool,
     bluetooth: bool,
     volume: bool,
     brightness: bool,
@@ -2577,68 +2807,12 @@ struct Layout {
 }
 
 impl Layout {
-    fn new(w: f64, h: f64, view: &DesktopView) -> Self {
-        Self {
-            w,
-            h,
-            bar: view.bar_height as f64,
-            dock: view.dock_height as f64,
-            clipboard_position: view.clipboard.position,
-            battery: battery_dir().is_some(),
-            bluetooth: view.bluetooth.is_some(),
-            volume: view.volume.is_some(),
-            brightness: view.brightness.is_some(),
-            error: view.error.is_some(),
-        }
-    }
-
-    fn dashboard_cards(&self) -> [Rect; 8] {
-        let margin = 24.0;
-        let gap = 12.0;
-        let width = (self.w - margin * 2.0).max(1.0);
-        let top = self.bar + 16.0;
-        // Le Dock reste entièrement visible sous les widgets.
-        let height = (self.h - top - margin.max(self.dock + gap)).max(1.0);
-        let rows_height = (height - gap * 2.0).max(3.0);
-        let row_one = rows_height * 0.38;
-        let row_two = rows_height * 0.41;
-        let row_three = rows_height - row_one - row_two;
-        let third = (width - 2.0 * gap) / 3.0;
-        let shortcuts_width = (width - gap) * 0.58;
-        let quote_width = width - gap - shortcuts_width;
-        [
-            Rect::new(margin, top, third, row_one),
-            Rect::new(margin + third + gap, top, third, row_one),
-            Rect::new(margin + 2.0 * (third + gap), top, third, row_one),
-            Rect::new(margin, top + row_one + gap, third, row_two),
-            Rect::new(margin + third + gap, top + row_one + gap, third, row_two),
-            Rect::new(margin + 2.0 * (third + gap), top + row_one + gap, third, row_two),
-            Rect::new(
-                margin,
-                top + row_one + gap + row_two + gap,
-                shortcuts_width,
-                row_three,
-            ),
-            Rect::new(
-                margin + shortcuts_width + gap,
-                top + row_one + gap + row_two + gap,
-                quote_width,
-                row_three,
-            ),
-        ]
-    }
-
-    /// Marque d'une page dans la barre, juste après « Applications ».
-    fn page_dot(&self, page: usize) -> Rect {
-        Rect::new(140.0 + page as f64 * 16.0, 0.0, 16.0, self.bar)
-    }
-
     fn applications_button(&self) -> Rect {
-        // Logo, « Applications » en gras, et une marge de chaque côté.
-        Rect::new(4.0, 0.0, 132.0, self.bar)
+        // Logo de 20 px, « Applications » en demi-gras, et une marge de chaque côté.
+        Rect::new(6.0, 0.0, 138.0, self.bar)
     }
 
-    /// Indicateurs présents, de gauche à droite (l'alimentation à part, tout à droite).
+    /// Indicateurs présents, de gauche à droite.
     fn present(&self) -> Vec<Indicator> {
         let mut list = Vec::new();
         if self.bluetooth {
@@ -2656,38 +2830,473 @@ impl Layout {
 
     /// Case d'un indicateur ; vide (largeur nulle) s'il est absent.
     fn indicator(&self, indicator: Indicator) -> Rect {
-        let power = Rect::new(self.w - 6.0 - INDICATOR_WIDTH, 0.0, INDICATOR_WIDTH, self.bar);
-        if indicator == Indicator::Power {
-            return power;
-        }
-        // Le pourcentage de batterie est écrit à droite de son icône.
-        let battery_text = if self.battery { 46.0 } else { 0.0 };
         let present = self.present();
         let Some(index) = present.iter().position(|known| *known == indicator) else {
-            return Rect::new(power.x, 0.0, 0.0, 0.0);
+            return Rect::new(self.w, 0.0, 0.0, 0.0);
         };
         let from_right = (present.len() - index) as f64;
+        // Le dernier s'arrête à 16 px du bord, la case dépassant son icône de 8 px.
         Rect::new(
-            power.x - 8.0 - battery_text - from_right * INDICATOR_WIDTH,
+            self.w - 8.0 - self.percent_width() - from_right * INDICATOR_WIDTH,
             0.0,
             INDICATOR_WIDTH,
             self.bar,
         )
     }
 
+    /// Place du pourcentage de batterie.
+    fn percent_width(&self) -> f64 {
+        if self.battery && self.battery_percent {
+            40.0
+        } else {
+            0.0
+        }
+    }
+
     fn indicators(&self) -> Vec<(Indicator, Rect)> {
-        let mut list = self.present();
-        list.push(Indicator::Power);
-        list.into_iter()
+        self.present()
+            .into_iter()
             .map(|indicator| (indicator, self.indicator(indicator)))
             .collect()
     }
 
-    /// Indicateurs qui ouvrent les réglages rapides (tous sauf l'alimentation).
+    /// Indicateurs, qui ouvrent le centre de contrôle.
     fn indicators_group(&self) -> Rect {
         let first = self.indicator(self.present()[0]);
-        let end = self.indicator(Indicator::Power).x - 4.0;
-        Rect::new(first.x, 0.0, end - first.x, self.bar)
+        Rect::new(first.x, 0.0, self.w - 8.0 - first.x, self.bar)
+    }
+
+    /// Horloge au centre de la barre, qui ouvre le calendrier et les notifications.
+    fn clock_button(&self) -> Rect {
+        Rect::new((self.w - CLOCK_WIDTH) / 2.0, 0.0, CLOCK_WIDTH, self.bar)
+    }
+
+    /// Bannières des notifications, en haut à droite, la plus récente en haut.
+    fn notification_bubbles(&self, notifications: &[NotificationView]) -> Vec<Rect> {
+        let mut y = self.bar + 12.0;
+        notifications
+            .iter()
+            .map(|notification| {
+                let actions = if notification.actions.is_empty() {
+                    0.0
+                } else {
+                    36.0
+                };
+                let height = NOTIFICATION_HEIGHT + actions;
+                let rect = Rect::new(self.w - NOTIFICATION_WIDTH - 16.0, y, NOTIFICATION_WIDTH, height);
+                y += height + 8.0;
+                rect
+            })
+            .collect()
+    }
+
+    /// Lignes de notifications qui tiennent sous le calendrier.
+    fn notification_rows(&self) -> usize {
+        let room = self.h - self.bar - POPOVER_MARGIN - 12.0 - CALENDAR_BODY - NOTIFICATION_HEADER - 18.0;
+        ((room / (NOTIFICATION_HEIGHT + 8.0)).floor() as usize).max(1)
+    }
+
+    /// Panneau du calendrier et des notifications, centré sous la barre.
+    fn calendar(&self, count: usize) -> Rect {
+        let rows = count.min(self.notification_rows());
+        let list = if rows == 0 {
+            44.0
+        } else {
+            rows as f64 * (NOTIFICATION_HEIGHT + 8.0)
+        };
+        Rect::new(
+            (self.w - CALENDAR_WIDTH) / 2.0,
+            self.bar + POPOVER_MARGIN,
+            CALENDAR_WIDTH,
+            CALENDAR_BODY + NOTIFICATION_HEADER + list + 10.0,
+        )
+    }
+
+    /// Filet au-dessus des notifications.
+    fn calendar_rule(&self, count: usize) -> Rect {
+        let card = self.calendar(count);
+        Rect::new(card.x + 18.0, card.y + CALENDAR_BODY, card.w - 36.0, 1.0)
+    }
+
+    fn notifications_clear(&self, count: usize) -> Rect {
+        let rule = self.calendar_rule(count);
+        Rect::new(rule.right() - 92.0, rule.y + 12.0, 92.0, 26.0)
+    }
+
+    fn notification_row(&self, count: usize, slot: usize) -> Rect {
+        let rule = self.calendar_rule(count);
+        Rect::new(
+            rule.x,
+            rule.y + NOTIFICATION_HEADER + slot as f64 * (NOTIFICATION_HEIGHT + 8.0),
+            rule.w,
+            NOTIFICATION_HEIGHT,
+        )
+    }
+
+    /// Centre de contrôle, ancré en haut à droite, 8 px sous la barre.
+    fn controls(&self) -> Rect {
+        let h = match self.controls_view.page {
+            ControlsPage::Main => {
+                let sliders = [self.volume, self.brightness]
+                    .into_iter()
+                    .filter(|&present| present)
+                    .count() as f64;
+                let error = if self.error { 22.0 } else { 0.0 };
+                2.0 * CONTROLS_PAD
+                    + 3.0 * CONTROLS_TILE
+                    + 2.0 * 10.0
+                    + CONTROLS_GAP
+                    + sliders * (CONTROLS_ROW + 6.0)
+                    + CONTROLS_GAP
+                    + 13.0
+                    + CONTROLS_ROW
+                    + error
+            }
+            ControlsPage::Wifi => CONTROLS_LIST_TOP + self.wifi_list_height() + CONTROLS_LIST_BOTTOM,
+            ControlsPage::Bluetooth => {
+                let groups = self.bluetooth_groups();
+                CONTROLS_LIST_TOP
+                    + groups
+                        .iter()
+                        .map(|count| {
+                            if *count == 0 {
+                                0.0
+                            } else {
+                                CONTROLS_HEADING + *count as f64 * CONTROLS_LIST_ROW + 10.0
+                            }
+                        })
+                        .sum::<f64>()
+                    + CONTROLS_LIST_BOTTOM
+            }
+        };
+        Rect::new(
+            (self.w - 16.0 - CONTROLS_WIDTH).max(POPOVER_MARGIN),
+            self.bar + POPOVER_MARGIN,
+            CONTROLS_WIDTH,
+            h,
+        )
+    }
+
+    /// Retour aux tuiles, en haut à gauche d'une liste.
+    fn controls_back(&self) -> Rect {
+        let card = self.controls();
+        Rect::new(card.x + CONTROLS_PAD, card.y + CONTROLS_PAD, 34.0, 34.0)
+    }
+
+    /// Interrupteur, en haut à droite d'une liste.
+    fn controls_switch(&self) -> Rect {
+        let card = self.controls();
+        Rect::new(
+            card.right() - CONTROLS_PAD - 46.0,
+            card.y + CONTROLS_PAD + 3.0,
+            46.0,
+            28.0,
+        )
+    }
+
+    /// Bas d'une liste : état et lien vers Paramètres.
+    fn controls_bottom(&self) -> Rect {
+        let card = self.controls();
+        Rect::new(
+            card.x + CONTROLS_PAD,
+            card.bottom() - CONTROLS_LIST_BOTTOM + 4.0,
+            card.w - 2.0 * CONTROLS_PAD,
+            32.0,
+        )
+    }
+
+    fn wifi_list_height(&self) -> f64 {
+        let rows = self.controls_view.networks.len().max(1) as f64;
+        let password = if self.controls_view.password.is_some() {
+            CONTROLS_PASSWORD
+        } else {
+            0.0
+        };
+        rows * CONTROLS_LIST_ROW + password
+    }
+
+    fn wifi_list(&self) -> Rect {
+        let card = self.controls();
+        Rect::new(
+            card.x + CONTROLS_PAD,
+            card.y + CONTROLS_LIST_TOP,
+            card.w - 2.0 * CONTROLS_PAD,
+            self.wifi_list_height(),
+        )
+    }
+
+    /// Place du réseau dont on demande le mot de passe.
+    fn password_slot(&self) -> Option<usize> {
+        let entry = self.controls_view.password.as_ref()?;
+        self.controls_view
+            .networks
+            .iter()
+            .position(|network| network.ssid == entry.ssid)
+    }
+
+    /// Ligne d'un réseau ; celles sous le mot de passe demandé descendent.
+    fn wifi_row(&self, slot: usize) -> Rect {
+        let list = self.wifi_list();
+        let below = self.password_slot().is_some_and(|open| slot > open);
+        let extra = if below { CONTROLS_PASSWORD } else { 0.0 };
+        Rect::new(
+            list.x,
+            list.y + slot as f64 * CONTROLS_LIST_ROW + extra,
+            list.w,
+            CONTROLS_LIST_ROW,
+        )
+    }
+
+    fn password_field(&self) -> Rect {
+        let row = self.wifi_row(self.password_slot().unwrap_or_default());
+        Rect::new(row.x + 48.0, row.bottom() + 24.0, row.w - 48.0 - 14.0, 40.0)
+    }
+
+    fn password_submit(&self) -> Rect {
+        let field = self.password_field();
+        Rect::new(field.right() - 108.0, field.bottom() + 10.0, 108.0, 32.0)
+    }
+
+    fn password_cancel(&self) -> Rect {
+        let submit = self.password_submit();
+        Rect::new(submit.x - 8.0 - 76.0, submit.y, 76.0, submit.h)
+    }
+
+    /// Nombre d'appareils associés, puis à proximité.
+    fn bluetooth_groups(&self) -> [usize; 2] {
+        let devices = &self.controls_view.devices;
+        let paired = devices.iter().filter(|device| device.paired).count();
+        [paired, devices.len() - paired]
+    }
+
+    /// Titre et fond du groupe des appareils associés, ou de ceux à proximité.
+    fn bluetooth_group(&self, paired: bool) -> Option<(Rect, Rect)> {
+        let card = self.controls();
+        let [mine, nearby] = self.bluetooth_groups();
+        let (count, before) = if paired { (mine, 0) } else { (nearby, mine) };
+        if count == 0 {
+            return None;
+        }
+        let skipped = if before == 0 {
+            0.0
+        } else {
+            CONTROLS_HEADING + before as f64 * CONTROLS_LIST_ROW + 10.0
+        };
+        let top = card.y + CONTROLS_LIST_TOP + skipped;
+        let width = card.w - 2.0 * CONTROLS_PAD;
+        Some((
+            Rect::new(card.x + CONTROLS_PAD + 4.0, top, width, CONTROLS_HEADING),
+            Rect::new(
+                card.x + CONTROLS_PAD,
+                top + CONTROLS_HEADING,
+                width,
+                count as f64 * CONTROLS_LIST_ROW,
+            ),
+        ))
+    }
+
+    /// Ligne d'un appareil ; la liste est triée, les associés d'abord.
+    fn bluetooth_row(&self, slot: usize) -> Rect {
+        let [mine, _] = self.bluetooth_groups();
+        let paired = slot < mine;
+        let index = if paired { slot } else { slot - mine };
+        let list = self
+            .bluetooth_group(paired)
+            .map_or(self.controls(), |(_, list)| list);
+        Rect::new(
+            list.x,
+            list.y + index as f64 * CONTROLS_LIST_ROW,
+            list.w,
+            CONTROLS_LIST_ROW,
+        )
+    }
+
+    fn bluetooth_button(&self, slot: usize) -> Rect {
+        let row = self.bluetooth_row(slot);
+        Rect::new(
+            row.right() - 12.0 - 96.0,
+            row.y + (row.h - 30.0) / 2.0,
+            96.0,
+            30.0,
+        )
+    }
+
+    /// Case d'un réglage ; vide si le curseur est absent.
+    fn control_row(&self, control: Control) -> Rect {
+        let card = self.controls();
+        let inner = card.w - 2.0 * CONTROLS_PAD;
+        let (left, top) = (card.x + CONTROLS_PAD, card.y + CONTROLS_PAD);
+        let tile_w = (inner - 10.0) / 2.0;
+        let tile = |column: f64, row: f64| {
+            Rect::new(
+                left + column * (tile_w + 10.0),
+                top + row * (CONTROLS_TILE + 10.0),
+                tile_w,
+                CONTROLS_TILE,
+            )
+        };
+        let sliders_top = top + 3.0 * CONTROLS_TILE + 20.0 + CONTROLS_GAP;
+        let row = |index: f64| {
+            Rect::new(
+                left,
+                sliders_top + index * (CONTROLS_ROW + 6.0),
+                inner,
+                CONTROLS_ROW,
+            )
+        };
+        let footer = self.controls_footer();
+        let round = |from_right: f64| {
+            Rect::new(
+                footer.right() - from_right * 40.0 + 8.0,
+                footer.y + 15.0,
+                32.0,
+                32.0,
+            )
+        };
+        let chevron = |tile: Rect| Rect::new(tile.right() - 36.0, tile.y, 36.0, tile.h);
+        match control {
+            Control::Wifi => tile(0.0, 0.0),
+            Control::Bluetooth => tile(1.0, 0.0),
+            Control::Dark => tile(0.0, 1.0),
+            Control::DoNotDisturb => tile(1.0, 1.0),
+            Control::Saver => tile(0.0, 2.0),
+            Control::Keyboard => tile(1.0, 2.0),
+            Control::Volume if self.volume => row(0.0),
+            Control::Brightness if self.brightness => row(if self.volume { 1.0 } else { 0.0 }),
+            Control::Volume | Control::Brightness => Rect::new(card.x, card.y, 0.0, 0.0),
+            Control::WifiMore => chevron(tile(0.0, 0.0)),
+            Control::BluetoothMore => chevron(tile(1.0, 0.0)),
+            // Le lien « Paramètres… », à gauche des deux boutons ronds.
+            Control::Settings => Rect::new(footer.right() - 80.0 - 116.0, footer.y + 15.0, 108.0, 32.0),
+            Control::Lock => round(2.0),
+            Control::Power => round(1.0),
+        }
+    }
+
+    /// Bas du centre de contrôle : filet, batterie et boutons de session.
+    fn controls_footer(&self) -> Rect {
+        let card = self.controls();
+        let error = if self.error { 22.0 } else { 0.0 };
+        Rect::new(
+            card.x + CONTROLS_PAD,
+            card.bottom() - CONTROLS_PAD - error - CONTROLS_ROW - 13.0,
+            card.w - 2.0 * CONTROLS_PAD,
+            CONTROLS_ROW + 13.0,
+        )
+    }
+
+    /// Ligne du message d'erreur, tout en bas du centre de contrôle.
+    fn controls_error(&self) -> Rect {
+        let card = self.controls();
+        Rect::new(
+            card.x + CONTROLS_PAD,
+            card.bottom() - CONTROLS_PAD - 16.0,
+            card.w - 2.0 * CONTROLS_PAD,
+            16.0,
+        )
+    }
+
+    /// Piste d'un curseur : le bouton de 20 px y circule, entre l'icône et le pourcentage.
+    fn slider_track(&self, control: Control) -> Rect {
+        let row = self.control_row(control);
+        Rect::new(
+            row.x + 32.0,
+            row.y + (row.h - 20.0) / 2.0,
+            row.w - 32.0 - 46.0,
+            20.0,
+        )
+    }
+
+    /// Dialogue système : 420 px, centré.
+    fn dialog(&self) -> Rect {
+        Rect::new(
+            ((self.w - DIALOG.0) / 2.0).max(8.0),
+            ((self.h - DIALOG.1) / 2.0).max(self.bar + 8.0),
+            DIALOG.0,
+            DIALOG.1,
+        )
+    }
+
+    fn dialog_confirm(&self) -> Rect {
+        let dialog = self.dialog();
+        Rect::new(
+            dialog.right() - 20.0 - 92.0,
+            dialog.bottom() - 20.0 - 34.0,
+            92.0,
+            34.0,
+        )
+    }
+
+    fn dialog_restart(&self) -> Rect {
+        let confirm = self.dialog_confirm();
+        Rect::new(confirm.x - 8.0 - 104.0, confirm.y, 104.0, confirm.h)
+    }
+
+    fn dialog_cancel(&self) -> Rect {
+        let restart = self.dialog_restart();
+        Rect::new(restart.x - 8.0 - 84.0, restart.y, 84.0, restart.h)
+    }
+
+    fn new(w: f64, h: f64, view: &DesktopView) -> Self {
+        Self {
+            w,
+            h,
+            page: view.page,
+            dock_height: view.dock_height as f64,
+            bar: view.bar_height as f64,
+            clipboard_position: view.clipboard.position,
+            controls_view: view.controls.clone(),
+            battery: battery_dir().is_some(),
+            battery_percent: view.battery_percent,
+            bluetooth: view.bluetooth_icon && view.bluetooth.is_some(),
+            volume: view.volume.is_some(),
+            brightness: view.brightness.is_some(),
+            error: view.error.is_some(),
+        }
+    }
+
+    /// Menu du bureau : 260 de large, des lignes de 32, marge de 6, jamais hors de l'écran.
+    fn desktop_menu(&self, anchor: (i32, i32)) -> Rect {
+        let (w, h) = (260.0, DESKTOP_MENU.len() as f64 * 32.0 + 12.0);
+        Rect::new(
+            f64::from(anchor.0)
+                .min(self.w - w - POPOVER_MARGIN)
+                .max(POPOVER_MARGIN),
+            f64::from(anchor.1)
+                .min(self.h - h - POPOVER_MARGIN)
+                .max(self.bar + POPOVER_MARGIN),
+            w,
+            h,
+        )
+    }
+
+    fn desktop_menu_row(&self, anchor: (i32, i32), index: usize) -> Rect {
+        let menu = self.desktop_menu(anchor);
+        Rect::new(
+            menu.x + 6.0,
+            menu.y + 6.0 + index as f64 * 32.0,
+            menu.w - 12.0,
+            32.0,
+        )
+    }
+
+    /// Marque du bureau `page` : la pilule du bureau affiché prend plus de place.
+    fn page_dot(&self, page: usize) -> Rect {
+        let width = |index: usize| {
+            if index == self.page {
+                PAGE_MARK_ACTIVE
+            } else {
+                PAGE_MARK
+            }
+        };
+        let before: f64 = (0..page).map(|index| width(index) + PAGE_MARK_GAP).sum();
+        // La zone du clic déborde dans les écarts.
+        Rect::new(
+            150.0 + before - PAGE_MARK_GAP / 2.0,
+            0.0,
+            width(page) + PAGE_MARK_GAP,
+            self.bar,
+        )
     }
 
     /// Lanceur, centré dans l'écran (un peu au-dessus du milieu, comme sur macOS).
@@ -2723,84 +3332,12 @@ impl Layout {
         let (dx, dy) = (content.x + LAUNCHER_PAD, content.y - scroll);
         for item in &mut items {
             let rect = match item {
-                LauncherItem::Title { rect, .. }
-                | LauncherItem::Link { rect, .. }
-                | LauncherItem::Tile { rect, .. }
-                | LauncherItem::Rule(rect) => rect,
+                LauncherItem::Title { rect, .. } | LauncherItem::Tile { rect, .. } => rect,
             };
             rect.x += dx;
             rect.y += dy;
         }
         items
-    }
-
-    fn controls(&self) -> Rect {
-        let x = (self.w - POPOVER_MARGIN - CONTROLS_WIDTH).max(POPOVER_MARGIN);
-        let sliders = [self.brightness, self.volume]
-            .into_iter()
-            .filter(|&present| present)
-            .count();
-        let error = if self.error { 22.0 } else { 0.0 };
-        let h = CONTROLS_GAP
-            + CONTROLS_RADIOS
-            + CONTROLS_GAP
-            + sliders as f64 * (CONTROLS_SLIDER + CONTROLS_GAP)
-            + error;
-        Rect::new(x, self.bar + POPOVER_MARGIN, CONTROLS_WIDTH, h)
-    }
-
-    /// Module de gauche : Wi-Fi, Bluetooth et mode avion.
-    fn controls_radios(&self) -> Rect {
-        let card = self.controls();
-        let half = (card.w - 3.0 * CONTROLS_GAP) / 2.0;
-        Rect::new(
-            card.x + CONTROLS_GAP,
-            card.y + CONTROLS_GAP,
-            half,
-            CONTROLS_RADIOS,
-        )
-    }
-
-    /// Ligne, case ou module d'un réglage ; vide si le module est absent.
-    fn control_row(&self, control: Control) -> Rect {
-        let card = self.controls();
-        let radios = self.controls_radios();
-        let tile_h = (CONTROLS_RADIOS - CONTROLS_GAP) / 2.0;
-        let right = radios.right() + CONTROLS_GAP;
-        let radio = |index: f64| {
-            let h = (radios.h - 14.0) / 3.0;
-            Rect::new(radios.x, radios.y + 7.0 + index * h, radios.w, h)
-        };
-        let slider = |index: f64| {
-            Rect::new(
-                card.x + CONTROLS_GAP,
-                radios.bottom() + CONTROLS_GAP + index * (CONTROLS_SLIDER + CONTROLS_GAP),
-                card.w - 2.0 * CONTROLS_GAP,
-                CONTROLS_SLIDER,
-            )
-        };
-        match control {
-            Control::Wifi => radio(0.0),
-            Control::Bluetooth => radio(1.0),
-            Control::Airplane => radio(2.0),
-            Control::Clipboard => Rect::new(right, radios.y, radios.w, tile_h),
-            Control::Settings => Rect::new(right, radios.bottom() - tile_h, radios.w, tile_h),
-            Control::Brightness if self.brightness => slider(0.0),
-            Control::Volume if self.volume => slider(if self.brightness { 1.0 } else { 0.0 }),
-            Control::Brightness | Control::Volume => Rect::new(card.x, card.y, 0.0, 0.0),
-        }
-    }
-
-    /// Ligne du message d'erreur, sous le dernier module.
-    fn controls_error(&self) -> Rect {
-        let card = self.controls();
-        Rect::new(card.x + 14.0, card.bottom() - 24.0, card.w - 28.0, 20.0)
-    }
-
-    /// Piste d'un curseur, sous le titre de son module.
-    fn slider_track(&self, control: Control) -> Rect {
-        let module = self.control_row(control);
-        Rect::new(module.x + 12.0, module.y + 36.0, module.w - 24.0, 26.0)
     }
 
     /// Menu d'une icône du Dock, au-dessus d'elle (sans sortir de l'écran).
@@ -2863,45 +3400,6 @@ impl Layout {
         let card = self.clipboard();
         Rect::new(card.right() - 120.0, card.y + 10.0, 110.0, 30.0)
     }
-
-    fn session(&self) -> Rect {
-        let x = (self.w - POPOVER_MARGIN - SESSION_WIDTH).max(POPOVER_MARGIN);
-        Rect::new(x, self.bar + POPOVER_MARGIN, SESSION_WIDTH, 84.0)
-    }
-
-    fn session_row(&self, index: usize) -> Rect {
-        let card = self.session();
-        Rect::new(
-            card.x + 6.0,
-            card.y + 6.0 + index as f64 * 36.0,
-            card.w - 12.0,
-            36.0,
-        )
-    }
-
-    fn dialog(&self) -> Rect {
-        Rect::new(
-            ((self.w - DIALOG.0) / 2.0).max(8.0),
-            ((self.h - DIALOG.1) * 0.4).max(self.bar + 8.0),
-            DIALOG.0,
-            DIALOG.1,
-        )
-    }
-
-    fn dialog_confirm(&self) -> Rect {
-        let dialog = self.dialog();
-        Rect::new(
-            dialog.right() - 20.0 - 120.0,
-            dialog.bottom() - 20.0 - 34.0,
-            120.0,
-            34.0,
-        )
-    }
-
-    fn dialog_cancel(&self) -> Rect {
-        let confirm = self.dialog_confirm();
-        Rect::new(confirm.x - 10.0 - 104.0, confirm.y, 104.0, confirm.h)
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -2915,6 +3413,10 @@ struct Rect {
 impl Rect {
     fn new(x: f64, y: f64, w: f64, h: f64) -> Self {
         Self { x, y, w, h }
+    }
+
+    fn expand(self, by: f64) -> Self {
+        Self::new(self.x - by, self.y - by, self.w + 2.0 * by, self.h + 2.0 * by)
     }
 
     fn right(self) -> f64 {
@@ -3085,39 +3587,6 @@ impl Canvas<'_> {
         }
     }
 
-    fn progress_ring(&mut self, center: (f64, f64), radius: f64, thickness: f64, value: u8, color: Color) {
-        let scale = self.scale as f64;
-        let outer = radius * scale;
-        let inner = (radius - thickness) * scale;
-        let left = ((center.0 - radius) * scale).floor().max(0.0) as u32;
-        let top = ((center.1 - radius) * scale).floor().max(0.0) as u32;
-        let right = ((center.0 + radius) * scale).ceil().min(self.width as f64) as u32;
-        let bottom = ((center.1 + radius) * scale).ceil().min(self.height as f64) as u32;
-        let progress = value.min(100) as f64 / 100.0;
-        for y in top..bottom {
-            for x in left..right {
-                let dx = x as f64 + 0.5 - center.0 * scale;
-                let dy = y as f64 + 0.5 - center.1 * scale;
-                let distance = dx.hypot(dy);
-                if distance < inner || distance > outer {
-                    continue;
-                }
-                let angle = (dy.atan2(dx) + std::f64::consts::FRAC_PI_2).rem_euclid(std::f64::consts::TAU)
-                    / std::f64::consts::TAU;
-                self.blend(
-                    x,
-                    y,
-                    if angle <= progress {
-                        color
-                    } else {
-                        Color::rgb(0xDCE5EF)
-                    },
-                    1.0,
-                );
-            }
-        }
-    }
-
     fn fit_text(&self, font: &Font, text: &str, size: f32, max_width: f64) -> String {
         if self.text_width(font, text, size) <= max_width {
             return text.to_owned();
@@ -3151,68 +3620,9 @@ impl Canvas<'_> {
         pixel[3] = (alpha + pixel[3] as u32 * inverse / 255).min(255) as u8;
     }
 
-    /// Carte claire avec ombre douce et contour discret.
-    fn card(&mut self, rect: Rect, radius: f32) {
-        self.card_shadow(rect, radius);
-        self.fill(rect, radius, card());
-    }
-
-    /// Ombre douce et contour discret d'une carte, sans son fond.
-    ///
-    /// L'ombre empile dix voiles noirs à 5/255, chacun la carte (décalée de 4 vers le bas)
-    /// agrandie de 1 à 10 points : leur distance au pixel se déduit d'un seul calcul. Le
-    /// dedans, caché par la carte, n'est pas peint ; tout repeindre à chaque image rendait
-    /// le défilement du lanceur très lent.
-    fn card_shadow(&mut self, rect: Rect, radius: f32) {
-        const SPREAD: f32 = 10.0;
-        let s = self.scale;
-        let (x, y, w, h) = (
-            rect.x as f32 * s,
-            rect.y as f32 * s,
-            rect.w as f32 * s,
-            rect.h as f32 * s,
-        );
-        let radius = (radius * s).min(w.min(h) * 0.5);
-        // Distance signée au bord de la carte décalée de `dy`, en pixels physiques.
-        let distance = |px: u32, py: u32, dy: f32| {
-            let qx = (px as f32 + 0.5 - (x + w * 0.5)).abs() - (w * 0.5 - radius);
-            let qy = (py as f32 + 0.5 - (y + dy + h * 0.5)).abs() - (h * 0.5 - radius);
-            qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - radius
-        };
-        let reach = (SPREAD + 1.0) * s;
-        let left = (x - reach).floor().max(0.0) as u32;
-        let top = (y - reach).floor().max(0.0) as u32;
-        let right = (x + w + reach).ceil().clamp(0.0, self.width as f32) as u32;
-        let bottom = (y + h + 4.0 * s + reach).ceil().clamp(0.0, self.height as f32) as u32;
-        // Dedans sûr : plus loin du bord que l'arrondi des coins (r × (1 − 1/√2)).
-        let inset = radius * 0.3 + 1.0;
-        let hole_x = ((x + inset).ceil().max(0.0) as u32).clamp(left, right)
-            ..((x + w - inset).floor().max(0.0) as u32).clamp(left, right);
-        let hole_y = (y + inset).ceil().max(0.0) as u32..(y + h - inset).floor().max(0.0) as u32;
-        for py in top..bottom {
-            let (skip_from, skip_to) = match hole_y.contains(&py) && !hole_x.is_empty() {
-                true => (hole_x.start, hole_x.end),
-                false => (right, right),
-            };
-            for px in (left..skip_from).chain(skip_to..right) {
-                let shadow = distance(px, py, 4.0 * s);
-                if shadow < reach {
-                    let clear: f32 = (1..=SPREAD as u32)
-                        .map(|spread| 1.0 - 5.0 / 255.0 * (0.5 - shadow + spread as f32 * s).clamp(0.0, 1.0))
-                        .product();
-                    self.blend(px, py, Color::BLACK, 1.0 - clear);
-                }
-                let contour = distance(px, py, 0.0) - s;
-                self.blend(
-                    px,
-                    py,
-                    Color::BLACK.with_alpha(36),
-                    (0.5 - contour).clamp(0.0, 1.0),
-                );
-            }
-        }
-    }
-
+    /// Verre liquide posé sur le fond d'écran `backdrop` : limpide au milieu, il courbe le
+    /// fond comme une lentille sur ses bords, avive les couleurs, et accroche la lumière
+    /// sur un liseré. À réserver à ce qui n'a que le fond d'écran derrière lui.
     /// Copie des lignes de pixels entre les ordonnées logiques `top` et `bottom`, à
     /// remettre avec [`Canvas::restore_rows`].
     fn save_rows(&self, top: f64, bottom: f64) -> (usize, Vec<u8>) {
@@ -3280,6 +3690,21 @@ impl Canvas<'_> {
 
     /// Interrupteur ; `None` : grisé, indisponible.
     /// Icône d'une application installée ; faux si le fichier est illisible.
+    /// Icône d'une application, ou une icône neutre si la sienne manque ou est illisible.
+    fn app_icon(&mut self, icon: &crate::desktop::apps::AppIcon, center: (f64, f64), size: f64) {
+        let drawn = match icon {
+            crate::desktop::apps::AppIcon::Builtin(name) => {
+                self.icon(name, center, size, Style::Color);
+                true
+            }
+            crate::desktop::apps::AppIcon::File(path) => self.icon_file(path, center, size),
+            crate::desktop::apps::AppIcon::Missing => false,
+        };
+        if !drawn {
+            self.icon("app-search", center, size, Style::Color);
+        }
+    }
+
     fn icon_file(&mut self, path: &std::path::Path, center: (f64, f64), size: f64) -> bool {
         let s = self.scale;
         let side = size as f32 * s;
@@ -3326,108 +3751,77 @@ impl Canvas<'_> {
         }
     }
 
-    /// Module des réglages rapides : verre un peu plus clair que le panneau.
-    fn module(&mut self, rect: Rect) {
-        self.fill(rect, 17.0, controls_module());
+    /// Panneau de verre liquide comme le Dock : intérieur translucide éclairé par le haut,
+    /// liseré qui accroche la lumière, contour fin et ombre douce tout autour. Des fenêtres
+    /// peuvent être dessous : il ne réfracte rien et reste presque opaque pour rester lisible.
+    /// Panneau système : fond presque opaque et ombre flottante.
+    fn glass(&mut self, rect: Rect, radius: f32) {
+        self.panel_shadow(rect, radius);
+        self.fill(rect, radius, panel_fill());
     }
 
-    /// Panneau de verre comme le Dock : intérieur blanc translucide, liseré blanc, contour
-    /// sombre fin et ombre douce tout autour, sans assombrir l'intérieur.
-    fn glass(&mut self, rect: Rect, radius: f32) {
-        const SHADOW: f32 = 12.0;
+    /// Ombre flottante 0 12 32, noir 30 %, autour de `rect`.
+    fn panel_shadow(&mut self, rect: Rect, radius: f32) {
+        const OFFSET_Y: f32 = 12.0;
+        const BLUR: f32 = 32.0;
+        const ALPHA: f32 = 0.30;
         let s = self.scale;
         let (x, y, w, h) = (
             rect.x as f32 * s,
-            rect.y as f32 * s,
+            (rect.y as f32 + OFFSET_Y) * s,
             rect.w as f32 * s,
             rect.h as f32 * s,
         );
-        let radius = (radius * s).min(w.min(h) * 0.5);
-        let reach = (SHADOW + 2.0) * s;
-        let left = (x - reach).floor().max(0.0) as u32;
-        let top = (y - reach).floor().max(0.0) as u32;
-        let right = (x + w + reach).ceil().clamp(0.0, self.width as f32) as u32;
-        let bottom = (y + h + reach).ceil().clamp(0.0, self.height as f32) as u32;
+        let r = (radius * s).min(w.min(h) * 0.5);
+        let spread = BLUR * s;
+        let left = (x - spread).floor().max(0.0) as u32;
+        let top = (y - spread).floor().max(0.0) as u32;
+        let right = (x + w + spread).ceil().clamp(0.0, self.width as f32) as u32;
+        let bottom = (y + h + spread).ceil().clamp(0.0, self.height as f32) as u32;
         for py in top..bottom {
             for px in left..right {
-                let qx = (px as f32 + 0.5 - (x + w * 0.5)).abs() - (w * 0.5 - radius);
-                let qy = (py as f32 + 0.5 - (y + h * 0.5)).abs() - (h * 0.5 - radius);
-                let d = (qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - radius) / s;
-                let inside = (0.5 - d * s).clamp(0.0, 1.0);
-                if inside < 1.0 {
-                    let fade = (1.0 - d.max(0.0) / SHADOW).clamp(0.0, 1.0);
-                    let shadow = Color::BLACK.with_alpha((fade * fade * 22.0) as u8);
-                    self.blend(px, py, shadow, 1.0 - inside);
-                    let edge = (1.0 - (d - 0.5).abs()).clamp(0.0, 1.0);
-                    self.blend(px, py, glass_edge(), edge);
-                }
-                if inside > 0.0 {
-                    self.blend(px, py, glass(), inside);
-                    let rim = (1.5 + d).clamp(0.0, 1.0) * inside;
-                    self.blend(px, py, glass_rim(), rim);
+                let qx = (px as f32 + 0.5 - (x + w * 0.5)).abs() - (w * 0.5 - r);
+                let qy = (py as f32 + 0.5 - (y + h * 0.5)).abs() - (h * 0.5 - r);
+                let distance = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - r;
+                let t = ((distance + spread * 0.5) / spread).clamp(0.0, 1.0);
+                let amount = (1.0 - t * t * (3.0 - 2.0 * t)) * ALPHA;
+                if amount > 0.0 {
+                    self.blend(px, py, Color::BLACK, amount);
                 }
             }
         }
     }
 
-    /// Pastille ronde d'un interrupteur : bleue s'il est actif, grise sinon, estompée
-    /// s'il est indisponible (`None`).
-    fn toggle_circle(&mut self, center: (f64, f64), glyph: &'static str, state: Option<bool>) {
-        let (disc, ink) = match state {
-            Some(true) => (controls_on(), Color::WHITE),
-            Some(false) => (Color::BLACK.with_alpha(22), text_strong()),
-            None => (Color::BLACK.with_alpha(12), text_secondary()),
-        };
-        let radius = 16.0;
-        self.fill(
-            Rect::new(center.0 - radius, center.1 - radius, 2.0 * radius, 2.0 * radius),
-            radius as f32,
-            disc,
-        );
-        self.icon(glyph, center, 18.0, Style::Symbolic(ink));
-    }
-
     /// Curseur épais : partie réglée blanche, bouton rond à son extrémité et pictogramme
     /// au début de la piste.
-    fn slider(&mut self, track: Rect, value: u8, glyph: &'static str) {
-        let radius = (track.h / 2.0) as f32;
-        self.fill(
-            Rect::new(track.x - 1.0, track.y - 1.0, track.w + 2.0, track.h + 2.0),
-            radius + 1.0,
-            Color::BLACK.with_alpha(26),
-        );
-        self.fill(track, radius, controls_track());
+    /// Curseur : piste de 6 px, partie réglée dans la couleur d'accent, bouton blanc de 20 px.
+    fn slider(&mut self, track: Rect, value: u8) {
+        let center_y = track.y + track.h / 2.0;
+        let rail = Rect::new(track.x, center_y - 3.0, track.w, 6.0);
+        self.fill(rail, 3.0, themed(Color::rgb(0xD5D9E0), Color::rgb(0x4B5360)));
         let knob = track.h;
-        let filled = knob + (track.w - knob) * value.min(100) as f64 / 100.0;
-        self.fill(Rect::new(track.x, track.y, filled, track.h), radius, Color::WHITE);
-        self.icon(
-            glyph,
-            (track.x + knob / 2.0 + 2.0, track.y + track.h / 2.0),
-            14.0,
-            Style::Symbolic(text_secondary()),
+        let x = track.x + (track.w - knob) * f64::from(value) / 100.0;
+        self.fill(
+            Rect::new(rail.x, rail.y, x + knob / 2.0 - rail.x, rail.h),
+            3.0,
+            accent(),
         );
-        let x = track.x + filled - knob;
-        for (spread, alpha) in [(2.0, 10), (1.0, 34)] {
-            self.fill(
-                Rect::new(
-                    x - spread,
-                    track.y - spread + 0.5,
-                    knob + 2.0 * spread,
-                    knob + 2.0 * spread,
-                ),
-                radius + spread as f32,
-                Color::BLACK.with_alpha(alpha),
-            );
-        }
-        self.fill(Rect::new(x, track.y, knob, knob), radius, Color::WHITE);
+        let shadow = Rect::new(x, track.y + 1.0, knob, knob);
+        self.fill(shadow, (knob / 2.0) as f32, Color::BLACK.with_alpha(60));
+        self.fill(
+            Rect::new(x, track.y, knob, knob),
+            (knob / 2.0) as f32,
+            Color::WHITE,
+        );
     }
 
     fn button(&mut self, rect: Rect, text: &str, background: Color, ink: Color) {
         self.fill(rect, 8.0, background);
         let font = self.bold;
-        let width = self.text_width(font, text, 11.5);
-        let y = rect.y + (rect.h - 11.5 * 1.22) / 2.0 - 1.0;
-        self.label(font, text, rect.x + (rect.w - width) / 2.0, y, 11.5, ink);
+        let size = px(13.0);
+        let width = self.text_width(font, text, size);
+        let y = rect.y + (rect.h - 13.0) / 2.0 - 2.0;
+        self.label(font, text, rect.x + (rect.w - width) / 2.0, y, size, ink);
     }
 
     /// Texte de la barre, de la couleur `ink`.
@@ -3436,22 +3830,30 @@ impl Canvas<'_> {
         self.label(font, text, x, y, size, ink);
     }
 
-    /// Logo Ferrite du Ferrite d'origine : un losange plein, traversé d'un trait clair.
-    fn logo(&mut self, center: (f64, f64), color: Color) {
-        let (cx, cy) = center;
-        for dy in -7i32..=7 {
-            let half = 6.0 - f64::from(dy.abs()) * 6.0 / 7.0;
-            self.fill(
-                Rect::new(cx - half - 0.5, cy + f64::from(dy) - 0.5, 2.0 * half + 1.0, 1.0),
-                0.0,
-                color,
-            );
+    /// Largeur d'un texte de `css` pixels.
+    fn css_width(&self, font: &Font, text: &str, css: f64) -> f64 {
+        self.text_width(font, text, px(css as f32))
+    }
+
+    /// Texte de `css` pixels dont la ligne, de hauteur normale, commence en `top`.
+    fn text(&mut self, font: &Font, text: &str, x: f64, top: f64, css: f64, color: Color) {
+        self.label(font, text, x, top - css * 0.03, px(css as f32), color);
+    }
+
+    fn tracked_width(&self, font: &Font, text: &str, css: f64, tracking: f64) -> f64 {
+        self.css_width(font, text, css) + text.chars().count() as f64 * tracking * css
+    }
+
+    /// Texte espacé (ou resserré) de `tracking` fois sa taille.
+    #[allow(clippy::too_many_arguments)] // Police, texte, position, taille, espacement, encre.
+    fn tracked(&mut self, font: &Font, text: &str, x: f64, top: f64, css: f64, tracking: f64, color: Color) {
+        let mut cursor = x;
+        let mut glyph = [0_u8; 4];
+        for character in text.chars() {
+            let piece: &str = character.encode_utf8(&mut glyph);
+            self.text(font, piece, cursor, top, css, color);
+            cursor += self.css_width(font, piece, css) + tracking * css;
         }
-        self.fill(
-            Rect::new(cx - 6.5, cy - 0.5, 13.0, 1.0),
-            0.0,
-            color.mix(Color::WHITE, 90.0 / 255.0),
-        );
     }
 
     fn text_width(&self, font: &Font, text: &str, size: f32) -> f64 {
@@ -3526,6 +3928,17 @@ fn wrap_dashboard_text(font: &Font, text: &str, size: f32, max_width: f64) -> Ve
 }
 
 /// Date et heure locales, à la française : « lun. 26 oct.  18:05 ».
+/// Horloge selon le réglage, à partir du texte complet (« lun. 2 nov.  17:24 »).
+fn clock_text(style: ClockStyle, full: String) -> String {
+    match style {
+        ClockStyle::Full => full,
+        ClockStyle::Date => full
+            .split_once(' ')
+            .map_or(full.clone(), |(_, rest)| rest.to_owned()),
+        ClockStyle::Time => full.rsplit(' ').next().unwrap_or_default().to_owned(),
+    }
+}
+
 fn clock_label(now: SystemTime, offset: i64) -> String {
     const DAYS: [&str; 7] = ["dim.", "lun.", "mar.", "mer.", "jeu.", "ven.", "sam."];
     const MONTHS: [&str; 12] = [
@@ -3537,12 +3950,107 @@ fn clock_label(now: SystemTime, offset: i64) -> String {
     let (_, month, day) = civil_from_days(days);
     let weekday = (days + 4).rem_euclid(7) as usize;
     format!(
-        "{} {} {}   {:02}:{:02}",
+        "{} {} {}  {:02}:{:02}",
         DAYS[weekday],
         day,
         MONTHS[month as usize - 1],
         time / 3600,
         (time / 60) % 60
+    )
+}
+
+/// Heure locale : « 18:30 ».
+pub fn hour_label(at: SystemTime) -> String {
+    let seconds = at.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as i64 + local_offset();
+    let time = seconds.rem_euclid(86_400);
+    format!("{:02}:{:02}", time / 3600, (time / 60) % 60)
+}
+
+/// Date et heure locales pour un nom de fichier : « 2026-11-02 à 17.34.12 ».
+pub fn file_timestamp(now: SystemTime) -> String {
+    format_file_timestamp(now, local_offset())
+}
+
+fn format_file_timestamp(now: SystemTime, offset: i64) -> String {
+    let seconds = now.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as i64 + offset;
+    let (year, month, day) = civil_from_days(seconds.div_euclid(86_400));
+    let time = seconds.rem_euclid(86_400);
+    format!(
+        "{year}-{month:02}-{day:02} à {:02}.{:02}.{:02}",
+        time / 3600,
+        (time / 60) % 60,
+        time % 60
+    )
+}
+
+/// Mesures des notifications, du calendrier et de la zone cliquable de l'horloge.
+const NOTIFICATION_WIDTH: f64 = 380.0;
+const NOTIFICATION_HEIGHT: f64 = 84.0;
+const NOTIFICATION_HEADER: f64 = 48.0;
+const CLOCK_WIDTH: f64 = 170.0;
+const CALENDAR_WIDTH: f64 = 400.0;
+const CALENDAR_ROW: f64 = 36.0;
+/// Haut du panneau jusqu'au filet des notifications : titre, jours, six semaines.
+const CALENDAR_BODY: f64 = 52.0 + 22.0 + 6.0 * CALENDAR_ROW + 12.0;
+
+/// Bouton d'action `index` d'une bannière, sous son texte.
+fn notification_action(bubble: Rect, index: usize) -> Rect {
+    Rect::new(
+        bubble.x + 58.0 + index as f64 * 88.0,
+        bubble.bottom() - 14.0 - 28.0,
+        80.0,
+        28.0,
+    )
+}
+
+/// Marge intérieure du sélecteur Alt+Tab, écart et taille maximale d'une case (icône de 96 px).
+const SWITCHER_PADDING: f64 = 18.0;
+const SWITCHER_GAP: f64 = 8.0;
+const SWITCHER_TILE: f64 = 120.0;
+
+/// Vignettes des espaces dans la vue d'ensemble : taille, écart et marge sous la barre.
+const SPACE_THUMB: (f64, f64) = (110.0, 68.0);
+const SPACE_GAP: f64 = 12.0;
+
+/// Vignette d'un espace : la rangée est centrée, sous la barre.
+fn overview_space_rect(width: f64, bar: f64, count: usize, index: usize) -> Rect {
+    let total = count as f64 * SPACE_THUMB.0 + count.saturating_sub(1) as f64 * SPACE_GAP;
+    Rect::new(
+        (width - total) / 2.0 + index as f64 * (SPACE_THUMB.0 + SPACE_GAP),
+        bar + 22.0,
+        SPACE_THUMB.0,
+        SPACE_THUMB.1,
+    )
+}
+
+/// Espace de travail sous le pointeur, dans la bande de la vue d'ensemble.
+pub fn overview_space_at(
+    output: Rectangle<i32, Logical>,
+    view: &DesktopView,
+    pos: Point<f64, Logical>,
+) -> Option<usize> {
+    let spaces = &view.overview.as_ref()?.spaces;
+    let pos = Point::from((pos.x - output.loc.x as f64, pos.y - output.loc.y as f64));
+    spaces
+        .iter()
+        .enumerate()
+        .find(|(index, _)| {
+            overview_space_rect(output.size.w as f64, view.bar_height as f64, spaces.len(), *index)
+                .contains(pos)
+        })
+        .map(|(_, space)| space.page)
+}
+
+/// Carte du sélecteur et côté d'une case : les cases rétrécissent pour tenir dans l'écran.
+fn switcher_card(w: f64, h: f64, count: usize) -> (Rect, f64) {
+    let count = count.max(1) as f64;
+    let gaps = (count - 1.0) * SWITCHER_GAP;
+    let tile = SWITCHER_TILE.min((w - 40.0 - 2.0 * SWITCHER_PADDING - gaps) / count);
+    let card_w = tile * count + gaps + 2.0 * SWITCHER_PADDING;
+    let card_h = tile + 2.0 * SWITCHER_PADDING + 30.0;
+    (
+        Rect::new((w - card_w) / 2.0, (h - card_h) / 2.0, card_w, card_h),
+        tile,
     )
 }
 
@@ -3618,17 +4126,10 @@ fn note_timestamp(updated: u64, now: ClockSnapshot) -> String {
 
 fn network_rate(kib_per_second: u64) -> (String, &'static str) {
     if kib_per_second >= 1024 {
-        (format!("{:.1}", kib_per_second as f64 / 1024.0), "MB")
+        (format!("{:.1}", kib_per_second as f64 / 1024.0), "Mo")
     } else {
-        (kib_per_second.to_string(), "KB")
+        (kib_per_second.to_string(), "Ko")
     }
-}
-
-fn capitalize(text: &str) -> String {
-    let mut chars = text.chars();
-    chars.next().map_or_else(String::new, |first| {
-        first.to_uppercase().collect::<String>() + chars.as_str()
-    })
 }
 
 fn cpu_counters() -> Option<(u64, u64)> {
@@ -3689,8 +4190,8 @@ fn disk_usage() -> Option<u8> {
     }
     // SAFETY: `statvfs` returned success and initialized the whole output structure.
     let stats = unsafe { stats.assume_init() };
-    let total = (stats.f_blocks as u64).checked_mul(stats.f_frsize as u64)?;
-    let available = (stats.f_bavail as u64).checked_mul(stats.f_frsize as u64)?;
+    let total = stats.f_blocks.checked_mul(stats.f_frsize)?;
+    let available = stats.f_bavail.checked_mul(stats.f_frsize)?;
     if total == 0 {
         return None;
     }
@@ -3804,7 +4305,7 @@ mod tests {
     fn accentuation_personnalisee_remplace_l_accent_de_la_palette_du_shell() {
         assert_eq!(
             accent_for(Palette::DARK, Accent::Purple.rgb()),
-            Color::rgb(0x953D96)
+            Color::rgb(0x7C4DE8)
         );
         assert_eq!(accent_for(Palette::DARK, None), Palette::DARK.accent);
     }
@@ -3843,6 +4344,8 @@ mod tests {
         let output = output();
         let mut desktop = view(None);
         desktop.bar_height = 34;
+        desktop.dashboard.shown = true;
+        desktop.dashboard.layout = default_layout();
         desktop.dashboard.tasks = vec![DashboardTaskView {
             text: "Rapport".to_owned(),
             done: false,
@@ -3853,56 +4356,58 @@ mod tests {
             preview: "Finir l'interface".to_owned(),
             updated: 0,
         }];
-        let (layout, scale) = dashboard_layout(output.size.w as f64, output.size.h as f64, &desktop);
-        let [_, _, calendar, notes, tasks, _, shortcuts, _] = layout.dashboard_cards();
+        let layout = Layout::new(output.size.w as f64, output.size.h as f64, &desktop);
+        let cards = layout.dashboard_cards(&desktop.dashboard.layout);
+        let (tasks, notes) = (cards[3], cards[4]);
+        let click = |x: f64, y: f64| action_at(output, point(x, y), &desktop);
         assert_eq!(
-            action_at(
-                output,
-                point((notes.x + 30.0) * scale, (notes.y + 70.0) * scale),
-                &desktop
-            ),
+            click(notes.x + 30.0, notes.y + 70.0),
             Some(DesktopAction::DashboardEditNote(0))
         );
         assert_eq!(
-            action_at(
-                output,
-                point((notes.right() - 28.0) * scale, (notes.y + 25.0) * scale),
-                &desktop
-            ),
+            click(notes.right() - 30.0, notes.y + 28.0),
             Some(DesktopAction::DashboardAddNote)
         );
         assert_eq!(
-            action_at(
-                output,
-                point((calendar.right() - 55.0) * scale, (calendar.y + 24.0) * scale),
-                &desktop
-            ),
-            Some(DesktopAction::DashboardMonth(-1))
-        );
-        assert_eq!(
-            action_at(
-                output,
-                point((tasks.x + 25.0) * scale, (tasks.y + 63.0) * scale),
-                &desktop
-            ),
+            click(tasks.x + 25.0, tasks.y + 65.0),
             Some(DesktopAction::DashboardToggleTask(0))
         );
         assert_eq!(
-            action_at(
-                output,
-                point((tasks.right() - 30.0) * scale, (tasks.y + 63.0) * scale),
-                &desktop
-            ),
+            click(tasks.right() - 22.0, tasks.y + 65.0),
             Some(DesktopAction::DashboardCyclePriority(0))
         );
         assert_eq!(
-            action_at(
-                output,
-                point((shortcuts.x + 45.0) * scale, (shortcuts.y + 70.0) * scale),
-                &desktop
-            ),
-            Some(DesktopAction::DashboardShortcut(0))
+            click(tasks.right() - 30.0, tasks.y + 28.0),
+            Some(DesktopAction::DashboardAddTask)
         );
+    }
+
+    use crate::desktop::widgets::{WidgetEdges, default_layout};
+
+    #[test]
+    fn un_widget_devant_prend_le_clic_et_les_taches_suivent_la_hauteur() {
+        let output = output();
+        let mut desktop = view(None);
+        desktop.dashboard.shown = true;
+        desktop.dashboard.layout = default_layout();
+        // Le calendrier posé sur la citation, en dernier donc devant.
+        let mut calendar = desktop.dashboard.layout.remove(1);
+        calendar.x = 40;
+        calendar.y = 440;
+        desktop.dashboard.layout.push(calendar);
+        assert_eq!(widget_at(output, &desktop, point(60.0, 460.0)), Some(5));
+        // Plus haute, la carte des tâches en montre plus.
+        desktop.dashboard.tasks = (0..8)
+            .map(|index| DashboardTaskView {
+                text: format!("Tâche {index}"),
+                done: false,
+                priority: crate::desktop::widgets::Priority::Low,
+            })
+            .collect();
+        let short = Rect::new(0.0, 0.0, 356.0, 170.0);
+        let tall = Rect::new(0.0, 0.0, 356.0, 360.0);
+        assert_eq!(cards::shown_tasks(&desktop.dashboard, short).len(), 3);
+        assert_eq!(cards::shown_tasks(&desktop.dashboard, tall).len(), 8);
     }
 
     fn point(x: f64, y: f64) -> Point<f64, Logical> {
@@ -3936,17 +4441,75 @@ mod tests {
     }
 
     #[test]
-    fn les_widgets_ne_captent_les_clics_que_sur_leur_page() {
+    fn les_widgets_masques_ne_captent_pas_les_clics() {
         let mut desktop = view(None);
-        let (layout, scale) = dashboard_layout(1280.0, 720.0, &desktop);
-        let notes = layout.dashboard_cards()[3];
-        let inside = point((notes.x + 30.0) * scale, (notes.y + 70.0) * scale);
+        desktop.dashboard.layout = default_layout();
+        desktop.dashboard.shown = true;
+        let layout = Layout::new(1280.0, 720.0, &desktop);
+        let quote = layout.dashboard_cards(&desktop.dashboard.layout)[5];
+        let inside = point(quote.x + 30.0, quote.y + 40.0);
         assert_eq!(
             action_at(output(), inside, &desktop),
             Some(DesktopAction::DashboardConsume)
         );
-        desktop.page = 1;
+        desktop.dashboard.shown = false;
         assert_eq!(action_at(output(), inside, &desktop), None);
+    }
+
+    #[test]
+    fn l_editeur_deplace_redimensionne_retire_et_termine() {
+        let mut desktop = view(None);
+        desktop.dashboard.layout = default_layout();
+        desktop.dashboard.shown = true;
+        desktop.dashboard.edit = true;
+        desktop.dashboard.layout.remove(1);
+        let layout = Layout::new(1280.0, 720.0, &desktop);
+        let card = layout.dashboard_cards(&desktop.dashboard.layout)[0];
+        let click = |x: f64, y: f64| action_at(output(), point(x, y), &desktop);
+        assert_eq!(
+            click(card.x + 2.0, card.y + 2.0),
+            Some(DesktopAction::WidgetRemove(0))
+        );
+        assert_eq!(
+            click(card.x + 100.0, card.y + 80.0),
+            Some(DesktopAction::WidgetDragStart(0, WidgetEdges::default()))
+        );
+        assert_eq!(
+            click(card.right() - 3.0, card.bottom() - 3.0),
+            Some(DesktopAction::WidgetDragStart(
+                0,
+                WidgetEdges {
+                    right: true,
+                    bottom: true,
+                    ..WidgetEdges::default()
+                }
+            ))
+        );
+        assert_eq!(
+            click(card.x + 3.0, card.y + 80.0),
+            Some(DesktopAction::WidgetDragStart(
+                0,
+                WidgetEdges {
+                    left: true,
+                    ..WidgetEdges::default()
+                }
+            ))
+        );
+        let bar = layout.editor_bar();
+        assert_eq!(
+            click(bar.x + 40.0, bar.y + 22.0),
+            Some(DesktopAction::WidgetAdd(
+                crate::desktop::widgets::WidgetKind::Calendar
+            ))
+        );
+        assert_eq!(
+            click(bar.right() - 40.0, bar.y + 22.0),
+            Some(DesktopAction::WidgetsDone)
+        );
+        assert_eq!(
+            click(bar.right() - 150.0, bar.y + 22.0),
+            Some(DesktopAction::WidgetsReset)
+        );
     }
 
     #[test]
@@ -3966,28 +4529,116 @@ mod tests {
     }
 
     #[test]
-    fn les_widgets_laissent_la_place_au_dock() {
+    fn les_widgets_gardent_la_taille_de_la_maquette_et_restent_dans_l_ecran() {
         let mut desktop = view(None);
-        desktop.dock_height = 76;
-        let cards = Layout::new(1280.0, 720.0, &desktop).dashboard_cards();
-        for card in cards {
-            assert!(card.bottom() <= 720.0 - 76.0);
-        }
+        desktop.bar_height = 34;
+        desktop.dashboard.layout = default_layout();
+        let cards = Layout::new(1600.0, 1000.0, &desktop).dashboard_cards(&desktop.dashboard.layout);
+        assert_eq!(
+            (cards[0].x, cards[0].y, cards[0].w, cards[0].h),
+            (32.0, 58.0, 356.0, 170.0)
+        );
+        desktop.dashboard.layout[0].x = 9000;
+        let cards = Layout::new(1280.0, 720.0, &desktop).dashboard_cards(&desktop.dashboard.layout);
+        assert!(cards[0].right() <= 1280.0);
     }
 
     #[test]
-    fn les_cartes_reproduisent_la_grille_de_la_maquette() {
-        let cards = Layout::new(1280.0, 720.0, &view(None)).dashboard_cards();
-        for row in [&cards[0..3], &cards[3..6]] {
-            assert!((row[0].w - row[1].w).abs() < 0.01);
-            assert!((row[1].w - row[2].w).abs() < 0.01);
-            assert_eq!(row[0].y, row[1].y);
-            assert_eq!(row[1].y, row[2].y);
+    fn le_clic_droit_du_bureau_offre_ses_choix() {
+        let mut desktop = view(Some(Popover::DesktopMenu));
+        desktop.desktop_menu = Some((400, 300));
+        let row = Layout::new(1280.0, 720.0, &desktop).desktop_menu_row((400, 300), 0);
+        let (x, y) = row.center();
+        assert_eq!(
+            action_at(output(), point(x, y), &desktop),
+            Some(DesktopAction::DesktopMenu(0))
+        );
+        assert_eq!(
+            action_at(output(), point(10.0, 300.0), &desktop),
+            Some(DesktopAction::ClosePopover)
+        );
+    }
+
+    fn lock_view() -> DesktopView {
+        let mut desktop = view(None);
+        desktop.lock = Some(LockView {
+            user: "Utilisateur".to_owned(),
+            initial: 'U',
+            length: 0,
+            field: false,
+            progress: 0,
+            checking: false,
+            welcome: false,
+            message: LockMessage::Hint,
+            shake: 0,
+            pulse: 0,
+            spin: 0,
+            dark: true,
+            wall: 0,
+            weather: None,
+            place: String::new(),
+            notice: None,
+            media: None,
+        });
+        desktop
+    }
+
+    #[test]
+    fn au_repos_un_clic_reveille_et_les_boutons_repondent() {
+        let desktop = lock_view();
+        let area = Rectangle::from_size((1600, 1000).into());
+        assert_eq!(
+            lock_action_at(area, &desktop, point(800.0, 500.0)),
+            LockAction::Reveal
+        );
+        assert_eq!(
+            lock_action_at(area, &desktop, point(1546.0, 948.0)),
+            LockAction::Power
+        );
+        assert_eq!(
+            lock_action_at(area, &desktop, point(1486.0, 948.0)),
+            LockAction::Keyboard
+        );
+        assert_eq!(
+            lock_action_at(area, &desktop, point(58.0, 944.0)),
+            LockAction::ToggleTheme
+        );
+        assert_eq!(
+            lock_action_at(area, &desktop, point(115.0, 944.0)),
+            LockAction::Wall(0)
+        );
+    }
+
+    #[test]
+    fn en_saisie_on_annule_ou_on_valide() {
+        let mut desktop = lock_view();
+        if let Some(lock) = desktop.lock.as_mut() {
+            lock.field = true;
         }
-        assert!(cards[0].x < cards[1].x && cards[1].x < cards[2].x);
-        assert!(cards[3].y > cards[0].y);
-        assert!(cards[6].y > cards[3].y);
-        assert!(cards[6].w > cards[7].w);
+        let area = Rectangle::from_size((1600, 1000).into());
+        assert_eq!(
+            lock_action_at(area, &desktop, point(75.0, 950.0)),
+            LockAction::Cancel
+        );
+        assert_eq!(
+            lock_action_at(area, &desktop, point(800.0 + 130.0, 513.0)),
+            LockAction::Submit
+        );
+        // Rien de ce qui est au repos ne reste cliquable.
+        assert_eq!(
+            lock_action_at(area, &desktop, point(800.0, 800.0)),
+            LockAction::Consume
+        );
+    }
+
+    #[test]
+    fn le_fond_de_verrouillage_est_opaque_et_suit_le_theme() {
+        let dark = lock_screen::paint_lock_wall(64, 40, true, 0);
+        let light = lock_screen::paint_lock_wall(64, 40, false, 0);
+        assert_eq!(dark.len(), 64 * 40 * 4);
+        assert!(dark.chunks(4).all(|pixel| pixel[3] == 255));
+        let luma = |pixels: &[u8]| pixels.iter().map(|value| u64::from(*value)).sum::<u64>();
+        assert!(luma(&light) > luma(&dark));
     }
 
     #[test]
@@ -4002,13 +4653,13 @@ mod tests {
             Some(DesktopAction::TogglePopover(Popover::Controls))
         );
         assert_eq!(
-            click(point(1265.0, 15.0), None),
-            Some(DesktopAction::TogglePopover(Popover::Session))
+            click(point(640.0, 15.0), None),
+            Some(DesktopAction::TogglePopover(Popover::Notifications))
         );
         // Le reste de la barre absorbe le clic, ou ferme le menu ouvert.
-        assert_eq!(click(point(640.0, 15.0), None), Some(DesktopAction::Consume));
+        assert_eq!(click(point(400.0, 15.0), None), Some(DesktopAction::Consume));
         assert_eq!(
-            click(point(640.0, 15.0), Some(Popover::Launcher)),
+            click(point(400.0, 15.0), Some(Popover::Launcher)),
             Some(DesktopAction::ClosePopover)
         );
     }
@@ -4042,28 +4693,20 @@ mod tests {
         );
     }
 
-    fn launcher(sections: Vec<(usize, Option<SectionLink>)>, scroll: u32) -> DesktopView {
-        let mut next = 0;
-        let sections = sections
-            .into_iter()
-            .map(|(count, link)| LauncherSection {
-                title: "Rubrique".to_owned(),
-                tiles: (0..count)
-                    .map(|_| {
-                        next += 1;
-                        Tile {
-                            name: format!("App {next}"),
-                            icon: TileIcon::Missing,
-                            index: next - 1,
-                        }
-                    })
-                    .collect(),
-                link,
+    fn launcher(count: usize, scroll: u32) -> DesktopView {
+        let tiles = (0..count)
+            .map(|index| Tile {
+                name: format!("App {index}"),
+                icon: TileIcon::Missing,
+                index,
             })
             .collect();
         DesktopView {
             launcher: LauncherView {
-                sections,
+                sections: vec![LauncherSection {
+                    title: String::new(),
+                    tiles,
+                }],
                 scroll,
                 ..LauncherView::default()
             },
@@ -4090,47 +4733,28 @@ mod tests {
     fn le_lanceur_est_centre_et_lance_chaque_application() {
         let card = layout().launcher();
         assert!((card.x + card.w / 2.0 - 640.0).abs() < 1.0);
-        let open = launcher(
-            vec![(5, None), (5, Some(SectionLink::More(Section::Utilities)))],
-            0,
-        );
+        let open = launcher(10, 0);
         let at = |x: f64, y: f64| action_at(output(), point(x, y), &open);
         for index in [0, 4, 5, 9] {
             let (x, y) = tile_rect(&open, index).center();
             assert_eq!(at(x, y), Some(DesktopAction::LaunchTile(index)));
         }
-        // Cinq applications par ligne : la sixième commence la rubrique suivante.
-        assert!(tile_rect(&open, 5).y > tile_rect(&open, 4).bottom());
-        assert_eq!(tile_rect(&open, 5).x, tile_rect(&open, 0).x);
-        // « Plus » ouvre la rubrique.
-        let link = layout()
-            .launcher_items(&open.launcher)
-            .into_iter()
-            .find_map(|item| match item {
-                LauncherItem::Link { rect, .. } => Some(rect),
-                _ => None,
-            })
-            .expect("lien Plus");
-        assert_eq!(
-            at(link.center().0, link.center().1),
-            Some(DesktopAction::LauncherLink(SectionLink::More(Section::Utilities)))
-        );
+        // Six applications par ligne, à la suite, sans rubriques.
+        assert_eq!(tile_rect(&open, 5).y, tile_rect(&open, 0).y);
+        assert_eq!(tile_rect(&open, 6).x, tile_rect(&open, 0).x);
+        assert_eq!(tile_rect(&open, 6).y, tile_rect(&open, 0).bottom());
         // Le champ de recherche absorbe le clic ; dehors, le lanceur se ferme.
         assert_eq!(at(card.center().0, card.y + 20.0), Some(DesktopAction::Consume));
         assert_eq!(at(20.0, 600.0), Some(DesktopAction::ClosePopover));
-        assert_eq!(
-            click(point(700.0, 400.0), None),
-            Some(DesktopAction::DashboardConsume)
-        );
     }
 
     #[test]
     fn le_lanceur_defile_sans_depasser_la_fin() {
-        let long = launcher(vec![(40, Some(SectionLink::Less))], 0);
+        let long = launcher(40, 0);
         let limit = launcher_scroll_limit(output(), &long);
         assert!(limit > 0);
         // Défilé jusqu'au bout : la dernière case est visible, juste au-dessus du bas.
-        let end = launcher(vec![(40, Some(SectionLink::Less))], limit + 500);
+        let end = launcher(40, limit + 500);
         let content = layout().launcher_content();
         let last = tile_rect(&end, 39);
         assert!(last.bottom() <= content.bottom() + 0.5 && last.bottom() > content.bottom() - 20.0);
@@ -4138,7 +4762,7 @@ mod tests {
         let first = tile_rect(&end, 0);
         assert!(first.bottom() < content.y);
         // Peu d'applications : rien à faire défiler.
-        assert_eq!(launcher_scroll_limit(output(), &launcher(vec![(5, None)], 0)), 0);
+        assert_eq!(launcher_scroll_limit(output(), &launcher(5, 0)), 0);
     }
 
     #[test]
@@ -4151,12 +4775,24 @@ mod tests {
         };
         assert_eq!(at(Control::Wifi), Some(DesktopAction::ToggleWifi));
         assert_eq!(at(Control::Bluetooth), Some(DesktopAction::ToggleBluetooth));
-        assert_eq!(at(Control::Airplane), Some(DesktopAction::ToggleAirplane));
+        assert_eq!(at(Control::Dark), Some(DesktopAction::ToggleDarkMode));
+        assert_eq!(at(Control::DoNotDisturb), Some(DesktopAction::ToggleDoNotDisturb));
+        assert_eq!(at(Control::Saver), Some(DesktopAction::TogglePowerSaver));
+        assert_eq!(at(Control::Keyboard), Some(DesktopAction::ToggleKeyboardLayout));
         assert_eq!(
-            at(Control::Clipboard),
-            Some(DesktopAction::TogglePopover(Popover::Clipboard))
+            at(Control::WifiMore),
+            Some(DesktopAction::ControlsPage(ControlsPage::Wifi))
         );
-        assert_eq!(at(Control::Settings), Some(DesktopAction::Launch(App::Settings)));
+        assert_eq!(
+            at(Control::BluetoothMore),
+            Some(DesktopAction::ControlsPage(ControlsPage::Bluetooth))
+        );
+        assert_eq!(at(Control::Settings), Some(DesktopAction::OpenSettings));
+        assert_eq!(at(Control::Lock), Some(DesktopAction::Lock));
+        assert_eq!(
+            at(Control::Power),
+            Some(DesktopAction::RequestPower(PowerAction::PowerOff))
+        );
         // Le bouton reste dans la piste : sa course s'arrête à un demi-bouton des bords.
         let volume = layout.slider_track(Control::Volume);
         let quarter = volume.x + volume.h / 2.0 + (volume.w - volume.h) / 4.0;
@@ -4176,18 +4812,6 @@ mod tests {
     }
 
     #[test]
-    fn le_mode_avion_suit_les_radios_presentes() {
-        let mut view = view(None);
-        assert_eq!(airplane(&view), Some(false));
-        view.wifi = Some(false);
-        assert_eq!(airplane(&view), Some(true));
-        view.bluetooth = None;
-        assert_eq!(airplane(&view), Some(true));
-        view.wifi = None;
-        assert_eq!(airplane(&view), None);
-    }
-
-    #[test]
     fn sans_retroeclairage_le_module_moniteur_disparait() {
         let desktop = DesktopView {
             brightness: None,
@@ -4195,25 +4819,13 @@ mod tests {
         };
         let layout = Layout::new(1280.0, 720.0, &desktop);
         assert_eq!(layout.control_row(Control::Brightness).w, 0.0);
-        // Le module Son prend sa place, juste sous Wi-Fi et Bluetooth.
-        let volume = layout.control_row(Control::Volume);
-        assert_eq!(volume.y, layout.controls_radios().bottom() + CONTROLS_GAP);
+        // La rangée de sortie du son remonte d'autant.
         assert!(layout.controls().bottom() < self::layout().controls().bottom());
     }
 
     #[test]
     fn l_arret_demande_toujours_une_confirmation() {
         let layout = layout();
-        let restart = layout.session_row(0).center();
-        assert_eq!(
-            click(point(restart.0, restart.1), Some(Popover::Session)),
-            Some(DesktopAction::RequestPower(PowerAction::Restart))
-        );
-        let off = layout.session_row(1).center();
-        assert_eq!(
-            click(point(off.0, off.1), Some(Popover::Session)),
-            Some(DesktopAction::RequestPower(PowerAction::PowerOff))
-        );
 
         let pending = DesktopView {
             power: Some(PowerAction::PowerOff),
@@ -4233,14 +4845,64 @@ mod tests {
     }
 
     #[test]
+    fn clics_sur_les_notifications() {
+        let output = Rectangle::from_size((1440, 900).into());
+        let notification = NotificationView {
+            id: 7,
+            app: "Essai".to_owned(),
+            summary: "Titre".to_owned(),
+            body: String::new(),
+            icon: None,
+            when: "maintenant".to_owned(),
+            actions: vec!["Installer".to_owned()],
+        };
+        let mut view = DesktopView {
+            bar_visible: true,
+            bar_height: 34,
+            notifications: NotificationsView {
+                bubbles: vec![notification.clone()],
+                ..NotificationsView::default()
+            },
+            ..DesktopView::default()
+        };
+        let layout = Layout::new(1440.0, 900.0, &view);
+        let bubble = layout.notification_bubbles(&view.notifications.bubbles)[0];
+        let at = |rect: Rect| Point::from(rect.center());
+        assert_eq!(
+            action_at(output, Point::from((bubble.x + 10.0, bubble.y + 10.0)), &view),
+            Some(DesktopAction::NotificationActivate(7))
+        );
+        assert_eq!(
+            action_at(output, at(notification_action(bubble, 0)), &view),
+            Some(DesktopAction::NotificationAction(7, 0))
+        );
+        assert_eq!(
+            action_at(output, at(layout.clock_button()), &view),
+            Some(DesktopAction::TogglePopover(Popover::Notifications))
+        );
+
+        view.notifications.bubbles.clear();
+        view.notifications.history = vec![notification];
+        view.popover = Some(Popover::Notifications);
+        assert_eq!(
+            action_at(output, at(layout.notifications_clear(1)), &view),
+            Some(DesktopAction::NotificationsClear)
+        );
+        assert_eq!(
+            action_at(output, at(layout.notification_row(1, 0)), &view),
+            Some(DesktopAction::NotificationActivate(7))
+        );
+    }
+
+    #[test]
     fn horloge_en_francais_et_fuseau() {
         // Lundi 26 octobre 2026, 17:57 UTC.
         let time = UNIX_EPOCH + Duration::from_secs(20_752 * 86_400 + 17 * 3600 + 57 * 60);
         assert_eq!(civil_from_days(0), (1970, 1, 1));
         assert_eq!(civil_from_days(20_752), (2026, 10, 26));
-        assert_eq!(clock_label(time, 0), "lun. 26 oct.   17:57");
-        assert_eq!(clock_label(time, 3600), "lun. 26 oct.   18:57");
-        assert_eq!(clock_label(time, 7 * 3600), "mar. 27 oct.   00:57");
+        assert_eq!(clock_label(time, 0), "lun. 26 oct.  17:57");
+        assert_eq!(clock_label(time, 3600), "lun. 26 oct.  18:57");
+        assert_eq!(clock_label(time, 7 * 3600), "mar. 27 oct.  00:57");
         assert_eq!(parse_offset("+0100"), Some(3600));
         assert_eq!(parse_offset("-0230"), Some(-9000));
         assert_eq!(parse_offset("UTC"), None);

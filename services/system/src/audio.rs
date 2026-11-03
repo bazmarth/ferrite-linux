@@ -50,8 +50,18 @@ pub fn sinks() -> Result<Vec<Sink>, Error> {
     Ok(parse_sinks(&command::run("wpctl", &["status"])?))
 }
 
+/// Entrées audio (micros).
+pub fn sources() -> Result<Vec<Sink>, Error> {
+    Ok(parse_nodes(&command::run("wpctl", &["status"])?, "Sources:"))
+}
+
 /// Section « Sinks: » de la partie « Audio » de `wpctl status`.
 pub fn parse_sinks(status: &str) -> Vec<Sink> {
+    parse_nodes(status, "Sinks:")
+}
+
+/// Une section de la partie « Audio » de `wpctl status`.
+fn parse_nodes(status: &str, section: &str) -> Vec<Sink> {
     let mut in_audio = false;
     let mut in_sinks = false;
     let mut sinks = Vec::new();
@@ -70,7 +80,7 @@ pub fn parse_sinks(status: &str) -> Vec<Sink> {
             continue;
         }
         if clean.ends_with(':') {
-            in_sinks = clean == "Sinks:";
+            in_sinks = clean == section;
             continue;
         }
         if !in_sinks || clean.is_empty() {
@@ -90,6 +100,124 @@ pub fn parse_sinks(status: &str) -> Vec<Sink> {
 
 pub fn set_default_sink(id: u32) -> Result<(), Error> {
     command::run("wpctl", &["set-default", &id.to_string()]).map(drop)
+}
+
+/// Volume de l'entrée par défaut, de 0 à 100.
+pub fn input_volume() -> Option<u8> {
+    let output = command::run("wpctl", &["get-volume", "@DEFAULT_AUDIO_SOURCE@"]).ok()?;
+    parse_volume(&output).map(|volume| volume.level)
+}
+
+pub fn set_input_volume(level: u8) -> Result<(), Error> {
+    let value = format!("{}%", level.min(100));
+    command::run("wpctl", &["set-volume", "@DEFAULT_AUDIO_SOURCE@", &value]).map(drop)
+}
+
+/// Balance de la sortie, de -100 (tout à gauche) à 100 (tout à droite).
+pub fn balance() -> Option<i8> {
+    let output = command::run("pactl", &["get-sink-volume", "@DEFAULT_SINK@"]).ok()?;
+    parse_balance(&output)
+}
+
+/// Pourcentages du canal gauche et du canal droit dans `pactl get-sink-volume`.
+pub fn parse_balance(output: &str) -> Option<i8> {
+    let levels: Vec<i32> = output
+        .split('/')
+        .filter_map(|part| part.trim().strip_suffix('%')?.trim().parse().ok())
+        .collect();
+    let [left, right, ..] = levels.as_slice() else {
+        return None;
+    };
+    let loudest = (*left).max(*right);
+    if loudest == 0 {
+        return Some(0);
+    }
+    Some(((right - left) * 100 / loudest).clamp(-100, 100) as i8)
+}
+
+/// Règle la balance en gardant le volume : le canal opposé est atténué.
+pub fn set_balance(level: u8, balance: i8) -> Result<(), Error> {
+    let level = i32::from(level.min(100));
+    let side = |attenuated: bool| {
+        if attenuated {
+            level * (100 - i32::from(balance).abs()) / 100
+        } else {
+            level
+        }
+    };
+    let (left, right) = (side(balance > 0), side(balance < 0));
+    command::run(
+        "pactl",
+        &[
+            "set-sink-volume",
+            "@DEFAULT_SINK@",
+            &format!("{left}%"),
+            &format!("{right}%"),
+        ],
+    )
+    .map(drop)
+}
+
+/// Application qui joue du son.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stream {
+    pub id: u32,
+    pub name: String,
+    pub volume: u8,
+}
+
+pub fn streams() -> Result<Vec<Stream>, Error> {
+    Ok(parse_streams(&command::run("pactl", &["list", "sink-inputs"])?))
+}
+
+/// Analyse `pactl list sink-inputs`.
+pub fn parse_streams(output: &str) -> Vec<Stream> {
+    let mut streams: Vec<Stream> = Vec::new();
+    for line in output.lines() {
+        let line = line.trim();
+        if let Some(id) = line.strip_prefix("Sink Input #").and_then(|id| id.parse().ok()) {
+            streams.push(Stream {
+                id,
+                name: String::new(),
+                volume: 100,
+            });
+            continue;
+        }
+        let Some(stream) = streams.last_mut() else {
+            continue;
+        };
+        if let Some(volume) = line.strip_prefix("Volume:") {
+            let percent = volume
+                .split('/')
+                .find_map(|part| part.trim().strip_suffix('%')?.trim().parse::<u8>().ok());
+            stream.volume = percent.unwrap_or(stream.volume);
+        } else if let Some(name) = line.strip_prefix("application.name = ") {
+            stream.name = name.trim_matches('"').to_owned();
+        }
+    }
+    streams
+}
+
+pub fn set_stream_volume(id: u32, level: u8) -> Result<(), Error> {
+    command::run(
+        "pactl",
+        &[
+            "set-sink-input-volume",
+            &id.to_string(),
+            &format!("{}%", level.min(100)),
+        ],
+    )
+    .map(drop)
+}
+
+/// Son d'essai sur la sortie par défaut.
+pub fn test_speakers() -> Result<(), Error> {
+    command::run_with_timeout(
+        "speaker-test",
+        &["-t", "sine", "-f", "440", "-l", "1", "-c", "2"],
+        std::time::Duration::from_secs(6),
+    )
+    .map(drop)
 }
 
 #[cfg(test)]
@@ -139,5 +267,23 @@ Video
             }
         );
         assert_eq!(sinks[1].name, "HDMI / DisplayPort");
+    }
+
+    #[test]
+    fn balance_des_canaux() {
+        let centre = "Volume: front-left: 42598 /  65% / -11 dB,   front-right: 42598 /  65% / -11 dB";
+        assert_eq!(parse_balance(centre), Some(0));
+        let droite = "Volume: front-left: 1 /  32% / -1 dB,   front-right: 1 /  64% / -1 dB";
+        assert_eq!(parse_balance(droite), Some(50));
+        assert_eq!(parse_balance("rien"), None);
+    }
+
+    #[test]
+    fn son_par_application() {
+        let output = "Sink Input #12\n\tVolume: front-left: 52428 /  80% / -5 dB\n\tProperties:\n\t\tapplication.name = \"Firefox\"\nSink Input #15\n\tVolume: mono: 65536 / 100% / 0 dB\n";
+        let streams = parse_streams(output);
+        assert_eq!(streams[0].name, "Firefox");
+        assert_eq!(streams[0].volume, 80);
+        assert_eq!((streams[1].id, streams[1].volume), (15, 100));
     }
 }

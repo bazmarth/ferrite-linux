@@ -1,4 +1,4 @@
-//! Icônes SVG de Ferrite (dossier `icons/SVG`), rasterisées avec resvg.
+//! Icônes SVG de Ferrite (pack `ferrite-theme` et dossier `icons/SVG`), rasterisées avec resvg.
 //!
 //! Les icônes d'applications sont dessinées en couleur. Les icônes d'état, conçues en
 //! couleur, sont aussi disponibles en version « symbolique » monochrome pour la barre
@@ -19,28 +19,22 @@ use resvg::{
 };
 
 macro_rules! icons {
-    ($($name:literal),* $(,)?) => {
-        /// Icônes embarquées dans le binaire : (nom, source SVG).
+    ($($name:literal),* $(,)?; $($theme_name:literal => $theme_path:literal),* $(,)?) => {
+        /// Icônes embarquées dans le binaire : (nom, source SVG). Le pack `ferrite-theme` fournit
+        /// celles qui y existent, `icons/SVG` les autres (état, recherche).
         const SOURCES: &[(&str, &str)] = &[
-            $(($name, include_str!(concat!("../../../icons/SVG/", $name, ".svg")))),*
+            $(($name, include_str!(concat!("../../../icons/SVG/", $name, ".svg")))),*,
+            $((
+                $theme_name,
+                include_str!(concat!("../../../ferrite-theme/icons/Ferrite/scalable/", $theme_path, ".svg")),
+            )),*
         ];
     };
 }
 
 icons![
-    "app-calculator",
-    "app-calendar",
-    "app-clock",
     "app-code",
-    "app-monitor",
-    "app-files",
     "app-search",
-    "app-settings",
-    "app-terminal",
-    "app-text-editor",
-    "app-web",
-    "file-generic",
-    "places-trash",
     "status-battery-000",
     "status-battery-010",
     "status-battery-020",
@@ -84,11 +78,104 @@ icons![
     "status-wifi-2",
     "status-wifi-3",
     "status-wifi-4",
+    ;
+    "ferrite-logo" => "places/start-here",
+    "app-files" => "apps/system-file-manager",
+    "app-terminal" => "apps/utilities-terminal",
+    "app-web" => "apps/web-browser",
+    "app-settings" => "apps/preferences-system",
+    "app-text-editor" => "apps/accessories-text-editor",
+    "app-calculator" => "apps/accessories-calculator",
+    "app-monitor" => "apps/utilities-system-monitor",
+    "app-calendar" => "apps/x-office-calendar",
+    "app-clock" => "apps/preferences-system-time",
+    "file-generic" => "mimetypes/text-x-generic",
+    "places-trash" => "places/user-trash",
 ];
 
 /// Pictogrammes au trait des réglages rapides, dessinés en noir puis teintés comme les
 /// icônes symboliques.
 const GLYPHS: &[(&str, &str)] = &[
+    (
+        "cc-wifi",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M2 9 a15 15 0 0 1 20 0 M5.5 12.5 a10 10 0 0 1 13 0 M9 16 a5 5 0 0 1 6 0 M12 19.5 V19.6" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "cc-bluetooth",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M7 7 L17 17 L12 21 V3 L17 7 L7 17" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "cc-dark",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 14 A8 8 0 1 1 10 4 A6.5 6.5 0 0 0 20 14 Z" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "cc-dnd",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 3 a9 9 0 1 0 0.01 0 M8 12 H16" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "cc-saver",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 8 H18 V16 H3 Z M20 11 V13 M9 9.5 L7 12.5 H11 L9 15" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "cc-keyboard",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 7 H21 V17 H3 Z M7 11 H7.01 M11 11 H11.01 M15 11 H15.01 M8 14 H16" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "cc-volume",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 9 H8 L13 5 V19 L8 15 H4 Z M16.5 9 a4 4 0 0 1 0 6" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "cc-brightness",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8 a4 4 0 1 0 0.01 0 M12 2.5 V4.5 M12 19.5 V21.5 M2.5 12 H4.5 M19.5 12 H21.5 M5.3 5.3 L6.7 6.7 M17.3 17.3 L18.7 18.7 M5.3 18.7 L6.7 17.3 M17.3 6.7 L18.7 5.3" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "cc-settings",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8.8 a3.2 3.2 0 1 0 0.01 0 M12 2.5 V5.5 M12 18.5 V21.5 M2.5 12 H5.5 M18.5 12 H21.5 M5.3 5.3 L7.4 7.4 M16.6 16.6 L18.7 18.7 M5.3 18.7 L7.4 16.6 M16.6 7.4 L18.7 5.3" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "cc-lock",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M6 11 H18 V20 H6 Z M8.5 11 V8 a3.5 3.5 0 0 1 7 0 V11" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "cc-power",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 3 V11 M7 6.5 a7.5 7.5 0 1 0 10 0" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "cc-back",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M15 4 L7 12 L15 20" fill="none" stroke="#000" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "cc-check",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 12.5 L9.5 18 L20 6.5" fill="none" stroke="#000" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "cc-head",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 15 V12 a8 8 0 0 1 16 0 V15 M4 14 H7 V20 H4 Z M17 14 H20 V20 H17 Z" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "cc-mouse",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 3 a6 6 0 0 1 6 6 V15 a6 6 0 0 1 -12 0 V9 a6 6 0 0 1 6 -6 Z M12 3 V9" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "cc-phone",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M8 3 H16 V21 H8 Z M11 18 H13" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "cc-speaker",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M7 3 H17 V21 H7 Z M12 15 a3 3 0 1 0 0.01 0 M12 7 V7.1" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "cc-watch",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M8 7 H16 V17 H8 Z M9.5 7 L10 3 H14 L14.5 7 M9.5 17 L10 21 H14 L14.5 17" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "cc-chevron",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9 4 L17 12 L9 20" fill="none" stroke="#000" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "cc-search",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10.3 3.8 a6.5 6.5 0 1 0 0.01 0 M15.5 15.5 L21 21" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
     (
         "glyph-wifi",
         r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><g fill="none" stroke="#000" stroke-width="2.3" stroke-linecap="round"><path d="M2.6 9.4a13.4 13.4 0 0 1 18.8 0"/><path d="M6.1 12.9a8.4 8.4 0 0 1 11.8 0"/><path d="M9.6 16.4a3.4 3.4 0 0 1 4.8 0"/></g><circle cx="12" cy="19.6" r="1.7" fill="#000"/></svg>"##,
@@ -370,6 +457,14 @@ mod tests {
         let mut pixels = vec![0u8; 48 * 48 * 4];
         IconCache::default().draw(&mut pixels, 48, 48, name, 0.0, 0.0, 48.0, style);
         pixels
+    }
+
+    #[test]
+    fn les_icones_du_theme_n_ont_pas_de_texte() {
+        // resvg est compilé sans le texte : une balise <text> disparaîtrait au rendu.
+        for (name, source) in SOURCES {
+            assert!(!source.contains("<text"), "{name} contient du texte");
+        }
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 use std::{path::PathBuf, time::Duration};
 
-use crate::desktop::panels::Popover;
+use crate::desktop::panels::{ControlsPage, Popover};
 
 pub const USAGE: &str = "\
 Utilisation : ferrite-shell [OPTIONS] [-- COMMANDE [ARGUMENTS...]]
@@ -17,11 +17,17 @@ Options :
   --capture FICHIER     en fenêtre : enregistre une capture PNG puis quitte
   --capture-delay SEC   délai avant la capture (défaut : 3)
   --menu MENU           ouvre un menu au démarrage, pour les captures
-                        (applications, reglages, session ou presse-papiers)
+                        (applications, reglages, presse-papiers ou notifications)
   --demo-genie FRACTION réduit la première fenêtre ouverte et fige l'animation
                         « génie » à cette fraction (0 à 1), pour les captures
-  --demo-page POSITION  fige l'affichage à cette position entre les pages (0 : widgets,
-                        1 : bureau principal, 0.5 : à mi-chemin), pour les captures
+  --demo-overview       ouvre la vue d'ensemble au démarrage (pour les captures)
+  --demo-switcher       ouvre le sélecteur Alt+Tab dès qu'une fenêtre existe (pour les captures)
+  --demo-controls LISTE ouvre le centre de contrôle sur sa liste (wifi ou bluetooth)
+  --demo-lock           affiche l'écran de verrouillage au démarrage (pour les captures)
+  --demo-region         ouvre la sélection d'une zone à capturer au démarrage
+  --demo-screenshot     enregistre une capture dans le dossier Images dès qu'une fenêtre existe
+  --demo-page POSITION  fige l'affichage à cette position entre les bureaux (0 : le premier,
+                        0.5 : à mi-chemin), pour les captures
   -h, --help            affiche cette aide
 
 COMMANDE est lancée comme client une fois le compositeur prêt (ex. -- foot).";
@@ -61,6 +67,14 @@ pub struct Options {
     pub genie_demo: Option<f64>,
     /// Position figée entre les pages.
     pub demo_page: Option<f64>,
+    /// Ouvre la vue d'ensemble au démarrage (pour les captures).
+    pub demo_overview: bool,
+    /// Sélecteur Alt+Tab, sélection d'une zone et capture demandés d'avance.
+    pub demo_switcher: bool,
+    pub demo_region: bool,
+    pub demo_lock: bool,
+    pub demo_controls: Option<ControlsPage>,
+    pub demo_screenshot: bool,
     pub command: Vec<String>,
 }
 
@@ -74,6 +88,12 @@ impl Default for Options {
             menu: None,
             genie_demo: None,
             demo_page: None,
+            demo_overview: false,
+            demo_switcher: false,
+            demo_region: false,
+            demo_lock: false,
+            demo_controls: None,
+            demo_screenshot: false,
             command: Vec::new(),
         }
     }
@@ -115,8 +135,8 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
                 options.menu = Some(match value("--menu")?.as_str() {
                     "applications" => Popover::Launcher,
                     "reglages" => Popover::Controls,
-                    "session" => Popover::Session,
                     "presse-papiers" => Popover::Clipboard,
+                    "notifications" => Popover::Notifications,
                     other => return Err(format!("menu inconnu : {other}")),
                 });
             }
@@ -129,6 +149,18 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
                         .ok_or_else(|| format!("fraction invalide : {text} (entre 0 et 1)"))?,
                 );
             }
+            "--demo-overview" => options.demo_overview = true,
+            "--demo-switcher" => options.demo_switcher = true,
+            "--demo-region" => options.demo_region = true,
+            "--demo-lock" => options.demo_lock = true,
+            "--demo-controls" => {
+                options.demo_controls = Some(match value("--demo-controls")?.as_str() {
+                    "wifi" => ControlsPage::Wifi,
+                    "bluetooth" => ControlsPage::Bluetooth,
+                    other => return Err(format!("liste inconnue : {other}")),
+                });
+            }
+            "--demo-screenshot" => options.demo_screenshot = true,
             "--demo-page" => {
                 let text = value("--demo-page")?;
                 options.demo_page = Some(

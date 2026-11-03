@@ -1,0 +1,6 @@
+{
+  "accent": "#2779E0", "accentLight": "#6CB8FF", "ink": "#16181C",
+  "surface": "#F2F3F6", "surfaceAlt": "#FFFFFF", "border": "#D5D9E0", "muted": "#4B5563",
+  "success": "#1F9D63", "warning": "#FF9F0A", "danger": "#E5372B",
+  "iconRadius": "28/128", "iconShadow": "0 6px 10px rgba(15,23,42,.18)", "font": "Inter"
+}

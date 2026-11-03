@@ -59,9 +59,9 @@ impl Wallpaper {
 /// Fond choisi à `width` × `height` pixels ; une image illisible donne le fond Ferrite.
 fn pixels(choice: &WallpaperChoice, width: u32, height: u32) -> Image {
     match (&choice.source, &choice.image) {
-        (Source::Builtin(builtin), _) => wallpaper::waves(*builtin, width, height),
+        (Source::Builtin(builtin), _) => wallpaper::paint(*builtin, width, height),
         (Source::File(_), Some(image)) => wallpaper::cover(image, width, height),
-        (Source::File(_), None) => wallpaper::waves(Builtin::Ferrite, width, height),
+        (Source::File(_), None) => wallpaper::paint(Builtin::Ferrite, width, height),
     }
 }
 
@@ -96,7 +96,7 @@ mod tests {
         };
         assert_eq!(
             pixels(&missing, 32, 20),
-            wallpaper::waves(Builtin::Ferrite, 32, 20)
+            wallpaper::paint(Builtin::Ferrite, 32, 20)
         );
     }
 }

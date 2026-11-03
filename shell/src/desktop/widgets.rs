@@ -1,4 +1,4 @@
-//! Données persistantes de la page des widgets : notes, tâches et météo.
+//! Données persistantes des widgets du bureau : disposition, notes, tâches et météo.
 
 use std::{
     thread,
@@ -17,6 +17,209 @@ use crate::state::Ferrite;
 /// Délai entre deux relevés de la météo, et avant de réessayer après un échec.
 const WEATHER_REFRESH: Duration = Duration::from_secs(30 * 60);
 const WEATHER_RETRY: Duration = Duration::from_secs(5 * 60);
+
+/// Disposition d'origine : colonnes de 170 px, écart de 16, à gauche sous la barre.
+const CELL: i32 = 170;
+const GAP: i32 = 16;
+const LEFT: i32 = 32;
+const TOP: i32 = 58;
+/// Marge gardée autour d'un widget, pour qu'il ne sorte jamais de l'écran.
+const SCREEN_MARGIN: i32 = 8;
+
+/// Widgets disponibles.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WidgetKind {
+    Clock,
+    Calendar,
+    System,
+    Tasks,
+    Notes,
+    Quote,
+}
+
+impl WidgetKind {
+    pub const ALL: [WidgetKind; 6] = [
+        WidgetKind::Clock,
+        WidgetKind::Calendar,
+        WidgetKind::System,
+        WidgetKind::Tasks,
+        WidgetKind::Notes,
+        WidgetKind::Quote,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            WidgetKind::Clock => "Horloge",
+            WidgetKind::Calendar => "Calendrier",
+            WidgetKind::System => "Système",
+            WidgetKind::Tasks => "Tâches",
+            WidgetKind::Notes => "Notes",
+            WidgetKind::Quote => "Citation",
+        }
+    }
+
+    fn token(self) -> &'static str {
+        match self {
+            WidgetKind::Clock => "horloge",
+            WidgetKind::Calendar => "calendrier",
+            WidgetKind::System => "systeme",
+            WidgetKind::Tasks => "taches",
+            WidgetKind::Notes => "notes",
+            WidgetKind::Quote => "citation",
+        }
+    }
+
+    /// Taille en dessous de laquelle le contenu ne tiendrait plus.
+    fn min_size(self) -> (i32, i32) {
+        match self {
+            WidgetKind::Clock => (170, 130),
+            WidgetKind::Calendar => (170, 170),
+            WidgetKind::System => (170, 170),
+            WidgetKind::Tasks => (220, 100),
+            WidgetKind::Notes => (160, 100),
+            WidgetKind::Quote => (200, 80),
+        }
+    }
+
+    /// Place d'origine (celle de la maquette).
+    fn default_slot(self) -> WidgetSlot {
+        let wide = 2 * CELL + GAP;
+        let second_row = TOP + CELL + GAP;
+        let (x, y, w, h) = match self {
+            WidgetKind::Clock => (LEFT, TOP, wide, CELL),
+            WidgetKind::Calendar => (LEFT + wide + GAP, TOP, CELL, CELL),
+            WidgetKind::System => (LEFT + wide + 2 * GAP + CELL, TOP, CELL, CELL),
+            WidgetKind::Tasks => (LEFT, second_row, wide, CELL),
+            WidgetKind::Notes => (LEFT + wide + GAP, second_row, wide, CELL),
+            WidgetKind::Quote => (LEFT, second_row + CELL + GAP, 2 * wide + GAP, 110),
+        };
+        WidgetSlot {
+            kind: self,
+            x,
+            y,
+            w,
+            h,
+        }
+    }
+}
+
+/// Un widget posé sur le bureau : place et taille libres, en points de l'écran. Le dernier
+/// de la liste passe devant les autres.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WidgetSlot {
+    pub kind: WidgetKind,
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+}
+
+impl WidgetSlot {
+    /// Ramené dans l'écran de `width` × `height`, sous la barre de hauteur `bar`.
+    pub fn clamped(self, width: i32, height: i32, bar: i32) -> Self {
+        let (min_w, min_h) = self.kind.min_size();
+        let w = self.w.max(min_w).min((width - 2 * SCREEN_MARGIN).max(min_w));
+        let h = self
+            .h
+            .max(min_h)
+            .min((height - bar - 2 * SCREEN_MARGIN).max(min_h));
+        Self {
+            w,
+            h,
+            x: self.x.min(width - w - SCREEN_MARGIN).max(SCREEN_MARGIN),
+            y: self.y.min(height - h - SCREEN_MARGIN).max(bar + SCREEN_MARGIN),
+            ..self
+        }
+    }
+}
+
+/// Bords saisis pour redimensionner ; aucun : le widget se déplace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct WidgetEdges {
+    pub left: bool,
+    pub right: bool,
+    pub top: bool,
+    pub bottom: bool,
+}
+
+impl WidgetEdges {
+    /// Le widget `start` après un glissement de (`dx`, `dy`). Le bord opposé ne bouge pas,
+    /// même quand la taille minimale arrête le geste.
+    pub fn apply(self, start: WidgetSlot, dx: i32, dy: i32) -> WidgetSlot {
+        if self == WidgetEdges::default() {
+            return WidgetSlot {
+                x: start.x + dx,
+                y: start.y + dy,
+                ..start
+            };
+        }
+        let (min_w, min_h) = start.kind.min_size();
+        let mut slot = start;
+        if self.right {
+            slot.w = (start.w + dx).max(min_w);
+        }
+        if self.left {
+            slot.w = (start.w - dx).max(min_w);
+            slot.x = start.x + start.w - slot.w;
+        }
+        if self.bottom {
+            slot.h = (start.h + dy).max(min_h);
+        }
+        if self.top {
+            slot.h = (start.h - dy).max(min_h);
+            slot.y = start.y + start.h - slot.h;
+        }
+        slot
+    }
+}
+
+/// Disposition d'origine : celle de la maquette.
+pub fn default_layout() -> Vec<WidgetSlot> {
+    WidgetKind::ALL
+        .into_iter()
+        .map(WidgetKind::default_slot)
+        .collect()
+}
+
+/// Lit `horloge:32:58:356:170,…` ; ce qui n'existe plus est ignoré, sans doublon.
+fn parse_layout(text: &str) -> Vec<WidgetSlot> {
+    let mut layout: Vec<WidgetSlot> = Vec::new();
+    for item in text.split(',') {
+        let mut parts = item.split(':');
+        let token = parts.next().unwrap_or_default();
+        let kind = WidgetKind::ALL.into_iter().find(|kind| kind.token() == token);
+        let numbers: Vec<i32> = parts.filter_map(|part| part.parse().ok()).collect();
+        if let (Some(kind), [x, y, w, h]) = (kind, numbers.as_slice())
+            && layout.iter().all(|slot| slot.kind != kind)
+        {
+            layout.push(WidgetSlot {
+                kind,
+                x: *x,
+                y: *y,
+                w: *w,
+                h: *h,
+            });
+        }
+    }
+    layout
+}
+
+fn layout_text(layout: &[WidgetSlot]) -> String {
+    layout
+        .iter()
+        .map(|slot| {
+            format!(
+                "{}:{}:{}:{}:{}",
+                slot.kind.token(),
+                slot.x,
+                slot.y,
+                slot.w,
+                slot.h
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DashboardEdit {
@@ -97,6 +300,12 @@ pub struct Dashboard {
     pub tasks: Vec<Task>,
     pub draft: String,
     pub month_offset: i32,
+    /// Widgets posés, du dessous vers le dessus.
+    pub layout: Vec<WidgetSlot>,
+    /// Note affichée par le widget Notes.
+    pub note_shown: usize,
+    /// Première tâche affichée, quand elles ne tiennent pas toutes.
+    pub tasks_scroll: usize,
     /// Dernier relevé ; `None` tant qu'aucun n'a abouti.
     pub weather: Option<Weather>,
     pub place: String,
@@ -132,9 +341,13 @@ impl Dashboard {
         } else {
             sample_tasks()
         };
+        let layout = settings
+            .get("widgets_disposition")
+            .map_or_else(default_layout, parse_layout);
         Self {
             notes,
             tasks,
+            layout,
             place: Place::from_settings(&settings).name,
             ..Self::default()
         }
@@ -142,6 +355,7 @@ impl Dashboard {
 
     pub fn save(&self) -> std::io::Result<()> {
         let mut settings = Settings::load();
+        settings.set("widgets_disposition", &layout_text(&self.layout));
         settings.set("tableau_notes_nombre", &self.notes.len().to_string());
         for (index, note) in self.notes.iter().enumerate() {
             settings.set(&format!("tableau_note_{index}"), &encode(&note.text));
@@ -159,6 +373,35 @@ impl Dashboard {
         settings.save()
     }
 
+    /// Widgets qu'on peut encore ajouter.
+    pub fn absent_widgets(layout: &[WidgetSlot]) -> Vec<WidgetKind> {
+        WidgetKind::ALL
+            .into_iter()
+            .filter(|kind| layout.iter().all(|slot| slot.kind != *kind))
+            .collect()
+    }
+
+    pub fn add_widget(&mut self, kind: WidgetKind) {
+        if self.layout.iter().all(|slot| slot.kind != kind) {
+            self.layout.push(kind.default_slot());
+        }
+    }
+
+    pub fn remove_widget(&mut self, index: usize) {
+        if index < self.layout.len() {
+            self.layout.remove(index);
+        }
+    }
+
+    /// Passe le widget devant les autres ; renvoie sa nouvelle place dans la liste.
+    pub fn raise_widget(&mut self, index: usize) -> usize {
+        if index < self.layout.len() {
+            let slot = self.layout.remove(index);
+            self.layout.push(slot);
+        }
+        self.layout.len().saturating_sub(1)
+    }
+
     /// Commence une note, en tête de liste.
     pub fn add_note(&mut self, now: u64) -> Option<DashboardEdit> {
         if self.notes.len() >= 100 {
@@ -171,6 +414,7 @@ impl Dashboard {
                 updated: now,
             },
         );
+        self.note_shown = 0;
         Some(DashboardEdit::Note(0))
     }
 
@@ -278,41 +522,19 @@ fn load_notes(settings: &Settings) -> Vec<Note> {
 }
 
 fn sample_notes() -> Vec<Note> {
-    let now = now_seconds();
-    [
-        ("Projet web", "Finaliser l’interface d’administration…", now),
-        (
-            "Idées",
-            "Application mobile (marketplace)…",
-            now.saturating_sub(86_400),
-        ),
-        (
-            "Personnel",
-            "Préparer les documents pour le voyage",
-            now.saturating_sub(2 * 86_400),
-        ),
-        (
-            "Santé",
-            "Prendre les médicaments",
-            now.saturating_sub(20 * 86_400),
-        ),
-    ]
-    .into_iter()
-    .map(|(title, preview, updated)| Note {
-        text: format!("{title}\n{preview}"),
-        updated,
-    })
-    .collect()
+    vec![Note {
+        text: "Idées pour Ferrite\nCentre de contrôle : chevrons Wi-Fi et Bluetooth. Widgets en grille \
+               4 colonnes, verre sombre. Tester le scanout direct…"
+            .to_owned(),
+        updated: now_seconds(),
+    }]
 }
 
 fn sample_tasks() -> Vec<Task> {
     [
-        ("Terminer le rapport", Priority::High, false),
-        ("Répondre aux emails", Priority::Medium, false),
-        ("Faire les courses", Priority::Low, false),
-        ("Appeler la famille", Priority::Medium, false),
-        ("Réviser le code", Priority::High, false),
-        ("Nettoyer le bureau", Priority::Low, true),
+        ("Préparer la démo Ferrite", Priority::High, false),
+        ("Relire le rapport", Priority::Medium, false),
+        ("Mettre à jour les icônes", Priority::Low, true),
     ]
     .into_iter()
     .map(|(text, priority, done)| Task {
@@ -402,6 +624,108 @@ fn decode(text: &str) -> String {
 mod tests {
     use super::*;
 
+    fn slot(kind: WidgetKind) -> WidgetSlot {
+        kind.default_slot()
+    }
+
+    #[test]
+    fn la_disposition_d_origine_reproduit_la_maquette() {
+        let places: Vec<_> = default_layout()
+            .iter()
+            .map(|slot| (slot.x, slot.y, slot.w, slot.h))
+            .collect();
+        assert_eq!(
+            places,
+            vec![
+                (32, 58, 356, 170),
+                (404, 58, 170, 170),
+                (590, 58, 170, 170),
+                (32, 244, 356, 170),
+                (404, 244, 356, 170),
+                (32, 430, 728, 110),
+            ]
+        );
+    }
+
+    #[test]
+    fn la_disposition_se_relit_et_ignore_l_inconnu() {
+        let layout = default_layout();
+        assert_eq!(parse_layout(&layout_text(&layout)), layout);
+        let read = parse_layout("notes:900:300:400:260,inconnu:1:1:1:1,notes:0:0:9:9,taches:2");
+        assert_eq!(
+            read,
+            vec![WidgetSlot {
+                kind: WidgetKind::Notes,
+                x: 900,
+                y: 300,
+                w: 400,
+                h: 260
+            }]
+        );
+    }
+
+    #[test]
+    fn un_widget_se_deplace_librement() {
+        let moved = WidgetEdges::default().apply(slot(WidgetKind::Notes), 300, 123);
+        assert_eq!((moved.x, moved.y, moved.w, moved.h), (704, 367, 356, 170));
+    }
+
+    #[test]
+    fn un_widget_se_redimensionne_par_ses_bords_sans_passer_sous_son_minimum() {
+        let start = slot(WidgetKind::Calendar);
+        let corner = WidgetEdges {
+            right: true,
+            bottom: true,
+            ..WidgetEdges::default()
+        };
+        let bigger = corner.apply(start, 200, 90);
+        assert_eq!((bigger.x, bigger.y, bigger.w, bigger.h), (404, 58, 370, 260));
+        // Le bord opposé reste en place, même arrêté par la taille minimale.
+        let left = WidgetEdges {
+            left: true,
+            top: true,
+            ..WidgetEdges::default()
+        };
+        let smaller = left.apply(bigger, 500, 500);
+        assert_eq!((smaller.w, smaller.h), (170, 170));
+        assert_eq!(smaller.x + smaller.w, bigger.x + bigger.w);
+        assert_eq!(smaller.y + smaller.h, bigger.y + bigger.h);
+    }
+
+    #[test]
+    fn un_widget_reste_dans_l_ecran() {
+        let far = WidgetSlot {
+            x: 5000,
+            y: -300,
+            w: 9000,
+            h: 400,
+            ..slot(WidgetKind::Tasks)
+        };
+        let shown = far.clamped(1280, 800, 34);
+        assert_eq!(shown.w, 1264);
+        assert_eq!(shown.x, 8);
+        assert_eq!(shown.y, 42);
+        assert!(shown.y + shown.h <= 792);
+    }
+
+    #[test]
+    fn un_widget_saisi_passe_devant_et_un_retire_peut_revenir() {
+        let mut dashboard = Dashboard {
+            layout: default_layout(),
+            ..Dashboard::default()
+        };
+        assert_eq!(dashboard.raise_widget(1), 5);
+        assert_eq!(dashboard.layout[5].kind, WidgetKind::Calendar);
+        dashboard.remove_widget(5);
+        assert_eq!(
+            Dashboard::absent_widgets(&dashboard.layout),
+            vec![WidgetKind::Calendar]
+        );
+        dashboard.add_widget(WidgetKind::Calendar);
+        dashboard.add_widget(WidgetKind::Calendar);
+        assert_eq!(dashboard.layout.len(), 6);
+    }
+
     #[test]
     fn les_notes_encodent_les_separateurs_du_fichier_de_reglages() {
         let text = "  Ligne 1 = été\\n\n\tLigne 2  ";
@@ -443,8 +767,10 @@ mod tests {
 
     #[test]
     fn une_tache_vide_n_est_pas_ajoutee() {
-        let mut dashboard = Dashboard::default();
-        dashboard.draft = "   ".to_owned();
+        let mut dashboard = Dashboard {
+            draft: "   ".to_owned(),
+            ..Dashboard::default()
+        };
         assert!(!dashboard.commit_draft());
         assert!(dashboard.tasks.is_empty());
     }

@@ -67,8 +67,11 @@ impl Ferrite {
             .chain(self.minimized.iter().map(|minimized| &minimized.window))
             .chain(self.workspaces.all_parked().map(|parked| &parked.window));
         let mut running: Vec<AppKey> = Vec::new();
+        let mut several: Vec<AppKey> = Vec::new();
         for key in windows.filter_map(|window| self.window_app(window)) {
-            if !running.contains(&key) {
+            if running.contains(&key) {
+                several.push(key);
+            } else {
                 running.push(key);
             }
         }
@@ -102,12 +105,15 @@ impl Ferrite {
             .chain(
                 order
                     .iter()
-                    .filter(|key| !pinned.contains(key))
+                    .filter(|key| self.dock_config.recents && !pinned.contains(key))
                     .map(|key| (key.clone(), false)),
             )
+            // La corbeille ferme toujours la rangée, après le trait.
+            .chain(std::iter::once((AppKey::Builtin(App::Trash), true)))
             .map(|(key, pinned)| DockItem {
                 icon: key.icon(&self.applications),
                 running: running.contains(&key),
+                several: several.contains(&key),
                 key,
                 pinned,
             })
@@ -177,18 +183,16 @@ impl Ferrite {
             .page_of(|parked| self.window_app(&parked.window).as_ref() == Some(key))
     }
 
-    /// L'application peut-elle ouvrir plusieurs fenêtres (Paramètres) ?
+    /// L'application peut-elle ouvrir plusieurs fenêtres ? Le Terminal toujours, les autres
+    /// selon Paramètres.
     pub fn allows_multiple_windows(&self, key: &AppKey) -> bool {
-        self.multi_window.iter().any(|token| *token == key.token())
+        *key == AppKey::Builtin(crate::desktop::apps::App::Terminal)
+            || self.multi_window.iter().any(|token| *token == key.token())
     }
 
     /// Ouvre une application depuis le menu Applications : si elle est déjà ouverte et
     /// n'a droit qu'à une fenêtre, sa fenêtre revient au premier plan.
     pub fn open_app(&mut self, key: &AppKey) {
-        // Les dernières applications ouvertes sont suggérées en tête du lanceur.
-        self.launcher_recent.retain(|known| known != key);
-        self.launcher_recent.insert(0, key.clone());
-        self.launcher_recent.truncate(10);
         let (mapped, minimized) = self.app_windows(key);
         let running = !mapped.is_empty() || !minimized.is_empty() || self.app_parked_page(key).is_some();
         if running && !self.allows_multiple_windows(key) {
@@ -198,7 +202,7 @@ impl Ferrite {
         }
     }
 
-    fn launch_app(&mut self, key: &AppKey) {
+    pub fn launch_app(&mut self, key: &AppKey) {
         let env = self.client_environment();
         if key.launch(&self.applications, &env) {
             self.dock_bounces
@@ -262,6 +266,9 @@ impl Ferrite {
     /// Entrées du menu d'une case du Dock.
     pub fn dock_menu_entries(&self, item: &DockItem) -> Vec<DockMenuAction> {
         let mut entries = Vec::new();
+        if item.key == AppKey::Builtin(App::Trash) {
+            return entries;
+        }
         let launchable = !matches!(item.key, AppKey::Other(_));
         if launchable && item.running && self.allows_multiple_windows(&item.key) {
             entries.push(DockMenuAction::NewWindow);

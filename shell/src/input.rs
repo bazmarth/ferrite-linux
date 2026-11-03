@@ -15,11 +15,23 @@ use smithay::{
 use tracing::info;
 
 use crate::{
-    desktop::panels::{self, DesktopAction, LAUNCHER_SCROLL_STEP, Popover, SectionLink, Slider},
+    desktop::panels::{self, DesktopAction, LAUNCHER_SCROLL_STEP, LockAction, Popover, Slider},
     state::Ferrite,
     system::Change,
     wm::{BTN_LEFT, BTN_RIGHT, Hit, decoration::Part},
 };
+
+/// Widget en train d'être déplacé ou redimensionné : ce qu'il était à l'appui.
+#[derive(Debug, Clone, Copy)]
+pub struct WidgetDrag {
+    pub index: usize,
+    pub edges: crate::desktop::widgets::WidgetEdges,
+    pub pointer: Point<f64, smithay::utils::Logical>,
+    pub start: crate::desktop::widgets::WidgetSlot,
+}
+
+/// Molette à accumuler pour changer de mois ou faire défiler les tâches d'une ligne.
+const WIDGET_SCROLL_STEP: f64 = 12.0;
 
 /// Raccourcis gérés par le compositeur lui-même (non transmis aux applications).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,6 +42,9 @@ enum Action {
     RestoreMinimized,
     /// Ctrl+Alt+← ou → (Ctrl+Super sous GNOME, qui garde Ctrl+Alt) : page voisine.
     SwitchPage(i32),
+    /// Ctrl+Alt+↑ ou ↓ (Ctrl+Super sous GNOME) : ouvre ou ferme la vue d'ensemble, comme le
+    /// balayage à trois doigts vers le haut ou le bas.
+    Overview(bool),
     /// Ctrl+Alt+F1…F12 : passe au terminal virtuel indiqué (backend DRM).
     SwitchVt(i32),
     /// Échap : ferme le menu ou la confirmation ouverte.
@@ -52,11 +67,80 @@ enum Action {
     DashboardErase,
     DashboardEnter,
     DashboardStopEditing,
+    /// Alt+Tab, Alt+Maj+Tab ou flèches : avance ou recule dans le sélecteur de fenêtres.
+    SwitcherStep(i32),
+    SwitcherCancel,
+    /// Alt+` : fenêtres de l'application active.
+    SwitcherSameApp(i32),
+    /// Super+Q, Super+M et Super+H : fenêtre ou application active.
+    CloseWindow,
+    MinimizeWindow,
+    HideApp,
+    /// Super+↑ et Super+↓.
+    Maximize,
+    RestoreOrMinimize,
+    /// Super+← ou → : moitié, deux tiers, puis tiers.
+    SnapSide(bool),
+    /// Super+Alt+1, 2, 3 et Super+C.
+    Snap(crate::wm::Snap),
+    /// Super+T : tuilage automatique.
+    ToggleTiling,
+    /// Super+Entrée : échange avec la principale en tuilage, nouveau terminal sinon.
+    SuperEnter,
+    /// Ctrl+Alt+T : nouveau terminal.
+    OpenTerminal,
+    /// Super+D : afficher le bureau.
+    ShowDesktop,
+    /// Super+S : vue d'ensemble.
+    ToggleOverview,
+    /// Super+A : centre de contrôle.
+    ToggleControls,
+    /// Super+L : verrouiller.
+    Lock,
+    /// Super+Maj+1…9 : envoie la fenêtre active sur cet espace.
+    SendToSpace(usize),
+    /// Mot de passe Wi-Fi demandé dans le centre de contrôle.
+    PasswordType(char),
+    PasswordErase,
+    PasswordSubmit,
+    PasswordCancel,
+    /// Écran de verrouillage : caractère, effacer, valider, ou autre touche.
+    LockType(char),
+    LockErase,
+    LockSubmit,
+    LockReveal,
+    /// Touche relâchée pendant le verrouillage : rien à faire, rien ne passe aux clients.
+    LockIgnore,
+    LockCancel,
+    ToggleWidgets,
+    WidgetsDismiss,
+    /// Super+Espace : menu Applications et sa recherche.
+    ToggleLauncher,
+    /// Super+N : historique des notifications.
+    ToggleNotifications,
+    /// Impr. écran : tout l'écran.
+    ScreenshotFull,
+    /// Maj+Impr. écran : zone choisie à la souris.
+    ScreenshotRegion,
 }
+
+/// Codes de touche XKB (indépendants de la disposition) : rangée 1 à 9, et la touche à gauche
+/// du 1 (`² ` en AZERTY, `` ` `` en QWERTY).
+const KEY_DIGIT_1: u32 = 10;
+const KEY_DIGIT_9: u32 = 18;
+const KEY_GRAVE: u32 = 49;
 
 /// Symboles XKB `XF86Switch_VT_1` à `XF86Switch_VT_12`, produits par Ctrl+Alt+F1…F12.
 const SWITCH_VT_FIRST: u32 = 0x1008_FE01;
 const SWITCH_VT_LAST: u32 = 0x1008_FE0C;
+
+fn scroll_direction(source: AxisSource, inverted: bool) -> i32 {
+    if inverted && matches!(source, AxisSource::Wheel | AxisSource::WheelTilt) {
+        -1
+    } else {
+        1
+    }
+}
 
 impl Ferrite {
     pub fn process_input_event<I: InputBackend>(&mut self, event: InputEvent<I>) {
@@ -125,6 +209,49 @@ impl Ferrite {
             event.time_msec(),
             |state, modifiers, keysym| {
                 let sym = keysym.modified_sym();
+                let code = keysym.raw_code().raw();
+                // Verrouillé : tout reste ici, sauf le changement de terminal virtuel.
+                if state.lock.is_some() {
+                    let raw = sym.raw();
+                    if pressed
+                        && modifiers.ctrl
+                        && modifiers.alt
+                        && (SWITCH_VT_FIRST..=SWITCH_VT_LAST).contains(&raw)
+                    {
+                        return FilterResult::Intercept(Action::SwitchVt((raw - SWITCH_VT_FIRST + 1) as i32));
+                    }
+                    if !pressed {
+                        return FilterResult::Intercept(Action::LockIgnore);
+                    }
+                    return FilterResult::Intercept(match sym {
+                        Keysym::Escape => Action::LockCancel,
+                        Keysym::BackSpace => Action::LockErase,
+                        Keysym::Return | Keysym::KP_Enter => Action::LockSubmit,
+                        sym => match sym.key_char().filter(|c| !c.is_control()) {
+                            Some(character) if !modifiers.ctrl && !modifiers.alt => {
+                                Action::LockType(character)
+                            }
+                            _ => Action::LockReveal,
+                        },
+                    });
+                }
+                if pressed && state.controls.password.is_some() {
+                    match sym {
+                        Keysym::Escape => return FilterResult::Intercept(Action::PasswordCancel),
+                        Keysym::BackSpace => return FilterResult::Intercept(Action::PasswordErase),
+                        Keysym::Return | Keysym::KP_Enter => {
+                            return FilterResult::Intercept(Action::PasswordSubmit);
+                        }
+                        sym => {
+                            if !modifiers.ctrl
+                                && !modifiers.alt
+                                && let Some(character) = sym.key_char().filter(|c| !c.is_control())
+                            {
+                                return FilterResult::Intercept(Action::PasswordType(character));
+                            }
+                        }
+                    }
+                }
                 if matches!(sym, Keysym::Super_L | Keysym::Super_R) {
                     return FilterResult::Intercept(if pressed {
                         Action::SuperDown
@@ -132,11 +259,92 @@ impl Ferrite {
                         Action::SuperUp
                     });
                 }
+                if pressed && state.switcher.is_some() {
+                    match sym {
+                        Keysym::Escape => return FilterResult::Intercept(Action::SwitcherCancel),
+                        Keysym::Left => return FilterResult::Intercept(Action::SwitcherStep(-1)),
+                        Keysym::Right => return FilterResult::Intercept(Action::SwitcherStep(1)),
+                        _ => {}
+                    }
+                }
+                if pressed && modifiers.alt && !modifiers.ctrl && code == KEY_GRAVE {
+                    return FilterResult::Intercept(Action::SwitcherSameApp(if modifiers.shift {
+                        -1
+                    } else {
+                        1
+                    }));
+                }
+                if pressed && modifiers.ctrl && modifiers.alt && matches!(sym, Keysym::t | Keysym::T) {
+                    return FilterResult::Intercept(Action::OpenTerminal);
+                }
+                if pressed && modifiers.alt && !modifiers.ctrl {
+                    match sym {
+                        Keysym::Tab if modifiers.shift => {
+                            return FilterResult::Intercept(Action::SwitcherStep(-1));
+                        }
+                        Keysym::ISO_Left_Tab => return FilterResult::Intercept(Action::SwitcherStep(-1)),
+                        Keysym::Tab => return FilterResult::Intercept(Action::SwitcherStep(1)),
+                        _ => {}
+                    }
+                }
+                if pressed && sym == Keysym::Print {
+                    return FilterResult::Intercept(if modifiers.shift {
+                        Action::ScreenshotRegion
+                    } else {
+                        Action::ScreenshotFull
+                    });
+                }
+                if pressed && sym == Keysym::Escape && state.region_select.is_some() {
+                    return FilterResult::Intercept(Action::CloseOverlay);
+                }
                 if pressed && state.super_held {
                     // Super combinée à une autre touche : le menu ne s'ouvrira pas au relâcher.
                     state.super_used = true;
-                    if matches!(sym, Keysym::v | Keysym::V) {
-                        return FilterResult::Intercept(Action::ToggleClipboard);
+                    // Super+Maj+1…9 et Super+Alt+1, 2, 3 : par code de touche, car le symbole
+                    // dépend de la disposition et de Maj.
+                    if (KEY_DIGIT_1..=KEY_DIGIT_9).contains(&code) {
+                        let digit = (code - KEY_DIGIT_1) as usize;
+                        if modifiers.shift {
+                            return FilterResult::Intercept(Action::SendToSpace(digit));
+                        }
+                        if modifiers.alt && digit < 3 {
+                            return FilterResult::Intercept(Action::Snap(crate::wm::Snap::Third(
+                                digit as u8,
+                            )));
+                        }
+                    }
+                    match sym {
+                        Keysym::v | Keysym::V => return FilterResult::Intercept(Action::ToggleClipboard),
+                        Keysym::w | Keysym::W => return FilterResult::Intercept(Action::ToggleWidgets),
+                        Keysym::q | Keysym::Q => {
+                            return FilterResult::Intercept(Action::CloseWindow);
+                        }
+                        Keysym::m | Keysym::M => return FilterResult::Intercept(Action::MinimizeWindow),
+                        Keysym::h | Keysym::H => return FilterResult::Intercept(Action::HideApp),
+                        Keysym::space => return FilterResult::Intercept(Action::ToggleLauncher),
+                        Keysym::n | Keysym::N => return FilterResult::Intercept(Action::ToggleNotifications),
+                        Keysym::a | Keysym::A => return FilterResult::Intercept(Action::ToggleControls),
+                        Keysym::s | Keysym::S => return FilterResult::Intercept(Action::ToggleOverview),
+                        Keysym::d | Keysym::D => return FilterResult::Intercept(Action::ShowDesktop),
+                        Keysym::l | Keysym::L => return FilterResult::Intercept(Action::Lock),
+                        Keysym::t | Keysym::T => return FilterResult::Intercept(Action::ToggleTiling),
+                        Keysym::c | Keysym::C => {
+                            return FilterResult::Intercept(Action::Snap(crate::wm::Snap::Center));
+                        }
+                        Keysym::Return | Keysym::KP_Enter => {
+                            return FilterResult::Intercept(Action::SuperEnter);
+                        }
+                        Keysym::Up if !modifiers.ctrl => return FilterResult::Intercept(Action::Maximize),
+                        Keysym::Down if !modifiers.ctrl => {
+                            return FilterResult::Intercept(Action::RestoreOrMinimize);
+                        }
+                        Keysym::Left if !modifiers.ctrl => {
+                            return FilterResult::Intercept(Action::SnapSide(true));
+                        }
+                        Keysym::Right if !modifiers.ctrl => {
+                            return FilterResult::Intercept(Action::SnapSide(false));
+                        }
+                        _ => {}
                     }
                     if modifiers.ctrl && sym == Keysym::Left {
                         return FilterResult::Intercept(Action::SwitchPage(-1));
@@ -144,6 +352,19 @@ impl Ferrite {
                     if modifiers.ctrl && sym == Keysym::Right {
                         return FilterResult::Intercept(Action::SwitchPage(1));
                     }
+                    if modifiers.ctrl && sym == Keysym::Up {
+                        return FilterResult::Intercept(Action::Overview(true));
+                    }
+                    if modifiers.ctrl && sym == Keysym::Down {
+                        return FilterResult::Intercept(Action::Overview(false));
+                    }
+                }
+                if pressed
+                    && sym == Keysym::Escape
+                    && state.dashboard_editing.is_none()
+                    && (state.widgets_front || state.widgets_edit)
+                {
+                    return FilterResult::Intercept(Action::WidgetsDismiss);
                 }
                 if pressed && state.dashboard_editing.is_some() {
                     match sym {
@@ -176,7 +397,9 @@ impl Ferrite {
                     }
                 }
                 if pressed && !modifiers.ctrl && !modifiers.alt {
-                    if sym == Keysym::Escape && (state.popover.is_some() || state.pending_power.is_some()) {
+                    if sym == Keysym::Escape
+                        && (state.popover.is_some() || state.pending_power.is_some() || state.overview)
+                    {
                         return FilterResult::Intercept(Action::CloseOverlay);
                     }
                     // Menu Applications ouvert : le clavier sert à la recherche.
@@ -206,6 +429,8 @@ impl Ferrite {
                     Keysym::m | Keysym::M => FilterResult::Intercept(Action::RestoreMinimized),
                     Keysym::Left => FilterResult::Intercept(Action::SwitchPage(-1)),
                     Keysym::Right => FilterResult::Intercept(Action::SwitchPage(1)),
+                    Keysym::Up => FilterResult::Intercept(Action::Overview(true)),
+                    Keysym::Down => FilterResult::Intercept(Action::Overview(false)),
                     _ => FilterResult::Forward,
                 }
             },
@@ -218,6 +443,8 @@ impl Ferrite {
             }
             Some(Action::RestoreMinimized) => self.restore_minimized(),
             Some(Action::SwitchPage(step)) => self.go_to_neighbor_page(step),
+            Some(Action::Overview(true)) => self.open_overview(),
+            Some(Action::Overview(false)) => self.close_overview(),
             Some(Action::SwitchVt(vt)) => {
                 if let Some(change_vt) = self.change_vt.as_mut() {
                     info!("passage au terminal virtuel {vt}");
@@ -227,7 +454,8 @@ impl Ferrite {
             Some(Action::CloseOverlay) => {
                 self.popover = None;
                 self.pending_power = None;
-                self.overview = false;
+                self.region_select = None;
+                self.close_overview();
             }
             Some(Action::LauncherType(character)) => {
                 self.launcher_query.push(character);
@@ -310,8 +538,113 @@ impl Ferrite {
             Some(Action::ClipboardDeleteSelected) => {
                 self.handle_desktop_action(DesktopAction::ClipboardDelete(self.clipboard_selected));
             }
+            Some(Action::SwitcherStep(step)) => self.switcher_step(step),
+            Some(Action::SwitcherCancel) => self.switcher = None,
+            Some(Action::SwitcherSameApp(step)) => self.switcher_step_same_app(step),
+            Some(Action::CloseWindow) => self.close_active_window(),
+            Some(Action::MinimizeWindow) => self.minimize_active_window(),
+            Some(Action::HideApp) => self.hide_active_app(),
+            Some(Action::Maximize) => self.toggle_maximize_active(),
+            Some(Action::RestoreOrMinimize) => self.restore_or_minimize_active(),
+            Some(Action::SnapSide(left)) => self.snap_active_side(left),
+            Some(Action::Snap(snap)) => self.snap_active(snap),
+            Some(Action::ToggleTiling) => self.toggle_tiling(),
+            Some(Action::SuperEnter) => {
+                if self.tiling {
+                    self.swap_with_main();
+                } else {
+                    self.open_terminal();
+                }
+            }
+            Some(Action::OpenTerminal) => self.open_terminal(),
+            Some(Action::ShowDesktop) => self.toggle_show_desktop(),
+            Some(Action::ToggleOverview) => {
+                if self.overview {
+                    self.close_overview();
+                } else {
+                    self.open_overview();
+                }
+            }
+            Some(Action::ToggleControls) => {
+                self.pending_power = None;
+                self.handle_desktop_action(DesktopAction::TogglePopover(Popover::Controls));
+            }
+            Some(Action::Lock) => self.lock_session(),
+            Some(Action::SendToSpace(space)) => self.send_active_to_space(space),
+            Some(Action::PasswordType(character)) => self.password_type(character),
+            Some(Action::PasswordErase) => self.password_erase(),
+            Some(Action::PasswordSubmit) => self.password_submit(),
+            Some(Action::PasswordCancel) => self.password_cancel(),
+            Some(Action::LockType(character)) => self.lock_type(character),
+            Some(Action::LockErase) => self.lock_erase(),
+            Some(Action::LockSubmit) => self.lock_submit(),
+            Some(Action::LockReveal) => self.lock_reveal(),
+            Some(Action::LockIgnore) => {}
+            Some(Action::LockCancel) => {
+                if self.pending_power.take().is_none() {
+                    self.lock_cancel();
+                }
+            }
+            Some(Action::ToggleWidgets) => self.toggle_widgets_front(),
+            Some(Action::WidgetsDismiss) => self.stop_widgets_overlay(),
+            Some(Action::ToggleLauncher) => {
+                self.pending_power = None;
+                self.handle_desktop_action(DesktopAction::TogglePopover(Popover::Launcher));
+            }
+            Some(Action::ToggleNotifications) => {
+                self.pending_power = None;
+                self.handle_desktop_action(DesktopAction::TogglePopover(Popover::Notifications));
+            }
+            Some(Action::ScreenshotFull) => {
+                self.screenshot_request = Some(crate::render::capture::Request { region: None });
+            }
+            Some(Action::ScreenshotRegion) => {
+                self.popover = None;
+                self.region_select = Some(crate::render::capture::RegionSelect::default());
+            }
             None => {}
         }
+        // Le sélecteur se referme au relâchement d'Alt, que le client voit aussi.
+        if !pressed && self.switcher.is_some() && !keyboard.modifier_state().alt {
+            self.switcher_commit();
+        }
+    }
+
+    /// Passe au thème opposé à celui affiché et l'écrit dans les réglages, qui le diffusent
+    /// aux applications.
+    fn toggle_dark_mode(&mut self) {
+        let appearance = if self.appearance.is_dark() {
+            ferrite_system::config::Appearance::Light
+        } else {
+            ferrite_system::config::Appearance::Dark
+        };
+        self.appearance = appearance;
+        let mut settings = ferrite_system::config::Settings::load();
+        settings.set("apparence", appearance.key());
+        if let Err(error) = settings.save() {
+            tracing::warn!(%error, "thème non enregistré");
+        }
+    }
+
+    fn run_corner_action(&mut self, action: ferrite_system::config::CornerAction) {
+        use ferrite_system::config::CornerAction;
+        match action {
+            CornerAction::None => {}
+            CornerAction::Overview => self.open_overview(),
+            CornerAction::ShowDesktop => self.toggle_show_desktop(),
+            CornerAction::Launcher => {
+                self.handle_desktop_action(DesktopAction::TogglePopover(Popover::Launcher));
+            }
+            CornerAction::ControlCenter => {
+                self.handle_desktop_action(DesktopAction::TogglePopover(Popover::Controls));
+            }
+        }
+    }
+
+    fn open_terminal(&mut self) {
+        self.launch_app(&crate::desktop::apps::AppKey::Builtin(
+            crate::desktop::apps::App::Terminal,
+        ));
     }
 
     fn place_clipboard_near_pointer(&mut self) {
@@ -416,6 +749,15 @@ impl Ferrite {
             self.dock_fast_approach_until
                 .set(Some(now + crate::desktop::dock::REVEAL_APPROACH_GRACE));
         }
+        // Coins actifs : le pointeur qui arrive dans un angle de l'écran déclenche son action.
+        if let Some(area) = self.screen_area()
+            && self.lock.is_none()
+        {
+            let corner = crate::wm::screen_corner(area, location);
+            if corner.is_some() && corner != crate::wm::screen_corner(area, previous) {
+                self.run_corner_action(self.dock_config.corners[corner.unwrap_or_default()]);
+            }
+        }
         // Glissement d'un curseur des réglages rapides ou du panneau presse-papiers.
         if let Some(slider) = self.slider_drag {
             self.drag_slider(slider, location);
@@ -423,6 +765,7 @@ impl Ferrite {
         if self.clipboard_drag_offset.is_some() {
             self.drag_clipboard(location);
         }
+        self.drag_widget(location);
         let under = if self.slider_drag.is_some() {
             None
         } else {
@@ -448,6 +791,42 @@ impl Ferrite {
         };
         let location = pointer.current_location();
 
+        if self.lock.is_some() {
+            if button.state == ButtonState::Pressed && button.button == BTN_LEFT {
+                self.on_lock_click(location);
+            }
+            return;
+        }
+        // Fin d'un déplacement de widget.
+        if button.button == BTN_LEFT
+            && button.state == ButtonState::Released
+            && self.widget_drag.take().is_some()
+        {
+            // La place enregistrée est celle qu'on voit.
+            let last = self.dashboard.layout.len().saturating_sub(1);
+            if let Some(shown) = self.shown_widget(last) {
+                self.dashboard.layout[last] = shown;
+            }
+            self.save_dashboard();
+            return;
+        }
+        if let Some(select) = self.region_select.as_mut() {
+            match (button.button, button.state) {
+                (BTN_LEFT, ButtonState::Pressed) => select.start = Some(location),
+                (BTN_LEFT, ButtonState::Released) => {
+                    let start = select.start;
+                    self.region_select = None;
+                    self.screenshot_request = start
+                        .map(|start| crate::render::capture::region_between(start, location))
+                        .filter(|region| region.size.w >= 4 && region.size.h >= 4)
+                        .map(|region| crate::render::capture::Request { region: Some(region) });
+                }
+                (_, ButtonState::Pressed) => self.region_select = None,
+                _ => {}
+            }
+            return;
+        }
+
         if button.state == ButtonState::Released && self.slider_drag.take().is_some() {
             return;
         }
@@ -457,7 +836,7 @@ impl Ferrite {
         if button.state == ButtonState::Released {
             // Un feu agit au relâchement, si le pointeur est toujours dessus.
             if let Some((window, light)) = self.pressed_light.take() {
-                if let Some(Hit::Decoration(under, Part::Light(now))) = self.hit_test(location) {
+                if let Some(Hit::Decoration(under, Part::Button(now))) = self.hit_test(location) {
                     if under == window && now == light {
                         self.activate_light(&window, light);
                     }
@@ -465,26 +844,42 @@ impl Ferrite {
                 return;
             }
         } else if !pointer.is_grabbed() {
-            if self.overview && button.button == BTN_LEFT {
-                self.overview = false;
-                let selected = self
-                    .space
-                    .outputs()
-                    .next()
-                    .and_then(|output| self.space.output_geometry(output))
-                    .and_then(|output_geo| {
-                        let windows: Vec<_> = self.space.elements().rev().collect();
-                        let tiles = crate::wm::workspaces::overview_tiles(output_geo, windows.len());
-                        windows
-                            .into_iter()
-                            .zip(tiles)
-                            .find(|(_, tile)| tile.to_f64().contains(location))
-                            .map(|(window, _)| (*window).clone())
+            if self.overview {
+                let left = button.button == BTN_LEFT;
+                if left {
+                    let area = self
+                        .space
+                        .outputs()
+                        .next()
+                        .and_then(|output| self.space.output_geometry(output));
+                    let space = area.and_then(|area| {
+                        panels::overview_space_at(area, &crate::render::desktop_view(self), location)
                     });
-                if let Some(window) = selected {
-                    self.focus_window(Some(window));
+                    if let Some(page) = space {
+                        self.go_to_page(page);
+                        self.overview_order = self.space.elements().rev().cloned().collect();
+                        return;
+                    }
                 }
-                return;
+                if let Some((window, close)) = self.overview_hit(location) {
+                    // La vue reste ouverte après une fermeture : les aperçus se réarrangent.
+                    if left && close {
+                        crate::wm::close_window(&window);
+                    } else if left {
+                        self.close_overview();
+                        self.focus_window(Some(window));
+                    }
+                    return;
+                }
+                // Le Dock et la barre restent utilisables ; ailleurs, un clic referme la vue.
+                let chrome = self.dock_item_at(location).is_some()
+                    || location.y < f64::from(ferrite_ui::theme::MENUBAR_HEIGHT);
+                if left {
+                    self.close_overview();
+                }
+                if !chrome {
+                    return;
+                }
             }
             let output_geo = self
                 .space
@@ -494,7 +889,7 @@ impl Ferrite {
             // Dock : clic gauche pour ouvrir ou ramener l'application, clic droit pour son
             // menu.
             if self.pending_power.is_none()
-                && let Some((_, item)) = self.dock_item_at(location)
+                && let Some((index, item)) = self.dock_item_at(location)
             {
                 match button.button {
                     BTN_LEFT => {
@@ -505,7 +900,15 @@ impl Ferrite {
                     BTN_RIGHT => {
                         let entries = self.dock_menu_entries(&item);
                         if !entries.is_empty() {
-                            self.dock_menu = Some((item.key, entries, location));
+                            // Le menu se pose au-dessus de l'icône telle qu'elle est agrandie.
+                            let anchor = self
+                                .dock_geometry()
+                                .and_then(|(_, _, geometry)| geometry.icons.get(index).copied())
+                                .map_or(location, |icon| {
+                                    Point::from((icon.loc.x + icon.size.w / 2.0, icon.loc.y))
+                                });
+                            self.dock_menu_pointer = Some(location);
+                            self.dock_menu = Some((item.key, entries, anchor));
                             self.popover = Some(Popover::DockMenu);
                         }
                     }
@@ -516,6 +919,8 @@ impl Ferrite {
             let desktop_action = output_geo.and_then(|output_geo| {
                 panels::action_at(output_geo, location, &crate::render::desktop_view(self))
             });
+            // Sous une fenêtre, les widgets ne reçoivent rien, sauf s'ils sont passés devant.
+            let widgets_ahead = self.widgets_front || self.widgets_edit;
             let desktop_action = desktop_action.filter(|action| {
                 !matches!(
                     action,
@@ -526,11 +931,18 @@ impl Ferrite {
                         | DesktopAction::DashboardCyclePriority(_)
                         | DesktopAction::DashboardDeleteTask(_)
                         | DesktopAction::DashboardMonth(_)
+                        | DesktopAction::DashboardNoteStep(_)
                         | DesktopAction::DashboardConsume
-                        | DesktopAction::DashboardLaunch(_)
-                        | DesktopAction::DashboardShortcut(_)
-                ) || self.hit_test(location).is_none()
+                ) || widgets_ahead
+                    || self.hit_test(location).is_none()
             });
+            // Widgets ramenés devant : un clic à côté les renvoie derrière.
+            if self.widgets_front && desktop_action.is_none() {
+                if button.state == ButtonState::Pressed {
+                    self.widgets_front = false;
+                }
+                return;
+            }
             if button.button == BTN_LEFT
                 && let Some(action) = desktop_action
             {
@@ -546,6 +958,21 @@ impl Ferrite {
                 && let Some(DesktopAction::DashboardCyclePriority(index)) = desktop_action
             {
                 self.handle_desktop_action(DesktopAction::DashboardDeleteTask(index));
+                return;
+            }
+            // Clic droit sur le bureau, widgets compris : son menu.
+            if button.button == BTN_RIGHT
+                && self.popover.is_none()
+                && !self.overview
+                && !self.widgets_edit
+                && self.pending_power.is_none()
+                && self.hit_test(location).is_none()
+                && location.y >= f64::from(ferrite_ui::theme::MENUBAR_HEIGHT)
+            {
+                if button.state == ButtonState::Pressed {
+                    self.desktop_menu = Some((location.x as i32, location.y as i32));
+                    self.popover = Some(Popover::DesktopMenu);
+                }
                 return;
             }
             match self.hit_test(location) {
@@ -567,9 +994,8 @@ impl Ferrite {
         pointer.frame(self);
     }
 
-    /// Le lanceur revient à sa vue d'ensemble, en haut.
+    /// Le lanceur revient en haut de sa liste.
     fn reset_launcher_view(&mut self) {
-        self.launcher_section = None;
         self.launcher_scroll = 0;
     }
 
@@ -579,6 +1005,10 @@ impl Ferrite {
                 let opening_clipboard =
                     popover == Popover::Clipboard && self.popover != Some(Popover::Clipboard);
                 self.popover = (self.popover != Some(popover)).then_some(popover);
+                if self.popover == Some(Popover::Controls) {
+                    self.controls_opened();
+                }
+                self.controls.password = None;
                 self.launcher_query.clear();
                 self.reset_launcher_view();
                 self.clipboard_selected = 0;
@@ -642,41 +1072,49 @@ impl Ferrite {
             DesktopAction::DashboardMonth(delta) => {
                 self.dashboard.month_offset = (self.dashboard.month_offset + delta).clamp(-120, 120);
             }
-            DesktopAction::DashboardLaunch(app) => {
-                self.open_app(&crate::desktop::apps::AppKey::Builtin(app));
+            DesktopAction::DashboardNoteStep(step) => {
+                self.stop_dashboard_editing();
+                let count = self.dashboard.notes.len() as i32;
+                if count > 0 {
+                    let shown = self.dashboard.note_shown.min(count as usize - 1) as i32;
+                    self.dashboard.note_shown = (shown + step).rem_euclid(count) as usize;
+                }
             }
-            DesktopAction::DashboardShortcut(index) => match index {
-                0 => self.open_app(&crate::desktop::apps::AppKey::Builtin(
-                    crate::desktop::apps::App::Files,
-                )),
-                1 => self.open_app(&crate::desktop::apps::AppKey::Builtin(
-                    crate::desktop::apps::App::Terminal,
-                )),
-                2 | 3 => {
-                    let query = if index == 2 {
-                        ["firefox", "chromium", "browser", "navigateur", "web"]
-                    } else {
-                        ["codium", "visual studio code", "vscode", "code", "éditeur"]
-                    };
-                    let entry = self.launcher_entries().into_iter().find(|entry| {
-                        let name = entry.name().to_lowercase();
-                        query.iter().any(|term| name.contains(term))
+            DesktopAction::WidgetsDone => self.stop_widgets_overlay(),
+            DesktopAction::WidgetAdd(kind) => {
+                self.dashboard.add_widget(kind);
+                self.save_dashboard();
+            }
+            DesktopAction::WidgetRemove(index) => {
+                self.dashboard.remove_widget(index);
+                self.save_dashboard();
+            }
+            DesktopAction::WidgetsReset => {
+                self.dashboard.layout = crate::desktop::widgets::default_layout();
+                self.save_dashboard();
+            }
+            DesktopAction::WidgetDragStart(index, edges) => {
+                let pointer = self.pointer_location().unwrap_or_default();
+                let index = self.dashboard.raise_widget(index);
+                if let Some(start) = self.shown_widget(index) {
+                    self.dashboard.layout[index] = start;
+                    self.widget_drag = Some(WidgetDrag {
+                        index,
+                        edges,
+                        pointer,
+                        start,
                     });
-                    if let Some(entry) = entry {
-                        let key = entry.key();
-                        self.open_app(&key);
-                    } else {
-                        tracing::warn!(shortcut = index, "application du raccourci indisponible");
+                }
+            }
+            DesktopAction::DesktopMenu(index) => {
+                self.popover = None;
+                match index {
+                    0 => self.start_widgets_edit(),
+                    _ => {
+                        crate::desktop::apps::App::open_settings_page("apparence", &self.client_environment())
                     }
                 }
-                4 => self.open_app(&crate::desktop::apps::AppKey::Builtin(
-                    crate::desktop::apps::App::Settings,
-                )),
-                5 => self.open_app(&crate::desktop::apps::AppKey::Builtin(
-                    crate::desktop::apps::App::Files,
-                )),
-                _ => {}
-            },
+            }
             // Un clic ailleurs sur les widgets termine la saisie.
             DesktopAction::DashboardConsume => {
                 self.stop_dashboard_editing();
@@ -693,19 +1131,7 @@ impl Ferrite {
                     self.open_app(&key);
                 }
             }
-
-            DesktopAction::LauncherLink(link) => {
-                self.launcher_section = match link {
-                    SectionLink::More(section) => Some(section),
-                    SectionLink::Less => None,
-                };
-                self.launcher_scroll = 0;
-            }
             DesktopAction::ClosePopover => self.popover = None,
-            DesktopAction::Launch(app) => {
-                self.popover = None;
-                self.open_app(&crate::desktop::apps::AppKey::Builtin(app));
-            }
             DesktopAction::DockMenu(index) => {
                 if let Some((key, actions, _)) = self.dock_menu.clone()
                     && let Some(action) = actions.get(index)
@@ -721,17 +1147,6 @@ impl Ferrite {
             DesktopAction::ToggleBluetooth => {
                 if let Some(enabled) = self.system.bluetooth {
                     self.request_system_change(Change::Bluetooth(!enabled));
-                }
-            }
-            DesktopAction::ToggleAirplane => {
-                // Mode avion : toutes les radios présentes éteintes. Le quitter les rallume.
-                let (wifi, bluetooth) = (self.system.wifi, self.system.bluetooth);
-                let enable = wifi != Some(true) && bluetooth != Some(true);
-                if wifi.is_some() {
-                    self.request_system_change(Change::Wifi(enable));
-                }
-                if bluetooth.is_some() {
-                    self.request_system_change(Change::Bluetooth(enable));
                 }
             }
             DesktopAction::SetVolume(value) => self.request_system_change(Change::Volume(value)),
@@ -756,11 +1171,164 @@ impl Ferrite {
                 self.clipboard.clear();
                 self.clamp_clipboard_view();
             }
+            DesktopAction::NotificationActivate(id) => self.activate_notification(id),
+            DesktopAction::NotificationAction(id, index) => self.notification_action(id, index),
+            DesktopAction::NotificationsClear => self.clear_notifications(),
+            DesktopAction::ToggleDoNotDisturb => {
+                self.notifications.do_not_disturb = !self.notifications.do_not_disturb;
+            }
+            DesktopAction::ToggleDarkMode => self.toggle_dark_mode(),
+            DesktopAction::TogglePowerSaver => {
+                self.request_system_change(Change::PowerSaver(!self.power_saver));
+            }
+            DesktopAction::OpenSettings => {
+                self.popover = None;
+                self.open_app(&crate::desktop::apps::AppKey::Builtin(
+                    crate::desktop::apps::App::Settings,
+                ));
+            }
+            DesktopAction::ToggleKeyboardLayout => self.toggle_keyboard_layout(),
+            DesktopAction::ControlsPage(page) => self.show_controls_page(page),
+            DesktopAction::NetworkJoin(index) => self.join_network(index),
+            DesktopAction::PasswordCancel => self.password_cancel(),
+            DesktopAction::PasswordSubmit => self.password_submit(),
+            DesktopAction::DeviceAction(index) => self.device_action(index),
+            DesktopAction::OpenSettingsPage(page) => {
+                self.popover = None;
+                crate::desktop::apps::App::open_settings_page(page, &self.client_environment());
+            }
+            DesktopAction::Lock => self.lock_session(),
             DesktopAction::Consume => {}
         }
     }
 
-    fn stop_dashboard_editing(&mut self) -> Option<usize> {
+    fn save_dashboard(&self) {
+        if let Err(error) = self.dashboard.save() {
+            tracing::warn!(%error, "widgets non enregistrés");
+        }
+    }
+
+    /// Super+W : les widgets passent devant les fenêtres, ou y retournent.
+    fn toggle_widgets_front(&mut self) {
+        if self.widgets_edit {
+            return;
+        }
+        self.widgets_front = !self.widgets_front;
+        self.popover = None;
+        if !self.widgets_front {
+            self.stop_dashboard_editing();
+        }
+    }
+
+    fn start_widgets_edit(&mut self) {
+        self.stop_dashboard_editing();
+        self.widgets_front = false;
+        self.widgets_edit = true;
+    }
+
+    /// Échap, Terminé ou verrouillage : les widgets retournent sous les fenêtres.
+    pub fn stop_widgets_overlay(&mut self) {
+        self.stop_dashboard_editing();
+        self.widgets_front = false;
+        self.widgets_edit = false;
+        self.widget_drag = None;
+        self.save_dashboard();
+    }
+
+    /// Le widget tel qu'il est à l'écran : ramené dedans si l'écran a rétréci.
+    fn shown_widget(&self, index: usize) -> Option<crate::desktop::widgets::WidgetSlot> {
+        let area = self.screen_area()?;
+        let bar = crate::render::desktop_view(self).bar_height as i32;
+        Some(
+            self.dashboard
+                .layout
+                .get(index)?
+                .clamped(area.size.w, area.size.h, bar),
+        )
+    }
+
+    /// Le widget saisi suit le pointeur, librement.
+    fn drag_widget(&mut self, location: Point<f64, smithay::utils::Logical>) {
+        let Some(drag) = self.widget_drag else {
+            return;
+        };
+        let (dx, dy) = (location.x - drag.pointer.x, location.y - drag.pointer.y);
+        if let Some(slot) = self.dashboard.layout.get_mut(drag.index) {
+            *slot = drag.edges.apply(drag.start, dx.round() as i32, dy.round() as i32);
+        }
+    }
+
+    /// Clic sur l'écran de verrouillage. La confirmation d'arrêt, si elle est ouverte, passe avant.
+    fn on_lock_click(&mut self, location: Point<f64, smithay::utils::Logical>) {
+        let Some(area) = self
+            .space
+            .outputs()
+            .next()
+            .and_then(|output| self.space.output_geometry(output))
+        else {
+            return;
+        };
+        let view = crate::render::desktop_view(self);
+        if self.pending_power.is_some() {
+            if let Some(action) = panels::action_at(area, location, &view) {
+                self.handle_desktop_action(action);
+            }
+            return;
+        }
+        match panels::lock_action_at(area, &view, location) {
+            LockAction::Reveal => self.lock_reveal(),
+            LockAction::Submit => self.lock_submit(),
+            LockAction::Cancel => self.lock_cancel(),
+            LockAction::ToggleTheme => self.lock_toggle_theme(),
+            LockAction::Wall(wall) => self.lock_set_wall(wall),
+            LockAction::Keyboard => self.toggle_keyboard_layout(),
+            LockAction::Power => self.pending_power = Some(crate::state::PowerAction::PowerOff),
+            LockAction::Media(command) => self.lock_media(command),
+            LockAction::Consume => {}
+        }
+    }
+
+    /// Molette au-dessus d'un widget : change de mois ou fait défiler les tâches.
+    fn scroll_widget(&mut self, location: Point<f64, smithay::utils::Logical>, amount: f64) -> bool {
+        if self.popover.is_some() || self.overview || self.lock.is_some() || self.widgets_edit {
+            return false;
+        }
+        if !self.widgets_front && self.hit_test(location).is_some() {
+            return false;
+        }
+        let Some(area) = self
+            .space
+            .outputs()
+            .next()
+            .and_then(|output| self.space.output_geometry(output))
+        else {
+            return false;
+        };
+        let view = crate::render::desktop_view(self);
+        let Some(index) = panels::widget_at(area, &view, location) else {
+            return false;
+        };
+        self.widget_scroll += amount;
+        if self.widget_scroll.abs() < WIDGET_SCROLL_STEP {
+            return true;
+        }
+        let step = self.widget_scroll.signum() as i32;
+        self.widget_scroll = 0.0;
+        match self.dashboard.layout.get(index).map(|slot| slot.kind) {
+            Some(crate::desktop::widgets::WidgetKind::Calendar) => {
+                self.handle_desktop_action(DesktopAction::DashboardMonth(step));
+            }
+            Some(crate::desktop::widgets::WidgetKind::Tasks) => {
+                let limit = panels::tasks_scroll_limit(self.dashboard.tasks.len()) as i32;
+                let scroll = self.dashboard.tasks_scroll as i32 + step;
+                self.dashboard.tasks_scroll = scroll.clamp(0, limit) as usize;
+            }
+            _ => {}
+        }
+        true
+    }
+
+    pub fn stop_dashboard_editing(&mut self) -> Option<usize> {
         let removed = self.dashboard.finish_editing(self.dashboard_editing);
         self.dashboard_editing = None;
         if removed.is_some()
@@ -786,22 +1354,18 @@ impl Ferrite {
             location,
         };
         match part {
-            Part::Light(light) => {
+            Part::Button(light) => {
                 self.pressed_light = Some((window, light));
-                true
-            }
-            Part::Plus => {
-                if crate::render::app_id(&window).is_some_and(|id| {
-                    let id = id.to_lowercase();
-                    id == "foot" || id == "footclient" || id.contains("terminal")
-                }) {
-                    self.new_terminal_tmux_window();
-                }
                 true
             }
             Part::Titlebar => {
                 if self.titlebar_click(&window) {
-                    self.toggle_maximize(&window);
+                    use ferrite_system::config::DoubleClick;
+                    match self.dock_config.double_click {
+                        DoubleClick::Maximize => self.toggle_maximize(&window),
+                        DoubleClick::Minimize => self.minimize(&window),
+                        DoubleClick::Nothing => {}
+                    }
                     return true;
                 }
                 // Le bouton est ensuite transmis à la saisie, qui finit au relâchement.
@@ -816,12 +1380,15 @@ impl Ferrite {
     }
 
     fn on_axis<I: InputBackend>(&mut self, event: I::PointerAxisEvent) {
+        let source = event.source();
+        let direction = scroll_direction(source, self.scroll_inverted) as f64;
         // Panneau Super+V : la molette fait défiler la liste.
         if self.popover == Some(Popover::Clipboard) {
             let amount = event
                 .amount(Axis::Vertical)
                 .or_else(|| event.amount_v120(Axis::Vertical))
-                .unwrap_or(0.0);
+                .unwrap_or(0.0)
+                * direction;
             if amount != 0.0 {
                 self.scroll_clipboard(if amount > 0.0 { 1 } else { -1 });
             }
@@ -831,7 +1398,7 @@ impl Ferrite {
         if self.popover == Some(Popover::Launcher) {
             let amount = event.amount(Axis::Vertical).unwrap_or_else(|| {
                 event.amount_v120(Axis::Vertical).unwrap_or(0.0) / 120.0 * LAUNCHER_SCROLL_STEP
-            });
+            }) * direction;
             let output_geo = self
                 .space
                 .outputs()
@@ -843,17 +1410,28 @@ impl Ferrite {
             }
             return;
         }
-        let source = event.source();
+        let amount = event
+            .amount(Axis::Vertical)
+            .or_else(|| event.amount_v120(Axis::Vertical).map(|value| value / 8.0))
+            .unwrap_or(0.0)
+            * direction;
+        if let Some(location) = self.pointer_location()
+            && amount != 0.0
+            && self.scroll_widget(location, amount)
+        {
+            return;
+        }
         let mut frame = AxisFrame::new(event.time_msec()).source(source);
         for axis in [Axis::Horizontal, Axis::Vertical] {
             // Molette sans valeur continue : 15 px par cran (120 unités v120).
             let amount = event
                 .amount(axis)
-                .unwrap_or_else(|| event.amount_v120(axis).unwrap_or(0.0) * 15.0 / 120.0);
+                .unwrap_or_else(|| event.amount_v120(axis).unwrap_or(0.0) * 15.0 / 120.0)
+                * direction;
             if amount != 0.0 {
                 frame = frame.value(axis, amount);
                 if let Some(discrete) = event.amount_v120(axis) {
-                    frame = frame.v120(axis, discrete as i32);
+                    frame = frame.v120(axis, discrete as i32 * direction as i32);
                 }
             }
             if source == AxisSource::Finger && event.amount(axis) == Some(0.0) {
@@ -865,5 +1443,18 @@ impl Ferrite {
         };
         pointer.axis(self, frame);
         pointer.frame(self);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inversion_du_defilement_ne_touche_que_la_molette() {
+        assert_eq!(scroll_direction(AxisSource::Wheel, true), -1);
+        assert_eq!(scroll_direction(AxisSource::WheelTilt, true), -1);
+        assert_eq!(scroll_direction(AxisSource::Wheel, false), 1);
+        assert_eq!(scroll_direction(AxisSource::Finger, true), 1);
     }
 }

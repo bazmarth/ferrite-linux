@@ -273,7 +273,7 @@ impl MonitorState {
     fn header(&mut self, ui: &mut egui::Ui) {
         // Onglets en contrôle segmenté, d'une hauteur fixe dans la barre d'outils.
         let (pill, _) = ui.allocate_exact_size(egui::vec2(2.0 * 96.0 + 6.0, 30.0), Sense::hover());
-        ui.painter().rect_filled(pill, 8.0, Color32::from_black_alpha(14));
+        ui.painter().rect_filled(pill, 8.0, style::tint(14));
         let mut tabs = ui.new_child(
             egui::UiBuilder::new()
                 .max_rect(pill.shrink(3.0))
@@ -303,11 +303,7 @@ impl MonitorState {
                 } else {
                     style::text_secondary()
                 }))
-                .fill(if enabled {
-                    style::error()
-                } else {
-                    Color32::from_black_alpha(10)
-                });
+                .fill(if enabled { style::error() } else { style::tint(10) });
                 if ui
                     .add_enabled(enabled, button)
                     .on_hover_text("Terminer le processus choisi (Suppr)")

@@ -45,6 +45,8 @@ pub enum Change {
     Bluetooth(bool),
     Volume(u8),
     Brightness(u8),
+    /// Profil d'énergie du système.
+    PowerSaver(bool),
     Power(PowerAction),
 }
 
@@ -61,8 +63,13 @@ pub enum Event {
     Snapshot(Snapshot),
     Failed(String),
     KeyboardLayout(String),
+    /// Listes du centre de contrôle, relues à la demande.
+    WifiList(Vec<network::WifiNetwork>, Vec<String>),
+    BluetoothList(Vec<bluetooth::Device>),
+    BluetoothScanDone,
     Dock(DockConfig),
     Theme(Appearance, Accent),
+    ScrollInverted(bool),
     Wallpaper(WallpaperChoice),
     /// Applications épinglées dans le Dock, et applications à plusieurs fenêtres.
     DockApps(Option<Vec<String>>, Vec<String>),
@@ -77,6 +84,8 @@ pub struct WallpaperChoice {
     pub generation: u64,
     pub bar_dark: bool,
     pub backdrop: Option<Arc<Image>>,
+    /// Fond à peine flouté, vu au travers du verre liquide des widgets.
+    pub glass: Option<Arc<Image>>,
 }
 
 impl WallpaperChoice {
@@ -97,18 +106,20 @@ impl WallpaperChoice {
 
     fn from_parts(source: Source, image: Option<Image>, generation: u64) -> Self {
         let preview = match (&source, &image) {
-            (Source::Builtin(builtin), _) => wallpaper::waves(*builtin, 320, 200),
+            (Source::Builtin(builtin), _) => wallpaper::paint(*builtin, 320, 200),
             (Source::File(_), Some(image)) => wallpaper::cover(image, 320, 200),
-            (Source::File(_), None) => wallpaper::waves(Builtin::Ferrite, 320, 200),
+            (Source::File(_), None) => wallpaper::paint(Builtin::Ferrite, 320, 200),
         };
         let bar_dark = preview.top_is_dark(24);
         let backdrop = Some(Arc::new(wallpaper::blur(&preview, 10)));
+        let glass = Some(Arc::new(wallpaper::blur(&preview, 3)));
         Self {
             source,
             image,
             generation,
             bar_dark,
             backdrop,
+            glass,
         }
     }
 }
@@ -123,9 +134,23 @@ impl Default for WallpaperChoice {
 #[derive(Debug)]
 pub struct SystemLink {
     sender: mpsc::Sender<Change>,
+    events: channel::Sender<Event>,
 }
 
 impl SystemLink {
+    /// Lance une opération lente (liste des réseaux, connexion) sur son propre fil ; ses
+    /// résultats reviennent à la boucle.
+    pub fn run(&self, job: impl FnOnce() -> Vec<Event> + Send + 'static) {
+        let events = self.events.clone();
+        std::thread::spawn(move || {
+            for event in job() {
+                if events.send(event).is_err() {
+                    return;
+                }
+            }
+        });
+    }
+
     pub fn request(&self, change: Change) {
         if self.sender.send(change).is_err() {
             warn!(?change, "fil système arrêté : demande ignorée");
@@ -144,17 +169,34 @@ pub fn start(handle: &LoopHandle<'static, Ferrite>) -> Result<SystemLink, String
             }
         })
         .map_err(|err| format!("canal système : {err}"))?;
+    // Dans une fenêtre d'un autre bureau, ses réglages ne sont pas les nôtres à changer.
+    let nested = std::env::var_os("WAYLAND_DISPLAY").is_some() || std::env::var_os("DISPLAY").is_some();
     thread::Builder::new()
         .name("ferrite-systeme".into())
-        .spawn(move || worker(receiver, events))
+        .spawn({
+            let events = events.clone();
+            move || worker(receiver, events, nested)
+        })
         .map_err(|err| format!("fil système : {err}"))?;
-    Ok(SystemLink { sender })
+    Ok(SystemLink { sender, events })
 }
 
-fn worker(receiver: mpsc::Receiver<Change>, events: channel::Sender<Event>) {
+/// Annonce le thème aux applications tierces : GTK, et par le portail Firefox ou
+/// Chromium, suivent cette clé en direct.
+fn publish_color_scheme(dark: bool) {
+    let scheme = if dark { "prefer-dark" } else { "default" };
+    let args = ["set", "org.gnome.desktop.interface", "color-scheme", scheme];
+    if let Err(err) = command::run("gsettings", &args) {
+        warn!("thème des applications tierces non transmis : {err}");
+    }
+}
+
+fn worker(receiver: mpsc::Receiver<Change>, events: channel::Sender<Event>, nested: bool) {
     let mut layout_stamp: Option<SystemTime> = None;
     let mut settings_initialized = false;
     let mut known_theme = None;
+    let mut known_dark = None;
+    let mut known_scroll_inverted = None;
     let mut known_wallpaper = None;
     let mut wallpaper_generation = 0u64;
     let mut last_snapshot: Option<Instant> = None;
@@ -194,6 +236,20 @@ fn worker(receiver: mpsc::Receiver<Change>, events: channel::Sender<Event>) {
             if known_theme != Some(theme) {
                 known_theme = Some(theme);
                 if events.send(Event::Theme(theme.0, theme.1)).is_err() {
+                    return;
+                }
+            }
+            let dark = settings.appearance().is_dark();
+            if known_dark != Some(dark) {
+                known_dark = Some(dark);
+                if !nested {
+                    publish_color_scheme(dark);
+                }
+            }
+            let scroll_inverted = settings.scroll_inverted();
+            if known_scroll_inverted != Some(scroll_inverted) {
+                known_scroll_inverted = Some(scroll_inverted);
+                if events.send(Event::ScrollInverted(scroll_inverted)).is_err() {
                     return;
                 }
             }
@@ -258,6 +314,11 @@ fn apply(change: Change) -> Result<(), String> {
         Change::Bluetooth(enabled) => bluetooth::set_powered(enabled),
         Change::Volume(level) => audio::set_volume(level),
         Change::Brightness(level) => display::set_brightness(level),
+        Change::PowerSaver(enabled) => command::run(
+            "powerprofilesctl",
+            &["set", if enabled { "power-saver" } else { "balanced" }],
+        )
+        .map(drop),
         Change::Power(power) => command::run(
             "systemctl",
             &[match power {
@@ -286,11 +347,23 @@ impl Ferrite {
             }
             Event::Failed(message) => self.system_error = Some(message),
             Event::KeyboardLayout(layout) => self.set_keyboard_layout(&layout),
-            Event::Dock(config) => self.dock_config = config,
+            Event::WifiList(networks, known) => {
+                self.controls.networks = networks;
+                self.controls.known = known;
+            }
+            Event::BluetoothList(devices) => self.controls.devices = devices,
+            Event::BluetoothScanDone => self.controls.scanning = false,
+            Event::Dock(config) => {
+                self.dock_config = config;
+                if config.tiling != self.tiling {
+                    self.toggle_tiling();
+                }
+            }
             Event::Theme(appearance, accent) => {
                 self.appearance = appearance;
                 self.accent = accent;
             }
+            Event::ScrollInverted(inverted) => self.scroll_inverted = inverted,
             Event::Wallpaper(wallpaper) => self.wallpaper = wallpaper,
             Event::DockApps(pinned, multi) => {
                 self.dock_pinned = pinned;
@@ -322,6 +395,7 @@ impl Ferrite {
                     volume.muted = level == 0;
                 }
             }
+            Change::PowerSaver(enabled) => self.power_saver = enabled,
             Change::Brightness(level) => {
                 self.brightness_held_until = Some(Instant::now() + HOLD);
                 self.system.brightness = self.system.brightness.map(|_| level);

@@ -60,6 +60,14 @@ fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     if let Some(position) = options.demo_page {
         state.workspaces.freeze(position);
     }
+    if options.demo_overview {
+        state.open_overview();
+    }
+    state.demo_switcher = options.demo_switcher;
+    state.demo_screenshot = options.demo_screenshot;
+    if options.demo_region {
+        state.region_select = Some(render::capture::RegionSelect::default());
+    }
     state.genie_demo = options.genie_demo.map(|fraction| (fraction, None));
     match system::start(&event_loop.handle()) {
         Ok(link) => state.system_link = Some(link),
@@ -68,6 +76,29 @@ fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
     match clipboard::start(&event_loop.handle()) {
         Ok(sender) => state.clipboard_sender = Some(sender),
         Err(err) => warn!("historique du presse-papiers indisponible : {err}"),
+    }
+    match desktop::notifications::start(&event_loop.handle()) {
+        Ok(link) => state.notification_link = Some(link),
+        Err(err) => warn!("notifications indisponibles : {err}"),
+    }
+    match desktop::lock::start(&event_loop.handle()) {
+        Ok((events, media)) => {
+            state.lock_events = Some(events);
+            state.media_link = Some(media);
+            // Verrouillé avant que le lien existe (`--demo-lock`) : le lecteur est suivi quand même.
+            if state.lock.is_some() {
+                state.set_media_watching(true);
+            }
+        }
+        Err(err) => warn!("verrouillage indisponible : {err}"),
+    }
+    if let Some(page) = options.demo_controls {
+        state.popover = Some(desktop::panels::Popover::Controls);
+        state.controls.page = page;
+    }
+    if options.demo_lock {
+        state.lock_session();
+        state.lock_reveal();
     }
     if let Err(err) = desktop::widgets::start_weather(&event_loop.handle()) {
         warn!(%err, "météo du tableau de bord indisponible");
@@ -102,6 +133,10 @@ fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         // Après chaque tour de boucle : fenêtres fermées retirées, messages envoyés.
         state.space.refresh();
         state.sync_desktops();
+        state.lock_tick();
+        state.expire_notifications();
+        state.retile();
+        state.refresh_controls();
         state.popups.cleanup();
         let _ = state.display_handle.flush_clients();
     });

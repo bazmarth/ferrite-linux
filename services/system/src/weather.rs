@@ -83,6 +83,8 @@ pub struct Weather {
     pub temperature: i32,
     pub feels_like: i32,
     pub sky: Sky,
+    /// Maximum et minimum du jour même.
+    pub today: (i32, i32),
     pub days: Vec<DayForecast>,
 }
 
@@ -145,6 +147,10 @@ fn parse(json: &str) -> Option<Weather> {
         temperature: number(current, "temperature_2m")?.round() as i32,
         feels_like: number(current, "apparent_temperature")?.round() as i32,
         sky: Sky::from_code(number(current, "weather_code")? as u32),
+        today: (
+            highs.first()?.parse::<f64>().ok()?.round() as i32,
+            lows.first()?.parse::<f64>().ok()?.round() as i32,
+        ),
         days,
     })
 }
@@ -166,6 +172,7 @@ mod tests {
         assert_eq!(weather.temperature, 32);
         assert_eq!(weather.feels_like, 34);
         assert_eq!(weather.sky, Sky::Partly);
+        assert_eq!(weather.today.0, 33);
         assert_eq!(weather.days.len(), 4);
         assert_eq!(
             weather.days[0],

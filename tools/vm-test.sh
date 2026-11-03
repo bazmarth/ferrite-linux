@@ -4,9 +4,9 @@
 #   tools/vm-test.sh tools/scenarios/stabilite.txt [ISO]
 #   FERRITE_VM_DEV=1 tools/vm-test.sh …   avec les binaires de target/release
 #
-# Une ligne par étape : « sleep SECONDES », « click X Y » (pixels de l'écran 1280×800),
+# Une ligne par étape : « sleep SECONDES », « click X Y » et « rclick X Y » (pixels de l'écran 1280×800),
 # « move X Y » (déplacer le pointeur), « serial LIGNE » (tapée sur la console série, sortie dans build/vm-serie.log),
-# « drag X1 Y1 X2 Y2 » (glisser avec le bouton gauche), « key TOUCHES » (syntaxe sendkey de QEMU, ex. ctrl-alt-backspace), « type TEXTE »
+# « drag X1 Y1 X2 Y2 » (glisser avec le bouton gauche), « key TOUCHES » (syntaxe sendkey de QEMU, ex. ctrl-alt-backspace), « keydown TOUCHE » et « keyup TOUCHE » (touche maintenue), « type TEXTE »
 # (frappe au clavier QWERTY américain, disposition par défaut de Ferrite), « serve FICHIER »
 # (le fichier est servi à la machine virtuelle sur 10.0.2.2:8765, à lire par exemple avec
 # « bash -c "$(cat </dev/tcp/10.0.2.2/8765)" ») ou « shot NOM » (capture dans build/NOM.png). Les lignes vides et celles commençant par # sont ignorées.
@@ -140,6 +140,11 @@ while read -r command a b; do
             server=$!
             ;;
         key) keys "$a" ;;
+        keydown | keyup)
+            # Touche maintenue : « keydown alt », puis « key tab », puis « keyup alt ».
+            [ "$command" = keydown ] && down=true || down=false
+            input "{\"type\":\"key\",\"data\":{\"down\":$down,\"key\":{\"type\":\"qcode\",\"data\":\"$a\"}}}"
+            ;;
         type)
             # Toute la frappe passe par une seule connexion QMP : une connexion par touche
             # perdait des caractères.
@@ -186,6 +191,14 @@ while read -r command a b; do
             input '{"type":"btn","data":{"down":true,"button":"left"}}'
             sleep 0.15
             input '{"type":"btn","data":{"down":false,"button":"left"}}'
+            ;;
+        rclick)
+            # Clic droit en (X, Y), en pixels de l'écran 1280×800.
+            move_abs "$a" "$b"
+            sleep 0.5
+            input '{"type":"btn","data":{"down":true,"button":"right"}}'
+            sleep 0.15
+            input '{"type":"btn","data":{"down":false,"button":"right"}}'
             ;;
         *) die "étape inconnue : $command" ;;
     esac

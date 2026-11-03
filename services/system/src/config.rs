@@ -86,7 +86,19 @@ impl Settings {
     /// Applications épinglées dans le Dock (identifiants : `app_id` des applications
     /// Ferrite, nom du fichier `.desktop` des autres) ; `None` : le Dock par défaut.
     pub fn dock_pinned(&self) -> Option<Vec<String>> {
-        self.get("dock_epingles").map(split_list)
+        // L'ancien Terminal (foot) cède sa place au Terminal Ferrite.
+        self.get("dock_epingles").map(|list| {
+            split_list(list)
+                .into_iter()
+                .map(|app| {
+                    if app == "foot" {
+                        "ferrite-terminal".to_owned()
+                    } else {
+                        app
+                    }
+                })
+                .collect()
+        })
     }
 
     pub fn set_dock_pinned(&mut self, apps: &[String]) {
@@ -106,6 +118,43 @@ impl Settings {
     }
 
     /// Agrandissement des icônes du Dock sous la souris, comme sur macOS (oui par défaut).
+    /// Réglage oui/non ; absent, sa valeur par défaut.
+    pub fn flag(&self, key: &str, default: bool) -> bool {
+        match self.get(key) {
+            Some("oui") => true,
+            Some("non") => false,
+            _ => default,
+        }
+    }
+
+    pub fn set_flag(&mut self, key: &str, value: bool) {
+        self.set(key, if value { "oui" } else { "non" });
+    }
+
+    /// Côté des icônes du Dock, en pixels logiques.
+    pub fn dock_icon(&self) -> u32 {
+        parse_height(self.get("dock_icones"), self.dock_size().icon() as u32, 40, 80)
+    }
+
+    pub fn clock_style(&self) -> ClockStyle {
+        ClockStyle::parse(self.get("horloge").unwrap_or_default())
+    }
+
+    /// Action d'un coin actif : `hg`, `hd`, `bg` ou `bd`.
+    pub fn hot_corner(&self, corner: &str) -> CornerAction {
+        let default = match corner {
+            "hg" => CornerAction::Overview,
+            "bd" => CornerAction::ShowDesktop,
+            _ => CornerAction::None,
+        };
+        self.get(&format!("coin_{corner}"))
+            .map_or(default, CornerAction::parse)
+    }
+
+    pub fn double_click(&self) -> DoubleClick {
+        DoubleClick::parse(self.get("double_clic").unwrap_or_default())
+    }
+
     pub fn dock_magnify(&self) -> bool {
         self.get("dock_agrandissement") != Some("non")
     }
@@ -142,7 +191,7 @@ impl Settings {
 
     /// Hauteur totale du Dock, en pixels logiques.
     pub fn dock_height(&self) -> u32 {
-        parse_height(self.get("dock_hauteur"), 68, 68, 120)
+        parse_height(self.get("dock_hauteur"), 89, 68, 120)
     }
 
     /// Hauteur de la barre des menus, en pixels logiques.
@@ -152,6 +201,11 @@ impl Settings {
 
     pub fn scroll_bars(&self) -> ScrollBars {
         ScrollBars::parse(self.get("barres_defilement").unwrap_or_default())
+    }
+
+    /// Inversion de la molette ; activée par défaut pour conserver le comportement historique.
+    pub fn scroll_inverted(&self) -> bool {
+        self.get("defilement_inverse") != Some("non")
     }
 
     /// Fond d'écran : nom d'un fond de Ferrite, ou chemin absolu d'une image (vide : le
@@ -216,9 +270,9 @@ impl DockSize {
     /// Côté des icônes, en pixels logiques.
     pub fn icon(self) -> i32 {
         match self {
-            DockSize::Small => 42,
-            DockSize::Medium => 52,
-            DockSize::Large => 64,
+            DockSize::Small => 48,
+            DockSize::Medium => 58,
+            DockSize::Large => 72,
         }
     }
 }
@@ -332,29 +386,29 @@ impl Appearance {
 /// Couleur d'accentuation, comme dans les Réglages de macOS.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Accent {
-    /// Chaque application garde sa couleur (le bleu Ferrite pour les nôtres).
+    /// Le bleu Ferrite, plus clair en thème sombre.
     #[default]
-    Multicolor,
     Blue,
-    Purple,
-    Pink,
-    Red,
-    Orange,
-    Yellow,
+    Teal,
     Green,
+    Yellow,
+    Orange,
+    Red,
+    Pink,
+    Purple,
     Graphite,
 }
 
 impl Accent {
     pub const ALL: [Accent; 9] = [
-        Accent::Multicolor,
         Accent::Blue,
-        Accent::Purple,
-        Accent::Pink,
-        Accent::Red,
-        Accent::Orange,
-        Accent::Yellow,
+        Accent::Teal,
         Accent::Green,
+        Accent::Yellow,
+        Accent::Orange,
+        Accent::Red,
+        Accent::Pink,
+        Accent::Purple,
         Accent::Graphite,
     ];
 
@@ -367,8 +421,8 @@ impl Accent {
 
     pub fn key(self) -> &'static str {
         match self {
-            Accent::Multicolor => "multicolore",
             Accent::Blue => "bleu",
+            Accent::Teal => "turquoise",
             Accent::Purple => "violet",
             Accent::Pink => "rose",
             Accent::Red => "rouge",
@@ -381,8 +435,8 @@ impl Accent {
 
     pub fn label(self) -> &'static str {
         match self {
-            Accent::Multicolor => "Multicolore",
             Accent::Blue => "Bleu",
+            Accent::Teal => "Turquoise",
             Accent::Purple => "Violet",
             Accent::Pink => "Rose",
             Accent::Red => "Rouge",
@@ -393,18 +447,18 @@ impl Accent {
         }
     }
 
-    /// Couleur `0xRRGGBB` ; `None` pour « Multicolore ».
+    /// Couleur `0xRRGGBB` ; `None` pour le bleu Ferrite, qui dépend du thème.
     pub fn rgb(self) -> Option<u32> {
         match self {
-            Accent::Multicolor => None,
-            Accent::Blue => Some(0x007AFF),
-            Accent::Purple => Some(0x953D96),
-            Accent::Pink => Some(0xF74F9E),
-            Accent::Red => Some(0xE0383E),
-            Accent::Orange => Some(0xF7821B),
-            Accent::Yellow => Some(0xFFC600),
-            Accent::Green => Some(0x62BA46),
-            Accent::Graphite => Some(0x8C8C8C),
+            Accent::Blue => None,
+            Accent::Teal => Some(0x0E9AA7),
+            Accent::Green => Some(0x1F9D63),
+            Accent::Yellow => Some(0xE3A008),
+            Accent::Orange => Some(0xE5571A),
+            Accent::Red => Some(0xE5372B),
+            Accent::Pink => Some(0xDB2C57),
+            Accent::Purple => Some(0x7C4DE8),
+            Accent::Graphite => Some(0x4B5563),
         }
     }
 }
@@ -458,6 +512,129 @@ fn split_list(value: &str) -> Vec<String> {
         .collect()
 }
 
+/// Texte de l'horloge de la barre.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ClockStyle {
+    /// « lun. 2 nov.  17:24 »
+    #[default]
+    Full,
+    /// « 2 nov.  17:24 »
+    Date,
+    /// « 17:24 »
+    Time,
+}
+
+impl ClockStyle {
+    pub const ALL: [ClockStyle; 3] = [ClockStyle::Full, ClockStyle::Date, ClockStyle::Time];
+
+    fn parse(value: &str) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|style| style.key() == value)
+            .unwrap_or_default()
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            ClockStyle::Full => "complet",
+            ClockStyle::Date => "date",
+            ClockStyle::Time => "heure",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ClockStyle::Full => "Jour, date et heure",
+            ClockStyle::Date => "Date et heure",
+            ClockStyle::Time => "Heure seule",
+        }
+    }
+}
+
+/// Action d'un coin actif de l'écran.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CornerAction {
+    #[default]
+    None,
+    Overview,
+    ShowDesktop,
+    Launcher,
+    ControlCenter,
+}
+
+impl CornerAction {
+    pub const ALL: [CornerAction; 5] = [
+        CornerAction::None,
+        CornerAction::Overview,
+        CornerAction::ShowDesktop,
+        CornerAction::Launcher,
+        CornerAction::ControlCenter,
+    ];
+
+    fn parse(value: &str) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|action| action.key() == value)
+            .unwrap_or_default()
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            CornerAction::None => "aucune",
+            CornerAction::Overview => "vue",
+            CornerAction::ShowDesktop => "bureau",
+            CornerAction::Launcher => "lanceur",
+            CornerAction::ControlCenter => "centre",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            CornerAction::None => "Aucune action",
+            CornerAction::Overview => "Vue d’ensemble",
+            CornerAction::ShowDesktop => "Afficher le bureau",
+            CornerAction::Launcher => "Lanceur",
+            CornerAction::ControlCenter => "Centre de contrôle",
+        }
+    }
+}
+
+/// Double-clic sur la barre de titre.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DoubleClick {
+    #[default]
+    Maximize,
+    Minimize,
+    Nothing,
+}
+
+impl DoubleClick {
+    pub const ALL: [DoubleClick; 3] = [DoubleClick::Maximize, DoubleClick::Minimize, DoubleClick::Nothing];
+
+    fn parse(value: &str) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|action| action.key() == value)
+            .unwrap_or_default()
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            DoubleClick::Maximize => "agrandir",
+            DoubleClick::Minimize => "reduire",
+            DoubleClick::Nothing => "rien",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            DoubleClick::Maximize => "Agrandir",
+            DoubleClick::Minimize => "Réduire",
+            DoubleClick::Nothing => "Rien",
+        }
+    }
+}
+
 fn parse_height(value: Option<&str>, default: u32, min: u32, max: u32) -> u32 {
     value
         .and_then(|value| value.parse::<u32>().ok())
@@ -481,18 +658,20 @@ mod tests {
     fn reglages_d_apparence() {
         let defaults = Settings::default();
         assert_eq!(defaults.appearance(), Appearance::Light);
-        assert_eq!(defaults.accent(), Accent::Multicolor);
+        assert_eq!(defaults.accent(), Accent::Blue);
         assert_eq!(defaults.highlight(), None);
         assert_eq!(defaults.sidebar_icons(), DockSize::Medium);
         assert_eq!(defaults.scroll_bars(), ScrollBars::Auto);
+        assert!(defaults.scroll_inverted());
         let chosen = Settings::parse(
-            "apparence = sombre\naccent = violet\nsurlignage = vert\nbarre_laterale_icones = petit\nbarres_defilement = toujours\n",
+            "apparence = sombre\naccent = violet\nsurlignage = vert\nbarre_laterale_icones = petit\nbarres_defilement = toujours\ndefilement_inverse = non\n",
         );
         assert_eq!(chosen.appearance(), Appearance::Dark);
         assert_eq!(chosen.accent(), Accent::Purple);
         assert_eq!(chosen.highlight(), Some(Accent::Green));
         assert_eq!(chosen.sidebar_icons(), DockSize::Small);
         assert_eq!(chosen.scroll_bars(), ScrollBars::Always);
+        assert!(!chosen.scroll_inverted());
         assert_eq!(Settings::parse("surlignage = accent\n").highlight(), None);
         for accent in Accent::ALL {
             assert_eq!(Accent::parse(accent.key()), accent);

@@ -459,7 +459,7 @@ impl Ferrite {
             .current_focus()
             .and_then(|surface| self.window_for_surface(&surface))
             .and_then(|window| crate::render::app_id(&window))
-            .is_some_and(|id| id == "foot");
+            .is_some_and(|id| id == "ferrite-terminal" || id == "foot");
         let mut keys = vec![KEY_LEFTCTRL];
         if terminal {
             keys.push(KEY_LEFTSHIFT);

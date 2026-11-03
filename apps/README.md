@@ -10,7 +10,8 @@ Applications du premier ensemble du bureau, en Rust avec eframe/egui :
   les fichiers Markdown ont les modes Éditer, Partagé et Aperçu avec rendu des titres,
   listes, tableaux, citations et blocs de code.
 - **Calculatrice** : opérations `+`, `-`, `*`, `/`, nombres décimaux et parenthèses.
-- **Terminal** : `foot`, lancé par le Dock.
+- **Terminal** : `alacritty_terminal`, onglets, plusieurs fenêtres, défilement, sélection,
+  recherche, zoom, souris dans les programmes (`ferrite-apps terminal [dossier] [-e commande]`).
 - **Paramètres** : Wi-Fi et réseau (connexion avec mot de passe), Bluetooth (recherche,
   appairage, connexion), son (volume, muet, sortie), écran (luminosité), clavier
   (disposition appliquée aussitôt), date et heure (fuseau, mise à l'heure automatique)
@@ -20,5 +21,5 @@ Lancement : `ferrite-apps files`, `ferrite-apps textedit [fichier]` ou
 `ferrite-apps calculator` ou `ferrite-apps settings`.
 
 Les applications sont des étapes utilisables, pas encore le périmètre complet de la phase
-5 : corbeille, opérations de fichiers avec progression, onglets du terminal, coloration
+5 : corbeille, opérations de fichiers avec progression, profils du terminal, coloration
 syntaxique, Réglages, visionneuse PDF et lecteur multimédia restent à faire.

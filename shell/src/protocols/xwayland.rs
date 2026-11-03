@@ -264,7 +264,6 @@ impl XwmHandler for Ferrite {
     fn new_override_redirect_window(&mut self, _xwm: XwmId, _window: X11Surface) {}
 
     fn map_window_request(&mut self, _xwm: XwmId, surface: X11Surface) {
-        self.leave_widgets();
         if let Err(err) = surface.set_mapped(true) {
             warn!(?err, "fenêtre X11 non affichée");
             return;
@@ -302,7 +301,7 @@ impl XwmHandler for Ferrite {
                 // Jamais plus grande que la zone utile : le bas resterait sous le Dock.
                 let size = Size::from((size.w.min(area.size.w), size.h.min(area.size.h - titlebar).max(1)));
                 let frame_size = Size::from((size.w, size.h + titlebar));
-                let frame = self.placement.next_position(area, frame_size);
+                let frame = wm::centered_position(area, frame_size);
                 let frame = wm::clamp_frame(area, frame, frame_size);
                 Rectangle::new(frame + Point::from((0, titlebar)), size)
             }

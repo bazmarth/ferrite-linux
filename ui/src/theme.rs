@@ -1,8 +1,8 @@
 //! Charte visuelle de Ferrite (voir `docs/PLAN.md`, §3.4).
 //!
 //! Toutes les mesures sont en **pixels logiques**. L'écran du ThinkBook (2880×1800) est
-//! utilisé à l'échelle 2, soit 1440×900 pixels logiques. Les valeurs reprennent celles du
-//! bureau Ferrite d'origine (`D:\Os\kernel\src\gui.rs`) pour garder le même rendu.
+//! utilisé à l'échelle 2, soit 1440×900 pixels logiques. Les valeurs sont celles de la
+//! « Spécification des fenêtres et dispositions » et de ses planches.
 
 use std::time::Duration;
 
@@ -11,24 +11,24 @@ use crate::tokens::{colors, motion};
 /// Hauteur de la barre du haut.
 pub const MENUBAR_HEIGHT: u32 = 34;
 /// Hauteur de la barre de titre des fenêtres.
-pub const TITLEBAR_HEIGHT: u32 = 30;
+pub const TITLEBAR_HEIGHT: u32 = 46;
 /// Rayon des coins des fenêtres.
 pub const WINDOW_RADIUS: u32 = crate::tokens::radius::WINDOW;
 /// Côté des icônes du Dock.
-pub const DOCK_ICON: u32 = 54;
+pub const DOCK_ICON: u32 = 58;
 /// Espace entre deux icônes du Dock.
 pub const DOCK_GAP: u32 = 10;
 /// Marge intérieure du Dock.
-pub const DOCK_PADDING: u32 = 8;
+pub const DOCK_PADDING: u32 = 12;
 /// Largeur d'un menu déroulant.
 pub const MENU_WIDTH: u32 = 220;
 /// Hauteur d'une ligne de menu.
-pub const MENU_ITEM_HEIGHT: u32 = 24;
+pub const MENU_ITEM_HEIGHT: u32 = 32;
 
-/// Feux tricolores : rayon, centre du premier feu depuis le bord gauche, et pas entre feux.
-pub const TRAFFIC_LIGHT_RADIUS: u32 = 7;
-pub const TRAFFIC_LIGHT_FIRST_X: u32 = 22;
-pub const TRAFFIC_LIGHT_STEP: u32 = 23;
+/// Boutons de fenêtre : pastille de 22 px, centre à 23 px du bord (fermer à gauche,
+/// agrandir à droite).
+pub const WINDOW_BUTTON_RADIUS: u32 = 11;
+pub const WINDOW_BUTTON_INSET: u32 = 23;
 
 /// Polices de l'interface (fichiers dans `assets/fonts`).
 pub const FONT_UI: &str = "Inter";
@@ -39,23 +39,6 @@ pub const FONT_SERIF: &str = "Source Serif 4";
 /// Durées d'animation : courte (survol, appui) et normale (ouverture, réduction).
 pub const ANIMATION_SHORT: Duration = motion::SHORT;
 pub const ANIMATION_NORMAL: Duration = motion::NORMAL;
-
-/// Fond d'écran par défaut : dégradé vertical du bureau Ferrite d'origine (haut, milieu, bas).
-pub const WALLPAPER_GRADIENT: [Color; 3] = [Color::rgb(0x1A2A6C), Color::rgb(0x6A3FA6), Color::rgb(0xF29A7E)];
-
-/// Couleur d'un dégradé vertical à la hauteur relative `t` (0 en haut, 1 en bas), les
-/// couleurs étant réparties à intervalles égaux.
-pub fn gradient_at(stops: &[Color], t: f32) -> Color {
-    match stops {
-        [] => Color::TRANSPARENT,
-        [only] => *only,
-        _ => {
-            let position = t.clamp(0.0, 1.0) * (stops.len() - 1) as f32;
-            let index = (position.floor() as usize).min(stops.len() - 2);
-            stops[index].mix(stops[index + 1], position - index as f32)
-        }
-    }
-}
 
 /// Couleur RVBA non prémultipliée, 8 bits par canal.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -128,12 +111,10 @@ pub struct Palette {
     pub toolbar_top: Color,
     pub toolbar_bottom: Color,
     pub titlebar: Color,
-    pub titlebar_active: Color,
-    pub titlebar_active_bottom: Color,
     pub titlebar_inactive: Color,
-    pub titlebar_inactive_bottom: Color,
-    pub titlebar_active_separator_alpha: u8,
-    pub titlebar_inactive_separator_alpha: u8,
+    /// Filet sous la barre de titre, fenêtre active ou inactive.
+    pub titlebar_line: Color,
+    pub titlebar_line_inactive: Color,
     pub window_title_active: Color,
     pub window_title_inactive: Color,
     pub titlebar_action_active: Color,
@@ -149,96 +130,89 @@ pub struct Palette {
     pub danger: Color,
     pub success: Color,
     pub warning: Color,
-    /// Teinte posée sur le flou de la barre de menus.
-    pub menubar_tint: Color,
-    /// Teinte posée sur le flou du Dock.
-    pub dock_tint: Color,
+    /// Pastille des boutons de fenêtre (active, inactive) et leur symbole.
+    pub window_button: Color,
+    pub window_button_inactive: Color,
+    pub window_glyph: Color,
+    /// Bordure d'une fenêtre : 1 px noir 8 % en clair, blanc 6 % en sombre.
+    pub window_ring: Color,
+    /// Sélection dans une barre latérale : fond et texte.
+    pub selection: Color,
+    pub selection_text: Color,
     pub shadow: Color,
-    /// Feux tricolores (remplissage, contour) : fermer, réduire, plein écran.
-    pub traffic_lights: [(Color, Color); 3],
-    /// Feux d'une fenêtre inactive (remplissage, contour).
-    pub traffic_light_inactive: (Color, Color),
 }
-
-const TRAFFIC_LIGHTS: [(Color, Color); 3] = [
-    (Color::rgb(0xFF5F57), Color::rgb(0xE0443E)),
-    (Color::rgb(0xFEBC2E), Color::rgb(0xDEA123)),
-    (Color::rgb(0x28C840), Color::rgb(0x1AAB29)),
-];
 
 impl Palette {
     pub const LIGHT: Palette = Palette {
         accent: Color::rgb(colors::ACCENT_LIGHT),
         window_background: Color::rgb(0xFFFFFF),
-        content_background: Color::rgb(0xF5F5F7),
-        header_background: Color::rgb(0xF6F6F8),
-        sidebar_background: Color::rgb(0xEDEDF0),
-        toolbar_top: Color::rgb(0xFBFBFC),
-        toolbar_bottom: Color::rgb(0xF1F1F4),
-        titlebar: Color::rgb(0xF6F6F6),
-        titlebar_active: Color::rgb(0xF0EEF1),
-        titlebar_active_bottom: Color::rgb(0xE4E2E5),
-        titlebar_inactive: Color::rgb(0xF6F6F6),
-        titlebar_inactive_bottom: Color::rgb(0xF3F3F3),
-        titlebar_active_separator_alpha: 38,
-        titlebar_inactive_separator_alpha: 22,
-        window_title_active: Color::rgb(0x3A3A3C),
-        window_title_inactive: Color::rgb(0xB0B0B4),
-        titlebar_action_active: Color::rgb(0x74747A),
-        titlebar_action_inactive: Color::rgb(0x9A9A9F),
-        text: Color::rgb(0x1C1C1E),
-        text_secondary: Color::rgb(0x6E6E73),
-        separator: Color::rgb(0xD8D8DC),
-        control_separator: Color::rgb(0xE3E3E8),
-        border: Color::rgb(0xCFCFD3),
-        border_hover: Color::rgb(0xB8B8BE),
-        control_hover: Color::rgb(0xF4F4F6),
-        control_pressed: Color::rgb(0xE6E6EA),
+        content_background: Color::rgb(0xFFFFFF),
+        header_background: Color::rgb(0xF7F8FA),
+        sidebar_background: Color::rgb(0xF2F3F6),
+        toolbar_top: Color::rgb(0xF7F8FA),
+        toolbar_bottom: Color::rgb(0xF7F8FA),
+        titlebar: Color::rgb(0xF7F8FA),
+        titlebar_inactive: Color::rgb(0xFBFBFC),
+        titlebar_line: Color::rgb(0xE3E6EB),
+        titlebar_line_inactive: Color::rgb(0xEDEFF2),
+        window_title_active: Color::rgb(0x1F2937),
+        window_title_inactive: Color::rgb(0x6B7280),
+        titlebar_action_active: Color::rgb(0x4B5563),
+        titlebar_action_inactive: Color::rgb(0x6B7280),
+        text: Color::rgb(0x16181C),
+        text_secondary: Color::rgb(0x4B5563),
+        separator: Color::rgb(0xE3E6EB),
+        control_separator: Color::rgb(0xEDEFF2),
+        border: Color::rgb(0xD5D9E0),
+        border_hover: Color::rgb(0xAEB6C2),
+        control_hover: Color::rgb(0xEEF0F4),
+        control_pressed: Color::rgb(0xE7E9EE),
         danger: Color::rgb(colors::DANGER_LIGHT),
         success: Color::rgb(colors::SUCCESS_LIGHT),
         warning: Color::rgb(colors::WARNING_LIGHT),
-        menubar_tint: Color::rgb(0xF5F5F7).with_alpha(170),
-        dock_tint: Color::rgb(0xF5F5F7).with_alpha(110),
-        shadow: Color::BLACK.with_alpha(90),
-        traffic_lights: TRAFFIC_LIGHTS,
-        traffic_light_inactive: (Color::rgb(0xDCDCDE), Color::rgb(0xC8C8CC)),
+        window_button: Color::rgb(0xD5D9E0),
+        window_button_inactive: Color::rgb(0xE7E9EE),
+        window_glyph: Color::rgb(0x4B5563),
+        window_ring: Color::BLACK.with_alpha(20),
+        selection: Color::rgb(0xDCEAFB),
+        selection_text: Color::rgb(0x174F9E),
+        shadow: Color::BLACK.with_alpha(97),
     };
 
     pub const DARK: Palette = Palette {
         accent: Color::rgb(colors::ACCENT_DARK),
-        window_background: Color::rgb(0x1E1E1E),
-        content_background: Color::rgb(0x242426),
-        header_background: Color::rgb(0x2C2C2E),
-        sidebar_background: Color::rgb(0x303033),
-        toolbar_top: Color::rgb(0x343436),
-        toolbar_bottom: Color::rgb(0x29292B),
-        titlebar: Color::rgb(0x2C2C2E),
-        titlebar_active: Color::rgb(0x353438),
-        titlebar_active_bottom: Color::rgb(0x2C2C30),
-        titlebar_inactive: Color::rgb(0x2C2C2E),
-        titlebar_inactive_bottom: Color::rgb(0x28282A),
-        titlebar_active_separator_alpha: 70,
-        titlebar_inactive_separator_alpha: 55,
-        window_title_active: Color::rgb(0xF2F2F7),
-        window_title_inactive: Color::rgb(0x98989D),
-        titlebar_action_active: Color::rgb(0xA8A8AE),
-        titlebar_action_inactive: Color::rgb(0x7A7A80),
-        text: Color::rgb(0xF2F2F7),
-        text_secondary: Color::rgb(0x98989D),
-        separator: Color::rgb(0x3A3A3C),
-        control_separator: Color::rgb(0x48484A),
-        border: Color::rgb(0x505054),
-        border_hover: Color::rgb(0x69696F),
-        control_hover: Color::rgb(0x3A3A3C),
-        control_pressed: Color::rgb(0x48484A),
+        window_background: Color::rgb(0x22262D),
+        content_background: Color::rgb(0x22262D),
+        header_background: Color::rgb(0x2A2E35),
+        sidebar_background: Color::rgb(0x1E2127),
+        toolbar_top: Color::rgb(0x2A2E35),
+        toolbar_bottom: Color::rgb(0x2A2E35),
+        titlebar: Color::rgb(0x2A2E35),
+        titlebar_inactive: Color::rgb(0x25282E),
+        titlebar_line: Color::rgb(0x353A42),
+        titlebar_line_inactive: Color::rgb(0x2E333A),
+        window_title_active: Color::rgb(0xE5E7EB),
+        window_title_inactive: Color::rgb(0x9CA3AF),
+        titlebar_action_active: Color::rgb(0xC9CED6),
+        titlebar_action_inactive: Color::rgb(0x9CA3AF),
+        text: Color::rgb(0xE5E7EB),
+        text_secondary: Color::rgb(0x9CA3AF),
+        separator: Color::rgb(0x353A42),
+        control_separator: Color::rgb(0x2E333A),
+        border: Color::rgb(0x353A42),
+        border_hover: Color::rgb(0x4B5360),
+        control_hover: Color::rgb(0x30343B),
+        control_pressed: Color::rgb(0x3A3F47),
         danger: Color::rgb(colors::DANGER_DARK),
         success: Color::rgb(colors::SUCCESS_DARK),
         warning: Color::rgb(colors::WARNING_DARK),
-        menubar_tint: Color::rgb(0x1C1C1E).with_alpha(170),
-        dock_tint: Color::rgb(0x2C2C2E).with_alpha(120),
-        shadow: Color::BLACK.with_alpha(140),
-        traffic_lights: TRAFFIC_LIGHTS,
-        traffic_light_inactive: (Color::rgb(0x4A4A4D), Color::rgb(0x3A3A3C)),
+        window_button: Color::rgb(0x4B5360),
+        window_button_inactive: Color::rgb(0x3A3F47),
+        window_glyph: Color::rgb(0xE5E7EB),
+        window_ring: Color::WHITE.with_alpha(15),
+        selection: Color::rgb(0x23395B),
+        selection_text: Color::rgb(0xCFE3FB),
+        shadow: Color::BLACK.with_alpha(115),
     };
 
     pub const fn for_mode(mode: ThemeMode) -> Palette {
@@ -358,7 +332,7 @@ mod tests {
         let scale = Scale::from_factor(1.75).unwrap();
         assert_eq!(scale.as_120ths(), 210);
         assert_eq!(scale.ceil(), 2);
-        assert_eq!(scale.to_physical(TITLEBAR_HEIGHT), 53);
+        assert_eq!(scale.to_physical(TITLEBAR_HEIGHT), 81);
         assert_eq!(scale.to_logical(2880), 1646);
         assert_eq!(Scale::from_factor(0.0), None);
         assert_eq!(Scale::from_factor(f64::NAN), None);
@@ -367,7 +341,7 @@ mod tests {
     #[test]
     fn couleurs() {
         let accent = Palette::LIGHT.accent;
-        assert_eq!((accent.r, accent.g, accent.b, accent.a), (0x0A, 0x7A, 0xFF, 255));
+        assert_eq!((accent.r, accent.g, accent.b, accent.a), (0x27, 0x79, 0xE0, 255));
         assert_eq!(Color::WHITE.to_argb8888_premultiplied(), 0xFFFF_FFFF);
         assert_eq!(
             Color::WHITE.with_alpha(128).to_argb8888_premultiplied(),
@@ -378,19 +352,8 @@ mod tests {
         assert_eq!(Palette::for_mode(ThemeMode::Dark), Palette::DARK);
         assert_ne!(Palette::LIGHT.window_background, Palette::DARK.window_background);
         assert_ne!(Palette::LIGHT.text, Palette::DARK.text);
-        assert_ne!(Palette::LIGHT.danger, Palette::DARK.danger);
+        assert_eq!(Palette::LIGHT.danger, Palette::DARK.danger);
         assert_eq!((Palette::LIGHT.border.a, Palette::DARK.border.a), (255, 255));
-    }
-
-    #[test]
-    fn degrade_du_fond() {
-        let [top, middle, bottom] = WALLPAPER_GRADIENT;
-        assert_eq!(gradient_at(&WALLPAPER_GRADIENT, 0.0), top);
-        assert_eq!(gradient_at(&WALLPAPER_GRADIENT, 0.5), middle);
-        assert_eq!(gradient_at(&WALLPAPER_GRADIENT, 1.0), bottom);
-        assert_eq!(gradient_at(&WALLPAPER_GRADIENT, 0.25), top.mix(middle, 0.5));
-        assert_eq!(gradient_at(&[], 0.5), Color::TRANSPARENT);
-        assert_eq!(gradient_at(&[top], 0.9), top);
     }
 
     #[test]

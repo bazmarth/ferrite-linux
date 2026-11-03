@@ -37,7 +37,7 @@ use self::{devices::Device, ops::Job, trash::TrashItem};
 use crate::style::{self, IconStyle, Icons};
 
 const ROW: f32 = 32.0;
-const GRID_CELL: egui::Vec2 = egui::vec2(108.0, 104.0);
+const GRID_CELL: egui::Vec2 = egui::vec2(122.0, 118.0);
 
 #[derive(Debug, Clone)]
 struct FileEntry {
@@ -62,6 +62,7 @@ enum SortKey {
     Name,
     Size,
     Modified,
+    Kind,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -206,7 +207,7 @@ impl Default for FilesState {
             back: Vec::new(),
             forward: Vec::new(),
             show_hidden: false,
-            view: View::List,
+            view: View::Grid,
             sort: SortKey::Name,
             ascending: true,
             search: String::new(),
@@ -275,6 +276,12 @@ impl FilesState {
 
     /// Ouvre `path` : un dossier s'affiche, un fichier est montré sélectionné dans le sien.
     pub fn open_at(&mut self, path: PathBuf) {
+        // Adresse donnée par la corbeille du Dock.
+        if path.as_os_str() == "corbeille:" {
+            self.location = Location::Trash;
+            self.refresh();
+            return;
+        }
         let path = fs::canonicalize(&path).unwrap_or(path);
         if path.is_dir() {
             self.location = Location::Folder(path);
@@ -301,6 +308,7 @@ impl FilesState {
                 Some(("tri", "nom")) => self.sort = SortKey::Name,
                 Some(("tri", "taille")) => self.sort = SortKey::Size,
                 Some(("tri", "date")) => self.sort = SortKey::Modified,
+                Some(("tri", "type")) => self.sort = SortKey::Kind,
                 Some(("croissant", value)) => self.ascending = value == "oui",
                 Some(("caches", value)) => self.show_hidden = value == "oui",
                 _ => {}
@@ -324,6 +332,7 @@ caches={}
                 SortKey::Name => "nom",
                 SortKey::Size => "taille",
                 SortKey::Modified => "date",
+                SortKey::Kind => "type",
             },
             yes_no(self.ascending),
             yes_no(self.show_hidden),
@@ -450,6 +459,8 @@ caches={}
                 SortKey::Name => natural_cmp(&a.name, &b.name),
                 SortKey::Size => a.size.unwrap_or(0).cmp(&b.size.unwrap_or(0)),
                 SortKey::Modified => a.modified.cmp(&b.modified),
+                SortKey::Kind => natural_cmp(extension(&a.name), extension(&b.name))
+                    .then_with(|| natural_cmp(&a.name, &b.name)),
             };
             let order = if ascending { order } else { order.reverse() };
             // Les dossiers toujours en tête, comme dans le Finder et Fichiers d'elementary.
@@ -745,31 +756,9 @@ caches={}
             }
             Action::TerminalHere => {
                 let dir = self.current_dir().map(Path::to_path_buf).unwrap_or_else(home);
-                let mut command = Command::new("foot");
-                command
-                    .arg("-o")
-                    .arg("main.resize-keep-grid=no")
-                    .arg("-o")
-                    .arg("key-bindings.font-increase=Control+plus Control+equal Control+KP_Add")
-                    .arg("-o")
-                    .arg("key-bindings.font-decrease=Control+minus Control+KP_Subtract")
-                    .arg("-o")
-                    .arg("key-bindings.font-reset=Control+0 Control+KP_0")
-                    .arg("-o")
-                    .arg("mouse-bindings.font-increase=Control+BTN_WHEEL_BACK")
-                    .arg("-o")
-                    .arg("mouse-bindings.font-decrease=Control+BTN_WHEEL_FORWARD")
-                    .arg("-o")
-                    .arg("main.pad=12x8 center")
-                    .arg(format!("--working-directory={}", dir.display()));
-                command
-                    .arg("tmux")
-                    .arg("-f")
-                    .arg("/home/bazoum/.config/tmux.conf")
-                    .arg("new-session")
-                    .arg("-A")
-                    .arg("-s")
-                    .arg("ferrite");
+                let program = std::env::current_exe().unwrap_or_else(|_| "ferrite-apps".into());
+                let mut command = Command::new(program);
+                command.arg("terminal").arg(dir);
                 if let Err(error) = spawn_detached(command) {
                     self.error(format!("Terminal indisponible : {error}"));
                 }
@@ -787,7 +776,7 @@ caches={}
                     self.ascending = !self.ascending;
                 } else {
                     self.sort = key;
-                    self.ascending = key == SortKey::Name;
+                    self.ascending = matches!(key, SortKey::Name | SortKey::Kind);
                 }
                 self.sort_entries();
                 self.save_preferences();
@@ -937,13 +926,13 @@ caches={}
         let mut actions = Vec::new();
         self.keyboard(ui, &mut actions);
 
-        // Colonne sur toute la hauteur (boutons de fenêtre en haut, sauf dans une feuille),
-        // puis barre d'outils et contenu à droite.
+        // Barre de titre sur toute la largeur (bouton fermer compris, sauf dans une feuille),
+        // puis la barre latérale et le contenu dessous.
         let buttons = self.picker.is_none();
-        style::sidebar(ui, "emplacements", 210.0, style::sidebar_color(), buttons, |ui| {
+        style::toolbar(ui, buttons, |ui| self.header(ui, &mut actions));
+        style::sidebar(ui, "emplacements", 210.0, style::sidebar_color(), false, |ui| {
             self.sidebar(ui, &mut actions)
         });
-        style::toolbar(ui, false, |ui| self.header(ui, &mut actions));
         if self.picker.is_some() {
             self.picker_bar(ui, &mut actions);
         } else {
@@ -1023,7 +1012,9 @@ caches={}
             if pressed(Key::F2) && self.selected.len() == 1 {
                 actions.push(Action::StartRename(self.selection()[0].clone()));
             }
-            if pressed(Key::Enter) && self.selected.len() == 1 {
+            if pressed(Key::Enter) && alt && self.selected.len() == 1 {
+                actions.push(Action::Properties(self.selection()[0].clone()));
+            } else if pressed(Key::Enter) && self.selected.len() == 1 {
                 let path = self.selection()[0].clone();
                 actions.push(Action::Open(path.clone(), path.is_dir()));
             }
@@ -1061,6 +1052,8 @@ caches={}
                     actions.push(Action::SetView(View::List));
                 }
             });
+            ui.add_space(6.0);
+            self.sort_button(ui, actions);
             ui.add_space(6.0);
             ui.add(
                 egui::TextEdit::singleline(&mut self.search)
@@ -1159,7 +1152,8 @@ caches={}
                 favorites.push((name, path, icon));
             }
         }
-        let tint = IconStyle::Tinted(style::accent());
+        // Les icônes du thème, en couleur : une seule teinte effacerait le dessin des dossiers.
+        let tint = IconStyle::Color;
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
             style::sidebar_heading(ui, "Favoris");
             for (name, path, icon) in favorites {
@@ -1376,49 +1370,139 @@ caches={}
     /// Menu contextuel d'un élément.
     fn item_menu(&self, ui: &mut egui::Ui, entry: &FileEntry, actions: &mut Vec<Action>) {
         let single = self.selected.len() <= 1;
-        let mut item = |ui: &mut egui::Ui, text: &str, enabled: bool, action: Action| {
-            if ui
-                .add_enabled(enabled, egui::Button::new(text).frame_when_inactive(false))
-                .clicked()
-            {
+        style::menu_style(ui);
+        let mut item = |ui: &mut egui::Ui, text: &str, key: &str, enabled: bool, action: Action| {
+            if style::menu_row(ui, text, key, false, enabled).clicked() {
                 actions.push(action);
                 ui.close();
             }
         };
         if self.location == Location::Trash {
-            item(ui, "Restaurer", true, Action::Restore);
-            item(ui, "Supprimer définitivement…", true, Action::AskDeleteForever);
-            ui.separator();
-            item(ui, "Propriétés", single, Action::Properties(entry.path.clone()));
+            item(ui, "Restaurer", "", true, Action::Restore);
+            if style::menu_row(ui, "Supprimer définitivement…", "", true, true).clicked() {
+                actions.push(Action::AskDeleteForever);
+                ui.close();
+            }
+            style::menu_separator(ui);
+            let properties = Action::Properties(entry.path.clone());
+            if style::menu_row(ui, "Propriétés", "Alt+Entrée", false, single).clicked() {
+                actions.push(properties);
+                ui.close();
+            }
             return;
         }
         item(
             ui,
             "Ouvrir",
+            "Entrée",
             single,
             Action::Open(entry.path.clone(), entry.directory),
         );
         if !entry.directory {
-            item(ui, "Ouvrir avec…", single, Action::OpenWith(entry.path.clone()));
+            item(
+                ui,
+                "Ouvrir avec…",
+                "›",
+                single,
+                Action::OpenWith(entry.path.clone()),
+            );
         }
-        ui.separator();
-        item(ui, "Couper", true, Action::Cut);
-        item(ui, "Copier", true, Action::Copy);
-        item(ui, "Dupliquer", true, Action::Duplicate);
-        item(ui, "Renommer…", single, Action::StartRename(entry.path.clone()));
-        ui.separator();
-        item(ui, "Mettre à la Corbeille", true, Action::Trash);
-        ui.separator();
-        item(ui, "Propriétés", single, Action::Properties(entry.path.clone()));
+        style::menu_separator(ui);
+        item(ui, "Copier", "Ctrl+C", true, Action::Copy);
+        item(ui, "Couper", "Ctrl+X", true, Action::Cut);
+        item(ui, "Dupliquer", "Ctrl+D", true, Action::Duplicate);
+        item(
+            ui,
+            "Renommer",
+            "F2",
+            single,
+            Action::StartRename(entry.path.clone()),
+        );
+        if style::menu_row(ui, "Mettre à la corbeille", "Suppr", true, true).clicked() {
+            actions.push(Action::Trash);
+            ui.close();
+        }
+        style::menu_separator(ui);
+        if style::menu_row(ui, "Propriétés", "Alt+Entrée", false, single).clicked() {
+            actions.push(Action::Properties(entry.path.clone()));
+            ui.close();
+        }
+    }
+
+    /// Bouton « Trier » et son popover : flèche vers le bouton, coins de 10, marge de 12.
+    fn sort_button(&self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
+        let (rect, button) = ui.allocate_exact_size(egui::vec2(74.0, 30.0), Sense::click());
+        let visuals = ui.visuals();
+        ui.painter().rect(
+            rect,
+            CornerRadius::same(8),
+            if button.hovered() {
+                visuals.widgets.hovered.bg_fill
+            } else {
+                visuals.window_fill
+            },
+            Stroke::new(1.0, style::separator()),
+            egui::StrokeKind::Inside,
+        );
+        ui.painter().text(
+            egui::pos2(rect.left() + 12.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            "Trier",
+            egui::FontId::proportional(13.0),
+            style::primary_text(),
+        );
+        let (x, y) = (rect.right() - 16.0, rect.center().y);
+        let chevron = Stroke::new(1.6, style::text_secondary());
+        ui.painter()
+            .line_segment([egui::pos2(x - 3.0, y - 1.5), egui::pos2(x, y + 1.5)], chevron);
+        ui.painter()
+            .line_segment([egui::pos2(x, y + 1.5), egui::pos2(x + 3.0, y - 1.5)], chevron);
+
+        egui::Popup::from_toggle_button_response(&button)
+            .gap(14.0)
+            .align(egui::RectAlign::BOTTOM)
+            .frame(
+                Frame::popup(ui.style())
+                    .corner_radius(CornerRadius::same(10))
+                    .inner_margin(Margin::same(12)),
+            )
+            .show(|ui| {
+                ui.set_width(216.0);
+                ui.spacing_mut().item_spacing.y = 0.0;
+                // Flèche de 10 px, pointée vers le bouton.
+                let fill = ui.visuals().window_fill;
+                let top = ui.min_rect().top() - 12.0;
+                let tip = rect.center().x;
+                ui.painter()
+                    .with_clip_rect(ui.ctx().content_rect())
+                    .add(egui::Shape::convex_polygon(
+                        vec![
+                            egui::pos2(tip - 10.0, top),
+                            egui::pos2(tip, top - 10.0),
+                            egui::pos2(tip + 10.0, top),
+                        ],
+                        fill,
+                        Stroke::NONE,
+                    ));
+                for (label, key) in [
+                    ("Nom", SortKey::Name),
+                    ("Date de modification", SortKey::Modified),
+                    ("Taille", SortKey::Size),
+                    ("Type", SortKey::Kind),
+                ] {
+                    // Le choix en cours ne s'inverse pas ici : les en-têtes de la liste le font.
+                    if style::radio_row(ui, label, self.sort == key).clicked() && self.sort != key {
+                        actions.push(Action::Sort(key));
+                    }
+                }
+            });
     }
 
     /// Menu contextuel de la zone vide du dossier.
     fn folder_menu(&self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
+        style::menu_style(ui);
         let mut item = |ui: &mut egui::Ui, text: &str, enabled: bool, action: Action| {
-            if ui
-                .add_enabled(enabled, egui::Button::new(text).frame_when_inactive(false))
-                .clicked()
-            {
+            if style::menu_row(ui, text, "", false, enabled).clicked() {
                 actions.push(action);
                 ui.close();
             }
@@ -1434,7 +1518,7 @@ caches={}
         }
         item(ui, "Nouveau dossier", true, Action::NewFolder);
         item(ui, "Coller", self.clipboard.is_some(), Action::Paste);
-        ui.separator();
+        style::menu_separator(ui);
         item(ui, "Ouvrir un terminal ici", true, Action::TerminalHere);
         let hidden = if self.show_hidden {
             "Masquer les fichiers cachés"
@@ -1443,7 +1527,7 @@ caches={}
         };
         item(ui, hidden, true, Action::ToggleHidden);
         if let Some(dir) = self.current_dir() {
-            ui.separator();
+            style::menu_separator(ui);
             item(
                 ui,
                 "Propriétés du dossier",
@@ -1682,20 +1766,16 @@ caches={}
                         let (rect, response) = ui.allocate_exact_size(GRID_CELL, Sense::click());
                         let selected = self.selected.contains(&entry.path);
                         let icon_rect = egui::Rect::from_center_size(
-                            egui::pos2(rect.center().x, rect.top() + 36.0),
-                            egui::vec2(56.0, 56.0),
+                            egui::pos2(rect.center().x, rect.top() + 40.0),
+                            egui::vec2(68.0, 68.0),
                         );
                         if selected || response.hovered() {
-                            let fill = if selected {
-                                Color32::from_black_alpha(18)
-                            } else {
-                                Color32::from_black_alpha(8)
-                            };
+                            let fill = if selected { style::tint(18) } else { style::tint(8) };
                             ui.painter().rect_filled(icon_rect.expand(6.0), 10.0, fill);
                         }
                         self.icons
                             .paint(ui, entry_icon(&entry), icon_rect, IconStyle::Color);
-                        let label_center = egui::pos2(rect.center().x, rect.top() + 84.0);
+                        let label_center = egui::pos2(rect.center().x, rect.top() + 94.0);
                         let mut child = ui.new_child(
                             egui::UiBuilder::new()
                                 .max_rect(egui::Rect::from_center_size(
@@ -2081,6 +2161,11 @@ fn permissions(mode: u32) -> String {
     format!("{text} (vous : {owner})")
 }
 
+/// Extension d'un nom de fichier, pour le tri par type.
+fn extension(name: &str) -> &str {
+    name.rsplit_once('.').map_or("", |(_, extension)| extension)
+}
+
 /// Comparaison « naturelle » : « image2 » avant « image10 », sans tenir compte de la casse.
 fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
     let (mut a, mut b) = (a.chars().peekable(), b.chars().peekable());
@@ -2123,7 +2208,7 @@ fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
 /// Icône du dossier `icons/SVG` selon la nature de l'entrée.
 fn entry_icon(entry: &FileEntry) -> &'static str {
     if entry.directory {
-        return "app-files";
+        return folder_icon(&entry.path, &home());
     }
     let extension = entry
         .path
@@ -2132,16 +2217,43 @@ fn entry_icon(entry: &FileEntry) -> &'static str {
         .map(str::to_ascii_lowercase)
         .unwrap_or_default();
     match extension.as_str() {
-        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" => "app-photos",
-        "mp3" | "ogg" | "flac" | "wav" | "m4a" | "opus" => "app-music",
-        "mp4" | "mkv" | "webm" | "avi" | "mov" => "app-video",
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" => "file-image",
+        "mp3" | "ogg" | "flac" | "wav" | "m4a" | "opus" => "file-audio",
+        "mp4" | "mkv" | "webm" | "avi" | "mov" => "file-video",
         "rs" | "c" | "h" | "py" | "js" | "ts" | "toml" | "json" | "yaml" | "yml" | "html" | "css" => {
-            "app-code"
+            "file-script"
         }
-        "sh" => "app-terminal",
-        "deb" => "app-store",
+        "sh" => "file-script",
+        "pdf" => "file-pdf",
+        "zip" | "tar" | "gz" | "xz" | "bz2" | "zst" | "7z" | "rar" | "deb" | "rpm" | "iso" => "file-archive",
+        "appimage" | "run" | "bin" | "exe" => "file-executable",
         _ if is_text_file(&entry.path) => "file-text",
         _ => "file-generic",
+    }
+}
+
+/// Icône d'un dossier : les dossiers habituels du dossier personnel ont la leur.
+fn folder_icon(path: &Path, home: &Path) -> &'static str {
+    if path == home {
+        return "places-home";
+    }
+    if path.parent() != Some(home) {
+        return "places-folder";
+    }
+    match path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+    {
+        "Bureau" | "Desktop" => "places-desktop",
+        "Documents" => "places-documents",
+        "Téléchargements" | "Downloads" => "places-downloads",
+        "Images" | "Pictures" => "places-pictures",
+        "Musique" | "Music" => "places-music",
+        "Vidéos" | "Videos" => "places-videos",
+        "Public" => "places-public",
+        "Modèles" | "Templates" => "places-templates",
+        _ => "places-folder",
     }
 }
 
@@ -2240,6 +2352,20 @@ fn format_date(time: Option<SystemTime>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn icones_des_dossiers() {
+        let home = Path::new("/home/ferrite");
+        assert_eq!(folder_icon(home, home), "places-home");
+        assert_eq!(folder_icon(&home.join("Musique"), home), "places-music");
+        assert_eq!(
+            folder_icon(&home.join("Téléchargements"), home),
+            "places-downloads"
+        );
+        assert_eq!(folder_icon(&home.join("projet"), home), "places-folder");
+        // Ailleurs que dans le dossier personnel, un dossier « Musique » n'a rien de spécial.
+        assert_eq!(folder_icon(&home.join("a/Musique"), home), "places-folder");
+    }
 
     #[test]
     fn tailles_lisibles() {

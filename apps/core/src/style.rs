@@ -17,20 +17,19 @@ use eframe::egui::{
     self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, Frame, Margin, Stroke,
     TextStyle, TextureHandle, TextureOptions,
 };
-use ferrite_system::config::{Accent, DockSize, ScrollBars, Settings};
+use ferrite_system::config::{Accent, DockSize, DoubleClick, ScrollBars, Settings};
 use ferrite_ui::{
     theme::{Color, Palette},
     tokens::{border, control, radius, spacing, typography},
 };
 
-/// Marge autour du panneau latéral, et rayon de ses coins.
-const PANEL_MARGIN: f32 = spacing::MEDIUM;
-const PANEL_RADIUS: u8 = radius::PANEL;
 /// Hauteur de la barre d'outils, et de la zone des boutons en haut de la colonne.
-pub const TOOLBAR_HEIGHT: f32 = 64.0;
+pub const TOOLBAR_HEIGHT: f32 = 52.0;
 /// Préférences d'apparence en vigueur (voir [`apply_preferences`]) : accentuation en
 /// `0xRRGGBB`, et taille des icônes des barres latérales en pour cent.
 static THEME_DARK: AtomicU8 = AtomicU8::new(0);
+/// Application toujours sombre, quel que soit le thème du bureau (le Terminal).
+static ALWAYS_DARK: AtomicU8 = AtomicU8::new(0);
 static ACCENT_RGB: AtomicU32 = AtomicU32::new(0x000A7AFF);
 static SIDEBAR_SCALE: AtomicU32 = AtomicU32::new(100);
 
@@ -70,6 +69,114 @@ pub fn sidebar_color() -> Color32 {
     color(palette().sidebar_background)
 }
 
+/// Ligne de menu contextuel : 32 px, raccourci à droite, surlignée au survol, rouge si
+/// l'action détruit quelque chose.
+pub fn menu_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    shortcut: &str,
+    destructive: bool,
+    enabled: bool,
+) -> egui::Response {
+    let width = MENU_WIDTH - 12.0;
+    let sense = if enabled {
+        egui::Sense::click()
+    } else {
+        egui::Sense::hover()
+    };
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 32.0), sense);
+    let hovered = enabled && response.hovered();
+    if hovered {
+        ui.painter().rect_filled(rect, CornerRadius::same(6), accent());
+    }
+    let (ink, secondary) = if hovered {
+        (accent_text(), accent_text())
+    } else if !enabled {
+        (
+            text_secondary().gamma_multiply(0.6),
+            text_secondary().gamma_multiply(0.6),
+        )
+    } else if destructive {
+        (Color32::from_rgb(0xC4, 0x2B, 0x20), text_secondary())
+    } else {
+        (primary_text(), text_secondary())
+    };
+    ui.painter().text(
+        egui::pos2(rect.left() + 10.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        label,
+        egui::FontId::proportional(13.0),
+        ink,
+    );
+    if shortcut == "›" {
+        let (x, y) = (rect.right() - 13.0, rect.center().y);
+        ui.painter().line_segment(
+            [egui::pos2(x - 2.0, y - 4.0), egui::pos2(x + 2.0, y)],
+            egui::Stroke::new(1.4, secondary),
+        );
+        ui.painter().line_segment(
+            [egui::pos2(x + 2.0, y), egui::pos2(x - 2.0, y + 4.0)],
+            egui::Stroke::new(1.4, secondary),
+        );
+    } else if !shortcut.is_empty() {
+        ui.painter().text(
+            egui::pos2(rect.right() - 10.0, rect.center().y),
+            egui::Align2::RIGHT_CENTER,
+            shortcut,
+            egui::FontId::proportional(12.0),
+            secondary,
+        );
+    }
+    response
+}
+
+/// Séparateur d'un menu contextuel.
+pub fn menu_separator(ui: &mut egui::Ui) {
+    let width = MENU_WIDTH - 12.0;
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 9.0), egui::Sense::hover());
+    ui.painter().hline(
+        (rect.left() + 6.0)..=(rect.right() - 6.0),
+        rect.center().y,
+        egui::Stroke::new(1.0, separator()),
+    );
+}
+
+/// Espacement d'un menu contextuel : les lignes se touchent.
+pub fn menu_style(ui: &mut egui::Ui) {
+    ui.spacing_mut().item_spacing.y = 0.0;
+    ui.set_width(MENU_WIDTH - 12.0);
+}
+
+/// Bouton de liste à choix unique, dans un popover : 32 px, rond plein quand il est choisi.
+pub fn radio_row(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response {
+    let width = ui.available_width();
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 32.0), egui::Sense::click());
+    if response.hovered() {
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(6), separator().gamma_multiply(0.5));
+    }
+    let center = egui::pos2(rect.left() + 14.0, rect.center().y);
+    if selected {
+        ui.painter()
+            .circle_stroke(center, 6.5, egui::Stroke::new(1.5, accent()));
+        ui.painter().circle_filled(center, 3.5, accent());
+    } else {
+        ui.painter()
+            .circle_stroke(center, 6.5, egui::Stroke::new(1.2, text_secondary()));
+    }
+    ui.painter().text(
+        egui::pos2(rect.left() + 30.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        label,
+        egui::FontId::proportional(13.0),
+        primary_text(),
+    );
+    response
+}
+
+/// Largeur des menus contextuels.
+pub const MENU_WIDTH: f32 = 260.0;
+
 pub fn primary_text() -> Color32 {
     color(palette().text)
 }
@@ -83,11 +190,23 @@ pub fn separator() -> Color32 {
 }
 
 pub fn sidebar_selected() -> Color32 {
-    Color32::from_black_alpha(if THEME_DARK.load(Ordering::Relaxed) == 1 {
-        48
-    } else {
-        22
-    })
+    color(palette().selection)
+}
+
+/// Texte d'un élément choisi dans une barre latérale.
+pub fn sidebar_selected_text() -> Color32 {
+    color(palette().selection_text)
+}
+
+/// Valeur selon le thème en vigueur.
+pub fn themed<T>(light: T, dark: T) -> T {
+    if theme_is_dark() { dark } else { light }
+}
+
+/// Voile qui contraste avec le fond : noir en thème clair, blanc en thème sombre. Pour les
+/// filets, les survols et les pastilles ; les ombres, elles, restent noires.
+pub fn tint(alpha: u8) -> Color32 {
+    themed(Color32::from_black_alpha(alpha), Color32::from_white_alpha(alpha))
 }
 
 pub fn error() -> Color32 {
@@ -123,7 +242,7 @@ pub fn accent_text() -> Color32 {
     }
 }
 
-/// Couleur d'une accentuation de Paramètres (« Multicolore » : celle de Ferrite).
+/// Couleur d'une accentuation de Paramètres (le bleu Ferrite dépend du thème).
 pub fn accent_color(accent: Accent) -> Color32 {
     accent.rgb().map_or(color(palette().accent), from_rgb)
 }
@@ -133,11 +252,22 @@ fn sidebar_scale() -> f32 {
     SIDEBAR_SCALE.load(Ordering::Relaxed) as f32 / 100.0
 }
 
+/// Garde cette application en thème sombre.
+pub fn set_always_dark() {
+    ALWAYS_DARK.store(1, Ordering::Relaxed);
+}
+
+/// Thème à afficher selon les réglages.
+pub fn wants_dark(settings: &Settings) -> bool {
+    ALWAYS_DARK.load(Ordering::Relaxed) == 1 || settings.appearance().is_dark()
+}
+
 /// Applique les préférences d'apparence de Paramètres : accentuation, surlignage du
 /// texte, taille des icônes des barres latérales et barres de défilement.
 pub fn apply_preferences(context: &egui::Context, settings: &Settings) {
-    THEME_DARK.store(u8::from(settings.appearance().is_dark()), Ordering::Relaxed);
-    context.set_theme(if settings.appearance().is_dark() {
+    let dark = wants_dark(settings);
+    THEME_DARK.store(u8::from(dark), Ordering::Relaxed);
+    context.set_theme(if dark {
         egui::Theme::Dark
     } else {
         egui::Theme::Light
@@ -165,7 +295,9 @@ pub fn apply_preferences(context: &egui::Context, settings: &Settings) {
         ScrollBars::WhenScrolling => egui::style::ScrollStyle::floating(),
         ScrollBars::Always => egui::style::ScrollStyle::solid(),
     };
+    let reduce_motion = settings.flag("reduire_animations", false);
     context.all_styles_mut(|style| {
+        style.animation_time = if reduce_motion { 0.0 } else { 1.0 / 12.0 };
         style.spacing.scroll = scroll;
         style.visuals.selection.bg_fill = highlight;
         style.visuals.selection.stroke = Stroke::new(border::HAIRLINE, primary_text());
@@ -175,6 +307,36 @@ pub fn apply_preferences(context: &egui::Context, settings: &Settings) {
 
 /// Polices (Inter et JetBrains Mono) et réglages visuels partagés.
 pub fn apply(context: &egui::Context) {
+    context.set_fonts(font_definitions());
+
+    apply_theme(context);
+    apply_preferences(context, &Settings::load());
+}
+
+/// Ajoute des polices de secours à la chasse fixe, pour les caractères absents de JetBrains
+/// Mono (écritures d'Asie, symboles). Un fichier illisible est ignoré.
+pub fn add_mono_fallbacks(context: &egui::Context, files: &[std::path::PathBuf]) {
+    let mut fonts = font_definitions();
+    let mut added = false;
+    for file in files {
+        let Ok(bytes) = std::fs::read(file) else {
+            continue;
+        };
+        let name = format!("secours:{}", file.display());
+        fonts
+            .font_data
+            .insert(name.clone(), Arc::new(FontData::from_owned(bytes)));
+        for family in [FontFamily::Monospace, mono_bold_family()] {
+            fonts.families.entry(family).or_default().push(name.clone());
+        }
+        added = true;
+    }
+    if added {
+        context.set_fonts(fonts);
+    }
+}
+
+pub(crate) fn font_definitions() -> FontDefinitions {
     let mut fonts = FontDefinitions::default();
     fonts.font_data.insert(
         "ferrite-inter".into(),
@@ -204,13 +366,21 @@ pub fn apply(context: &egui::Context) {
         .entry(FontFamily::Monospace)
         .or_default()
         .insert(0, "ferrite-mono".into());
+    fonts.font_data.insert(
+        "ferrite-mono-bold".into(),
+        Arc::new(FontData::from_static(include_bytes!(
+            "../../../assets/fonts/JetBrainsMono-Bold.ttf"
+        ))),
+    );
+    let mut mono_bold = vec!["ferrite-mono-bold".to_owned()];
+    mono_bold.extend(fonts.families[&FontFamily::Monospace].iter().cloned());
+    fonts
+        .families
+        .insert(FontFamily::Name("mono-bold".into()), mono_bold);
     let mut strong = vec!["ferrite-inter-semibold".to_owned()];
     strong.extend(fonts.families[&FontFamily::Proportional].iter().cloned());
     fonts.families.insert(FontFamily::Name("strong".into()), strong);
-    context.set_fonts(fonts);
-
-    apply_theme(context);
-    apply_preferences(context, &Settings::load());
+    fonts
 }
 
 fn apply_theme(context: &egui::Context) {
@@ -240,6 +410,14 @@ fn apply_theme(context: &egui::Context) {
         let visuals = &mut style.visuals;
         visuals.panel_fill = background;
         visuals.window_fill = background;
+        // Menus et popovers : coins de 10, ombre flottante.
+        visuals.menu_corner_radius = CornerRadius::same(10);
+        visuals.popup_shadow = egui::Shadow {
+            offset: [0, 12],
+            blur: 32,
+            spread: 0,
+            color: Color32::from_black_alpha(77),
+        };
         visuals.extreme_bg_color = background;
         visuals.faint_bg_color = color(palette.content_background);
         visuals.override_text_color = Some(text);
@@ -266,6 +444,11 @@ fn apply_theme(context: &egui::Context) {
     });
 }
 
+/// Police à chasse fixe en gras, pour le terminal.
+pub fn mono_bold_family() -> FontFamily {
+    FontFamily::Name("mono-bold".into())
+}
+
 pub fn strong_family() -> FontFamily {
     FontFamily::Name("strong".into())
 }
@@ -275,18 +458,18 @@ pub fn header(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
     toolbar(ui, true, add);
 }
 
-/// Barre d'outils en haut du contenu. Avec `buttons` (fenêtre sans panneau latéral),
-/// elle porte les boutons de fenêtre sur un dégradé clair, avec un trait dessous ; à côté
-/// d'un panneau, elle reste blanche et sans trait, ses boutons flottant sur le contenu.
-/// Le vide sert à déplacer la fenêtre.
+/// Barre d'outils en haut du contenu, sur le fond des barres de titre avec son filet. Elle
+/// porte le bouton agrandir à droite ; avec `buttons` (fenêtre sans barre latérale), aussi le
+/// bouton fermer à gauche. Le vide sert à déplacer la fenêtre.
 pub fn toolbar(ui: &mut egui::Ui, buttons: bool, add: impl FnOnce(&mut egui::Ui)) {
-    let left = if buttons { 96 } else { 14 };
+    let left: i8 = if buttons { 46 } else { 14 };
+    let right: i8 = 46;
     egui::Panel::top(ui.scope_id().with("ferrite-header"))
         .resizable(false)
         .exact_size(TOOLBAR_HEIGHT)
-        .frame(Frame::new().fill(background()).inner_margin(Margin {
+        .frame(Frame::new().fill(header_color()).inner_margin(Margin {
             left,
-            right: 12,
+            right,
             top: 0,
             bottom: 0,
         }))
@@ -294,46 +477,27 @@ pub fn toolbar(ui: &mut egui::Ui, buttons: bool, add: impl FnOnce(&mut egui::Ui)
             let inner = ui.max_rect();
             let full = egui::Rect::from_min_max(
                 egui::pos2(inner.left() - left as f32, inner.top()),
-                egui::pos2(inner.right() + 12.0, inner.bottom()),
+                egui::pos2(inner.right() + right as f32, inner.bottom()),
             );
-            if buttons {
-                vertical_gradient(
-                    ui.painter(),
-                    full,
-                    color(palette().toolbar_top),
-                    color(palette().toolbar_bottom),
-                );
-                ui.painter().hline(
-                    full.x_range(),
-                    full.bottom() - 0.5,
-                    Stroke::new(border::HAIRLINE, color(palette().separator)),
-                );
-            }
+            ui.painter().hline(
+                full.x_range(),
+                full.bottom() - 0.5,
+                Stroke::new(border::HAIRLINE, color(palette().titlebar_line)),
+            );
             // Fond déplaçable, enregistré avant les boutons pour qu'ils restent prioritaires.
             drag_area(ui, full, "barre");
+            let inset = ferrite_ui::theme::WINDOW_BUTTON_INSET as f32;
             if buttons {
-                window_buttons(ui, egui::pos2(full.left() + 22.0, full.center().y));
+                close_button(ui, egui::pos2(full.left() + inset, full.center().y));
             }
+            zoom_button(ui, egui::pos2(full.right() - inset, full.center().y));
             // Centré en hauteur, sans étirer les éléments (pastilles, onglets).
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), add);
         });
 }
 
-/// Rectangle peint d'un dégradé vertical, de `top` à `bottom`.
-fn vertical_gradient(painter: &egui::Painter, rect: egui::Rect, top: Color32, bottom: Color32) {
-    let mut mesh = egui::Mesh::default();
-    mesh.colored_vertex(rect.left_top(), top);
-    mesh.colored_vertex(rect.right_top(), top);
-    mesh.colored_vertex(rect.left_bottom(), bottom);
-    mesh.colored_vertex(rect.right_bottom(), bottom);
-    mesh.add_triangle(0, 1, 2);
-    mesh.add_triangle(1, 3, 2);
-    painter.add(mesh);
-}
-
-/// Panneau latéral flottant, de couleur `fill`, détaché des bords de la fenêtre par une
-/// marge blanche, avec les boutons de fenêtre dans son coin (sauf `buttons` faux :
-/// sélecteur de fichiers dans une feuille).
+/// Barre latérale pleine hauteur, collée au bord gauche, avec son filet à droite et le bouton
+/// fermer en haut (sauf `buttons` faux : sélecteur de fichiers dans une feuille).
 pub fn sidebar(
     ui: &mut egui::Ui,
     id: &str,
@@ -345,68 +509,31 @@ pub fn sidebar(
     egui::Panel::left(ui.scope_id().with(id))
         .resizable(false)
         .exact_size(width)
-        .frame(Frame::new().fill(background()))
+        .frame(Frame::new().fill(fill))
         .show(ui, |ui| {
             let full = ui.max_rect();
-            let panel = full.shrink(PANEL_MARGIN);
-            let painter = ui.painter();
-            painter.rect_filled(
-                panel.expand(1.0).translate(egui::vec2(0.0, 1.0)),
-                PANEL_RADIUS + 1,
-                Color32::from_black_alpha(12),
-            );
-            painter.rect(
-                panel,
-                PANEL_RADIUS,
-                fill,
-                Stroke::new(border::HAIRLINE, Color32::from_black_alpha(22)),
-                egui::StrokeKind::Inside,
+            ui.painter().vline(
+                full.right() - 0.5,
+                full.y_range(),
+                Stroke::new(border::HAIRLINE, color(palette().titlebar_line)),
             );
             let top = egui::Rect::from_min_size(full.min, egui::vec2(full.width(), TOOLBAR_HEIGHT));
             if buttons {
                 drag_area(ui, top, "colonne");
-                window_buttons(ui, egui::pos2(panel.left() + 21.0, top.center().y));
+                close_button(
+                    ui,
+                    egui::pos2(
+                        full.left() + ferrite_ui::theme::WINDOW_BUTTON_INSET as f32,
+                        top.center().y,
+                    ),
+                );
             }
             let body = egui::Rect::from_min_max(
                 egui::pos2(
-                    panel.left() + 6.0,
-                    if buttons { top.bottom() } else { panel.top() + 10.0 },
+                    full.left() + 10.0,
+                    if buttons { top.bottom() } else { full.top() + 10.0 },
                 ),
-                egui::pos2(panel.right() - 6.0, panel.bottom() - 6.0),
-            );
-            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(body));
-            add(&mut child);
-        });
-}
-
-/// Colonne pleine hauteur collée au bord gauche, comme celle des Réglages de macOS :
-/// dégradé vertical (teinté par le fond d'écran), trait à droite, boutons de fenêtre en
-/// haut ; la bande du haut déplace la fenêtre.
-pub fn tinted_sidebar(
-    ui: &mut egui::Ui,
-    id: &str,
-    width: f32,
-    (top, bottom): (Color32, Color32),
-    add: impl FnOnce(&mut egui::Ui),
-) {
-    egui::Panel::left(ui.scope_id().with(id))
-        .resizable(false)
-        .exact_size(width)
-        .frame(Frame::new())
-        .show(ui, |ui| {
-            let full = ui.max_rect();
-            vertical_gradient(ui.painter(), full, top, bottom);
-            ui.painter().vline(
-                full.right() - 0.5,
-                full.y_range(),
-                Stroke::new(border::HAIRLINE, Color32::from_black_alpha(26)),
-            );
-            let header = egui::Rect::from_min_size(full.min, egui::vec2(full.width(), TOOLBAR_HEIGHT));
-            drag_area(ui, header, "colonne");
-            window_buttons(ui, egui::pos2(full.left() + 24.0, header.center().y));
-            let body = egui::Rect::from_min_max(
-                egui::pos2(full.left() + 14.0, header.bottom()),
-                egui::pos2(full.right() - 14.0, full.bottom() - 8.0),
+                egui::pos2(full.right() - 10.0, full.bottom() - 10.0),
             );
             let mut child = ui.new_child(egui::UiBuilder::new().max_rect(body));
             add(&mut child);
@@ -467,89 +594,86 @@ pub fn drag_area(ui: &mut egui::Ui, rect: egui::Rect, salt: &str) {
         egui::Sense::click_and_drag(),
     );
     if response.double_clicked() {
-        // Basculer uniquement l'agrandissement : aucun mouvement de fenêtre
-        // ne doit démarrer entre les deux clics.
-        let maximized = ui.input(|input| input.viewport().maximized.unwrap_or(false));
-        ui.ctx()
-            .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+        // Basculer uniquement l'état choisi : aucun mouvement de fenêtre ne doit démarrer
+        // entre les deux clics.
+        match Settings::load().double_click() {
+            DoubleClick::Maximize => {
+                let maximized = ui.input(|input| input.viewport().maximized.unwrap_or(false));
+                ui.ctx()
+                    .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+            }
+            DoubleClick::Minimize => ui.ctx().send_viewport_cmd(egui::ViewportCommand::Minimized(true)),
+            DoubleClick::Nothing => {}
+        }
     } else if response.drag_started() {
         ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
     }
 }
 
-/// Les trois boutons de fenêtre (fermer, réduire, agrandir), comme ceux que ferrite-shell
-/// dessine pour les autres applications : même taille, mêmes couleurs, symboles au survol.
-fn window_buttons(ui: &mut egui::Ui, first: egui::Pos2) {
-    use ferrite_ui::theme::{TRAFFIC_LIGHT_RADIUS, TRAFFIC_LIGHT_STEP};
-    let radius = TRAFFIC_LIGHT_RADIUS as f32;
-    let step = TRAFFIC_LIGHT_STEP as f32;
-    let group = egui::Rect::from_min_max(
-        egui::pos2(first.x - radius - 3.0, first.y - radius - 3.0),
-        egui::pos2(first.x + 2.0 * step + radius + 3.0, first.y + radius + 3.0),
-    );
-    let hovered = ui.rect_contains_pointer(group);
+/// Bouton de fenêtre : pastille de 22 px et symbole, rouge (fermer) ou couleur d'accent
+/// (agrandir) au survol, estompé si la fenêtre n'a pas le focus.
+fn window_button(ui: &mut egui::Ui, center: egui::Pos2, close: bool) -> egui::Response {
+    use ferrite_ui::theme::WINDOW_BUTTON_RADIUS;
+    let radius = WINDOW_BUTTON_RADIUS as f32;
+    let rect = egui::Rect::from_center_size(center, egui::vec2(2.0 * radius + 2.0, 2.0 * radius + 2.0));
+    let salt = if close { "fermer" } else { "agrandir" };
+    let response = ui.interact(rect, ui.scope_id().with(salt), egui::Sense::click());
     let focused = ui.input(|input| input.viewport().focused.unwrap_or(true));
     let active_palette = palette();
-    let [close, minimize, zoom] = active_palette.traffic_lights;
-    let (off_fill, off_edge) = active_palette.traffic_light_inactive;
-    for (index, (fill, edge)) in [close, minimize, zoom].into_iter().enumerate() {
-        let center = egui::pos2(first.x + index as f32 * step, first.y);
-        let rect = egui::Rect::from_center_size(center, egui::vec2(2.0 * radius + 4.0, 2.0 * radius + 4.0));
-        let response = ui.interact(rect, ui.scope_id().with(("feu", index)), egui::Sense::click());
-        let (fill, edge) = if focused || hovered {
-            (fill, edge)
+    let (fill, ink) = if response.hovered() {
+        let fill = if close {
+            color(active_palette.danger)
         } else {
-            (off_fill, off_edge)
+            accent()
         };
-        let painter = ui.painter();
-        painter.circle(center, radius, color(fill), Stroke::new(0.8, color(edge)));
-        if hovered {
-            let ink = color(edge).gamma_multiply(0.55);
-            let stroke = Stroke::new(1.3, ink);
-            let d = radius * 0.42;
-            match index {
-                0 => {
-                    painter.line_segment([center + egui::vec2(-d, -d), center + egui::vec2(d, d)], stroke);
-                    painter.line_segment([center + egui::vec2(-d, d), center + egui::vec2(d, -d)], stroke);
-                }
-                1 => {
-                    painter.line_segment(
-                        [
-                            center + egui::vec2(-d - 0.6, 0.0),
-                            center + egui::vec2(d + 0.6, 0.0),
-                        ],
-                        stroke,
-                    );
-                }
-                _ => {
-                    painter.line_segment(
-                        [
-                            center + egui::vec2(-d - 0.6, 0.0),
-                            center + egui::vec2(d + 0.6, 0.0),
-                        ],
-                        stroke,
-                    );
-                    painter.line_segment(
-                        [
-                            center + egui::vec2(0.0, -d - 0.6),
-                            center + egui::vec2(0.0, d + 0.6),
-                        ],
-                        stroke,
-                    );
-                }
-            }
+        (fill, Color32::WHITE)
+    } else if focused {
+        (
+            color(active_palette.window_button),
+            color(active_palette.window_glyph),
+        )
+    } else {
+        (
+            color(active_palette.window_button_inactive),
+            color(active_palette.window_glyph),
+        )
+    };
+    let painter = ui.painter();
+    painter.circle_filled(center, radius, fill);
+    let at = |x: f32, y: f32| center + egui::vec2(x, y);
+    if close {
+        let stroke = Stroke::new(1.6, ink);
+        painter.line_segment([at(-3.0, -3.0), at(3.0, 3.0)], stroke);
+        painter.line_segment([at(3.0, -3.0), at(-3.0, 3.0)], stroke);
+    } else {
+        let stroke = Stroke::new(1.5, ink);
+        for segment in [
+            [at(-3.0, 1.0), at(-3.0, 3.0)],
+            [at(-3.0, 3.0), at(-1.0, 3.0)],
+            [at(1.0, -3.0), at(3.0, -3.0)],
+            [at(3.0, -3.0), at(3.0, -1.0)],
+            [at(-3.0, 3.0), at(-0.5, 0.5)],
+            [at(3.0, -3.0), at(0.5, -0.5)],
+        ] {
+            painter.line_segment(segment, stroke);
         }
-        if response.clicked() {
-            let ctx = ui.ctx();
-            match index {
-                0 => ctx.send_viewport_cmd(egui::ViewportCommand::Close),
-                1 => ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true)),
-                _ => {
-                    let maximized = ui.input(|input| input.viewport().maximized.unwrap_or(false));
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
-                }
-            }
-        }
+    }
+    response
+}
+
+/// Bouton « fermer », à gauche de la barre de la fenêtre.
+fn close_button(ui: &mut egui::Ui, center: egui::Pos2) {
+    if window_button(ui, center, true).clicked() {
+        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+    }
+}
+
+/// Bouton « agrandir », à droite de la barre de la fenêtre.
+fn zoom_button(ui: &mut egui::Ui, center: egui::Pos2) {
+    if window_button(ui, center, false).clicked() {
+        let maximized = ui.input(|input| input.viewport().maximized.unwrap_or(false));
+        ui.ctx()
+            .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
     }
 }
 
@@ -588,7 +712,11 @@ pub fn suggested_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
 
 /// Interrupteur à glissière, comme dans les réglages rapides du bureau.
 pub fn switch(ui: &mut egui::Ui, on: &mut bool, enabled: bool) -> egui::Response {
-    let size = egui::vec2(42.0, 24.0);
+    switch_sized(ui, on, enabled, egui::vec2(44.0, 26.0))
+}
+
+/// Interrupteur de la taille voulue : bouton blanc ombré, piste couleur d'accent s'il est mis.
+pub fn switch_sized(ui: &mut egui::Ui, on: &mut bool, enabled: bool, size: egui::Vec2) -> egui::Response {
     let sense = if enabled {
         egui::Sense::click()
     } else {
@@ -600,53 +728,44 @@ pub fn switch(ui: &mut egui::Ui, on: &mut bool, enabled: bool) -> egui::Response
         response.mark_changed();
     }
     let progress = ui.ctx().animate_bool_responsive(response.id, *on);
+    let off = themed(rgb_color(0xD5D9E0), rgb_color(0x4B5360));
     let track = if !enabled {
         control_background()
-    } else if *on {
-        accent()
     } else {
-        separator()
+        off.lerp_to_gamma(accent(), progress)
     };
     let painter = ui.painter();
     painter.rect_filled(rect, rect.height() / 2.0, track);
-    let radius = rect.height() / 2.0 - 2.5;
-    let x = egui::lerp(rect.left() + radius + 2.5..=rect.right() - radius - 2.5, progress);
-    painter.circle_filled(egui::pos2(x, rect.center().y), radius, background());
+    let radius = rect.height() / 2.0 - 2.0;
+    let x = egui::lerp(rect.left() + radius + 2.0..=rect.right() - radius - 2.0, progress);
+    painter.circle_filled(
+        egui::pos2(x, rect.center().y + 1.0),
+        radius,
+        Color32::from_black_alpha(46),
+    );
+    painter.circle_filled(egui::pos2(x, rect.center().y), radius, Color32::WHITE);
     response
 }
 
+fn rgb_color(hex: u32) -> Color32 {
+    from_rgb(hex)
+}
+
 macro_rules! icons {
-    ($($name:literal),* $(,)?) => {
+    ($($name:literal),* $(,)?; $($theme_name:literal => $theme_path:literal),* $(,)?) => {
         const SOURCES: &[(&str, &str)] = &[
-            $(($name, include_str!(concat!("../../../icons/SVG/", $name, ".svg")))),*
+            $(($name, include_str!(concat!("../../../icons/SVG/", $name, ".svg")))),*,
+            $((
+                $theme_name,
+                include_str!(concat!("../../../ferrite-theme/icons/Ferrite/scalable/", $theme_path, ".svg")),
+            )),*
         ];
     };
 }
 
 icons![
     "app-code",
-    "app-files",
-    "app-music",
-    "app-photos",
-    "app-terminal",
-    "app-store",
-    "app-video",
-    "file-generic",
-    "file-text",
-    "places-computer",
-    "places-desktop",
-    "places-documents",
-    "places-downloads",
-    "places-home",
-    "places-music",
-    "places-pictures",
-    "places-trash",
-    "places-trash-full",
     "places-usb",
-    "places-videos",
-    "app-calendar",
-    "app-clock",
-    "app-settings",
     "status-bluetooth-on",
     "status-display",
     "status-download",
@@ -668,6 +787,39 @@ icons![
     "device-headphones",
     "device-mouse",
     "device-phone",
+    ;
+    "ferrite-logo" => "places/start-here",
+    "app-files" => "apps/system-file-manager",
+    "app-music" => "apps/multimedia-audio-player",
+    "app-photos" => "apps/image-viewer",
+    "app-terminal" => "apps/utilities-terminal",
+    "app-store" => "apps/system-software-install",
+    "app-video" => "apps/multimedia-video-player",
+    "app-calendar" => "apps/x-office-calendar",
+    "app-clock" => "apps/preferences-system-time",
+    "app-settings" => "apps/preferences-system",
+    "file-generic" => "mimetypes/text-x-generic",
+    "file-text" => "mimetypes/text-x-generic",
+    "file-image" => "mimetypes/image-x-generic",
+    "file-audio" => "mimetypes/audio-x-generic",
+    "file-video" => "mimetypes/video-x-generic",
+    "file-pdf" => "mimetypes/application-pdf",
+    "file-archive" => "mimetypes/package-x-generic",
+    "file-script" => "mimetypes/text-x-script",
+    "file-executable" => "mimetypes/application-x-executable",
+    "places-folder" => "places/folder",
+    "places-computer" => "devices/drive-harddisk",
+    "places-desktop" => "places/user-desktop",
+    "places-documents" => "places/folder-documents",
+    "places-downloads" => "places/folder-download",
+    "places-home" => "places/user-home",
+    "places-music" => "places/folder-music",
+    "places-pictures" => "places/folder-pictures",
+    "places-public" => "places/folder-publicshare",
+    "places-templates" => "places/folder-templates",
+    "places-trash" => "places/user-trash",
+    "places-trash-full" => "places/user-trash-full",
+    "places-videos" => "places/folder-videos",
 ];
 
 /// Rendu d'une icône : couleurs d'origine, ou teinte unique (symbolique).
@@ -741,7 +893,7 @@ pub fn sidebar_item(
     if selected {
         ui.painter().rect_filled(rect, 7.0, sidebar_selected());
     } else if response.hovered() {
-        ui.painter().rect_filled(rect, 7.0, Color32::from_black_alpha(9));
+        ui.painter().rect_filled(rect, 7.0, tint(9));
     }
     let icon_size = 18.0 * sidebar_scale();
     let icon_rect = egui::Rect::from_center_size(
@@ -755,13 +907,17 @@ pub fn sidebar_item(
         egui::Align2::LEFT_CENTER,
         text,
         font,
-        primary_text(),
+        if selected {
+            sidebar_selected_text()
+        } else {
+            primary_text()
+        },
     );
     response
 }
 
 /// Ligne de colonne des Paramètres, comme dans les Réglages de macOS : pastille colorée
-/// ombrée avec un symbole blanc, puis le titre ; choisie, la ligne se voile de gris.
+/// avec un symbole blanc, puis le titre ; choisie, la ligne prend le fond de sélection.
 pub fn sidebar_tile_item(
     ui: &mut egui::Ui,
     icons: &mut Icons,
@@ -772,27 +928,21 @@ pub fn sidebar_tile_item(
 ) -> egui::Response {
     let scale = sidebar_scale();
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), 38.0 * scale),
+        egui::vec2(ui.available_width(), 34.0 * scale),
         egui::Sense::click(),
     );
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     if selected {
-        ui.painter().rect_filled(rect, 9.0, Color32::from_black_alpha(20));
+        ui.painter().rect_filled(rect, 8.0, sidebar_selected());
     } else if response.hovered() {
-        ui.painter().rect_filled(rect, 9.0, Color32::from_black_alpha(9));
+        ui.painter().rect_filled(rect, 8.0, tint(9));
     }
-    let side = 28.0 * scale;
+    let side = 24.0 * scale;
     let icon_rect = egui::Rect::from_center_size(
         egui::pos2(rect.left() + 8.0 + side / 2.0, rect.center().y),
         egui::Vec2::splat(side),
     );
-    let corner = side * 0.24;
-    ui.painter().rect_filled(
-        icon_rect.translate(egui::vec2(0.0, 1.5)).expand(0.5),
-        corner,
-        Color32::from_black_alpha(30),
-    );
-    ui.painter().rect_filled(icon_rect, corner, tile);
+    ui.painter().rect_filled(icon_rect, 7.0 * scale, tile);
     icons.paint(
         ui,
         icon,
@@ -800,11 +950,15 @@ pub fn sidebar_tile_item(
         IconStyle::Tinted(Color32::WHITE),
     );
     ui.painter().text(
-        egui::pos2(icon_rect.right() + 14.0, rect.center().y),
+        egui::pos2(icon_rect.right() + 10.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
         text,
         FontId::proportional(14.0),
-        primary_text(),
+        if selected {
+            sidebar_selected_text()
+        } else {
+            primary_text()
+        },
     );
     response
 }
@@ -812,13 +966,134 @@ pub fn sidebar_tile_item(
 /// Titre de groupe d'une barre latérale (« Favoris », « Appareils »…).
 pub fn sidebar_heading(ui: &mut egui::Ui, text: &str) {
     ui.add_space(6.0);
-    ui.label(egui::RichText::new(text).size(11.5).color(text_secondary()));
+    ui.label(
+        egui::RichText::new(text.to_uppercase())
+            .size(11.0)
+            .strong()
+            .extra_letter_spacing(0.66)
+            .color(text_secondary()),
+    );
     ui.add_space(2.0);
 }
 
+/// Symboles au trait des pages de Paramètres, repris tels quels des planches.
+const GLYPHS: &[(&str, &str)] = &[
+    (
+        "glyph-wifi",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M2 9 a15 15 0 0 1 20 0 M5.5 12.5 a10 10 0 0 1 13 0 M9 16 a5 5 0 0 1 6 0 M12 19.5 V19.6" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "glyph-bluetooth",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M7 7 L17 17 L12 21 V3 L17 7 L7 17" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "glyph-network",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 3 a9 9 0 1 0 0.01 0 M3 12 H21 M12 3 a14 14 0 0 1 0 18 M12 3 a14 14 0 0 0 0 18" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "glyph-appearance",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 3 a9 9 0 1 0 0.01 0 M12 3 V21" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "glyph-dock",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 5 H20 V15 H4 Z M8 19 H16" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "glyph-windows",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 5 H20 V19 H4 Z M4 9 H20" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "glyph-bell",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M6 16 V11 a6 6 0 0 1 12 0 V16 L19.5 18 H4.5 Z M10 21 H14" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "glyph-sound",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 9 H8 L13 5 V19 L8 15 H4 Z M16.5 9 a4 4 0 0 1 0 6" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "glyph-sound-full",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 9 H8 L13 5 V19 L8 15 H4 Z M16.5 9 a4 4 0 0 1 0 6 M19 6.5 a8 8 0 0 1 0 11" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "glyph-energy",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 8 H18 V16 H3 Z M20 11 V13" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "glyph-screen",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 5 H21 V16 H3 Z M9 20 H15 M12 16 V20" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "glyph-keyboard",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 7 H21 V17 H3 Z M7 11 H7.01 M11 11 H11.01 M15 11 H15.01 M8 14 H16" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "glyph-mouse",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 3 a6 6 0 0 1 6 6 V15 a6 6 0 0 1 -12 0 V9 a6 6 0 0 1 6 -6 Z M12 3 V9" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "glyph-printer",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M7 9 V3 H17 V9 M5 9 H19 V16 H5 Z M8 14 H16 V21 H8 Z" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "glyph-account",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 4 a4 4 0 1 0 0.01 0 M4 21 a8 8 0 0 1 16 0" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "glyph-lock",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M6 11 H18 V20 H6 Z M8.5 11 V8 a3.5 3.5 0 0 1 7 0 V11" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "glyph-access",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 3.5 V3.6 M5 8 H19 M12 8 V14 L8 21 M12 14 L16 21" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "glyph-update",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 12 a8 8 0 1 1 -2.3 -5.7 M20 4 V9 H15" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "glyph-about",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 3 a9 9 0 1 0 0.01 0 M12 11 V17 M12 7.5 V7.6" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "glyph-clock",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 3 a9 9 0 1 0 0.01 0 M12 7 V12 L15.5 14" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "glyph-head",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 15 V12 a8 8 0 0 1 16 0 V15 M4 14 H7 V20 H4 Z M17 14 H20 V20 H17 Z" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "glyph-phone",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M8 3 H16 V21 H8 Z M11 18 H13" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "glyph-speaker",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M7 3 H17 V21 H7 Z M12 15 a3 3 0 1 0 0.01 0 M12 7 V7.1" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "glyph-watch",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M8 7 H16 V17 H8 Z M9.5 7 L10 3 H14 L14.5 7 M9.5 17 L10 21 H14 L14.5 17" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "glyph-laptop",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M5 6 H19 V16 H5 Z M3 19 H21" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "glyph-mic",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 3 a3 3 0 0 1 3 3 V12 a3 3 0 0 1 -6 0 V6 a3 3 0 0 1 3 -3 Z M6 11 a6 6 0 0 0 12 0 M12 17 V21" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "glyph-app",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M5 5 H19 V19 H5 Z" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+];
+
 fn rasterize(name: &str, side: u32, ink: Option<Color32>) -> Option<egui::ColorImage> {
     use resvg::{tiny_skia, usvg};
-    let (_, source) = SOURCES.iter().find(|(candidate, _)| *candidate == name)?;
+    let (_, source) = SOURCES
+        .iter()
+        .chain(GLYPHS)
+        .find(|(candidate, _)| *candidate == name)?;
     let source = match ink {
         Some(ink) => ferrite_ui::icons::symbolic(
             source,
@@ -873,6 +1148,14 @@ mod tests {
         apply_preferences(&context, &light);
         assert_eq!(background(), color(Palette::LIGHT.window_background));
         assert_eq!(primary_text(), color(Palette::LIGHT.text));
+    }
+
+    #[test]
+    fn les_icones_du_theme_n_ont_pas_de_texte() {
+        // resvg est compilé sans le texte : une balise <text> disparaîtrait au rendu.
+        for (name, source) in SOURCES {
+            assert!(!source.contains("<text"), "{name} contient du texte");
+        }
     }
 
     #[test]

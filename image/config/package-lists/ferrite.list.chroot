@@ -51,6 +51,8 @@ pipewire
 pipewire-pulse
 pipewire-alsa
 pipewire-bin
+pulseaudio-utils
+curl
 wireplumber
 alsa-ucm-conf
 bluez
@@ -67,14 +69,15 @@ xdg-desktop-portal
 xdg-desktop-portal-gtk
 dbus-bin
 
-# Terminal lancé dans le bureau (en attendant le Terminal Ferrite, phase 5)
+# Terminal de secours et d'essais (le Terminal du bureau est celui de ferrite-apps)
 foot
-tmux
 
 # Polices
 fonts-noto-core
 fonts-dejavu-core
 fonts-noto-color-emoji
+# Symboles et emoji du Terminal, qui ne sait pas dessiner les polices en couleur
+fonts-symbola
 fonts-jetbrains-mono
 
 # Outils de diagnostic (critères de la phase 1)

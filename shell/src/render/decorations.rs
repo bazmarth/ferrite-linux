@@ -6,7 +6,7 @@
 use std::cell::RefCell;
 
 use ferrite_ui::{
-    theme::{Color, Palette, TRAFFIC_LIGHT_FIRST_X, TRAFFIC_LIGHT_STEP},
+    theme::{Palette, WINDOW_BUTTON_INSET, WINDOW_BUTTON_RADIUS},
     tokens::{elevation, radius::WINDOW as WINDOW_RADIUS},
 };
 use smithay::{
@@ -33,12 +33,33 @@ use super::{
 };
 use crate::wm::decoration;
 
-/// Ombre : débord autour du cadre, décalage vers le bas, flou et intensité.
+/// Débord de l'ombre autour du cadre.
 const SHADOW_MARGIN: i32 = elevation::WINDOW_MARGIN;
-const SHADOW_OFFSET_Y: f32 = elevation::WINDOW_OFFSET_Y;
-const SHADOW_BLUR: f32 = elevation::WINDOW_BLUR;
-const SHADOW_ACTIVE: f32 = elevation::WINDOW_ACTIVE_ALPHA;
-const SHADOW_INACTIVE: f32 = elevation::WINDOW_INACTIVE_ALPHA;
+
+/// Ombre d'une fenêtre selon son état.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Shadow {
+    offset_y: f32,
+    blur: f32,
+    alpha: f32,
+}
+
+const SHADOW_ACTIVE: Shadow = Shadow {
+    offset_y: elevation::ACTIVE_OFFSET_Y,
+    blur: elevation::ACTIVE_BLUR,
+    alpha: elevation::ACTIVE_ALPHA,
+};
+const SHADOW_INACTIVE: Shadow = Shadow {
+    offset_y: elevation::INACTIVE_OFFSET_Y,
+    blur: elevation::INACTIVE_BLUR,
+    alpha: elevation::INACTIVE_ALPHA,
+};
+
+/// Ombre déjà prête : (active, thème sombre), zone et élément.
+type ShadowCache = ((bool, bool), Rectangle<i32, Logical>, PixelShaderElement);
+
+/// Fenêtre active, et bouton de fenêtre survolé.
+pub type WindowLook = (bool, Option<decoration::WindowButton>);
 
 /// Ressources partagées des décorations.
 #[derive(Debug)]
@@ -51,7 +72,10 @@ pub struct Decorations {
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct Look {
     active: bool,
-    hover: bool,
+    /// Bouton survolé : il prend sa couleur d'action.
+    hover: Option<decoration::WindowButton>,
+    /// Agrandie : coins droits, ni ombre ni bordure.
+    maximized: bool,
     dark_theme: bool,
     scale: f64,
 }
@@ -61,6 +85,7 @@ struct Look {
 struct TitleCache {
     text: String,
     active: bool,
+    dark_theme: bool,
     scale: f64,
     max_width: u32,
     /// Image et taille en pixels physiques ; `None` si rien à afficher.
@@ -70,7 +95,7 @@ struct TitleCache {
 #[derive(Debug, Default)]
 struct Cache {
     titlebar: Option<(Look, Rectangle<i32, Logical>, PixelShaderElement)>,
-    shadow: Option<(bool, Rectangle<i32, Logical>, PixelShaderElement)>,
+    shadow: Option<ShadowCache>,
     title: Option<TitleCache>,
 }
 
@@ -90,16 +115,18 @@ impl Decorations {
         renderer: &mut GlesRenderer,
         window: &Window,
         content: Rectangle<i32, Logical>,
-        look: (bool, bool),
+        look: WindowLook,
         titlebar: bool,
         dark_theme: bool,
         scale: f64,
         out: &mut Vec<OutputElement>,
     ) {
         let (active, hover) = look;
+        let maximized = crate::wm::is_maximized(window);
         let look = Look {
             active,
             hover,
+            maximized,
             dark_theme,
             scale,
         };
@@ -114,7 +141,10 @@ impl Decorations {
         if titlebar {
             self.push_titlebar(renderer, window, content, look, scale, &mut cache, out);
         }
-        self.push_shadow(content, titlebar, active, &mut cache, out);
+        if !maximized {
+            let shadow = active && !crate::wm::is_tiled(window);
+            self.push_shadow(content, titlebar, (shadow, dark_theme), &mut cache, out);
+        }
     }
 
     #[allow(clippy::too_many_arguments)] // Rendu, fenêtre, géométrie et apparence.
@@ -131,18 +161,23 @@ impl Decorations {
         let Look {
             active,
             hover,
+            maximized,
             dark_theme,
             ..
         } = look;
         let palette = if dark_theme { Palette::DARK } else { Palette::LIGHT };
         let bar = decoration::titlebar(content);
 
-        // Titre, centré dans la barre, sans empiéter sur les feux.
-        let lights_width = (TRAFFIC_LIGHT_FIRST_X + 2 * TRAFFIC_LIGHT_STEP) as i32 + 16;
-        let max_width = ((bar.size.w - 2 * lights_width).max(0) as f64 * scale) as u32;
+        // Titre, centré dans la barre, sans empiéter sur les boutons.
+        let buttons_width = (WINDOW_BUTTON_INSET + WINDOW_BUTTON_RADIUS) as i32 + 12;
+        let max_width = ((bar.size.w - 2 * buttons_width).max(0) as f64 * scale) as u32;
         let text = window_title(window);
         let stale = cache.title.as_ref().is_none_or(|t| {
-            t.text != text || t.active != active || t.scale != scale || t.max_width != max_width
+            t.text != text
+                || t.active != active
+                || t.dark_theme != dark_theme
+                || t.scale != scale
+                || t.max_width != max_width
         });
         if stale {
             let color = if active {
@@ -168,6 +203,7 @@ impl Decorations {
             cache.title = Some(TitleCache {
                 text,
                 active,
+                dark_theme,
                 scale,
                 max_width,
                 image,
@@ -197,77 +233,34 @@ impl Decorations {
             }
         }
 
-        if crate::render::app_id(window).is_some_and(|id| {
-            let id = id.to_lowercase();
-            id == "foot" || id == "footclient" || id.contains("terminal")
-        }) {
-            let plus_color = if active {
-                palette.titlebar_action_active
-            } else {
-                palette.titlebar_action_inactive
-            };
-            if let Some(bitmap) = self
-                .font
-                .render("+", (TITLE_SIZE + 4.0) * scale as f32, plus_color, 100)
-            {
-                let buffer = MemoryRenderBuffer::from_slice(
-                    &bitmap.pixels,
-                    Fourcc::Argb8888,
-                    (bitmap.width as i32, bitmap.height as i32),
-                    1,
-                    Transform::Normal,
-                    None,
-                );
-                let center = decoration::plus_center(content);
-                let size = (
-                    (bitmap.width as f64 / scale).round() as i32,
-                    (bitmap.height as f64 / scale).round() as i32,
-                );
-                let point = Point::from((
-                    (center.x * scale - bitmap.width as f64 / 2.0).round(),
-                    (center.y * scale - bitmap.height as f64 / 2.0).round(),
-                ));
-                match MemoryRenderBufferRenderElement::from_buffer(
-                    renderer,
-                    point,
-                    &buffer,
-                    None,
-                    None,
-                    Some(size.into()),
-                    Kind::Unspecified,
-                ) {
-                    Ok(element) => out.push(OutputElement::Memory(element)),
-                    Err(err) => warn!("bouton Terminal non importé : {err:?}"),
-                }
-            }
-        }
-
-        // Barre de titre.
-        // Dégradé du Ferrite d'origine : plus soutenu sur la fenêtre active, trait dessous.
-        let (top, bottom, line) = if active {
-            (
-                palette.titlebar_active,
-                palette.titlebar_active_bottom,
-                palette.titlebar_active_separator_alpha,
-            )
+        // Barre de titre, unie, avec son filet du bas.
+        let (background, line, button) = if active {
+            (palette.titlebar, palette.titlebar_line, palette.window_button)
         } else {
             (
                 palette.titlebar_inactive,
-                palette.titlebar_inactive_bottom,
-                palette.titlebar_inactive_separator_alpha,
+                palette.titlebar_line_inactive,
+                palette.window_button_inactive,
             )
         };
         let uniforms = || {
             vec![
                 Uniform::new("scale", scale as f32),
-                Uniform::new("background", premultiplied(top)),
-                Uniform::new("background_bottom", premultiplied(bottom)),
+                Uniform::new("background", premultiplied(background)),
+                Uniform::new("separator", premultiplied(line)),
+                Uniform::new("button", premultiplied(button)),
+                Uniform::new("glyph", premultiplied(palette.window_glyph)),
+                Uniform::new("danger", premultiplied(palette.danger)),
+                Uniform::new("accent", premultiplied(palette.accent)),
                 Uniform::new(
-                    "separator",
-                    premultiplied(bottom.mix(Color::BLACK, f32::from(line) / 255.0)),
+                    "hover",
+                    match hover {
+                        None => 0.0f32,
+                        Some(decoration::WindowButton::Close) => 1.0,
+                        Some(decoration::WindowButton::Zoom) => 2.0,
+                    },
                 ),
-                Uniform::new("lit", if active { 1.0f32 } else { 0.0 }),
-                Uniform::new("hover", if hover { 1.0f32 } else { 0.0 }),
+                Uniform::new("corner", if maximized { 0.0f32 } else { WINDOW_RADIUS as f32 }),
             ]
         };
         match &mut cache.titlebar {
@@ -303,7 +296,7 @@ impl Decorations {
         &self,
         content: Rectangle<i32, Logical>,
         titlebar: bool,
-        active: bool,
+        (active, dark_theme): (bool, bool),
         cache: &mut Cache,
         out: &mut Vec<OutputElement>,
     ) {
@@ -316,28 +309,25 @@ impl Decorations {
             frame.loc - Point::from((SHADOW_MARGIN, SHADOW_MARGIN)),
             (frame.size.w + 2 * SHADOW_MARGIN, frame.size.h + 2 * SHADOW_MARGIN).into(),
         );
+        let shadow = if active { SHADOW_ACTIVE } else { SHADOW_INACTIVE };
+        let ring = if dark_theme { Palette::DARK } else { Palette::LIGHT }.window_ring;
         let shadow_uniforms = || {
             let margin = SHADOW_MARGIN as f32;
             vec![
-                Uniform::new(
-                    "rect",
-                    [
-                        margin,
-                        margin + SHADOW_OFFSET_Y,
-                        frame.size.w as f32,
-                        frame.size.h as f32,
-                    ],
-                ),
+                Uniform::new("rect", [margin, margin, frame.size.w as f32, frame.size.h as f32]),
+                Uniform::new("offset_y", shadow.offset_y),
                 Uniform::new("radius", WINDOW_RADIUS as f32),
-                Uniform::new("blur", SHADOW_BLUR),
-                Uniform::new("strength", if active { SHADOW_ACTIVE } else { SHADOW_INACTIVE }),
+                Uniform::new("blur", shadow.blur),
+                Uniform::new("strength", shadow.alpha),
+                Uniform::new("ring", premultiplied(ring)),
             ]
         };
+        let key = (active, dark_theme);
         match &mut cache.shadow {
-            Some((last_active, last_area, element)) => {
-                if *last_active != active || last_area.size != area.size {
+            Some((last_key, last_area, element)) => {
+                if *last_key != key || last_area.size != area.size {
                     element.update_uniforms(shadow_uniforms());
-                    *last_active = active;
+                    *last_key = key;
                 }
                 if *last_area != area {
                     element.resize(area, None);
@@ -353,7 +343,7 @@ impl Decorations {
                     shadow_uniforms(),
                     Kind::Unspecified,
                 );
-                cache.shadow = Some((active, area, element));
+                cache.shadow = Some((key, area, element));
             }
         }
         if let Some((_, _, element)) = &cache.shadow {
@@ -363,7 +353,7 @@ impl Decorations {
 }
 
 /// Titre de la fenêtre (vide si le client n'en a pas donné).
-fn window_title(window: &Window) -> String {
+pub(crate) fn window_title(window: &Window) -> String {
     if let Some(x11) = window.x11_surface() {
         return x11.title();
     }

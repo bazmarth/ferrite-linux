@@ -1,45 +1,35 @@
-//! Géométrie des décorations serveur : barre de titre, feux tricolores, bords de
+//! Géométrie des décorations serveur : barre de titre, boutons de fenêtre, bords de
 //! redimensionnement. Tout est en pixels logiques, relatif au contenu de la fenêtre
 //! (la surface du client) ; la barre de titre est posée juste au-dessus.
 
-use ferrite_ui::theme::{TITLEBAR_HEIGHT, TRAFFIC_LIGHT_FIRST_X, TRAFFIC_LIGHT_STEP};
+use ferrite_ui::theme::{TITLEBAR_HEIGHT, WINDOW_BUTTON_INSET, WINDOW_BUTTON_RADIUS};
 use smithay::utils::{Logical, Point, Rectangle};
 
 use super::resize_grab::ResizeEdge;
 
 /// Largeur de la zone de saisie des bords, autour du cadre (invisible, comme sous Windows).
-pub const RESIZE_BORDER: i32 = 10;
+pub const RESIZE_BORDER: i32 = 8;
 /// Près d'un coin, sur cette longueur le long des bords, on tire les deux côtés à la fois.
-const RESIZE_CORNER: f64 = 20.0;
-/// Rayon de clic d'un feu (un peu plus large que le feu dessiné).
-const LIGHT_HIT_RADIUS: f64 = 9.5;
+const RESIZE_CORNER: f64 = 16.0;
+/// Rayon de clic d'un bouton : un peu plus large que la pastille dessinée.
+const BUTTON_HIT_RADIUS: f64 = WINDOW_BUTTON_RADIUS as f64 + 1.0;
 
-/// Les trois feux, de gauche à droite.
+/// Les deux boutons d'une fenêtre : fermer à gauche, agrandir à droite.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TrafficLight {
+pub enum WindowButton {
     Close,
-    Minimize,
     Zoom,
 }
 
-impl TrafficLight {
-    pub const ALL: [TrafficLight; 3] = [TrafficLight::Close, TrafficLight::Minimize, TrafficLight::Zoom];
-
-    fn index(self) -> i32 {
-        match self {
-            TrafficLight::Close => 0,
-            TrafficLight::Minimize => 1,
-            TrafficLight::Zoom => 2,
-        }
-    }
+impl WindowButton {
+    pub const ALL: [WindowButton; 2] = [WindowButton::Close, WindowButton::Zoom];
 }
 
 /// Partie de la décoration sous le pointeur.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Part {
     Titlebar,
-    Light(TrafficLight),
-    Plus,
+    Button(WindowButton),
     Border(ResizeEdge),
 }
 
@@ -61,28 +51,23 @@ pub fn frame(content: Rectangle<i32, Logical>) -> Rectangle<i32, Logical> {
     )
 }
 
-/// Centre d'un feu, en coordonnées globales.
-pub fn plus_center(content: Rectangle<i32, Logical>) -> Point<f64, Logical> {
+/// Centre d'un bouton, en coordonnées globales.
+pub fn button_center(content: Rectangle<i32, Logical>, button: WindowButton) -> Point<f64, Logical> {
     let bar = titlebar(content);
-    Point::from((
-        bar.loc.x as f64 + bar.size.w as f64 - 28.0,
-        bar.loc.y as f64 + TITLEBAR_HEIGHT as f64 / 2.0,
-    ))
+    let inset = WINDOW_BUTTON_INSET as i32;
+    let x = match button {
+        WindowButton::Close => bar.loc.x + inset,
+        WindowButton::Zoom => bar.loc.x + bar.size.w - inset,
+    };
+    Point::from((x as f64, bar.loc.y as f64 + TITLEBAR_HEIGHT as f64 / 2.0))
 }
 
-pub fn light_center(content: Rectangle<i32, Logical>, light: TrafficLight) -> Point<f64, Logical> {
-    let bar = titlebar(content);
-    let x = bar.loc.x + (TRAFFIC_LIGHT_FIRST_X + TRAFFIC_LIGHT_STEP * light.index() as u32) as i32;
-    let y = bar.loc.y as f64 + TITLEBAR_HEIGHT as f64 / 2.0;
-    Point::from((x as f64, y))
-}
-
-/// Le pointeur survole-t-il le groupe des feux (les symboles ×, −, + apparaissent) ?
-pub fn lights_hovered(content: Rectangle<i32, Logical>, pos: Point<f64, Logical>) -> bool {
-    let first = light_center(content, TrafficLight::Close);
-    let last = light_center(content, TrafficLight::Zoom);
-    let margin = LIGHT_HIT_RADIUS;
-    pos.x >= first.x - margin && pos.x <= last.x + margin && (pos.y - first.y).abs() <= margin
+/// Bouton sous le pointeur, s'il y en a un.
+pub fn hovered_button(content: Rectangle<i32, Logical>, pos: Point<f64, Logical>) -> Option<WindowButton> {
+    WindowButton::ALL.into_iter().find(|button| {
+        let center = button_center(content, *button);
+        (pos.x - center.x).hypot(pos.y - center.y) <= BUTTON_HIT_RADIUS
+    })
 }
 
 /// Partie de la décoration sous `pos`, ou `None` si `pos` est dans le contenu ou hors du
@@ -144,17 +129,8 @@ fn hit_frame(
     if pos.y >= content.loc.y as f64 {
         return None;
     }
-    let plus = plus_center(content);
-    let (dx, dy) = (pos.x - plus.x, pos.y - plus.y);
-    if dx * dx + dy * dy <= LIGHT_HIT_RADIUS * LIGHT_HIT_RADIUS {
-        return Some(Part::Plus);
-    }
-    for light in TrafficLight::ALL {
-        let center = light_center(content, light);
-        let (dx, dy) = (pos.x - center.x, pos.y - center.y);
-        if dx * dx + dy * dy <= LIGHT_HIT_RADIUS * LIGHT_HIT_RADIUS {
-            return Some(Part::Light(light));
-        }
+    if let Some(button) = hovered_button(content, pos) {
+        return Some(Part::Button(button));
     }
     Some(Part::Titlebar)
 }
@@ -164,7 +140,7 @@ mod tests {
     use super::*;
 
     fn content() -> Rectangle<i32, Logical> {
-        Rectangle::new((100, 130).into(), (400, 300).into())
+        Rectangle::new((100, 146).into(), (400, 300).into())
     }
 
     fn p(x: f64, y: f64) -> Point<f64, Logical> {
@@ -175,53 +151,47 @@ mod tests {
     fn cadre_et_barre_de_titre() {
         assert_eq!(
             titlebar(content()),
-            Rectangle::new((100, 100).into(), (400, 30).into())
+            Rectangle::new((100, 100).into(), (400, 46).into())
         );
         assert_eq!(
             frame(content()),
-            Rectangle::new((100, 100).into(), (400, 330).into())
+            Rectangle::new((100, 100).into(), (400, 346).into())
         );
-        assert_eq!(light_center(content(), TrafficLight::Close), p(122.0, 115.0));
-        assert_eq!(light_center(content(), TrafficLight::Zoom), p(168.0, 115.0));
     }
 
     #[test]
-    fn zones_de_clic() {
+    fn boutons_de_part_et_d_autre_de_la_barre() {
         let c = content();
-        assert_eq!(hit(c, p(120.0, 115.0)), Some(Part::Light(TrafficLight::Close)));
-        assert_eq!(hit(c, p(144.0, 116.0)), Some(Part::Light(TrafficLight::Minimize)));
-        // Sans barre de titre : seuls les bords comptent.
-        assert_eq!(hit_border(c, p(300.0, 135.0)), None);
-        assert_eq!(
-            hit_border(c, p(300.0, 125.0)),
-            Some(Part::Border(ResizeEdge::TOP))
-        );
-        assert_eq!(hit(c, p(300.0, 110.0)), Some(Part::Titlebar));
-        assert_eq!(hit(c, p(300.0, 200.0)), None, "dans le contenu");
-        assert_eq!(hit(c, p(50.0, 50.0)), None, "loin de la fenêtre");
-        assert_eq!(hit(c, p(97.0, 200.0)), Some(Part::Border(ResizeEdge::LEFT)));
-        assert_eq!(
-            hit(c, p(502.0, 432.0)),
-            Some(Part::Border(ResizeEdge::BOTTOM_RIGHT))
-        );
-        assert_eq!(hit(c, p(300.0, 96.0)), Some(Part::Border(ResizeEdge::TOP)));
-        // Zone élargie : 10 px autour du cadre.
-        assert_eq!(hit(c, p(91.0, 200.0)), Some(Part::Border(ResizeEdge::LEFT)));
-        assert_eq!(hit(c, p(89.0, 200.0)), None);
-        // Coins larges : le bord droit près du bas tire aussi le bas.
-        assert_eq!(
-            hit(c, p(505.0, 420.0)),
-            Some(Part::Border(ResizeEdge::BOTTOM_RIGHT))
-        );
-        assert_eq!(hit(c, p(110.0, 97.0)), Some(Part::Border(ResizeEdge::TOP_LEFT)));
+        assert_eq!(hit(c, p(123.0, 123.0)), Some(Part::Button(WindowButton::Close)));
+        assert_eq!(hit(c, p(477.0, 123.0)), Some(Part::Button(WindowButton::Zoom)));
+        assert_eq!(hit(c, p(300.0, 123.0)), Some(Part::Titlebar));
+        assert_eq!(hit(c, p(300.0, 200.0)), None);
+        assert_eq!(hovered_button(c, p(300.0, 123.0)), None);
     }
 
     #[test]
-    fn survol_des_feux() {
+    fn bords_de_redimensionnement() {
         let c = content();
-        assert!(lights_hovered(c, p(140.0, 115.0)));
-        assert!(lights_hovered(c, p(166.0, 118.0)));
-        assert!(!lights_hovered(c, p(200.0, 115.0)));
-        assert!(!lights_hovered(c, p(140.0, 140.0)));
+        assert_eq!(hit(c, p(96.0, 300.0)), Some(Part::Border(ResizeEdge::LEFT)));
+        assert_eq!(hit(c, p(504.0, 300.0)), Some(Part::Border(ResizeEdge::RIGHT)));
+        assert_eq!(hit(c, p(300.0, 450.0)), Some(Part::Border(ResizeEdge::BOTTOM)));
+        // Coin : les deux côtés à la fois, sur 16 px le long des bords.
+        assert_eq!(
+            hit(c, p(504.0, 445.0)),
+            Some(Part::Border(ResizeEdge::BOTTOM_RIGHT))
+        );
+        assert_eq!(hit(c, p(96.0, 110.0)), Some(Part::Border(ResizeEdge::TOP_LEFT)));
+        // Hors de portée.
+        assert_eq!(hit(c, p(90.0, 300.0)), None);
+    }
+
+    #[test]
+    fn bords_seuls_sans_barre_de_titre() {
+        let c = content();
+        assert_eq!(hit_border(c, p(300.0, 200.0)), None);
+        assert_eq!(
+            hit_border(c, p(96.0, 300.0)),
+            Some(Part::Border(ResizeEdge::LEFT))
+        );
     }
 }

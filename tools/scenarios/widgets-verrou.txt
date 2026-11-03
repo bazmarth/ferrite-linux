@@ -1,0 +1,123 @@
+# Widgets du bureau et écran de verrouillage, avec de vraies touches sur le backend DRM.
+sleep 75
+serial ferrite
+serial live
+serial touch ~/rapport.pdf ~/notes.txt
+serial export $(tr '\0' '\n' </proc/$(pgrep -x ferrite-shell)/environ | grep DBUS_SESSION_BUS_ADDRESS)
+serial /run/ferrite-dev/faux-lecteur &
+sleep 2
+# Fichiers, ouvert au démarrage : popover de tri et menus contextuels.
+click 214 234
+sleep 1
+click 209 200
+sleep 2
+shot wv-a0-fichiers
+click 967 122
+sleep 1
+shot wv-a1-trier
+key esc
+sleep 1
+rclick 420 215
+sleep 1
+move 480 300
+sleep 1
+shot wv-a2-menu-fichier
+key esc
+sleep 1
+rclick 800 500
+sleep 1
+shot wv-a3-menu-dossier
+key esc
+sleep 1
+click 162 122
+sleep 2
+shot wv-00-bureau
+# Tâche cochée, note créée, sur la grille d'origine.
+click 60 309
+sleep 1
+click 729 273
+sleep 1
+type bonjour
+sleep 1
+shot wv-07-saisie-note
+key esc
+sleep 1
+# Clic droit sur le bureau : le menu, puis l'édition des widgets.
+rclick 1000 300
+sleep 1
+move 1100 320
+sleep 1
+shot wv-01-menu
+click 1100 320
+sleep 1
+shot wv-02-edition
+# Notes déplacées loin à droite, puis agrandies par leur coin ; calendrier agrandi ; tâches plus hautes.
+drag 600 340 1150 180
+sleep 1
+shot wv-03-notes-deplacees
+drag 1252 276 1262 560
+sleep 1
+drag 570 224 760 480
+sleep 1
+drag 200 410 200 660
+sleep 1
+shot wv-04-agrandis
+# Citation retirée, puis remise depuis la barre.
+click 38 436
+sleep 1
+shot wv-05-sans-citation
+click 300 662
+sleep 1
+shot wv-06-citation-remise
+key esc
+sleep 1
+sleep 1
+shot wv-06b-libres
+key ctrl-alt-t
+sleep 5
+shot wv-08-estompe
+key meta_l-w
+sleep 1
+shot wv-09-devant
+key esc
+sleep 1
+type ferrite-apps files
+key ret
+sleep 6
+shot wv-10-fichiers
+# Verrouillage : repos, thème et fond, saisie, refus, annulation, accueil.
+key meta_l-l
+sleep 2
+shot wv-11-repos
+click 46 755
+sleep 1
+shot wv-12-clair
+click 154 755
+sleep 1
+shot wv-13-ocean
+click 46 755
+sleep 1
+click 700 300
+sleep 1
+shot wv-14-saisie
+click 741 410
+sleep 1
+shot wv-15-vide
+type mauvais
+sleep 1
+shot wv-16-points
+key ret
+sleep 5
+shot wv-17-refus
+key esc
+sleep 1
+shot wv-18-annule
+click 1237 758
+sleep 1
+shot wv-19-arret
+key esc
+sleep 1
+type live
+key ret
+sleep 2
+shot wv-20-ouvert

@@ -31,9 +31,10 @@ podman run --rm \
         fi
         rustup toolchain install stable --profile minimal
         export CARGO_TARGET_DIR=/tmp/ferrite-vm-target
-        cargo build --release --locked -p ferrite-shell -p ferrite-apps
+        cargo build --release --locked -p ferrite-shell -p ferrite-apps --bins --example faux-lecteur
         install -m 0755 /tmp/ferrite-vm-target/release/ferrite-shell /src/target/release/ferrite-shell
         install -m 0755 /tmp/ferrite-vm-target/release/ferrite-apps /src/target/release/ferrite-apps
+        install -m 0755 /tmp/ferrite-vm-target/release/examples/faux-lecteur /src/target/release/faux-lecteur
     '
 
 ok "Binaires Debian compatibles recompilés dans target/release"

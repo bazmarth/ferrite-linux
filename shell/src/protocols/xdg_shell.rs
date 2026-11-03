@@ -32,10 +32,10 @@ use crate::{state::Ferrite, wm};
 /// qu'après son premier tampon).
 const NEW_WINDOW_SIZE: (i32, i32) = (740, 350);
 
-/// Décalage de placement d'une fenêtre qui attend encore son premier tampon : elle sera
-/// recentrée selon sa vraie taille en conservant le comportement choisi par le bureau.
+/// Fenêtre qui attend encore son premier tampon : elle sera centrée selon sa vraie taille,
+/// sauf si elle a été agrandie entre-temps.
 struct PendingPlacement {
-    offset: Cell<Option<Point<i32, Logical>>>,
+    waiting: Cell<bool>,
     titlebar_height: i32,
 }
 
@@ -53,7 +53,6 @@ impl XdgShellHandler for Ferrite {
     }
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
-        self.leave_widgets();
         let titlebar_height = if wm::is_ferrite_app(&surface) {
             0
         } else {
@@ -64,10 +63,9 @@ impl XdgShellHandler for Ferrite {
             .usable_area()
             .unwrap_or_else(|| Rectangle::from_size(Size::from(NEW_WINDOW_SIZE)));
         let frame_size = Size::from((NEW_WINDOW_SIZE.0, NEW_WINDOW_SIZE.1 + titlebar_height));
-        let frame = self.placement.next_position(area, frame_size);
-        let offset = frame - wm::centered_position(area, frame_size);
+        let frame = wm::centered_position(area, frame_size);
         window.user_data().insert_if_missing(|| PendingPlacement {
-            offset: Cell::new(Some(offset)),
+            waiting: Cell::new(true),
             titlebar_height,
         });
         let content = frame + Point::from((0, titlebar_height));
@@ -190,7 +188,7 @@ impl XdgShellHandler for Ferrite {
             return;
         };
         if let Some(pending) = window.user_data().get::<PendingPlacement>() {
-            pending.offset.set(None);
+            pending.waiting.set(false);
         }
         if let Some(location) = self.space.element_location(&window) {
             let previous = Rectangle::new(location, window.geometry().size);
@@ -298,7 +296,7 @@ impl Ferrite {
         if maximized {
             let Some(area) = self.usable_area() else { return };
             if let Some(pending) = window.user_data().get::<PendingPlacement>() {
-                pending.offset.set(None);
+                pending.waiting.set(false);
             }
             let area = wm::maximized_content(area, wm::is_server_decorated(&window));
             if let Some(location) = self.space.element_location(&window) {
@@ -395,17 +393,16 @@ impl Ferrite {
             state.states.unset(xdg_toplevel::State::TiledBottom);
             // Côtés de la fenêtre collés au bord de l'écran ou à une voisine.
             use xdg_toplevel::State::{TiledBottom, TiledLeft, TiledRight, TiledTop};
-            let sides: &[xdg_toplevel::State] = match snap {
-                wm::Snap::Left => &[TiledLeft, TiledTop, TiledBottom],
-                wm::Snap::Right => &[TiledRight, TiledTop, TiledBottom],
-                wm::Snap::TopLeft => &[TiledLeft, TiledTop],
-                wm::Snap::TopRight => &[TiledRight, TiledTop],
-                wm::Snap::BottomLeft => &[TiledLeft, TiledBottom],
-                wm::Snap::BottomRight => &[TiledRight, TiledBottom],
-                wm::Snap::Maximize => &[],
-            };
-            for side in sides {
-                state.states.set(*side);
+            let [x, y, w, h] = snap.part();
+            for (touches, side) in [
+                (x == 0, TiledLeft),
+                (x + w >= 1000, TiledRight),
+                (y == 0, TiledTop),
+                (y + h >= 1000, TiledBottom),
+            ] {
+                if touches {
+                    state.states.set(side);
+                }
             }
             state.size = Some(target.size);
         });
@@ -499,18 +496,17 @@ impl Ferrite {
             return;
         }
         let placement = window.user_data().get::<PendingPlacement>().and_then(|pending| {
-            pending.offset.take().map(|offset| {
-                let titlebar_height = window
-                    .toplevel()
-                    .is_some_and(|toplevel| wm::is_ferrite_app(&toplevel))
-                    .then_some(0)
-                    .unwrap_or(pending.titlebar_height);
-                (offset, titlebar_height)
+            pending.waiting.replace(false).then(|| {
+                if window.toplevel().is_some_and(wm::is_ferrite_app) {
+                    0
+                } else {
+                    pending.titlebar_height
+                }
             })
         });
-        if let (Some((offset, titlebar_height)), Some(area)) = (placement, self.usable_area()) {
+        if let (Some(titlebar_height), Some(area)) = (placement, self.usable_area()) {
             let frame_size = Size::from((size.w, size.h + titlebar_height));
-            let frame = wm::clamp_frame(area, wm::centered_position(area, frame_size) + offset, frame_size);
+            let frame = wm::clamp_frame(area, wm::centered_position(area, frame_size), frame_size);
             let content = frame + Point::from((0, titlebar_height));
             self.space.map_element(window.clone(), content, true);
         }

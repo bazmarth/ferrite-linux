@@ -1,0 +1,85 @@
+# Thème et raccourcis : Alt+Tab, aimantation, tuilage, vue d'ensemble, centre de contrôle,
+# calendrier, captures d'écran et verrouillage, avec de vraies touches sur le backend DRM.
+sleep 75
+shot theme-00-depart
+key ctrl-alt-t
+sleep 5
+shot theme-01-terminal
+# Alt maintenue : le sélecteur reste ouvert.
+keydown alt
+key tab
+sleep 1
+shot theme-02-alt-tab
+keyup alt
+sleep 2
+shot theme-03-apres-alt-tab
+key meta_l-left
+sleep 2
+shot theme-04-moitie
+key meta_l-left
+sleep 2
+shot theme-05-deux-tiers
+key meta_l-up
+sleep 2
+shot theme-06-agrandie
+key meta_l-up
+sleep 2
+key meta_l-c
+sleep 2
+shot theme-07-centree
+key meta_l-t
+sleep 2
+shot theme-08-tuilage
+key meta_l-t
+sleep 2
+key meta_l-s
+sleep 2
+shot theme-09-vue-ensemble
+key esc
+sleep 1
+key meta_l-a
+sleep 1
+shot theme-10-centre
+key esc
+sleep 1
+key meta_l-n
+sleep 1
+shot theme-11-calendrier
+key esc
+sleep 1
+# Capture de tout l'écran : la bannière confirme.
+key print
+sleep 3
+shot theme-12-capture
+# Zone : voile, sélection, puis capture.
+key shift-print
+sleep 1
+shot theme-13-zone
+drag 300 200 900 600
+sleep 3
+shot theme-14-zone-faite
+# Verrouillage : mauvais mot de passe, puis le bon.
+key meta_l-l
+sleep 2
+shot theme-15-verrou
+type mauvais
+key ret
+sleep 6
+shot theme-16-refus
+type live
+key ret
+sleep 6
+shot theme-17-deverrouille
+# Super+D, deux fois, puis Super+Q ferme la fenêtre active.
+key meta_l-d
+sleep 2
+shot theme-18-bureau
+key meta_l-d
+sleep 2
+key meta_l-q
+sleep 3
+shot theme-19-fermee
+serial ferrite
+serial live
+serial ls -la "$HOME/Images" /home/ferrite/Images
+sleep 2

@@ -1,16 +1,14 @@
-//! Fonds d'écran de Ferrite : ceux dessinés par Ferrite (dégradé, halo et collines
-//! ondulées translucides, repris du bureau d'origine `D:\Os\kernel\src\gui.rs`,
-//! `paint_wallpaper`), ou une image PNG ou JPEG de l'utilisateur, recadrée pour couvrir
-//! l'écran. Partagé par le compositeur (fond réel) et Paramètres (vignettes).
+//! Fonds d'écran de Ferrite : ceux dessinés par Ferrite (couleur unie et hexagones au
+//! trait fin, comme sur les planches du thème), ou une image PNG ou JPEG de l'utilisateur,
+//! recadrée pour couvrir l'écran. Partagé par le compositeur (fond réel) et Paramètres (vignettes).
 
 use std::{
-    f32::consts::TAU,
     fs,
     io::Cursor,
     path::{Path, PathBuf},
 };
 
-use crate::theme::{Color, WALLPAPER_GRADIENT, gradient_at};
+use crate::theme::Color;
 
 /// Fond d'écran choisi, tel qu'écrit dans les réglages (`fond_ecran`) : le nom d'un fond
 /// de Ferrite, ou le chemin absolu d'une image.
@@ -47,125 +45,104 @@ impl Source {
     }
 }
 
-/// Fonds dessinés par Ferrite : même relief de collines, couleurs différentes.
+/// Fonds dessinés par Ferrite : mêmes hexagones, couleurs différentes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Builtin {
     Ferrite,
-    Sunset,
-    Ocean,
-    Forest,
-    Graphite,
-}
-
-/// Couleurs d'un fond dessiné : dégradé (haut, milieu, bas), halo, puis les collines
-/// de la plus lointaine à la plus proche.
-struct Palette {
-    gradient: [Color; 3],
-    glow: Color,
-    hills: [Color; 4],
+    Night,
+    Slate,
+    Light,
 }
 
 impl Builtin {
-    pub const ALL: [Builtin; 5] = [
-        Builtin::Ferrite,
-        Builtin::Sunset,
-        Builtin::Ocean,
-        Builtin::Forest,
-        Builtin::Graphite,
-    ];
+    pub const ALL: [Builtin; 4] = [Builtin::Ferrite, Builtin::Night, Builtin::Slate, Builtin::Light];
 
     pub fn key(self) -> &'static str {
         match self {
             Builtin::Ferrite => "ferrite",
-            Builtin::Sunset => "crepuscule",
-            Builtin::Ocean => "ocean",
-            Builtin::Forest => "foret",
-            Builtin::Graphite => "graphite",
+            Builtin::Night => "nuit",
+            Builtin::Slate => "ardoise",
+            Builtin::Light => "clair",
         }
     }
 
     pub fn label(self) -> &'static str {
         match self {
             Builtin::Ferrite => "Ferrite",
-            Builtin::Sunset => "Crépuscule",
-            Builtin::Ocean => "Océan",
-            Builtin::Forest => "Forêt",
-            Builtin::Graphite => "Graphite",
+            Builtin::Night => "Nuit",
+            Builtin::Slate => "Ardoise",
+            Builtin::Light => "Clair",
         }
     }
 
-    fn palette(self) -> Palette {
-        let rgb = Color::rgb;
+    /// Couleur du fond et couleur du trait du cube.
+    pub fn colors(self) -> (Color, Color) {
         match self {
-            Builtin::Ferrite => Palette {
-                gradient: WALLPAPER_GRADIENT,
-                glow: rgb(0xFFC7A8),
-                hills: [rgb(0xFFB49C), rgb(0xE66A8A), rgb(0x4A2F86), rgb(0x24185A)],
-            },
-            Builtin::Sunset => Palette {
-                gradient: [rgb(0x3A1C71), rgb(0xD76D77), rgb(0xFFAF7B)],
-                glow: rgb(0xFFE0B5),
-                hills: [rgb(0xFFC59E), rgb(0xF0886A), rgb(0x8A3B6E), rgb(0x3A1C71)],
-            },
-            Builtin::Ocean => Palette {
-                gradient: [rgb(0x0B2545), rgb(0x13678A), rgb(0x7FD1C7)],
-                glow: rgb(0xD9F7F2),
-                hills: [rgb(0x9BE3D9), rgb(0x2E9CCA), rgb(0x134074), rgb(0x0B2545)],
-            },
-            Builtin::Forest => Palette {
-                gradient: [rgb(0x0F2A1D), rgb(0x2F6B3F), rgb(0xC9D88B)],
-                glow: rgb(0xFFF2C2),
-                hills: [rgb(0xB5D99C), rgb(0x5E9C5A), rgb(0x1E4D2B), rgb(0x0C2116)],
-            },
-            Builtin::Graphite => Palette {
-                gradient: [rgb(0x1C1C1E), rgb(0x3A3A40), rgb(0x8E8E99)],
-                glow: rgb(0xD0D0D8),
-                hills: [rgb(0xA0A0AA), rgb(0x6A6A74), rgb(0x2E2E34), rgb(0x141416)],
-            },
+            Builtin::Ferrite => (Color::rgb(0x16202D), Color::rgb(0x6CB8FF)),
+            Builtin::Night => (Color::rgb(0x1B2433), Color::rgb(0x9A6BFF)),
+            Builtin::Slate => (Color::rgb(0x2A3340), Color::rgb(0x2FD49A)),
+            Builtin::Light => (Color::rgb(0xE7E9EE), Color::rgb(0x2779E0)),
         }
     }
 }
 
-/// Relief d'une colline : opacité (0 à 1), hauteur de base, amplitude (fractions de la
-/// hauteur de l'écran), nombre d'ondulations sur la largeur, et décalage (en 60es de tour).
-struct Wave {
-    opacity: f32,
-    base: f32,
-    amplitude: f32,
-    frequency: f32,
-    phase: f32,
+type Segment = ((f32, f32), (f32, f32));
+
+/// Contour d'un hexagone, à partir de ses sommets.
+fn outline<const N: usize>(points: [(f32, f32); N]) -> [Segment; N] {
+    std::array::from_fn(|index| (points[index], points[(index + 1) % N]))
 }
 
-const WAVES: [Wave; 4] = [
-    Wave {
-        opacity: 70.0 / 255.0,
-        base: 0.58,
-        amplitude: 0.06,
-        frequency: 1.0,
-        phase: 0.0,
-    },
-    Wave {
-        opacity: 90.0 / 255.0,
-        base: 0.69,
-        amplitude: 0.045,
-        frequency: 2.0,
-        phase: 20.0,
-    },
-    Wave {
-        opacity: 120.0 / 255.0,
-        base: 0.82,
-        amplitude: 0.03,
-        frequency: 1.0,
-        phase: 40.0,
-    },
-    Wave {
-        opacity: 140.0 / 255.0,
-        base: 0.92,
-        amplitude: 0.02,
-        frequency: 3.0,
-        phase: 10.0,
-    },
+/// Traits blancs du fond sur l'écran de référence de 1600 × 1000 : un grand hexagone à
+/// droite et deux petits en bas (opacité, segments).
+fn white_outlines() -> [(f32, Vec<Segment>); 3] {
+    [
+        (
+            0.06,
+            outline([
+                (1180.0, 120.0),
+                (1420.0, 258.0),
+                (1420.0, 534.0),
+                (1180.0, 672.0),
+                (940.0, 534.0),
+                (940.0, 258.0),
+            ])
+            .to_vec(),
+        ),
+        (
+            0.05,
+            outline([
+                (300.0, 560.0),
+                (470.0, 658.0),
+                (470.0, 854.0),
+                (300.0, 952.0),
+                (130.0, 854.0),
+                (130.0, 658.0),
+            ])
+            .to_vec(),
+        ),
+        (
+            0.05,
+            outline([
+                (1460.0, 700.0),
+                (1560.0, 758.0),
+                (1560.0, 874.0),
+                (1460.0, 932.0),
+                (1360.0, 874.0),
+                (1360.0, 758.0),
+            ])
+            .to_vec(),
+        ),
+    ]
+}
+
+/// Arêtes intérieures du grand hexagone, qui en font un cube, dans la couleur du fond.
+const CUBE_EDGES: [Segment; 3] = [
+    ((1180.0, 120.0), (1180.0, 396.0)),
+    ((1180.0, 396.0), (1420.0, 534.0)),
+    ((1180.0, 396.0), (940.0, 534.0)),
 ];
+const CUBE_OPACITY: f32 = 0.16;
 
 /// Image RVBA 8 bits, non prémultipliée.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -191,47 +168,109 @@ impl Image {
     }
 }
 
-/// Fond dessiné à `width` × `height` pixels. Le bord de chaque colline est anticrénelé :
-/// un pixel qu'il traverse n'en reçoit que la part qu'il couvre.
-pub fn waves(builtin: Builtin, width: u32, height: u32) -> Image {
-    let palette = builtin.palette();
+/// Fond dessiné à `width` × `height` pixels : les hexagones gardent leurs proportions et
+/// couvrent l'écran, comme une image recadrée.
+pub fn paint(builtin: Builtin, width: u32, height: u32) -> Image {
     let (width, height) = (width.max(1), height.max(1));
-    let (w, h) = (width as f32, height as f32);
-    // Bord de chaque colline, colonne par colonne (en pixels depuis le haut).
-    let edges: Vec<Vec<f32>> = WAVES
-        .iter()
-        .map(|wave| {
-            (0..width)
-                .map(|x| {
-                    let turns = x as f32 * wave.frequency / w + wave.phase / 60.0;
-                    (wave.base + wave.amplitude * (turns * TAU).sin()) * h
-                })
-                .collect()
-        })
-        .collect();
-    let (glow_x, glow_y, glow_r) = (w * 0.72, h * 0.18, h * 0.60);
-    let mut rgba = Vec::with_capacity((width * height * 4) as usize);
-    for y in 0..height {
-        let base = gradient_at(&palette.gradient, y as f32 / (h - 1.0).max(1.0));
-        for x in 0..width {
-            let mut color = [base.r, base.g, base.b].map(f32::from);
-            let (dx, dy) = (x as f32 - glow_x, y as f32 - glow_y);
-            let d2 = (dx * dx + dy * dy) / (glow_r * glow_r);
-            if d2 < 1.0 {
-                let a = 60.0 * (1.0 - d2);
-                blend(&mut color, palette.glow, a * a / 60.0 / 255.0);
-            }
-            for ((wave, edge), hill) in WAVES.iter().zip(&edges).zip(palette.hills) {
-                let coverage = (y as f32 + 1.0 - edge[x as usize]).clamp(0.0, 1.0);
-                if coverage > 0.0 {
-                    blend(&mut color, hill, wave.opacity * coverage);
-                }
-            }
-            let [r, g, b] = color.map(|channel| channel.round().clamp(0.0, 255.0) as u8);
-            rgba.extend([r, g, b, 255]);
+    let (background, stroke) = builtin.colors();
+    let mut pixels = vec![
+        [
+            f32::from(background.r),
+            f32::from(background.g),
+            f32::from(background.b)
+        ];
+        (width * height) as usize
+    ];
+    let scale = (width as f32 / 1600.0).max(height as f32 / 1000.0);
+    let origin = (
+        (width as f32 - 1600.0 * scale) / 2.0,
+        (height as f32 - 1000.0 * scale) / 2.0,
+    );
+    let place = |(x, y): (f32, f32)| (origin.0 + x * scale, origin.1 + y * scale);
+    // Sur le fond clair, le blanc ne se verrait pas : tout prend la couleur du trait.
+    let white = if builtin == Builtin::Light {
+        stroke
+    } else {
+        Color::WHITE
+    };
+    let half_width = scale.max(0.5);
+    for (opacity, segments) in white_outlines() {
+        for (start, end) in segments {
+            stroke_segment(
+                &mut pixels,
+                width,
+                height,
+                place(start),
+                place(end),
+                half_width,
+                white,
+                opacity,
+            );
         }
     }
+    for (start, end) in CUBE_EDGES {
+        stroke_segment(
+            &mut pixels,
+            width,
+            height,
+            place(start),
+            place(end),
+            half_width,
+            stroke,
+            CUBE_OPACITY,
+        );
+    }
+    let mut rgba = Vec::with_capacity(pixels.len() * 4);
+    for pixel in pixels {
+        let [r, g, b] = pixel.map(|channel| channel.round().clamp(0.0, 255.0) as u8);
+        rgba.extend([r, g, b, 255]);
+    }
     Image { width, height, rgba }
+}
+
+/// Trait anticrénelé : seuls les pixels autour du segment sont parcourus.
+#[allow(clippy::too_many_arguments)] // Image, segment et apparence.
+fn stroke_segment(
+    pixels: &mut [[f32; 3]],
+    width: u32,
+    height: u32,
+    a: (f32, f32),
+    b: (f32, f32),
+    half_width: f32,
+    color: Color,
+    opacity: f32,
+) {
+    let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+    let length_squared = (dx * dx + dy * dy).max(f32::EPSILON);
+    let steps = dx.abs().max(dy.abs()).ceil() as i32;
+    let reach = half_width.ceil() as i32 + 1;
+    // Le long de l'axe principal, chaque rangée ne touche que quelques pixels.
+    let mut last = None;
+    for step in 0..=steps {
+        let t = step as f32 / steps.max(1) as f32;
+        let (cx, cy) = ((a.0 + dx * t).floor() as i32, (a.1 + dy * t).floor() as i32);
+        for y in (cy - reach)..=(cy + reach) {
+            for x in (cx - reach)..=(cx + reach) {
+                if x < 0 || y < 0 || x >= width as i32 || y >= height as i32 {
+                    continue;
+                }
+                let index = y as usize * width as usize + x as usize;
+                let visited = last
+                    .is_some_and(|(px, py): (i32, i32)| (x - px).abs() <= reach && (y - py).abs() <= reach);
+                if visited {
+                    continue;
+                }
+                let (qx, qy) = (x as f32 + 0.5 - a.0, y as f32 + 0.5 - a.1);
+                let along = ((qx * dx + qy * dy) / length_squared).clamp(0.0, 1.0);
+                let distance = (qx - dx * along).hypot(qy - dy * along);
+                let coverage = (half_width + 0.5 - distance).clamp(0.0, 1.0);
+                if coverage > 0.0 {
+                    blend(&mut pixels[index], color, opacity * coverage);
+                }
+            }
+        }
+        last = Some((cx, cy));
+    }
 }
 
 fn blend(color: &mut [f32; 3], over: Color, amount: f32) {
@@ -416,10 +455,10 @@ pub fn blur(image: &Image, radius: u32) -> Image {
 /// Ferrite, et l'erreur.
 pub fn render(source: &Source, width: u32, height: u32) -> (Image, Option<String>) {
     match source {
-        Source::Builtin(builtin) => (waves(*builtin, width, height), None),
+        Source::Builtin(builtin) => (paint(*builtin, width, height), None),
         Source::File(path) => match decode(path) {
             Ok(image) => (cover(&image, width, height), None),
-            Err(error) => (waves(Builtin::Ferrite, width, height), Some(error)),
+            Err(error) => (paint(Builtin::Ferrite, width, height), Some(error)),
         },
     }
 }
@@ -431,7 +470,7 @@ mod tests {
     #[test]
     fn choix_du_fond_dans_les_reglages() {
         assert_eq!(Source::parse(""), Source::Builtin(Builtin::Ferrite));
-        assert_eq!(Source::parse("ocean"), Source::Builtin(Builtin::Ocean));
+        assert_eq!(Source::parse("ardoise"), Source::Builtin(Builtin::Slate));
         assert_eq!(
             Source::parse("/home/a/b.jpg"),
             Source::File("/home/a/b.jpg".into())
@@ -445,22 +484,26 @@ mod tests {
     }
 
     #[test]
-    fn degrade_puis_collines() {
-        let image = waves(Builtin::Ferrite, 400, 300);
-        assert_eq!(image.rgba.len(), 400 * 300 * 4);
+    fn fond_uni_et_hexagones() {
+        let image = paint(Builtin::Ferrite, 1600, 1000);
+        assert_eq!(image.rgba.len(), 1600 * 1000 * 4);
         assert!(image.rgba.chunks_exact(4).all(|pixel| pixel[3] == 255));
         let at = |x: usize, y: usize| {
-            let i = (y * 400 + x) * 4;
+            let i = (y * 1600 + x) * 4;
             [image.rgba[i], image.rgba[i + 1], image.rgba[i + 2]]
         };
-        // En haut à gauche : le bleu nuit du dégradé, loin du halo.
-        let top = WALLPAPER_GRADIENT[0];
-        let [r, g, b] = at(0, 0);
-        assert!(r.abs_diff(top.r) < 6 && g.abs_diff(top.g) < 6 && b.abs_diff(top.b) < 6);
-        // En bas : la dernière colline, sombre, recouvre le corail du dégradé.
-        let [r, _, b] = at(200, 299);
-        assert!(r < 0xC0 && b > 0x50);
+        // Loin des traits : la couleur du fond, #16202D.
+        assert_eq!(at(10, 10), [0x16, 0x20, 0x2D]);
+        // Sur le côté du grand hexagone : un peu plus clair.
+        let side = at(1420, 400);
+        assert!(side[0] > 0x16 && side[0] < 0x40);
         assert!(image.top_is_dark(20));
+        assert!(!paint(Builtin::Light, 160, 100).top_is_dark(5));
+    }
+
+    #[test]
+    fn un_ancien_fond_revient_au_fond_ferrite() {
+        assert_eq!(Source::parse("crepuscule"), Source::Builtin(Builtin::Ferrite));
     }
 
     #[test]

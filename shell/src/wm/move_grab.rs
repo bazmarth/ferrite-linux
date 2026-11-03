@@ -47,7 +47,9 @@ impl PointerGrab<Ferrite> for MoveSurfaceGrab {
             .usable_area()
             .zip(data.screen_area())
             .and_then(|(area, screen)| {
-                super::snap_at(area, screen, event.location).map(|snap| super::snap_zone(area, snap))
+                super::snap_at(area, screen, event.location)
+                    .filter(|_| data.dock_config.snapping)
+                    .map(|snap| super::snap_zone(area, snap))
             });
         if self.window.x11_surface().is_some() {
             let size = self.window.geometry().size;
@@ -80,7 +82,9 @@ impl PointerGrab<Ferrite> for MoveSurfaceGrab {
             // tout le compositeur.
             data.snap_preview = None;
             if let Some((area, screen)) = data.usable_area().zip(data.screen_area()) {
-                if let Some(snap) = super::snap_at(area, screen, handle.current_location()) {
+                if let Some(snap) = super::snap_at(area, screen, handle.current_location())
+                    .filter(|_| data.dock_config.snapping)
+                {
                     data.snap_window(&self.window, snap);
                 }
             }

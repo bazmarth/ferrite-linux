@@ -1,7 +1,6 @@
-//! Paramètres, organisés comme les Réglages de macOS : une colonne teintée par le fond
-//! d'écran (rubriques sur des pastilles colorées), et à droite un grand titre suivi de
-//! sections. Rubriques : à propos, Wi-Fi, Bluetooth, son, Dock et barre des menus,
-//! réglages du bureau (fond d'écran, apparence, écran), clavier, date et heure.
+//! Paramètres, d'après les planches : une colonne de rubriques par catégorie, et à droite un
+//! bandeau suivi de groupes de lignes sur deux colonnes. Une ligne de la maquette sans
+//! fonction réelle reste affichée, grisée (voir `rows::Row::unavailable`).
 //!
 //! Toutes les commandes système passent par `ferrite-system` dans des fils d'exécution
 //! à part : l'interface ne se fige jamais, même si un service ne répond pas.
@@ -17,15 +16,21 @@ use std::{
 /// Durée pendant laquelle un curseur réglé à la main n'est pas remplacé par une relecture.
 const HOLD: Duration = Duration::from_secs(2);
 
+mod rows;
+
+use self::rows::{Lead, Row, group, hero};
 use eframe::egui::{self, Color32, Frame, Margin, RichText, Stroke};
 use ferrite_system::{
     Snapshot,
     about::{self, About},
-    audio::{self, Sink},
+    audio::{self, Sink, Stream},
     bluetooth,
-    config::{Accent, Appearance, DockHiding, DockSize, KEYBOARD_LAYOUTS, ScrollBars, Settings},
+    config::{
+        Accent, Appearance, ClockStyle, CornerAction, DockHiding, DockSize, DoubleClick, KEYBOARD_LAYOUTS,
+        ScrollBars, Settings,
+    },
     display,
-    network::{self, WifiNetwork},
+    network::{self, KnownWifi, WifiNetwork, WifiOptions},
     time,
 };
 use ferrite_ui::wallpaper::{self, Builtin, Image, Source};
@@ -34,62 +39,139 @@ use crate::style::{self, Icons};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Page {
-    About,
     Network,
     Bluetooth,
-    Sound,
-    Dock,
+    Wired,
     Desktop,
+    Dock,
+    Windows,
+    Notifications,
+    Sound,
+    Energy,
+    Displays,
     Keyboard,
+    Mouse,
+    Printers,
+    Accounts,
+    Privacy,
+    Accessibility,
+    Updates,
     DateTime,
+    About,
 }
 
 impl Page {
-    /// Rubriques de la colonne, groupées comme dans les Réglages de macOS (sans ce qui
-    /// n'existe pas sur un PC : compte Apple, partage familial, Touch ID…).
-    const GROUPS: [&'static [Page]; 4] = [
-        &[Page::About],
-        &[Page::Network, Page::Bluetooth, Page::Sound],
-        &[Page::Dock, Page::Desktop],
-        &[Page::Keyboard, Page::DateTime],
+    /// Rubrique demandée par son nom, sur la ligne de commande.
+    fn from_key(key: &str) -> Option<Page> {
+        Some(match key {
+            "wifi" => Page::Network,
+            "bluetooth" => Page::Bluetooth,
+            "reseau" => Page::Wired,
+            "apparence" => Page::Desktop,
+            "dock" => Page::Dock,
+            "fenetres" => Page::Windows,
+            "son" => Page::Sound,
+            "ecrans" => Page::Displays,
+            "clavier" => Page::Keyboard,
+            "souris" => Page::Mouse,
+            "comptes" => Page::Accounts,
+            "date" => Page::DateTime,
+            "apropos" => Page::About,
+            _ => return None,
+        })
+    }
+
+    /// Rubriques de la colonne, par catégorie.
+    const GROUPS: [(&'static str, &'static [Page]); 4] = [
+        ("Connexions", &[Page::Network, Page::Bluetooth, Page::Wired]),
+        (
+            "Personnalisation",
+            &[Page::Desktop, Page::Dock, Page::Windows, Page::Notifications],
+        ),
+        (
+            "Matériel",
+            &[
+                Page::Sound,
+                Page::Energy,
+                Page::Displays,
+                Page::Keyboard,
+                Page::Mouse,
+                Page::Printers,
+            ],
+        ),
+        (
+            "Système",
+            &[
+                Page::Accounts,
+                Page::Privacy,
+                Page::Accessibility,
+                Page::Updates,
+                Page::DateTime,
+                Page::About,
+            ],
+        ),
     ];
 
     fn title(self) -> &'static str {
         match self {
-            Page::About => "À propos de cet ordinateur",
             Page::Network => "Wi-Fi",
             Page::Bluetooth => "Bluetooth",
+            Page::Wired => "Réseau",
+            Page::Desktop => "Apparence",
+            Page::Dock => "Bureau et dock",
+            Page::Windows => "Fenêtres",
+            Page::Notifications => "Notifications",
             Page::Sound => "Son",
-            Page::Dock => "Dock et barre des menus",
-            Page::Desktop => "Réglages du bureau",
+            Page::Energy => "Énergie",
+            Page::Displays => "Écrans",
             Page::Keyboard => "Clavier",
+            Page::Mouse => "Souris et pavé tactile",
+            Page::Printers => "Imprimantes",
+            Page::Accounts => "Comptes",
+            Page::Privacy => "Confidentialité",
+            Page::Accessibility => "Accessibilité",
+            Page::Updates => "Mises à jour",
             Page::DateTime => "Date et heure",
+            Page::About => "À propos",
         }
     }
 
     /// Couleur de la pastille de la rubrique.
-    fn color(self) -> Color32 {
-        rgb(match self {
-            Page::About => 0x1E7FD8,
-            Page::Network | Page::Bluetooth => 0x0A7AFF,
-            Page::Sound => 0xFF2D3A,
-            Page::Dock => 0x4FC8DA,
-            Page::Desktop => 0x2FB2D6,
-            Page::Keyboard => 0x98989D,
-            Page::DateTime => 0xFF6A1A,
-        })
+    fn color(self) -> u32 {
+        match self {
+            Page::Network | Page::Bluetooth | Page::Displays | Page::Accessibility => 0x2779E0,
+            Page::Wired | Page::Energy => 0x1F9D63,
+            Page::Desktop => 0x7C4DE8,
+            Page::Dock | Page::Windows => 0x4B5563,
+            Page::Notifications => 0xE5372B,
+            Page::Sound => 0xDB2C57,
+            Page::Keyboard | Page::Mouse | Page::Printers | Page::Updates | Page::About => 0x6B7280,
+            Page::Accounts | Page::DateTime => 0xE5571A,
+            Page::Privacy => 0x374151,
+        }
     }
 
     fn icon(self) -> &'static str {
         match self {
-            Page::About => "settings-computer",
-            Page::Network => "settings-wifi",
-            Page::Bluetooth => "settings-bluetooth",
-            Page::Sound => "settings-sound",
-            Page::Dock => "settings-dock",
-            Page::Desktop => "settings-desktop",
-            Page::Keyboard => "settings-keyboard",
-            Page::DateTime => "settings-clock",
+            Page::Network => "glyph-wifi",
+            Page::Bluetooth => "glyph-bluetooth",
+            Page::Wired => "glyph-network",
+            Page::Desktop => "glyph-appearance",
+            Page::Dock => "glyph-dock",
+            Page::Windows => "glyph-windows",
+            Page::Notifications => "glyph-bell",
+            Page::Sound => "glyph-sound",
+            Page::Energy => "glyph-energy",
+            Page::Displays => "glyph-screen",
+            Page::Keyboard => "glyph-keyboard",
+            Page::Mouse => "glyph-mouse",
+            Page::Printers => "glyph-printer",
+            Page::Accounts => "glyph-account",
+            Page::Privacy => "glyph-lock",
+            Page::Accessibility => "glyph-access",
+            Page::Updates => "glyph-update",
+            Page::DateTime => "glyph-clock",
+            Page::About => "glyph-about",
         }
     }
 }
@@ -101,6 +183,18 @@ enum Update {
     NetworkDevices(Result<Vec<network::Device>, String>),
     BluetoothDevices(Result<Vec<bluetooth::Device>, String>),
     Sinks(Result<Vec<Sink>, String>),
+    Known(Vec<KnownWifi>),
+    Options(Option<WifiOptions>),
+    Details(Result<Vec<(String, String)>, String>),
+    Hotspot(Result<String, String>),
+    ScanDone,
+    BluetoothName(Option<String>),
+    Audio {
+        sources: Vec<Sink>,
+        input: Option<u8>,
+        balance: Option<i8>,
+        streams: Vec<Stream>,
+    },
     Time(Option<String>, Option<bool>),
     Timezones(Result<Vec<String>, String>),
     About(Box<About>),
@@ -118,7 +212,6 @@ enum ListAction {
     Connect(String),
     Disconnect(String),
     Forget(String),
-    Password(String),
 }
 
 pub struct SettingsState {
@@ -138,6 +231,25 @@ pub struct SettingsState {
     password_for: Option<String>,
     password: String,
     password_visible: bool,
+    /// Réseau masqué : le nom se tape dans la même fenêtre que le mot de passe.
+    hidden_network: bool,
+    known: Vec<KnownWifi>,
+    wifi_options: Option<WifiOptions>,
+    /// Adresse et serveurs du réseau actuel, affichés par « Détails ».
+    details: Option<Vec<(String, String)>>,
+    hotspot: bool,
+    /// Dernier balayage Wi-Fi et Bluetooth, pour les relancer tant que la page est ouverte.
+    wifi_scanned: Option<Instant>,
+    bluetooth_scanned: Option<Instant>,
+    bluetooth_scanning: bool,
+    bluetooth_name: Option<String>,
+    sources: Vec<Sink>,
+    input_volume: u8,
+    /// Balance : 0 tout à gauche, 50 au centre, 100 tout à droite.
+    balance: u8,
+    streams: Vec<Stream>,
+    /// « Ajouter… » : images et chemin pour le fond d'écran.
+    wallpaper_more: bool,
     bluetooth_devices: Option<Vec<bluetooth::Device>>,
     sinks: Vec<Sink>,
     keyboard: String,
@@ -160,8 +272,6 @@ pub struct SettingsState {
     thumbnails: HashMap<Source, Option<egui::TextureHandle>>,
     requested: HashSet<PathBuf>,
     wallpaper_path: String,
-    /// Teinte de la colonne (haut, bas) tirée de chaque fond d'écran.
-    tints: HashMap<Source, (Color32, Color32)>,
 }
 
 impl std::fmt::Debug for SettingsState {
@@ -174,7 +284,7 @@ impl Default for SettingsState {
     fn default() -> Self {
         let (sender, receiver) = mpsc::channel();
         Self {
-            page: Page::About,
+            page: Page::Desktop,
             icons: Icons::default(),
             sender,
             receiver,
@@ -188,6 +298,20 @@ impl Default for SettingsState {
             password_for: None,
             password: String::new(),
             password_visible: false,
+            hidden_network: false,
+            known: Vec::new(),
+            wifi_options: None,
+            details: None,
+            hotspot: false,
+            wifi_scanned: None,
+            bluetooth_scanned: None,
+            bluetooth_scanning: false,
+            bluetooth_name: None,
+            sources: Vec::new(),
+            input_volume: 0,
+            balance: 50,
+            streams: Vec::new(),
+            wallpaper_more: false,
             bluetooth_devices: None,
             sinks: Vec::new(),
             keyboard: Settings::load().keyboard_layout().to_owned(),
@@ -205,12 +329,18 @@ impl Default for SettingsState {
             thumbnails: HashMap::new(),
             requested: HashSet::new(),
             wallpaper_path: String::new(),
-            tints: HashMap::new(),
         }
     }
 }
 
 impl SettingsState {
+    /// Ouvre la rubrique demandée au lancement (« wifi », « son »…).
+    pub fn open_page(&mut self, name: &str) {
+        if let Some(page) = Page::from_key(name) {
+            self.go(page);
+        }
+    }
+
     /// Lance `job` dans un fil à part ; son résultat revient par le canal.
     fn spawn(&mut self, ctx: &egui::Context, job: impl FnOnce() -> Vec<Update> + Send + 'static) {
         self.running += 1;
@@ -266,6 +396,32 @@ impl SettingsState {
                     Ok(sinks) => self.sinks = sinks,
                     Err(error) => self.fail(error),
                 },
+                Update::Known(known) => self.known = known,
+                Update::Options(options) => self.wifi_options = options,
+                Update::Details(result) => match result {
+                    Ok(details) => self.details = Some(details),
+                    Err(error) => self.fail(error),
+                },
+                Update::Hotspot(result) => {
+                    self.hotspot = result.is_ok();
+                    self.message = Some(result);
+                }
+                Update::ScanDone => self.bluetooth_scanning = false,
+                Update::BluetoothName(name) => self.bluetooth_name = name,
+                Update::Audio {
+                    sources,
+                    input,
+                    balance,
+                    streams,
+                } => {
+                    self.sources = sources;
+                    self.streams = streams;
+                    if self.touched.is_none_or(|at| at.elapsed() >= HOLD) {
+                        self.input_volume = input.unwrap_or(self.input_volume);
+                        self.balance =
+                            balance.map_or(self.balance, |value| (i16::from(value) / 2 + 50) as u8);
+                    }
+                }
                 Update::Time(zone, ntp) => {
                     self.timezone = zone;
                     self.ntp = ntp;
@@ -281,10 +437,7 @@ impl SettingsState {
                 Update::WallpaperFiles(files) => self.wallpaper_files = Some(files),
                 Update::Thumbnail(path, image) => {
                     let source = Source::File(path);
-                    let texture = image.map(|image| {
-                        self.tints.insert(source.clone(), tint_of(&image));
-                        thumbnail_texture(ctx, &source.key(), &image)
-                    });
+                    let texture = image.map(|image| thumbnail_texture(ctx, &source.key(), &image));
                     self.thumbnails.insert(source, texture);
                 }
             }
@@ -303,8 +456,12 @@ impl SettingsState {
         self.loaded.push(page);
         match page {
             Page::Network => self.refresh_networks(ctx),
-            Page::Bluetooth => self.refresh_bluetooth(ctx),
-            Page::Sound => self.spawn(ctx, || vec![Update::Sinks(audio::sinks())]),
+            Page::Wired => self.spawn(ctx, || vec![Update::NetworkDevices(network::devices())]),
+            Page::Bluetooth => {
+                self.refresh_bluetooth(ctx);
+                self.spawn(ctx, || vec![Update::BluetoothName(bluetooth::adapter_name())]);
+            }
+            Page::Sound => self.refresh_audio(ctx),
             Page::DateTime => self.spawn(ctx, || {
                 vec![
                     Update::Time(time::timezone(), time::ntp_enabled()),
@@ -313,15 +470,49 @@ impl SettingsState {
             }),
             Page::About => self.spawn(ctx, || vec![Update::About(Box::new(about::read()))]),
             Page::Desktop => self.spawn(ctx, || vec![Update::WallpaperFiles(find_images())]),
-            Page::Dock | Page::Keyboard => {}
+            Page::Dock
+            | Page::Windows
+            | Page::Notifications
+            | Page::Energy
+            | Page::Displays
+            | Page::Keyboard
+            | Page::Mouse
+            | Page::Printers
+            | Page::Accounts
+            | Page::Privacy
+            | Page::Accessibility
+            | Page::Updates => {}
         }
     }
 
     fn refresh_networks(&mut self, ctx: &egui::Context) {
+        self.wifi_scanned = Some(Instant::now());
         self.spawn(ctx, || {
+            let networks = network::wifi_networks();
+            let current = networks
+                .iter()
+                .flatten()
+                .find(|network| network.connected)
+                .map(|network| network.ssid.clone());
             vec![
                 Update::NetworkDevices(network::devices()),
-                Update::Networks(network::wifi_networks()),
+                Update::Known(network::known_wifi().unwrap_or_default()),
+                Update::Options(current.and_then(|name| network::wifi_options(&name).ok())),
+                Update::Networks(networks),
+            ]
+        });
+    }
+
+    fn refresh_audio(&mut self, ctx: &egui::Context) {
+        self.spawn(ctx, || {
+            vec![
+                Update::Sinks(audio::sinks()),
+                Update::Audio {
+                    sources: audio::sources().unwrap_or_default(),
+                    input: audio::input_volume(),
+                    balance: audio::balance(),
+                    streams: audio::streams().unwrap_or_default(),
+                },
             ]
         });
     }
@@ -349,37 +540,47 @@ impl SettingsState {
             self.status(ui, running, message);
         }
 
-        let tint = self.sidebar_tint(&ctx);
-        style::tinted_sidebar(ui, "rubriques", 260.0, tint, |ui| self.sidebar(ui));
+        style::sidebar(ui, "rubriques", 290.0, style::sidebar_color(), true, |ui| {
+            self.sidebar(ui)
+        });
+        let title = self.page.title();
+        style::toolbar(ui, false, |ui| {
+            ui.add_space(14.0);
+            ui.label(RichText::new(title).size(15.0).family(style::strong_family()));
+        });
         egui::CentralPanel::no_frame()
-            .frame(Frame::new().fill(style::content_gray()).inner_margin(Margin {
-                left: 40,
-                right: 40,
-                top: 0,
+            .frame(Frame::new().fill(style::background()).inner_margin(Margin {
+                left: 32,
+                right: 32,
+                top: 24,
                 bottom: 12,
             }))
             .show(ui, |ui| {
-                // Pas de barre d'outils : la bande du haut déplace la fenêtre.
-                let top = ui.max_rect();
-                let strip = egui::Rect::from_min_size(
-                    top.min - egui::vec2(40.0, 0.0),
-                    egui::vec2(top.width() + 80.0, style::TOOLBAR_HEIGHT),
-                );
-                style::drag_area(ui, strip, "contenu");
-                ui.add_space(34.0);
                 egui::ScrollArea::vertical()
                     .auto_shrink(false)
                     .show(ui, |ui| match self.page {
-                        Page::About => self.about_page(ui, &ctx),
+                        Page::About => self.about_page(ui),
                         Page::Network => self.network_page(ui, &ctx),
                         Page::Bluetooth => self.bluetooth_page(ui, &ctx),
+                        Page::Wired => self.wired_page(ui),
                         Page::Sound => self.sound_page(ui, &ctx),
+                        Page::Mouse => self.mouse_page(ui),
                         Page::Dock => self.dock_page(ui),
+                        Page::Windows => self.windows_page(ui),
                         Page::Desktop => self.desktop_page(ui, &ctx),
+                        Page::Displays => self.displays_page(ui, &ctx),
                         Page::Keyboard => self.keyboard_page(ui),
                         Page::DateTime => self.datetime_page(ui, &ctx),
+                        Page::Accounts => self.accounts_page(ui),
+                        Page::Notifications
+                        | Page::Energy
+                        | Page::Printers
+                        | Page::Privacy
+                        | Page::Accessibility
+                        | Page::Updates => self.pending_page(ui),
                     });
             });
+        self.wifi_details_dialog(&ctx);
         self.wifi_password_dialog(&ctx);
     }
 
@@ -410,18 +611,23 @@ impl SettingsState {
     }
 
     fn sidebar(&mut self, ui: &mut egui::Ui) {
-        ui.add(
-            egui::TextEdit::singleline(&mut self.search)
-                .hint_text("Rechercher")
-                .desired_width(f32::INFINITY)
-                .margin(Margin::symmetric(10, 7)),
+        // Champ de recherche sur la ligne du bouton fermer.
+        let body = ui.max_rect();
+        let field = egui::Rect::from_min_size(
+            egui::pos2(body.left() + 34.0, body.top() - style::TOOLBAR_HEIGHT + 10.0),
+            egui::vec2(body.width() - 34.0, 32.0),
         );
-        ui.add_space(10.0);
+        ui.put(
+            field,
+            egui::TextEdit::singleline(&mut self.search)
+                .hint_text("Rechercher un réglage")
+                .desired_width(f32::INFINITY)
+                .margin(Margin::symmetric(10, 6)),
+        );
         let query = self.search.trim().to_lowercase();
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 4.0;
-            let mut first = true;
-            for group in Page::GROUPS {
+            ui.spacing_mut().item_spacing.y = 1.0;
+            for (name, group) in Page::GROUPS {
                 let pages: Vec<Page> = group
                     .iter()
                     .copied()
@@ -430,24 +636,14 @@ impl SettingsState {
                 if pages.is_empty() {
                     continue;
                 }
-                // Trait fin entre deux groupes, en retrait comme sur macOS.
-                if !first {
-                    ui.add_space(5.0);
-                    let rect = ui.available_rect_before_wrap();
-                    ui.painter().hline(
-                        rect.left() + 12.0..=rect.right() - 12.0,
-                        rect.top(),
-                        Stroke::new(1.0, Color32::from_black_alpha(28)),
-                    );
-                    ui.add_space(6.0);
-                }
-                first = false;
+                ui.add_space(8.0);
+                style::sidebar_heading(ui, name);
                 for page in pages {
                     let response = style::sidebar_tile_item(
                         ui,
                         &mut self.icons,
                         page.icon(),
-                        page.color(),
+                        rgb(page.color()),
                         page.title(),
                         self.page == page,
                     );
@@ -459,31 +655,9 @@ impl SettingsState {
         });
     }
 
-    /// Teinte pastel de la colonne, tirée du fond d'écran comme sur macOS ; grise tant que
-    /// l'image n'est pas lue.
-    fn sidebar_tint(&mut self, ctx: &egui::Context) -> (Color32, Color32) {
-        let source = Source::parse(Settings::load().wallpaper());
-        if let Some(tint) = self.tints.get(&source) {
-            return *tint;
-        }
-        match &source {
-            Source::Builtin(builtin) => {
-                let tint = tint_of(&wallpaper::waves(*builtin, 48, 30));
-                self.tints.insert(source, tint);
-                tint
-            }
-            Source::File(path) => {
-                if !self.requested.contains(path) {
-                    self.load_thumbnails(ctx, vec![path.clone()]);
-                }
-                (style::sidebar_color(), style::sidebar_color())
-            }
-        }
-    }
-
     // ---- À propos ---------------------------------------------------------------------
 
-    fn about_page(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+    fn about_page(&mut self, ui: &mut egui::Ui) {
         let Some(about) = self.about.clone() else {
             ui.label(RichText::new("Lecture des informations…").color(style::text_secondary()));
             return;
@@ -526,27 +700,10 @@ impl SettingsState {
         storage_bar(ui, used as f64 / about.disk_total.max(1) as f64);
 
         heading(ui, "Logiciel");
-        let current = Source::parse(Settings::load().wallpaper());
-        self.prepare_thumbnails(ctx, &current);
         ui.horizontal(|ui| {
-            // Pastille du système : le fond d'écran en rond, comme le logo de macOS.
             let (rect, _) = ui.allocate_exact_size(egui::vec2(116.0, 116.0), egui::Sense::hover());
-            let disc = rect.shrink(8.0);
-            ui.painter().circle_filled(
-                disc.center() + egui::vec2(0.0, 2.0),
-                disc.width() / 2.0 + 2.0,
-                Color32::from_black_alpha(30),
-            );
-            ui.painter()
-                .circle_filled(disc.center(), disc.width() / 2.0 + 2.0, Color32::WHITE);
-            if let Some(Some(texture)) = self.thumbnails.get(&current) {
-                // La vignette est en 16:10 : on n'en garde qu'un carré centré.
-                let uv = egui::Rect::from_min_max(egui::pos2(0.1875, 0.0), egui::pos2(0.8125, 1.0));
-                egui::Image::new(texture)
-                    .uv(uv)
-                    .corner_radius((disc.width() / 2.0) as u8)
-                    .paint_at(ui, disc);
-            }
+            self.icons
+                .paint(ui, "ferrite-logo", rect.shrink(8.0), style::IconStyle::Color);
             ui.add_space(26.0);
             ui.vertical(|ui| {
                 ui.add_space(14.0);
@@ -571,136 +728,300 @@ impl SettingsState {
     // ---- Wi-Fi ------------------------------------------------------------------------
 
     fn network_page(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        page_title(ui, "Wi-Fi");
         let wifi = self.snapshot.and_then(|snapshot| snapshot.wifi);
-        let joined = self
+        let bluetooth = self.snapshot.and_then(|snapshot| snapshot.bluetooth);
+        let networks = self.networks.clone().unwrap_or_default();
+        let current = networks.iter().find(|network| network.connected).cloned();
+        // Tant que la page est ouverte, la liste suit les réseaux à portée.
+        if wifi == Some(true) && self.wifi_scanned.is_none_or(|at| at.elapsed() >= WIFI_RESCAN) {
+            self.refresh_networks(ctx);
+        }
+        ctx.request_repaint_after(WIFI_RESCAN);
+        let subtitle = match (wifi, &current) {
+            (Some(true), Some(network)) => format!("Connecté à {}", network.ssid),
+            (Some(true), None) => "Aucun réseau connecté".to_owned(),
+            (Some(false), _) => "Désactivé".to_owned(),
+            (None, _) => "Aucune carte Wi-Fi détectée".to_owned(),
+        };
+        let mut on = wifi == Some(true);
+        if hero(
+            ui,
+            &mut self.icons,
+            (Page::Network.icon(), Page::Network.color()),
+            "Wi-Fi",
+            &subtitle,
+            Some((&mut on, wifi.is_some())),
+        ) {
+            self.act(ctx, "", move || network::set_wifi(on));
+            self.wifi_scanned = None;
+        }
+        ui.add_space(20.0);
+
+        enum Choice {
+            Details,
+            Join(WifiNetwork),
+            Other,
+            Autoconnect(bool),
+            Airplane(bool),
+            Hotspot,
+            Forget(String),
+            Mac(String),
+            Dns(String),
+        }
+        let mut choice = None;
+        let known = self.known.clone();
+        let is_known = |ssid: &str| known.iter().any(|entry| entry.name == ssid);
+        let mut autoconnect = known.is_empty() || known.iter().all(|entry| entry.autoconnect);
+        let mut airplane =
+            wifi != Some(true) && bluetooth != Some(true) && (wifi.is_some() || bluetooth.is_some());
+        let options = self.wifi_options.clone();
+        let hotspot = self.hotspot;
+        ui.spacing_mut().item_spacing.x = 24.0;
+        ui.columns(2, |columns| {
+            let [left, right] = columns else { return };
+            group(left, &mut self.icons, "Réseau actuel", |rows| match &current {
+                Some(network) => {
+                    let hint = format!("Connecté · {}", network.summary());
+                    let row = Row::new(&network.ssid)
+                        .lead(Lead::Bars(network.level()))
+                        .lock(network.secured)
+                        .bold(true)
+                        .hint(&hint)
+                        .ok(true);
+                    if rows.row(row, |ui| rows::button(ui, "Détails", false).clicked()).0 {
+                        choice = Some(Choice::Details);
+                    }
+                }
+                None => {
+                    rows.text(Row::new("Aucun réseau connecté"));
+                }
+            });
+            group(left, &mut self.icons, "Réseaux disponibles", |rows| {
+                for network in networks.iter().filter(|network| !network.connected) {
+                    let hint = if is_known(&network.ssid) {
+                        "Connu"
+                    } else if network.secured {
+                        ""
+                    } else {
+                        "Ouvert · non sécurisé"
+                    };
+                    let row = Row::new(&network.ssid)
+                        .lead(Lead::Bars(network.level()))
+                        .lock(network.secured)
+                        .hint(hint)
+                        .clickable();
+                    if rows.row(row, |_| ()).1.clicked() {
+                        choice = Some(Choice::Join(network.clone()));
+                    }
+                }
+                let other = Row::new("Autre réseau…").hint("Réseau masqué ou configuration manuelle");
+                if rows
+                    .row(other, |ui| rows::button(ui, "Ajouter…", false).clicked())
+                    .0
+                {
+                    choice = Some(Choice::Other);
+                }
+            });
+            group(right, &mut self.icons, "Options", |rows| {
+                let row = Row::new("Connexion automatique").hint("Aux réseaux déjà connus");
+                if rows.row(row, |ui| rows::switch(ui, &mut autoconnect)).0 {
+                    choice = Some(Choice::Autoconnect(autoconnect));
+                }
+                let row = Row::new("Mode avion").hint("Coupe Wi-Fi et Bluetooth");
+                if rows.row(row, |ui| rows::switch(ui, &mut airplane)).0 {
+                    choice = Some(Choice::Airplane(airplane));
+                }
+                let row = Row::new("Point d’accès mobile").hint("Partager la connexion de cet ordinateur");
+                let label = if hotspot { "Arrêter" } else { "Activer…" };
+                if rows.row(row, |ui| rows::button(ui, label, false).clicked()).0 {
+                    choice = Some(Choice::Hotspot);
+                }
+            });
+            if !known.is_empty() {
+                group(right, &mut self.icons, "Réseaux connus", |rows| {
+                    for (index, entry) in known.iter().enumerate() {
+                        let hint = format!("Priorité {}", index + 1);
+                        let row = Row::new(&entry.name).hint(&hint);
+                        if rows.row(row, |ui| rows::button(ui, "Oublier", false).clicked()).0 {
+                            choice = Some(Choice::Forget(entry.name.clone()));
+                        }
+                    }
+                });
+            }
+            group(right, &mut self.icons, "Avancé", |rows| {
+                let mut row = Row::new("Adresse matérielle (MAC)");
+                if options.is_none() {
+                    row = row.unavailable();
+                }
+                let mut mac = options
+                    .as_ref()
+                    .map_or("stable", |known| match known.mac.as_str() {
+                        "permanent" => "permanent",
+                        _ => "stable",
+                    });
+                let changed = rows
+                    .row(row, |ui| {
+                        rows::pick(
+                            ui,
+                            "wifi-mac",
+                            &mut mac,
+                            &[
+                                ("stable", "Aléatoire par réseau"),
+                                ("permanent", "Adresse réelle"),
+                            ],
+                        )
+                    })
+                    .0;
+                if changed {
+                    choice = Some(Choice::Mac(mac.to_owned()));
+                }
+                let mut row = Row::new("Serveurs DNS");
+                if options.is_none() {
+                    row = row.unavailable();
+                }
+                let mut dns = options.as_ref().map_or("", |known| known.dns.as_str());
+                let dns_choices = [
+                    ("", "Automatique"),
+                    ("1.1.1.1", "Cloudflare"),
+                    ("8.8.8.8", "Google"),
+                    ("9.9.9.9", "Quad9"),
+                ];
+                if !dns_choices.iter().any(|(value, _)| *value == dns) {
+                    dns = "";
+                }
+                let changed = rows
+                    .row(row, |ui| rows::pick(ui, "wifi-dns", &mut dns, &dns_choices))
+                    .0;
+                if changed {
+                    choice = Some(Choice::Dns(dns.to_owned()));
+                }
+            });
+        });
+        let name = current.as_ref().map(|network| network.ssid.clone());
+        match choice {
+            Some(Choice::Details) => {
+                let device = self
+                    .network_devices
+                    .iter()
+                    .find(|device| device.kind == "wifi" && device.state.starts_with("connected"))
+                    .map(|device| device.name.clone());
+                if let Some(device) = device {
+                    self.spawn(ctx, move || {
+                        vec![Update::Details(network::device_details(&device))]
+                    });
+                }
+            }
+            Some(Choice::Join(chosen)) => {
+                if chosen.secured && !is_known(&chosen.ssid) {
+                    self.hidden_network = false;
+                    self.password_for = Some(chosen.ssid);
+                    self.password.clear();
+                    self.password_visible = false;
+                } else {
+                    self.wifi_scanned = None;
+                    self.act(ctx, "", move || network::connect_wifi(&chosen.ssid, None));
+                }
+            }
+            Some(Choice::Other) => {
+                self.hidden_network = true;
+                self.password_for = Some(String::new());
+                self.password.clear();
+                self.password_visible = false;
+            }
+            Some(Choice::Autoconnect(enabled)) => {
+                self.wifi_scanned = None;
+                self.act(ctx, "", move || network::set_autoconnect(enabled));
+            }
+            Some(Choice::Airplane(enabled)) => {
+                self.wifi_scanned = None;
+                self.act(ctx, "", move || {
+                    let wifi = network::set_wifi(!enabled);
+                    let radio = bluetooth::set_powered(!enabled);
+                    wifi.and(radio)
+                });
+            }
+            Some(Choice::Hotspot) => {
+                if self.hotspot {
+                    self.hotspot = false;
+                    self.act(ctx, "Point d’accès arrêté", network::stop_hotspot);
+                } else {
+                    self.spawn(ctx, || vec![Update::Hotspot(network::start_hotspot())]);
+                }
+            }
+            Some(Choice::Forget(known)) => {
+                self.wifi_scanned = None;
+                self.act(ctx, "", move || network::forget_wifi(&known));
+            }
+            Some(Choice::Mac(mac)) => {
+                if let Some(name) = name {
+                    self.wifi_scanned = None;
+                    self.act(ctx, "", move || network::set_wifi_mac(&name, &mac));
+                }
+            }
+            Some(Choice::Dns(dns)) => {
+                if let Some(name) = name {
+                    self.wifi_scanned = None;
+                    self.act(ctx, "", move || network::set_wifi_dns(&name, &dns));
+                }
+            }
+            None => {}
+        }
+    }
+
+    /// « Détails » du réseau actuel, et sa déconnexion.
+    fn wifi_details_dialog(&mut self, ctx: &egui::Context) {
+        let Some(details) = self.details.clone() else {
+            return;
+        };
+        let ssid = self
             .networks
             .iter()
             .flatten()
             .find(|network| network.connected)
             .map(|network| network.ssid.clone());
-        let detail = match (wifi, joined) {
-            (Some(true), Some(ssid)) => format!("Connecté à « {ssid} »"),
-            (Some(true), None) => "Aucun réseau Wi-Fi connecté".to_owned(),
-            (Some(false), _) => "Désactivé".to_owned(),
-            (None, _) => "Aucune carte Wi-Fi détectée".to_owned(),
-        };
-        let mut on = wifi == Some(true);
-        let title = if on { "Wi-Fi activé" } else { "Wi-Fi" };
-        if toggle(ui, &mut on, wifi.is_some(), title, &detail) {
-            let message = if on { "Wi-Fi activé" } else { "Wi-Fi désactivé" };
-            self.act(ctx, message, move || network::set_wifi(on));
-        }
-
-        // Connexions actives (filaire comprise).
-        let connected: Vec<_> = self
-            .network_devices
-            .iter()
-            .filter(|device| device.state.starts_with("connected"))
-            .cloned()
-            .collect();
-        if !connected.is_empty() {
-            heading(ui, "Connexions actives");
-            card(ui, |ui| {
-                for (index, device) in connected.iter().enumerate() {
-                    if index > 0 {
-                        separator(ui);
-                    }
-                    let kind = match device.kind.as_str() {
-                        "wifi" => "Wi-Fi",
-                        "ethernet" => "Filaire",
-                        other => other,
-                    };
-                    list_row(ui, |ui| {
-                        ui.vertical(|ui| {
-                            ui.label(RichText::new(&device.connection).size(14.0));
-                            ui.label(
-                                RichText::new(format!("{kind} · {}", device.name))
-                                    .size(11.5)
-                                    .color(style::text_secondary()),
-                            );
+        let (mut close, mut disconnect) = (false, false);
+        egui::Window::new("Détails du réseau")
+            .collapsible(false)
+            .resizable(false)
+            .title_bar(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+            .frame(dialog_frame())
+            .show(ctx, |ui| {
+                ui.set_width(380.0);
+                ui.label(
+                    RichText::new(ssid.as_deref().unwrap_or("Réseau"))
+                        .size(16.0)
+                        .family(style::strong_family()),
+                );
+                ui.add_space(10.0);
+                for (label, value) in &details {
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(label).size(13.0).color(style::text_secondary()));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(RichText::new(value).size(13.0));
                         });
                     });
                 }
-            });
-        }
-
-        if wifi != Some(true) {
-            return;
-        }
-        if heading_with_button(ui, "Réseaux disponibles", "Rechercher") {
-            self.refresh_networks(ctx);
-        }
-        let Some(networks) = self.networks.clone() else {
-            ui.label(RichText::new("Recherche des réseaux…").color(style::text_secondary()));
-            return;
-        };
-        if networks.is_empty() {
-            ui.label(RichText::new("Aucun réseau à portée.").color(style::text_secondary()));
-            return;
-        }
-        let mut action = None;
-        card(ui, |ui| {
-            for (index, network) in networks.iter().enumerate() {
-                if index > 0 {
-                    separator(ui);
-                }
-                list_row(ui, |ui| {
-                    signal_bars(ui, network.signal);
-                    ui.add_space(8.0);
-                    ui.vertical(|ui| {
-                        let name = if network.connected {
-                            RichText::new(&network.ssid).family(style::strong_family())
-                        } else {
-                            RichText::new(&network.ssid)
-                        };
-                        ui.label(name.size(14.0));
-                        let detail = match (network.connected, network.secured) {
-                            (true, _) => "Connecté",
-                            (false, true) => "Protégé par un mot de passe",
-                            (false, false) => "Ouvert",
-                        };
-                        ui.label(RichText::new(detail).size(11.5).color(style::text_secondary()));
-                    });
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let ssid = network.ssid.clone();
-                        if network.connected {
-                            if ui.button("Déconnecter").clicked() {
-                                action = Some(ListAction::Disconnect(ssid));
-                            }
-                        } else if ui.button("Se connecter").clicked() {
-                            action = Some(if network.secured {
-                                ListAction::Password(ssid)
-                            } else {
-                                ListAction::Connect(ssid)
-                            });
-                        }
-                    });
+                ui.add_space(14.0);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    close = rows::button(ui, "Fermer", true).clicked();
+                    disconnect = rows::button(ui, "Déconnecter", false).clicked();
                 });
-            }
-        });
-        match action {
-            Some(ListAction::Disconnect(ssid)) => {
-                self.act(ctx, "Déconnecté", move || network::disconnect_wifi(&ssid));
-                self.loaded.retain(|page| *page != Page::Network);
-            }
-            Some(ListAction::Connect(ssid)) => {
-                self.act(ctx, "Connecté", move || network::connect_wifi(&ssid, None));
-                self.loaded.retain(|page| *page != Page::Network);
-            }
-            Some(ListAction::Password(ssid)) => {
-                self.password_for = Some(ssid);
-                self.password.clear();
-                self.password_visible = false;
-            }
-            Some(ListAction::Forget(_)) | None => {}
+            });
+        if close || disconnect || ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+            self.details = None;
+        }
+        if let (true, Some(ssid)) = (disconnect, ssid) {
+            self.wifi_scanned = None;
+            self.act(ctx, "", move || network::disconnect_wifi(&ssid));
         }
     }
 
     fn wifi_password_dialog(&mut self, ctx: &egui::Context) {
-        let Some(ssid) = self.password_for.clone() else {
+        let Some(mut ssid) = self.password_for.clone() else {
             return;
         };
+        let hidden = self.hidden_network;
         let mut open = true;
         let mut connect = false;
         let mut cancel = false;
@@ -737,8 +1058,23 @@ impl SettingsState {
                             .family(style::strong_family()),
                     );
                     ui.add_space(7.0);
-                    ui.label(RichText::new(&ssid).size(15.0).color(style::text_secondary()));
+                    if !hidden {
+                        ui.label(RichText::new(&ssid).size(15.0).color(style::text_secondary()));
+                    }
                 });
+                if hidden {
+                    ui.add_space(20.0);
+                    ui.label(
+                        RichText::new("Nom du réseau")
+                            .size(14.0)
+                            .family(style::strong_family()),
+                    );
+                    ui.add_space(6.0);
+                    ui.add_sized(
+                        [410.0, 44.0],
+                        egui::TextEdit::singleline(&mut ssid).margin(egui::vec2(14.0, 12.0)),
+                    );
+                }
                 ui.add_space(20.0);
                 ui.label(
                     RichText::new("Mot de passe")
@@ -813,64 +1149,140 @@ impl SettingsState {
             self.password_for = None;
             self.password.clear();
             self.password_visible = false;
-        } else if connect {
+        } else if connect && !ssid.trim().is_empty() {
             let password = std::mem::take(&mut self.password);
             self.password_for = None;
             self.password_visible = false;
+            self.wifi_scanned = None;
             self.act(ctx, "Connecté", move || {
-                network::connect_wifi(&ssid, Some(&password))
+                if hidden {
+                    network::connect_hidden_wifi(&ssid, Some(&password))
+                } else {
+                    network::connect_wifi(&ssid, Some(&password))
+                }
             });
+        } else {
+            self.password_for = Some(ssid);
         }
     }
 
     // ---- Bluetooth --------------------------------------------------------------------
 
     fn bluetooth_page(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        page_title(ui, "Bluetooth");
         let powered = self.snapshot.and_then(|snapshot| snapshot.bluetooth);
-        let detail = match powered {
-            Some(true) => "Visible des appareils proches",
-            Some(false) => "Désactivé",
-            None => "Aucun adaptateur Bluetooth détecté",
-        };
-        let mut on = powered == Some(true);
-        let title = if on { "Bluetooth activé" } else { "Bluetooth" };
-        if toggle(ui, &mut on, powered.is_some(), title, detail) {
-            let message = if on {
-                "Bluetooth activé"
-            } else {
-                "Bluetooth désactivé"
-            };
-            self.act(ctx, message, move || bluetooth::set_powered(on));
-        }
-        if powered != Some(true) {
-            return;
-        }
-        let Some(devices) = self.bluetooth_devices.clone() else {
-            heading(ui, "Mes appareils");
-            ui.label(RichText::new("Lecture des appareils…").color(style::text_secondary()));
-            return;
-        };
-        let (paired, others): (Vec<_>, Vec<_>) = devices.into_iter().partition(|device| device.paired);
-        let mut action = None;
-        if !paired.is_empty() {
-            heading(ui, "Mes appareils");
-            action = self.device_cards(ui, &paired).or(action);
-        }
-        if heading_with_button(ui, "Autres appareils", "Rechercher") {
+        // Tant que la page est ouverte, la recherche des appareils se relance.
+        if powered == Some(true)
+            && !self.bluetooth_scanning
+            && self
+                .bluetooth_scanned
+                .is_none_or(|at| at.elapsed() >= BLUETOOTH_RESCAN)
+        {
+            self.bluetooth_scanning = true;
+            self.bluetooth_scanned = Some(Instant::now());
             self.spawn(ctx, || {
                 let scan = bluetooth::scan();
-                let mut updates = vec![Update::BluetoothDevices(bluetooth::devices())];
+                let mut updates = vec![Update::ScanDone, Update::BluetoothDevices(bluetooth::devices())];
                 if let Err(error) = scan {
                     updates.push(Update::Done(Err(error)));
                 }
                 updates
             });
         }
-        if others.is_empty() {
-            note(ui, "Mets l'appareil en mode appairage, puis Rechercher.");
-        } else {
-            action = self.device_cards(ui, &others).or(action);
+        ctx.request_repaint_after(BLUETOOTH_RESCAN);
+        let subtitle = match (powered, &self.bluetooth_name) {
+            (Some(true), Some(name)) => format!("Visible sous le nom « {name} »"),
+            (Some(true), None) => "Visible des appareils proches".to_owned(),
+            (Some(false), _) => "Désactivé".to_owned(),
+            (None, _) => "Aucun adaptateur Bluetooth détecté".to_owned(),
+        };
+        let mut on = powered == Some(true);
+        if hero(
+            ui,
+            &mut self.icons,
+            (Page::Bluetooth.icon(), Page::Bluetooth.color()),
+            "Bluetooth",
+            &subtitle,
+            Some((&mut on, powered.is_some())),
+        ) {
+            self.act(ctx, "", move || bluetooth::set_powered(on));
+        }
+        ui.add_space(20.0);
+
+        let devices = self.bluetooth_devices.clone().unwrap_or_default();
+        let (paired, others): (Vec<_>, Vec<_>) = devices.into_iter().partition(|device| device.paired);
+        let mut action = None;
+        let scanning = self.bluetooth_scanning;
+        let mut settings = Settings::load();
+        let mut bar_icon = settings.flag("barre_bluetooth", true);
+        let mut save_icon = false;
+        ui.spacing_mut().item_spacing.x = 24.0;
+        ui.columns(2, |columns| {
+            let [left, right] = columns else { return };
+            group(left, &mut self.icons, "Mes appareils", |rows| {
+                if paired.is_empty() {
+                    rows.text(Row::new("Aucun appareil associé"));
+                }
+                for device in &paired {
+                    let hint = device_hint(device);
+                    let row = Row::new(&device.name)
+                        .lead(device_lead(device))
+                        .hint(&hint)
+                        .ok(device.connected)
+                        .clickable();
+                    let label = if device.connected {
+                        "Déconnecter"
+                    } else {
+                        "Connecter"
+                    };
+                    let (clicked, response) =
+                        rows.row(row, |ui| rows::button(ui, label, !device.connected).clicked());
+                    if clicked {
+                        action = Some(if device.connected {
+                            ListAction::Disconnect(device.address.clone())
+                        } else {
+                            ListAction::Connect(device.address.clone())
+                        });
+                    }
+                    response.context_menu(|ui| {
+                        if ui.button("Oublier cet appareil").clicked() {
+                            action = Some(ListAction::Forget(device.address.clone()));
+                            ui.close();
+                        }
+                    });
+                }
+            });
+            group(right, &mut self.icons, "Appareils à proximité", |rows| {
+                let text = if scanning {
+                    "Recherche en cours…"
+                } else {
+                    "Recherche terminée"
+                };
+                rows.row(Row::new("Recherche"), |ui| rows::status(ui, text, scanning));
+                for device in &others {
+                    let row = Row::new(&device.name)
+                        .lead(device_lead(device))
+                        .hint("Prêt à être associé");
+                    if rows.row(row, |ui| rows::button(ui, "Associer", true).clicked()).0 {
+                        action = Some(ListAction::Connect(device.address.clone()));
+                    }
+                }
+            });
+            group(right, &mut self.icons, "Options", |rows| {
+                let row = Row::new("Icône dans la barre supérieure");
+                save_icon = rows.row(row, |ui| rows::switch(ui, &mut bar_icon)).0;
+                rows.row(Row::new("Recevoir des fichiers").unavailable(), |ui| {
+                    let mut off = false;
+                    rows::switch(ui, &mut off);
+                });
+                rows.row(Row::new("Dossier de réception").unavailable(), |ui| {
+                    let mut folder = 0;
+                    rows::pick(ui, "bt-dossier", &mut folder, &[(0, "Téléchargements")]);
+                });
+            });
+        });
+        if save_icon {
+            settings.set_flag("barre_bluetooth", bar_icon);
+            self.save(&settings);
         }
         match action {
             Some(ListAction::Connect(address)) => {
@@ -882,75 +1294,15 @@ impl SettingsState {
             Some(ListAction::Forget(address)) => {
                 self.bluetooth_action(ctx, "Appareil oublié", move || bluetooth::forget(&address));
             }
-            Some(ListAction::Password(_)) | None => {}
+            None => {}
         }
     }
 
-    /// Appareils sur une carte, deux par ligne : image, nom, état et boutons.
-    fn device_cards(&mut self, ui: &mut egui::Ui, devices: &[bluetooth::Device]) -> Option<ListAction> {
-        let mut action = None;
-        card(ui, |ui| {
-            for (index, pair) in devices.chunks(2).enumerate() {
-                if index > 0 {
-                    ui.add_space(14.0);
-                }
-                ui.columns(2, |columns| {
-                    for (column, device) in columns.iter_mut().zip(pair) {
-                        column.horizontal(|ui| {
-                            let (rect, _) =
-                                ui.allocate_exact_size(egui::vec2(84.0, 84.0), egui::Sense::hover());
-                            ui.painter().rect_filled(rect, 18.0, rgb(0xF2F2F6));
-                            let ink = if device.connected {
-                                rgb(0x0A7AFF)
-                            } else {
-                                rgb(0x8E8E93)
-                            };
-                            self.icons.paint(
-                                ui,
-                                device_icon(&device.name),
-                                rect.shrink(20.0),
-                                style::IconStyle::Tinted(ink),
-                            );
-                            ui.add_space(14.0);
-                            ui.vertical(|ui| {
-                                ui.label(RichText::new(&device.name).size(14.0));
-                                let status = match (device.connected, device.paired) {
-                                    (true, _) => "Connecté",
-                                    (false, true) => "Non connecté",
-                                    _ => "Disponible",
-                                };
-                                ui.label(RichText::new(status).size(13.0).color(style::text_secondary()));
-                                ui.add_space(4.0);
-                                let address = device.address.clone();
-                                let main = if device.connected {
-                                    "Déconnecter"
-                                } else {
-                                    "Connecter"
-                                };
-                                if ui
-                                    .add(egui::Button::new(main).min_size(egui::vec2(120.0, 0.0)))
-                                    .clicked()
-                                {
-                                    action = Some(if device.connected {
-                                        ListAction::Disconnect(address.clone())
-                                    } else {
-                                        ListAction::Connect(address.clone())
-                                    });
-                                }
-                                if device.paired
-                                    && ui
-                                        .add(egui::Button::new("Oublier").min_size(egui::vec2(120.0, 0.0)))
-                                        .clicked()
-                                {
-                                    action = Some(ListAction::Forget(address));
-                                }
-                            });
-                        });
-                    }
-                });
-            }
-        });
-        action
+    /// Enregistre les réglages ; seule une erreur s'affiche.
+    fn save(&mut self, settings: &Settings) {
+        if let Err(error) = settings.save() {
+            self.fail(format!("Enregistrement impossible : {error}"));
+        }
     }
 
     fn bluetooth_action(
@@ -972,413 +1324,641 @@ impl SettingsState {
     // ---- Son --------------------------------------------------------------------------
 
     fn sound_page(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        page_title(ui, "Son");
-        let volume = self.snapshot.and_then(|snapshot| snapshot.volume);
-        let Some(current) = volume else {
-            note(ui, "Aucune sortie audio : PipeWire n'est pas démarré.");
-            return;
+        let current = self.snapshot.and_then(|snapshot| snapshot.volume);
+        let sink = self
+            .sinks
+            .iter()
+            .find(|sink| sink.default)
+            .map(|sink| sink.name.clone());
+        let subtitle = match (&sink, current) {
+            (Some(name), Some(_)) => format!("{name} · volume {} %", self.volume),
+            (None, Some(_)) => format!("Volume {} %", self.volume),
+            _ => "Aucune sortie audio : PipeWire n’est pas démarré".to_owned(),
         };
-        field(ui, "Volume de sortie", |ui| {
-            ui.spacing_mut().slider_width = 300.0;
-            let response = ui.add(egui::Slider::new(&mut self.volume, 0..=100).show_value(false));
-            ui.label(RichText::new(format!("{} %", self.volume)).color(style::text_secondary()));
+        hero(
+            ui,
+            &mut self.icons,
+            ("glyph-sound-full", Page::Sound.color()),
+            "Son",
+            &subtitle,
+            None,
+        );
+        ui.add_space(20.0);
+
+        enum Choice {
+            Sink(u32),
+            Source(u32),
+            Volume(u8),
+            Balance(u8, i8),
+            Input(u8),
+            Stream(u32, u8),
+            Test,
+        }
+        let mut choice = None;
+        let sinks = self.sinks.clone();
+        let sources = self.sources.clone();
+        let mut volume = self.volume;
+        let mut balance = self.balance;
+        let mut input = self.input_volume;
+        let mut streams = self.streams.clone();
+        let mut touched = false;
+        // Un curseur agit à la fin du glissement, ou au simple clic.
+        let done = |response: &egui::Response| {
+            response.drag_stopped() || (response.changed() && !response.dragged())
+        };
+        ui.spacing_mut().item_spacing.x = 24.0;
+        ui.columns(2, |columns| {
+            let [left, right] = columns else { return };
+            group(left, &mut self.icons, "Sortie", |rows| {
+                for sink in &sinks {
+                    let row = Row::new(&sink.name)
+                        .lead(sink_lead(&sink.name))
+                        .bold(sink.default);
+                    if rows.row(row, |ui| rows::radio(ui, sink.default).clicked()).0 && !sink.default {
+                        choice = Some(Choice::Sink(sink.id));
+                    }
+                }
+                let text = format!("{volume} %");
+                let (response, _) = rows.row(Row::new("Volume"), |ui| rows::slider(ui, &mut volume, &text));
+                touched |= response.changed();
+                if done(&response) {
+                    choice = Some(Choice::Volume(volume));
+                }
+                let text = balance_label(balance);
+                let (response, _) = rows.row(Row::new("Balance"), |ui| rows::slider(ui, &mut balance, &text));
+                touched |= response.changed();
+                if done(&response) {
+                    choice = Some(Choice::Balance(volume, (i16::from(balance) * 2 - 100) as i8));
+                }
+                let test = rows.row(Row::new("Tester les haut-parleurs"), |ui| {
+                    rows::button(ui, "Tester", false).clicked()
+                });
+                if test.0 {
+                    choice = Some(Choice::Test);
+                }
+            });
+            group(left, &mut self.icons, "Entrée", |rows| {
+                for source in &sources {
+                    let row = Row::new(&source.name)
+                        .lead(Lead::Tile("glyph-mic", 0x4B5563))
+                        .bold(source.default);
+                    if rows.row(row, |ui| rows::radio(ui, source.default).clicked()).0 && !source.default {
+                        choice = Some(Choice::Source(source.id));
+                    }
+                }
+                rows.row(Row::new("Niveau d’entrée").unavailable(), |ui| {
+                    rows::meter(ui, 0)
+                });
+                let text = format!("{input} %");
+                let (response, _) = rows.row(Row::new("Volume d’entrée"), |ui| {
+                    rows::slider(ui, &mut input, &text)
+                });
+                touched |= response.changed();
+                if done(&response) {
+                    choice = Some(Choice::Input(input));
+                }
+            });
+            group(right, &mut self.icons, "Volume par application", |rows| {
+                if streams.is_empty() {
+                    rows.text(Row::new("Aucune application ne joue de son"));
+                }
+                for stream in &mut streams {
+                    let name = if stream.name.is_empty() {
+                        "Application"
+                    } else {
+                        &stream.name
+                    };
+                    let row = Row::new(name).lead(Lead::Tile("glyph-app", 0x4B5563));
+                    let text = format!("{} %", stream.volume);
+                    let (response, _) = rows.row(row, |ui| rows::slider(ui, &mut stream.volume, &text));
+                    touched |= response.changed();
+                    if done(&response) {
+                        choice = Some(Choice::Stream(stream.id, stream.volume));
+                    }
+                }
+            });
+            group(right, &mut self.icons, "Sons système", |rows| {
+                rows.row(Row::new("Volume des alertes").unavailable(), |ui| {
+                    let mut value = 40;
+                    rows::slider(ui, &mut value, "40 %");
+                });
+                rows.row(Row::new("Son d’alerte").unavailable(), |ui| {
+                    let mut sound = 0;
+                    rows::pick(ui, "son-alerte", &mut sound, &[(0, "Goutte")]);
+                });
+                let row = Row::new("Sons des actions")
+                    .hint("Corbeille, capture d’écran")
+                    .unavailable();
+                rows.row(row, |ui| {
+                    let mut off = false;
+                    rows::switch(ui, &mut off);
+                });
+                rows.row(Row::new("Son au démarrage").unavailable(), |ui| {
+                    let mut off = false;
+                    rows::switch(ui, &mut off);
+                });
+            });
+        });
+        self.volume = volume;
+        self.balance = balance;
+        self.input_volume = input;
+        self.streams = streams;
+        if touched {
+            self.touched = Some(Instant::now());
+        }
+        match choice {
+            Some(Choice::Sink(id)) => self.spawn(ctx, move || {
+                let result = audio::set_default_sink(id).map(|()| String::new());
+                vec![Update::Done(result), Update::Sinks(audio::sinks())]
+            }),
+            Some(Choice::Source(id)) => self.spawn(ctx, move || {
+                let result = audio::set_default_sink(id).map(|()| String::new());
+                vec![
+                    Update::Done(result),
+                    Update::Audio {
+                        sources: audio::sources().unwrap_or_default(),
+                        input: audio::input_volume(),
+                        balance: audio::balance(),
+                        streams: audio::streams().unwrap_or_default(),
+                    },
+                ]
+            }),
+            Some(Choice::Volume(level)) => self.act(ctx, "", move || audio::set_volume(level)),
+            Some(Choice::Balance(level, value)) => {
+                self.act(ctx, "", move || audio::set_balance(level, value))
+            }
+            Some(Choice::Input(level)) => self.act(ctx, "", move || audio::set_input_volume(level)),
+            Some(Choice::Stream(id, level)) => self.act(ctx, "", move || audio::set_stream_volume(id, level)),
+            Some(Choice::Test) => self.act(ctx, "", audio::test_speakers),
+            None => {}
+        }
+    }
+
+    // ---- Bureau et dock ---------------------------------------------------------------
+
+    fn dock_page(&mut self, ui: &mut egui::Ui) {
+        let mut settings = Settings::load();
+        let before = settings.clone();
+        dock_preview(ui);
+        ui.add_space(20.0);
+        ui.spacing_mut().item_spacing.x = 24.0;
+        let icons = &mut self.icons;
+        ui.columns(2, |columns| {
+            let [left, right] = columns else { return };
+            group(left, icons, "Dock", |rows| {
+                let px = settings.dock_icon();
+                let mut percent = ((px - 40) * 100 / 40) as u8;
+                let text = format!("{px} px");
+                let (response, _) = rows.row(Row::new("Taille des icônes"), |ui| {
+                    rows::slider(ui, &mut percent, &text)
+                });
+                if response.changed() {
+                    let px = 40 + u32::from(percent) * 40 / 100;
+                    settings.set("dock_icones", &px.to_string());
+                }
+                flag_row(
+                    rows,
+                    &mut settings,
+                    Row::new("Agrandissement au survol"),
+                    "dock_agrandissement",
+                    true,
+                );
+                rows.row(Row::new("Position").unavailable(), |ui| {
+                    rows::segments(ui, &["Bas", "Gauche", "Droite"], 0);
+                });
+                let mut hiding = settings.dock_hiding();
+                let labels = hiding_labels();
+                let row = Row::new("Masquage").hint("Se cache si une fenêtre le recouvre");
+                if rows
+                    .row(row, |ui| rows::pick(ui, "dock-masquage", &mut hiding, &labels))
+                    .0
+                {
+                    settings.set("dock_masquage", hiding.key());
+                }
+                flag_row(
+                    rows,
+                    &mut settings,
+                    Row::new("Apps récentes dans le dock"),
+                    "dock_recentes",
+                    true,
+                );
+                flag_row(
+                    rows,
+                    &mut settings,
+                    Row::new("Point sous les apps ouvertes"),
+                    "dock_points",
+                    true,
+                );
+            });
+            group(left, icons, "Barre supérieure", |rows| {
+                flag_row(
+                    rows,
+                    &mut settings,
+                    Row::new("Translucide"),
+                    "barre_translucide",
+                    true,
+                );
+                let mut clock = settings.clock_style();
+                let labels: Vec<(ClockStyle, &str)> = ClockStyle::ALL
+                    .into_iter()
+                    .map(|choice| (choice, choice.label()))
+                    .collect();
+                if rows
+                    .row(Row::new("Horloge"), |ui| {
+                        rows::pick(ui, "horloge", &mut clock, &labels)
+                    })
+                    .0
+                {
+                    settings.set("horloge", clock.key());
+                }
+                flag_row(
+                    rows,
+                    &mut settings,
+                    Row::new("Pourcentage de batterie"),
+                    "barre_pourcentage",
+                    false,
+                );
+                let mut bar = settings.bar_hiding();
+                let labels = hiding_labels();
+                if rows
+                    .row(Row::new("Masquage"), |ui| {
+                        rows::pick(ui, "barre-masquage", &mut bar, &labels)
+                    })
+                    .0
+                {
+                    settings.set("barre_masquage", bar.key());
+                }
+            });
+            group(right, icons, "Coins actifs", |rows| {
+                let labels: Vec<(CornerAction, &str)> = CornerAction::ALL
+                    .into_iter()
+                    .map(|choice| (choice, choice.label()))
+                    .collect();
+                for (key, name) in [
+                    ("hg", "Haut gauche"),
+                    ("hd", "Haut droit"),
+                    ("bg", "Bas gauche"),
+                    ("bd", "Bas droit"),
+                ] {
+                    let mut action = settings.hot_corner(key);
+                    if rows
+                        .row(Row::new(name), |ui| rows::pick(ui, key, &mut action, &labels))
+                        .0
+                    {
+                        settings.set(&format!("coin_{key}"), action.key());
+                    }
+                }
+            });
+            group(right, icons, "Espaces de travail", |rows| {
+                rows.row(Row::new("Mode").unavailable(), |ui| {
+                    rows::segments(ui, &["Dynamiques", "Nombre fixe"], 0);
+                });
+                rows.row(Row::new("Écran principal uniquement").unavailable(), |ui| {
+                    let mut on = true;
+                    rows::switch(ui, &mut on);
+                });
+            });
+            group(right, icons, "Fenêtres", |rows| {
+                window_rows(rows, &mut settings);
+            });
+        });
+        if settings != before {
+            self.save(&settings);
+        }
+    }
+
+    // ---- Fenêtres ---------------------------------------------------------------------
+
+    fn windows_page(&mut self, ui: &mut egui::Ui) {
+        let mut settings = Settings::load();
+        let before = settings.clone();
+        let icons = &mut self.icons;
+        group(ui, icons, "Comportement", |rows| window_rows(rows, &mut settings));
+        let custom_dock = settings.dock_pinned().is_some();
+        group(ui, icons, "Applications à plusieurs fenêtres", |rows| {
+            let mut multi = settings.multi_window_apps();
+            let mut changed = false;
+            for (name, id) in MULTI_WINDOW_APPS {
+                let mut allowed = multi.iter().any(|known| known == id);
+                if rows.row(Row::new(name), |ui| rows::switch(ui, &mut allowed)).0 {
+                    changed = true;
+                    if allowed {
+                        multi.push(id.to_owned());
+                    } else {
+                        multi.retain(|known| known != id);
+                    }
+                }
+            }
+            if changed {
+                settings.set_multi_window_apps(&multi);
+            }
+        });
+        group(ui, icons, "Dock", |rows| {
+            let row = Row::new("Applications du Dock")
+                .hint("Clic droit sur une icône pour la garder ou la retirer");
+            let reset = rows
+                .row(row, |ui| {
+                    ui.add_enabled_ui(custom_dock, |ui| rows::button(ui, "Rétablir", false).clicked())
+                        .inner
+                })
+                .0;
+            if reset {
+                settings.set_dock_pinned(&DEFAULT_DOCK.map(str::to_owned));
+            }
+        });
+        if settings != before {
+            self.save(&settings);
+        }
+    }
+
+    // ---- Réseau, écrans, comptes, rubriques à venir -----------------------------------
+
+    fn wired_page(&mut self, ui: &mut egui::Ui) {
+        let devices = self.network_devices.clone();
+        hero(
+            ui,
+            &mut self.icons,
+            (Page::Wired.icon(), Page::Wired.color()),
+            "Réseau",
+            "Interfaces de cet ordinateur",
+            None,
+        );
+        ui.add_space(20.0);
+        group(ui, &mut self.icons, "Interfaces", |rows| {
+            if devices.is_empty() {
+                rows.text(Row::new("Aucune interface détectée"));
+            }
+            for device in &devices {
+                let kind = match device.kind.as_str() {
+                    "wifi" => "Wi-Fi",
+                    "ethernet" => "Filaire",
+                    other => other,
+                };
+                let connected = device.state.starts_with("connected");
+                let hint = if connected {
+                    format!("{kind} · {}", device.connection)
+                } else {
+                    format!("{kind} · non connecté")
+                };
+                rows.text(Row::new(&device.name).hint(&hint).ok(connected));
+            }
+        });
+    }
+
+    fn displays_page(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let available = self.snapshot.and_then(|snapshot| snapshot.brightness).is_some();
+        let scale = ui.ctx().pixels_per_point();
+        hero(
+            ui,
+            &mut self.icons,
+            (Page::Displays.icon(), Page::Displays.color()),
+            "Écrans",
+            "Écran principal",
+            None,
+        );
+        ui.add_space(20.0);
+        let mut brightness = self.brightness;
+        let mut response = None;
+        group(ui, &mut self.icons, "Écran principal", |rows| {
+            let mut row = Row::new("Luminosité");
+            if !available {
+                row = row.hint("Non réglable sur cet écran").unavailable();
+            }
+            let text = format!("{brightness} %");
+            response = Some(rows.row(row, |ui| rows::slider(ui, &mut brightness, &text)).0);
+            let scale = format!("{:.0} %", scale * 100.0);
+            rows.text(Row::new("Échelle").hint(&scale));
+        });
+        self.brightness = brightness;
+        if let Some(response) = response {
             if response.changed() {
                 self.touched = Some(Instant::now());
             }
             if response.drag_stopped() || (response.changed() && !response.dragged()) {
-                let level = self.volume;
-                self.act(ctx, "", move || audio::set_volume(level));
+                self.act(ctx, "", move || display::set_brightness(brightness.max(5)));
             }
-        });
-        let mut muted = current.muted;
-        if toggle(
-            ui,
-            &mut muted,
-            true,
-            "Couper le son",
-            "Coupe la sortie sans changer le volume",
-        ) {
-            self.act(ctx, "", move || audio::set_muted(muted));
-        }
-        if self.sinks.is_empty() {
-            return;
-        }
-        heading(ui, "Sortie");
-        let mut chosen = None;
-        card(ui, |ui| {
-            for (index, sink) in self.sinks.iter().enumerate() {
-                if index > 0 {
-                    separator(ui);
-                }
-                list_row(ui, |ui| {
-                    if radio(ui, sink.default, &sink.name).clicked() && !sink.default {
-                        chosen = Some(sink.id);
-                    }
-                });
-            }
-        });
-        if let Some(id) = chosen {
-            self.spawn(ctx, move || {
-                let result = audio::set_default_sink(id).map(|()| "Sortie changée".to_owned());
-                vec![Update::Done(result), Update::Sinks(audio::sinks())]
-            });
         }
     }
 
-    // ---- Dock et barre des menus ------------------------------------------------------
-
-    fn dock_page(&mut self, ui: &mut egui::Ui) {
-        page_title(ui, "Dock et barre des menus");
-        let mut settings = Settings::load();
-        let (size, hiding, bar) = (
-            settings.dock_size(),
-            settings.dock_hiding(),
-            settings.bar_hiding(),
+    fn accounts_page(&mut self, ui: &mut egui::Ui) {
+        let (full, login) = self.user.clone();
+        hero(
+            ui,
+            &mut self.icons,
+            (Page::Accounts.icon(), Page::Accounts.color()),
+            "Comptes",
+            "Compte de cette session",
+            None,
         );
-        let (mut new_size, mut new_hiding, mut new_bar) = (size, hiding, bar);
-        let mut new_dock_height = settings.dock_height();
-        let mut new_bar_height = settings.bar_height();
-        let magnify = settings.dock_magnify();
-        let mut new_magnify = magnify;
-        let multi = settings.multi_window_apps();
-        let mut new_multi = multi.clone();
-        let custom_dock = settings.dock_pinned().is_some();
-        let mut reset_dock = false;
-
-        heading(ui, "Dock");
-        field(ui, "Taille", |ui| {
-            egui::ComboBox::from_id_salt("dock-taille")
-                .selected_text(new_size.label())
-                .width(140.0)
-                .show_ui(ui, |ui| {
-                    for choice in DockSize::ALL {
-                        ui.selectable_value(&mut new_size, choice, choice.label());
-                    }
-                });
-        });
-        field(ui, "Hauteur du Dock", |ui| {
-            ui.add(
-                egui::Slider::new(&mut new_dock_height, 68..=120)
-                    .suffix(" px")
-                    .integer(),
+        ui.add_space(20.0);
+        group(ui, &mut self.icons, "Compte actuel", |rows| {
+            rows.text(
+                Row::new(&full)
+                    .hint(&login)
+                    .lead(Lead::Tile("glyph-account", 0xE5571A)),
             );
         });
-        field(ui, "Masquer le Dock", |ui| {
-            egui::ComboBox::from_id_salt("dock-masquage")
-                .selected_text(new_hiding.label())
-                .width(260.0)
-                .show_ui(ui, |ui| {
-                    for choice in DockHiding::ALL {
-                        ui.selectable_value(&mut new_hiding, choice, choice.label());
-                    }
-                });
-        });
-        note(
-            ui,
-            "Un Dock masqué revient quand la souris touche le bas de l'écran, ou avec la touche Super.",
-        );
-        ui.add_space(8.0);
-        toggle(
-            ui,
-            &mut new_magnify,
-            true,
-            "Agrandir les icônes sous la souris",
-            "",
-        );
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            if ui
-                .add_enabled(
-                    custom_dock,
-                    egui::Button::new("Rétablir les applications du Dock"),
-                )
-                .clicked()
-            {
-                reset_dock = true;
-            }
-            note(
-                ui,
-                "Clic droit sur une icône du Dock pour la garder ou la retirer.",
-            );
-        });
+    }
 
-        heading(ui, "Barre des menus");
-        field(ui, "Hauteur", |ui| {
-            ui.add(
-                egui::Slider::new(&mut new_bar_height, 24..=60)
-                    .suffix(" px")
-                    .integer(),
-            );
-        });
-        field(ui, "Masquer la barre des menus", |ui| {
-            egui::ComboBox::from_id_salt("barre-masquage")
-                .selected_text(new_bar.bar_label())
-                .width(260.0)
-                .show_ui(ui, |ui| {
-                    for choice in DockHiding::ALL {
-                        ui.selectable_value(&mut new_bar, choice, choice.bar_label());
-                    }
-                });
-        });
-        note(
+    /// Rubrique de la maquette sans réglage pour l'instant : elle le dit.
+    fn pending_page(&mut self, ui: &mut egui::Ui) {
+        let page = self.page;
+        hero(
             ui,
-            "Elle revient quand la souris touche le bord du haut de l'écran. En plein écran, la barre et le Dock se masquent toujours.",
+            &mut self.icons,
+            (page.icon(), page.color()),
+            page.title(),
+            "Cette rubrique n’est pas encore disponible.",
+            None,
         );
-
-        heading(ui, "Fenêtres");
-        note(
-            ui,
-            "Les autres applications n'ont qu'une fenêtre : les relancer ramène celle qui est ouverte, même réduite dans le Dock.",
-        );
-        ui.add_space(8.0);
-        card(ui, |ui| {
-            for (index, (name, id)) in MULTI_WINDOW_APPS.into_iter().enumerate() {
-                if index > 0 {
-                    separator(ui);
-                }
-                let mut allowed = new_multi.iter().any(|known| known == id);
-                list_row(ui, |ui| {
-                    ui.label(RichText::new(name).size(14.0));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if style::switch(ui, &mut allowed, true).changed() {
-                            if allowed {
-                                new_multi.push(id.to_owned());
-                            } else {
-                                new_multi.retain(|known| known != id);
-                            }
-                        }
-                        ui.label(RichText::new("Plusieurs fenêtres").color(style::text_secondary()));
-                    });
-                });
-            }
-        });
-
-        if (new_size, new_hiding, new_bar, new_magnify) != (size, hiding, bar, magnify)
-            || new_dock_height != settings.dock_height()
-            || new_bar_height != settings.bar_height()
-            || new_multi != multi
-            || reset_dock
-        {
-            settings.set("dock_taille", new_size.key());
-            settings.set("dock_masquage", new_hiding.key());
-            settings.set("barre_masquage", new_bar.key());
-            settings.set("dock_hauteur", &new_dock_height.to_string());
-            settings.set("barre_hauteur", &new_bar_height.to_string());
-            settings.set("dock_agrandissement", if new_magnify { "oui" } else { "non" });
-            settings.set_multi_window_apps(&new_multi);
-            if reset_dock {
-                settings.set_dock_pinned(&DEFAULT_DOCK.map(str::to_owned));
-            }
-            self.message = Some(
-                settings
-                    .save()
-                    .map(|()| "Réglage appliqué".to_owned())
-                    .map_err(|error| format!("Enregistrement impossible : {error}")),
-            );
-        }
     }
 
     // ---- Réglages du bureau -----------------------------------------------------------
 
     /// Fond d'écran, apparence et écran sur une seule page, comme sur la maquette.
     fn desktop_page(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        page_title(ui, "Réglages du bureau");
         let mut settings = Settings::load();
         let current = Source::parse(settings.wallpaper());
         let mut wallpaper_choice = current.clone();
         self.prepare_thumbnails(ctx, &current);
+        let before = settings.clone();
+        ui.set_max_width(ui.available_width().min(820.0));
 
-        heading(ui, "Fond d’écran");
+        let appearance = settings.appearance();
+        section_title(ui, "Style");
         ui.horizontal(|ui| {
-            ui.vertical(|ui| {
-                Frame::new()
-                    .fill(style::background())
-                    .stroke(Stroke::new(1.0, Color32::from_black_alpha(16)))
-                    .corner_radius(10)
-                    .inner_margin(Margin::same(14))
-                    .show(ui, |ui| {
-                        let (rect, _) =
-                            ui.allocate_exact_size(egui::vec2(288.0, 180.0), egui::Sense::hover());
-                        paint_thumbnail(ui, rect, self.thumbnails.get(&current));
-                    });
-                ui.add_space(4.0);
-                note(
-                    ui,
-                    "Fais glisser une image dans la fenêtre\npour en faire ton fond d’écran",
-                );
-            });
-            ui.add_space(20.0);
-            ui.vertical(|ui| {
-                ui.add_space(6.0);
-                ui.label(
-                    RichText::new(source_label(&current))
-                        .size(15.0)
-                        .family(style::strong_family()),
-                );
-                let kind = match current {
-                    Source::Builtin(_) => "Fond Ferrite",
-                    Source::File(_) => "Image, recadrée pour remplir l’écran",
-                };
-                ui.label(RichText::new(kind).color(style::text_secondary()));
-            });
+            ui.spacing_mut().item_spacing.x = 16.0;
+            for mode in Appearance::ALL {
+                if appearance_choice(ui, mode, appearance == mode).clicked() {
+                    settings.set("apparence", mode.key());
+                }
+            }
         });
-        ui.add_space(12.0);
-        subheading(ui, "Fonds Ferrite");
+        ui.add_space(22.0);
+
+        section_title(ui, "Couleur d’accent");
+        let mut accent = settings.accent();
+        accent_picker(ui, &mut accent);
+        if accent != settings.accent() {
+            settings.set("accent", accent.key());
+        }
+        ui.add_space(22.0);
+
+        section_title(ui, "Fond d’écran");
         ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = egui::vec2(12.0, 10.0);
+            ui.spacing_mut().item_spacing = egui::vec2(14.0, 14.0);
             for builtin in Builtin::ALL {
                 let source = Source::Builtin(builtin);
-                let thumbnail = self.thumbnails.get(&source);
-                if wallpaper_tile(ui, thumbnail, builtin.label(), current == source).clicked() {
+                if builtin_wallpaper_tile(ui, builtin, current == source).clicked() {
                     wallpaper_choice = source;
                 }
             }
-        });
-        subheading(ui, "Vos images");
-        match &self.wallpaper_files {
-            None => note(ui, "Recherche des images…"),
-            Some(files) if files.is_empty() => {
-                note(
-                    ui,
-                    "Aucune image PNG ou JPEG dans Images, Pictures ou /usr/share/backgrounds.",
+            if let Source::File(_) = &current {
+                let thumbnail = self.thumbnails.get(&current);
+                let (rect, _) = ui.allocate_exact_size(WALLPAPER_TILE, egui::Sense::hover());
+                paint_thumbnail(ui, rect, thumbnail);
+                ui.painter().rect_stroke(
+                    rect,
+                    10.0,
+                    Stroke::new(3.0, style::accent()),
+                    egui::StrokeKind::Outside,
                 );
             }
-            Some(files) => {
-                ui.horizontal_wrapped(|ui| {
-                    ui.spacing_mut().item_spacing = egui::vec2(12.0, 10.0);
-                    for path in files {
-                        let source = Source::File(path.clone());
-                        let thumbnail = self.thumbnails.get(&source);
-                        let response =
-                            wallpaper_tile(ui, thumbnail, &source_label(&source), current == source)
-                                .on_hover_text(path.display().to_string());
-                        if response.clicked() {
-                            wallpaper_choice = source;
-                        }
-                    }
-                });
-            }
-        }
-        ui.add_space(6.0);
-        field(ui, "Autre image", |ui| {
-            let field = ui.add(
-                egui::TextEdit::singleline(&mut self.wallpaper_path)
-                    .hint_text("/home/moi/Images/photo.jpg")
-                    .desired_width(300.0),
-            );
-            let entered = field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
-            if ui.button("Utiliser").clicked() || entered {
-                let path = PathBuf::from(self.wallpaper_path.trim());
-                match wallpaper::decode(&path) {
-                    Ok(_) if path.is_absolute() => wallpaper_choice = Source::File(path),
-                    Ok(_) => self.fail("Donne le chemin complet de l’image (il commence par /)".to_owned()),
-                    Err(error) => self.fail(format!("Image illisible : {error}")),
-                }
+            if add_wallpaper_tile(ui).clicked() {
+                self.wallpaper_more = !self.wallpaper_more;
             }
         });
+        if self.wallpaper_more {
+            ui.add_space(12.0);
+            match &self.wallpaper_files {
+                None => note(ui, "Recherche des images…"),
+                Some(files) if files.is_empty() => {
+                    note(
+                        ui,
+                        "Aucune image PNG ou JPEG dans Images, Pictures ou /usr/share/backgrounds.",
+                    );
+                }
+                Some(files) => {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = egui::vec2(12.0, 10.0);
+                        for path in files {
+                            let source = Source::File(path.clone());
+                            let thumbnail = self.thumbnails.get(&source);
+                            let response =
+                                wallpaper_tile(ui, thumbnail, &source_label(&source), current == source)
+                                    .on_hover_text(path.display().to_string());
+                            if response.clicked() {
+                                wallpaper_choice = source;
+                            }
+                        }
+                    });
+                }
+            }
+            ui.add_space(6.0);
+            field(ui, "Autre image", |ui| {
+                let field = ui.add(
+                    egui::TextEdit::singleline(&mut self.wallpaper_path)
+                        .hint_text("/home/moi/Images/photo.jpg")
+                        .desired_width(300.0),
+                );
+                let entered = field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
+                if ui.button("Utiliser").clicked() || entered {
+                    let path = PathBuf::from(self.wallpaper_path.trim());
+                    match wallpaper::decode(&path) {
+                        Ok(_) if path.is_absolute() => wallpaper_choice = Source::File(path),
+                        Ok(_) => {
+                            self.fail("Donne le chemin complet de l’image (il commence par /)".to_owned())
+                        }
+                        Err(error) => self.fail(format!("Image illisible : {error}")),
+                    }
+                }
+            });
+        }
+        ui.add_space(22.0);
+
+        let icons = &mut self.icons;
+        group(ui, icons, "Thèmes et affichage", |rows| {
+            rows.row(Row::new("Thème d’icônes"), |ui| {
+                let mut theme = 0;
+                rows::pick(ui, "theme-icones", &mut theme, &[(0, "Ferrite")]);
+            });
+            rows.row(Row::new("Thème de curseurs").unavailable(), |ui| {
+                let mut theme = 0;
+                rows::pick(ui, "theme-curseurs", &mut theme, &[(0, "Ferrite-Cursors")]);
+            });
+            rows.row(Row::new("Taille du curseur").unavailable(), |ui| {
+                let mut size = 24;
+                rows::pick(ui, "taille-curseur", &mut size, &[(24, "24 px")]);
+            });
+            rows.row(Row::new("Taille du texte").hint("100 %").unavailable(), |ui| {
+                let mut size = 40;
+                rows::slider(ui, &mut size, "100 %");
+            });
+            flag_row(
+                rows,
+                &mut settings,
+                Row::new("Barre supérieure translucide").hint("Laisse transparaître le fond d’écran"),
+                "barre_translucide",
+                true,
+            );
+            flag_row(
+                rows,
+                &mut settings,
+                Row::new("Réduire les animations").hint("Sans effet de transition sur les fenêtres"),
+                "reduire_animations",
+                false,
+            );
+        });
+        group(ui, icons, "Plus de réglages", |rows| {
+            let mut highlight = settings.highlight();
+            let mut choices: Vec<(Option<Accent>, &str)> = vec![(None, "Couleur d’accent")];
+            choices.extend(
+                Accent::ALL
+                    .into_iter()
+                    .map(|choice| (Some(choice), choice.label())),
+            );
+            if rows
+                .row(Row::new("Couleur de surlignage"), |ui| {
+                    rows::pick(ui, "surlignage", &mut highlight, &choices)
+                })
+                .0
+            {
+                settings.set("surlignage", highlight.map_or("accent", Accent::key));
+            }
+            let mut sizes = settings.sidebar_icons();
+            let choices: Vec<(DockSize, &str)> = DockSize::ALL
+                .into_iter()
+                .map(|choice| (choice, sidebar_icons_label(choice)))
+                .collect();
+            if rows
+                .row(Row::new("Icônes de la barre latérale"), |ui| {
+                    rows::pick(ui, "icones-colonne", &mut sizes, &choices)
+                })
+                .0
+            {
+                settings.set("barre_laterale_icones", sizes.key());
+            }
+            let mut scroll = settings.scroll_bars();
+            let choices: Vec<(ScrollBars, &str)> = ScrollBars::ALL
+                .into_iter()
+                .map(|choice| (choice, choice.label()))
+                .collect();
+            if rows
+                .row(Row::new("Barres de défilement"), |ui| {
+                    rows::pick(ui, "defilement", &mut scroll, &choices)
+                })
+                .0
+            {
+                settings.set("barres_defilement", scroll.key());
+            }
+        });
+
+        if settings != before {
+            style::apply_preferences(ui.ctx(), &settings);
+            self.save(&settings);
+        }
         if wallpaper_choice != current {
             self.set_wallpaper(&mut settings, &wallpaper_choice);
-        }
-
-        self.appearance_section(ui, &mut settings);
-
-        heading(ui, "Écran");
-        let available = self.snapshot.and_then(|snapshot| snapshot.brightness).is_some();
-        field(ui, "Luminosité", |ui| {
-            if available {
-                ui.spacing_mut().slider_width = 300.0;
-                let response = ui.add(egui::Slider::new(&mut self.brightness, 5..=100).show_value(false));
-                ui.label(RichText::new(format!("{} %", self.brightness)).color(style::text_secondary()));
-                if response.changed() {
-                    self.touched = Some(Instant::now());
-                }
-                if response.drag_stopped() || (response.changed() && !response.dragged()) {
-                    let level = self.brightness;
-                    self.act(ctx, "", move || display::set_brightness(level));
-                }
-            } else {
-                ui.label(RichText::new("Non réglable sur cet écran").color(style::text_secondary()));
-            }
-        });
-        let scale = ui.ctx().pixels_per_point();
-        field(ui, "Échelle", |ui| {
-            ui.label(RichText::new(format!("{:.0} %", scale * 100.0)).color(style::text_secondary()));
-        });
-    }
-
-    fn appearance_section(&mut self, ui: &mut egui::Ui, settings: &mut Settings) {
-        let current = (
-            settings.appearance(),
-            settings.accent(),
-            settings.highlight(),
-            settings.sidebar_icons(),
-            settings.scroll_bars(),
-        );
-        let (mut appearance, mut accent, mut highlight, mut icons, mut scroll) = current;
-        heading(ui, "Apparence");
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 14.0;
-            for mode in Appearance::ALL {
-                if appearance_choice(ui, mode, appearance == mode).clicked() {
-                    appearance = mode;
-                }
-            }
-        });
-        note(
-            ui,
-            "Auto bascule entre clair (7 h–19 h) et sombre (19 h–7 h, UTC).",
-        );
-        ui.add_space(6.0);
-        field(ui, "Couleur d’accentuation", |ui| {
-            accent_picker(ui, &mut accent)
-        });
-        field(ui, "Couleur de surlignage", |ui| {
-            let color = style::accent_color(highlight.unwrap_or(accent));
-            let (swatch, _) = ui.allocate_exact_size(egui::vec2(46.0, 22.0), egui::Sense::hover());
-            ui.painter()
-                .rect_filled(swatch, 5.0, color.lerp_to_gamma(style::background(), 0.6));
-            egui::ComboBox::from_id_salt("surlignage")
-                .selected_text(highlight.map_or("Couleur d’accentuation", Accent::label))
-                .width(190.0)
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut highlight, None, "Couleur d’accentuation");
-                    for choice in Accent::ALL.into_iter().skip(1) {
-                        ui.selectable_value(&mut highlight, Some(choice), choice.label());
-                    }
-                });
-        });
-        field(ui, "Icônes de la barre latérale", |ui| {
-            ui.label(RichText::new("Taille\u{a0}:").size(14.0));
-            egui::ComboBox::from_id_salt("icones-colonne")
-                .selected_text(sidebar_icons_label(icons))
-                .width(110.0)
-                .show_ui(ui, |ui| {
-                    for choice in DockSize::ALL {
-                        ui.selectable_value(&mut icons, choice, sidebar_icons_label(choice));
-                    }
-                });
-        });
-        field(ui, "Barres de défilement", |ui| {
-            egui::ComboBox::from_id_salt("defilement")
-                .selected_text(scroll.label())
-                .width(340.0)
-                .show_ui(ui, |ui| {
-                    for choice in ScrollBars::ALL {
-                        ui.selectable_value(&mut scroll, choice, choice.label());
-                    }
-                });
-        });
-
-        if (appearance, accent, highlight, icons, scroll) != current {
-            settings.set("apparence", appearance.key());
-            settings.set("accent", accent.key());
-            settings.set("surlignage", highlight.map_or("accent", Accent::key));
-            settings.set("barre_laterale_icones", icons.key());
-            settings.set("barres_defilement", scroll.key());
-            style::apply_preferences(ui.ctx(), settings);
-            if let Err(error) = settings.save() {
-                self.fail(format!("Enregistrement impossible : {error}"));
-            }
         }
     }
 
@@ -1416,7 +1996,7 @@ impl SettingsState {
             self.thumbnails
                 .entry(Source::Builtin(builtin))
                 .or_insert_with(|| {
-                    let image = wallpaper::waves(builtin, THUMBNAIL.0, THUMBNAIL.1);
+                    let image = wallpaper::paint(builtin, THUMBNAIL.0, THUMBNAIL.1);
                     Some(thumbnail_texture(ctx, builtin.key(), &image))
                 });
         }
@@ -1453,7 +2033,6 @@ impl SettingsState {
     // ---- Clavier ----------------------------------------------------------------------
 
     fn keyboard_page(&mut self, ui: &mut egui::Ui) {
-        page_title(ui, "Clavier");
         field(ui, "Disposition", |ui| {
             let current = KEYBOARD_LAYOUTS
                 .iter()
@@ -1492,10 +2071,30 @@ impl SettingsState {
         });
     }
 
+    fn mouse_page(&mut self, ui: &mut egui::Ui) {
+        heading(ui, "Défilement");
+        let mut settings = Settings::load();
+        let mut inverted = settings.scroll_inverted();
+        if toggle(
+            ui,
+            &mut inverted,
+            true,
+            "Inverser le sens de défilement",
+            "Inverse le sens de la molette. Le pavé tactile conserve son défilement naturel.",
+        ) {
+            settings.set("defilement_inverse", if inverted { "oui" } else { "non" });
+            self.message = Some(
+                settings
+                    .save()
+                    .map(|()| "Réglage enregistré".to_owned())
+                    .map_err(|error| format!("Enregistrement impossible : {error}")),
+            );
+        }
+    }
+
     // ---- Date et heure ----------------------------------------------------------------
 
     fn datetime_page(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        page_title(ui, "Date et heure");
         let mut on = self.ntp == Some(true);
         if toggle(
             ui,
@@ -1582,11 +2181,275 @@ fn format_uptime(seconds: u64) -> String {
 }
 
 /// Applications Ferrite et leur identifiant de fenêtre, pour le réglage « Plusieurs
-/// fenêtres ».
-const MULTI_WINDOW_APPS: [(&str, &str); 6] = [
+/// fenêtres ». Le Terminal n'y est pas : il peut toujours en ouvrir plusieurs.
+/// Relecture de la liste des réseaux et recherche des appareils, tant que la page est ouverte.
+const WIFI_RESCAN: Duration = Duration::from_secs(30);
+const BLUETOOTH_RESCAN: Duration = Duration::from_secs(20);
+const WALLPAPER_TILE: egui::Vec2 = egui::vec2(136.0, 84.0);
+
+/// Titre d'une partie de la page Apparence.
+fn section_title(ui: &mut egui::Ui, text: &str) {
+    ui.label(
+        RichText::new(text)
+            .size(14.0)
+            .family(style::strong_family())
+            .color(style::themed(rgb(0x374151), rgb(0xD1D5DB))),
+    );
+    ui.add_space(12.0);
+}
+
+/// Choix de masquage du Dock et de la barre.
+fn hiding_labels() -> [(DockHiding, &'static str); 3] {
+    [
+        (DockHiding::Smart, "Intelligent"),
+        (DockHiding::Always, "Toujours"),
+        (DockHiding::Never, "Jamais"),
+    ]
+}
+
+/// Ligne oui/non enregistrée sous `key`.
+fn flag_row(rows: &mut rows::Group<'_>, settings: &mut Settings, row: Row<'_>, key: &str, default: bool) {
+    let mut on = match key {
+        "dock_agrandissement" => settings.dock_magnify(),
+        _ => settings.flag(key, default),
+    };
+    if rows.row(row, |ui| rows::switch(ui, &mut on)).0 {
+        settings.set_flag(key, on);
+    }
+}
+
+/// Réglages des fenêtres, communs à « Bureau et dock » et à « Fenêtres ».
+fn window_rows(rows: &mut rows::Group<'_>, settings: &mut Settings) {
+    flag_row(
+        rows,
+        settings,
+        Row::new("Aimantation aux bords"),
+        "aimantation",
+        true,
+    );
+    flag_row(rows, settings, Row::new("Tuilage automatique"), "tuilage", false);
+    let mut action = settings.double_click();
+    let labels: Vec<(DoubleClick, &str)> = DoubleClick::ALL
+        .into_iter()
+        .map(|choice| (choice, choice.label()))
+        .collect();
+    if rows
+        .row(Row::new("Double-clic sur la barre de titre"), |ui| {
+            rows::pick(ui, "double-clic", &mut action, &labels)
+        })
+        .0
+    {
+        settings.set("double_clic", action.key());
+    }
+}
+
+/// Pastille et symbole d'un appareil Bluetooth, selon le genre qu'il annonce.
+fn device_lead(device: &bluetooth::Device) -> Lead {
+    let name = device.name.to_lowercase();
+    let kind = |known: &str, word: &str| device.icon.contains(known) || name.contains(word);
+    if kind("audio-head", "casque") || kind("audio-card", "buds") {
+        Lead::Tile("glyph-head", 0xDB2C57)
+    } else if kind("mouse", "souris") {
+        Lead::Tile("glyph-mouse", 0x4B5563)
+    } else if kind("keyboard", "clavier") {
+        Lead::Tile("glyph-keyboard", 0x4B5563)
+    } else if kind("phone", "téléphone") {
+        Lead::Tile("glyph-phone", 0x1F9D63)
+    } else if kind("watch", "montre") {
+        Lead::Tile("glyph-watch", 0x7C4DE8)
+    } else if kind("computer", "laptop") {
+        Lead::Tile("glyph-laptop", 0x4B5563)
+    } else if kind("audio", "enceinte") {
+        Lead::Tile("glyph-speaker", 0xE5571A)
+    } else {
+        Lead::Tile("glyph-bluetooth", 0x2779E0)
+    }
+}
+
+/// « Connecté · batterie 80 % », « Non connecté ».
+fn device_hint(device: &bluetooth::Device) -> String {
+    match (device.connected, device.battery) {
+        (true, Some(battery)) => format!("Connecté · batterie {battery} %"),
+        (true, None) => "Connecté".to_owned(),
+        (false, _) => "Non connecté".to_owned(),
+    }
+}
+
+/// Pastille d'une sortie audio, d'après son nom.
+fn sink_lead(name: &str) -> Lead {
+    let lower = name.to_lowercase();
+    if lower.contains("hdmi") || lower.contains("displayport") {
+        Lead::Tile("glyph-screen", 0x2779E0)
+    } else if lower.contains("head") || lower.contains("casque") || lower.contains("bluez") {
+        Lead::Tile("glyph-head", 0xDB2C57)
+    } else {
+        Lead::Tile("glyph-laptop", 0x4B5563)
+    }
+}
+
+/// « Centre », « Gauche 40 », « Droite 20 » pour une balance de 0 à 100.
+fn balance_label(balance: u8) -> String {
+    match i16::from(balance) * 2 - 100 {
+        0 => "Centre".to_owned(),
+        value if value < 0 => format!("G {}", -value),
+        value => format!("D {value}"),
+    }
+}
+
+/// Aperçu de « Bureau et dock » : un petit bureau et le texte de la planche.
+fn dock_preview(ui: &mut egui::Ui) {
+    Frame::new()
+        .fill(style::header_color())
+        .stroke(Stroke::new(1.0, style::separator()))
+        .corner_radius(14)
+        .inner_margin(Margin::symmetric(18, 14))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 24.0;
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(240.0, 140.0), egui::Sense::hover());
+                let painter = ui.painter();
+                painter.rect_filled(rect, 10.0, rgb(0x16202D));
+                let bar = egui::Rect::from_min_size(rect.min, egui::vec2(240.0, 8.0));
+                painter.rect_filled(
+                    bar,
+                    egui::CornerRadius {
+                        nw: 10,
+                        ne: 10,
+                        sw: 0,
+                        se: 0,
+                    },
+                    Color32::from_rgba_unmultiplied(10, 14, 20, 153),
+                );
+                let window =
+                    egui::Rect::from_min_size(rect.min + egui::vec2(30.0, 22.0), egui::vec2(130.0, 80.0));
+                painter.rect_filled(window, 5.0, Color32::WHITE);
+                let colors = [0x6CB8FF, 0x363B44, 0x4FB0FF, 0xFF7E9D, 0xA3AAB5];
+                let plate = egui::Rect::from_center_size(
+                    egui::pos2(rect.center().x, rect.bottom() - 17.0),
+                    egui::vec2(5.0 * 14.0 + 4.0 * 4.0 + 12.0, 22.0),
+                );
+                painter.rect(
+                    plate,
+                    7.0,
+                    Color32::from_white_alpha(51),
+                    Stroke::new(1.0, Color32::from_white_alpha(77)),
+                    egui::StrokeKind::Inside,
+                );
+                for (index, color) in colors.into_iter().enumerate() {
+                    let icon = egui::Rect::from_min_size(
+                        plate.min + egui::vec2(6.0 + index as f32 * 18.0, 4.0),
+                        egui::vec2(14.0, 14.0),
+                    );
+                    painter.rect_filled(icon, 4.0, rgb(color));
+                }
+                ui.vertical(|ui| {
+                    ui.add_space(40.0);
+                    ui.label(
+                        RichText::new("Bureau et dock")
+                            .size(18.0)
+                            .family(style::strong_family()),
+                    );
+                    ui.add_space(4.0);
+                    ui.label(
+                        RichText::new(
+                            "L’aperçu suit vos réglages : taille du dock, position, coins actifs et espaces de travail.",
+                        )
+                        .size(13.0)
+                        .color(style::text_secondary()),
+                    );
+                });
+            });
+        });
+}
+
+/// Fond de Ferrite : sa couleur et son hexagone.
+fn builtin_wallpaper_tile(ui: &mut egui::Ui, builtin: Builtin, selected: bool) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(WALLPAPER_TILE, egui::Sense::click());
+    let response = response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(builtin.label());
+    let (background, stroke) = builtin.colors();
+    let color = |c: ferrite_ui::theme::Color| Color32::from_rgb(c.r, c.g, c.b);
+    let painter = ui.painter();
+    painter.rect_filled(rect, 10.0, color(background));
+    let center = rect.center();
+    let at = |x: f32, y: f32| center + egui::vec2(x - 22.0, y - 22.0);
+    let points = [
+        at(22.0, 4.0),
+        at(38.0, 13.0),
+        at(38.0, 31.0),
+        at(22.0, 40.0),
+        at(6.0, 31.0),
+        at(6.0, 13.0),
+        at(22.0, 4.0),
+    ];
+    painter.add(egui::Shape::line(
+        points.to_vec(),
+        Stroke::new(2.0, color(stroke)),
+    ));
+    let ring = if selected {
+        Stroke::new(2.0, style::accent())
+    } else {
+        Stroke::new(1.0, rgb(0xD5D9E0))
+    };
+    let offset = if selected { 3.0 } else { 0.0 };
+    painter.rect_stroke(
+        rect.expand(offset),
+        10.0 + offset,
+        ring,
+        egui::StrokeKind::Outside,
+    );
+    response
+}
+
+/// Case « Ajouter… » au trait pointillé.
+fn add_wallpaper_tile(ui: &mut egui::Ui) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(WALLPAPER_TILE, egui::Sense::click());
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    let painter = ui.painter();
+    let corners = rect.shrink(1.0);
+    let path = [
+        corners.left_top(),
+        corners.right_top(),
+        corners.right_bottom(),
+        corners.left_bottom(),
+        corners.left_top(),
+    ];
+    painter.extend(egui::Shape::dashed_line(
+        &path,
+        Stroke::new(2.0, rgb(0xAEB6C2)),
+        6.0,
+        4.0,
+    ));
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        "Ajouter…",
+        egui::FontId::proportional(13.0),
+        style::text_secondary(),
+    );
+    response
+}
+
+/// Cadre des fenêtres de dialogue de la page.
+fn dialog_frame() -> Frame {
+    Frame::new()
+        .fill(style::background())
+        .corner_radius(14)
+        .inner_margin(Margin::same(20))
+        .stroke(Stroke::new(1.0, style::separator()))
+        .shadow(egui::Shadow {
+            offset: [0, 12],
+            blur: 32,
+            spread: 0,
+            color: Color32::from_black_alpha(64),
+        })
+}
+
+const MULTI_WINDOW_APPS: [(&str, &str); 5] = [
     ("Fichiers", "ferrite-files"),
     ("TextEdit", "ferrite-textedit"),
-    ("Terminal", "foot"),
     ("Calculatrice", "ferrite-calculator"),
     ("Paramètres", "ferrite-settings"),
     ("Moniteur d'activité", "ferrite-monitor"),
@@ -1596,7 +2459,7 @@ const MULTI_WINDOW_APPS: [(&str, &str); 6] = [
 const DEFAULT_DOCK: [&str; 5] = [
     "ferrite-files",
     "ferrite-textedit",
-    "foot",
+    "ferrite-terminal",
     "ferrite-calculator",
     "ferrite-settings",
 ];
@@ -1631,45 +2494,11 @@ fn current_user() -> (String, String) {
 
 // ---- Mise en page commune ------------------------------------------------------------
 
-/// Grand titre de la page.
-fn page_title(ui: &mut egui::Ui, text: &str) {
-    ui.label(RichText::new(text).size(28.0));
-    ui.add_space(16.0);
-}
-
 /// Titre de section, en gras.
 fn heading(ui: &mut egui::Ui, text: &str) {
     ui.add_space(20.0);
     ui.label(RichText::new(text).size(17.0).family(style::strong_family()));
     ui.add_space(8.0);
-}
-
-/// Titre de section avec un bouton à droite (« Rechercher ») ; vrai s'il est cliqué.
-fn heading_with_button(ui: &mut egui::Ui, text: &str, button: &str) -> bool {
-    ui.add_space(20.0);
-    let clicked = ui
-        .horizontal(|ui| {
-            ui.label(RichText::new(text).size(17.0).family(style::strong_family()));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.button(button).clicked()
-            })
-            .inner
-        })
-        .inner;
-    ui.add_space(8.0);
-    clicked
-}
-
-/// Petit titre au-dessus d'une rangée de vignettes.
-fn subheading(ui: &mut egui::Ui, text: &str) {
-    ui.add_space(8.0);
-    ui.label(
-        RichText::new(text)
-            .size(12.5)
-            .family(style::strong_family())
-            .color(style::text_secondary()),
-    );
-    ui.add_space(4.0);
 }
 
 /// Texte d'explication, en gris.
@@ -1681,7 +2510,7 @@ fn note(ui: &mut egui::Ui, text: &str) {
 fn card(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
     Frame::new()
         .fill(style::background())
-        .stroke(Stroke::new(1.0, Color32::from_black_alpha(16)))
+        .stroke(Stroke::new(1.0, style::tint(16)))
         .corner_radius(10)
         .inner_margin(Margin::symmetric(20, 14))
         .show(ui, |ui| {
@@ -1772,9 +2601,9 @@ fn paint_computer(painter: &egui::Painter, rect: egui::Rect) {
         7.0,
         Color32::from_black_alpha(22),
     );
-    painter.rect_filled(body, 7.0, rgb(0xA9D7F4));
+    painter.rect_filled(body, 7.0, style::themed(rgb(0xA9D7F4), rgb(0x3F6F92)));
     let screen = egui::Rect::from_min_max(body.min + egui::vec2(5.0, 5.0), body.max - egui::vec2(5.0, 20.0));
-    painter.rect_filled(screen, 3.0, rgb(0xDDF0FD));
+    painter.rect_filled(screen, 3.0, style::themed(rgb(0xDDF0FD), rgb(0x1F3F56)));
     let chin = egui::Rect::from_min_max(egui::pos2(body.left(), body.bottom() - 15.0), body.max);
     painter.rect_filled(
         chin,
@@ -1784,20 +2613,20 @@ fn paint_computer(painter: &egui::Painter, rect: egui::Rect) {
             sw: 7,
             se: 7,
         },
-        rgb(0x8EC9EE),
+        style::themed(rgb(0x8EC9EE), rgb(0x345F80)),
     );
     let neck = egui::Rect::from_center_size(
         egui::pos2(body.center().x, body.bottom() + 11.0),
         egui::vec2(44.0, 22.0),
     );
-    painter.rect_filled(neck, 2.0, rgb(0x9CCFEF));
+    painter.rect_filled(neck, 2.0, style::themed(rgb(0x9CCFEF), rgb(0x38668A)));
     painter.rect_filled(
         egui::Rect::from_center_size(
             egui::pos2(neck.center().x, neck.bottom() + 1.0),
             egui::vec2(60.0, 4.0),
         ),
         2.0,
-        rgb(0x7FB9DF),
+        style::themed(rgb(0x7FB9DF), rgb(0x2E5875)),
     );
 }
 
@@ -1806,7 +2635,11 @@ fn storage_bar(ui: &mut egui::Ui, used: f64) {
     let width = ui.available_width().min(800.0);
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 28.0), egui::Sense::hover());
     let painter = ui.painter();
-    painter.rect_filled(rect, 14.0, rgb(0xD1D1D6));
+    painter.rect_filled(
+        rect,
+        14.0,
+        style::themed(rgb(0xD1D1D6), style::control_background()),
+    );
     let filled = egui::Rect::from_min_size(
         rect.min,
         egui::vec2(rect.width() * used.clamp(0.02, 1.0) as f32, rect.height()),
@@ -1815,56 +2648,9 @@ fn storage_bar(ui: &mut egui::Ui, used: f64) {
     painter.rect_stroke(
         rect,
         14.0,
-        Stroke::new(1.0, Color32::from_black_alpha(20)),
+        Stroke::new(1.0, style::tint(20)),
         egui::StrokeKind::Inside,
     );
-}
-
-/// Force du signal en quatre barres.
-fn signal_bars(ui: &mut egui::Ui, signal: u8) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(22.0, 18.0), egui::Sense::hover());
-    let lit = (signal as usize).div_ceil(25).clamp(1, 4);
-    for index in 0..4 {
-        let height = 5.0 + index as f32 * 4.0;
-        let left = rect.left() + index as f32 * 5.5;
-        let bar = egui::Rect::from_min_max(
-            egui::pos2(left, rect.bottom() - height),
-            egui::pos2(left + 3.5, rect.bottom()),
-        );
-        let color = if index < lit {
-            style::primary_text()
-        } else {
-            Color32::from_black_alpha(40)
-        };
-        ui.painter().rect_filled(bar, 1.0, color);
-    }
-}
-
-/// Pictogramme d'un appareil Bluetooth, deviné d'après son nom.
-fn device_icon(name: &str) -> &'static str {
-    let name = name.to_lowercase();
-    let any = |words: &[&str]| words.iter().any(|word| name.contains(word));
-    if any(&[
-        "casque",
-        "headphone",
-        "headset",
-        "airpods",
-        "buds",
-        "écouteur",
-        "ecouteur",
-        "speaker",
-        "enceinte",
-    ]) {
-        "device-headphones"
-    } else if any(&["phone", "redmi", "galaxy", "pixel", "xiaomi", "oneplus", "note"]) {
-        "device-phone"
-    } else if any(&["mouse", "souris"]) {
-        "device-mouse"
-    } else if any(&["keyboard", "clavier", "keys"]) {
-        "settings-keyboard"
-    } else {
-        "settings-bluetooth"
-    }
 }
 
 /// Taille des vignettes de fond d'écran, en pixels (16:10, comme l'écran du ThinkBook).
@@ -1929,26 +2715,6 @@ fn thumbnail_texture(ctx: &egui::Context, name: &str, image: &Image) -> egui::Te
     ctx.load_texture(format!("fond:{name}"), pixels, egui::TextureOptions::LINEAR)
 }
 
-/// Teinte pastel (haut, bas) de la colonne pour un fond : la couleur moyenne de chaque
-/// moitié de l'image, très éclaircie.
-fn tint_of(image: &Image) -> (Color32, Color32) {
-    let row = image.width as usize * 4;
-    let half = (image.height / 2).max(1) as usize;
-    let average = |pixels: &[u8]| {
-        let mut sum = [0u64; 3];
-        let count = (pixels.len() / 4).max(1) as u64;
-        for pixel in pixels.as_chunks::<4>().0 {
-            for (total, channel) in sum.iter_mut().zip(pixel) {
-                *total += *channel as u64;
-            }
-        }
-        let [r, g, b] = sum.map(|total| (total / count) as u8);
-        Color32::from_rgb(r, g, b).lerp_to_gamma(Color32::WHITE, 0.74)
-    };
-    let split = (half * row).min(image.rgba.len());
-    (average(&image.rgba[..split]), average(&image.rgba[split..]))
-}
-
 /// Vignette arrondie ; absente : en cours de lecture ; `Some(None)` : image illisible.
 fn paint_thumbnail(ui: &egui::Ui, rect: egui::Rect, thumbnail: Option<&Option<egui::TextureHandle>>) {
     match thumbnail {
@@ -1956,7 +2722,7 @@ fn paint_thumbnail(ui: &egui::Ui, rect: egui::Rect, thumbnail: Option<&Option<eg
             egui::Image::new(texture).corner_radius(6).paint_at(ui, rect);
         }
         _ => {
-            ui.painter().rect_filled(rect, 6.0, rgb(0xE4E4E8));
+            ui.painter().rect_filled(rect, 6.0, style::control_background());
             let text = if thumbnail.is_some() { "Illisible" } else { "…" };
             ui.painter().text(
                 rect.center(),
@@ -1984,9 +2750,9 @@ fn wallpaper_tile(
     let ring = if selected {
         Stroke::new(3.0, style::accent())
     } else if response.hovered() {
-        Stroke::new(1.0, Color32::from_black_alpha(60))
+        Stroke::new(1.0, style::tint(60))
     } else {
-        Stroke::new(1.0, Color32::from_black_alpha(22))
+        Stroke::new(1.0, style::tint(22))
     };
     ui.painter()
         .rect_stroke(image, 6.0, ring, egui::StrokeKind::Outside);
@@ -2029,91 +2795,73 @@ fn sidebar_icons_label(size: DockSize) -> &'static str {
     }
 }
 
-/// Bouton radio à la macOS : pastille pleine de la couleur d'accentuation quand il est
-/// choisi ; toute la ligne est cliquable.
-fn radio(ui: &mut egui::Ui, selected: bool, text: &str) -> egui::Response {
-    let font = egui::FontId::proportional(14.0);
-    let galley = ui
-        .painter()
-        .layout_no_wrap(text.to_owned(), font, style::primary_text());
-    let size = egui::vec2(26.0 + galley.size().x, galley.size().y.max(24.0));
-    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
-    let center = egui::pos2(rect.left() + 8.0, rect.center().y);
-    let painter = ui.painter();
-    if selected {
-        painter.circle_filled(center, 8.0, style::accent());
-        painter.circle_filled(center, 3.0, Color32::WHITE);
-    } else {
-        painter.circle_filled(center, 8.0, Color32::WHITE);
-        painter.circle_stroke(center, 7.5, Stroke::new(1.0, rgb(0xC4C4C9)));
-    }
-    painter.galley(
-        egui::pos2(rect.left() + 26.0, rect.center().y - galley.size().y / 2.0),
-        galley,
-        style::primary_text(),
-    );
-    response
-}
-
 /// Fenêtre miniature d'un mode d'apparence, comme sur la maquette : claire, sombre, ou
 /// moitié-moitié ; son nom dessous.
 fn appearance_choice(ui: &mut egui::Ui, mode: Appearance, selected: bool) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(96.0, 92.0), egui::Sense::click());
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(180.0, 152.0), egui::Sense::click());
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
-    let window = egui::Rect::from_center_size(
-        egui::pos2(rect.center().x, rect.top() + 33.0),
-        egui::vec2(84.0, 62.0),
-    );
-    let painter = ui.painter();
+    let card = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), 128.0));
     let paint = |painter: &egui::Painter, dark: bool| {
-        let (frame, body) = if dark {
-            (rgb(0x111113), rgb(0x48484C))
+        let (wall, window, bar, line) = if dark {
+            (0x16202D, 0x22262D, 0x2A2E35, 0x3A3F47)
         } else {
-            (rgb(0xD2D2D6), Color32::WHITE)
+            (0x6CB8FF, 0xFFFFFF, 0xF2F3F6, 0xD5D9E0)
         };
-        painter.rect_filled(window, 8.0, frame);
-        painter.rect_filled(
-            egui::Rect::from_min_max(
-                window.min + egui::vec2(6.0, 16.0),
-                window.max - egui::vec2(6.0, 6.0),
-            ),
-            3.0,
-            body,
+        painter.rect_filled(card, 12.0, rgb(wall));
+        let body = egui::Rect::from_min_max(
+            card.min + egui::vec2(18.0, 20.0),
+            card.max - egui::vec2(18.0, 0.0),
         );
-        for (index, color) in [0xFF5F57u32, 0xFEBC2E, 0x28C840].into_iter().enumerate() {
-            painter.circle_filled(
-                window.min + egui::vec2(10.0 + index as f32 * 8.0, 8.5),
-                2.6,
-                rgb(color),
-            );
-        }
+        let top = egui::CornerRadius {
+            nw: 8,
+            ne: 8,
+            sw: 0,
+            se: 0,
+        };
+        painter.rect_filled(body, top, rgb(window));
+        let title = egui::Rect::from_min_size(body.min, egui::vec2(body.width(), 14.0));
+        painter.rect_filled(title, top, rgb(bar));
+        let bar_at = |y: f32, width: f32| {
+            egui::Rect::from_min_size(body.min + egui::vec2(12.0, y), egui::vec2(width, 6.0))
+        };
+        painter.rect_filled(bar_at(26.0, body.width() * 0.6), 3.0, rgb(line));
+        painter.rect_filled(bar_at(40.0, body.width() * 0.4), 3.0, rgb(line));
+        let button = egui::Rect::from_min_size(body.min + egui::vec2(12.0, 58.0), egui::vec2(56.0, 16.0));
+        painter.rect_filled(button, 5.0, rgb(0x2779E0));
     };
+    let painter = ui.painter();
     match mode {
         Appearance::Light => paint(painter, false),
         Appearance::Dark => paint(painter, true),
         Appearance::Auto => {
             paint(painter, false);
-            let right = egui::Rect::from_min_max(window.center_top(), window.right_bottom());
+            let right = egui::Rect::from_min_max(card.center_top(), card.right_bottom());
             paint(&painter.with_clip_rect(right), true);
         }
     }
     if selected {
         painter.rect_stroke(
-            window.expand(2.5),
-            10.0,
-            Stroke::new(2.5, style::accent()),
+            card.expand(2.0),
+            14.0,
+            Stroke::new(2.0, style::accent()),
             egui::StrokeKind::Outside,
         );
     }
     let label = match mode {
+        Appearance::Light => "Clair",
+        Appearance::Dark => "Sombre",
         Appearance::Auto => "Automatique",
-        other => other.label(),
+    };
+    let font = if selected {
+        egui::FontId::new(13.0, style::strong_family())
+    } else {
+        egui::FontId::proportional(13.0)
     };
     painter.text(
-        egui::pos2(rect.center().x, rect.bottom() - 10.0),
-        egui::Align2::CENTER_CENTER,
+        egui::pos2(card.center().x, rect.bottom()),
+        egui::Align2::CENTER_BOTTOM,
         label,
-        egui::FontId::proportional(13.0),
+        font,
         style::primary_text(),
     );
     response
@@ -2121,9 +2869,9 @@ fn appearance_choice(ui: &mut egui::Ui, mode: Appearance, selected: bool) -> egu
 
 /// Pastilles des couleurs d'accentuation, en ligne ; la choisie est cerclée.
 fn accent_picker(ui: &mut egui::Ui, accent: &mut Accent) {
-    const STEP: f32 = 26.0;
+    const STEP: f32 = 44.0;
     let count = Accent::ALL.len() as f32;
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(count * STEP, 28.0), egui::Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(count * STEP, 40.0), egui::Sense::hover());
     for (index, choice) in Accent::ALL.into_iter().enumerate() {
         let center = egui::pos2(rect.left() + STEP * (index as f32 + 0.5), rect.center().y);
         let hit = egui::Rect::from_center_size(center, egui::Vec2::splat(STEP));
@@ -2135,43 +2883,15 @@ fn accent_picker(ui: &mut egui::Ui, accent: &mut Accent) {
             *accent = choice;
         }
         let painter = ui.painter();
-        let radius = 9.0;
+        let radius = 15.0;
         if *accent == choice {
-            let ring = choice
-                .rgb()
-                .map_or(style::text_secondary(), |_| style::accent_color(choice));
-            painter.circle_stroke(center, radius + 3.0, Stroke::new(2.0, ring));
+            painter.circle_stroke(
+                center,
+                radius + 3.0,
+                Stroke::new(2.0, style::accent_color(choice)),
+            );
         }
-        match choice.rgb() {
-            Some(_) => {
-                painter.circle_filled(center, radius, style::accent_color(choice));
-            }
-            None => paint_multicolor(painter, center, radius),
-        }
-        painter.circle_stroke(
-            center,
-            radius - 0.5,
-            Stroke::new(1.0, Color32::from_black_alpha(30)),
-        );
-    }
-}
-
-/// Pastille « Multicolore » : un disque en parts aux couleurs d'accentuation.
-fn paint_multicolor(painter: &egui::Painter, center: egui::Pos2, radius: f32) {
-    let colors: Vec<Color32> = Accent::ALL[1..8]
-        .iter()
-        .map(|accent| style::accent_color(*accent))
-        .collect();
-    let parts = colors.len();
-    for (index, color) in colors.into_iter().enumerate() {
-        let from = index as f32 / parts as f32 * std::f32::consts::TAU;
-        let to = (index + 1) as f32 / parts as f32 * std::f32::consts::TAU;
-        let mut points = vec![center];
-        for step in 0..=6 {
-            let angle = from + (to - from) * step as f32 / 6.0 - std::f32::consts::FRAC_PI_2;
-            points.push(center + radius * egui::vec2(angle.cos(), angle.sin()));
-        }
-        painter.add(egui::Shape::convex_polygon(points, color, Stroke::NONE));
+        painter.circle_filled(center, radius, style::accent_color(choice));
     }
 }
 
@@ -2186,12 +2906,16 @@ mod tests {
     }
 
     #[test]
-    fn icone_d_un_appareil_d_apres_son_nom() {
-        assert_eq!(device_icon("AirPods Max"), "device-headphones");
-        assert_eq!(device_icon("Souris MX Master"), "device-mouse");
-        assert_eq!(device_icon("Magic Keyboard"), "settings-keyboard");
-        assert_eq!(device_icon("Redmi Note 11 SE"), "device-phone");
-        assert_eq!(device_icon("Manette"), "settings-bluetooth");
+    fn balance_affichee() {
+        assert_eq!(balance_label(50), "Centre");
+        assert_eq!(balance_label(30), "G 40");
+        assert_eq!(balance_label(60), "D 20");
+    }
+
+    #[test]
+    fn rubrique_demandee_au_lancement() {
+        assert!(Page::from_key("wifi") == Some(Page::Network));
+        assert!(Page::from_key("inconnu").is_none());
     }
 
     #[test]
@@ -2208,18 +2932,5 @@ mod tests {
             short_processor("Intel(R) Core(TM) i7-8550U CPU @ 1.80GHz"),
             "Intel Core i7-8550U"
         );
-    }
-
-    #[test]
-    fn teinte_de_la_colonne_tiree_du_fond() {
-        let image = Image {
-            width: 2,
-            height: 2,
-            rgba: vec![255, 0, 0, 255, 255, 0, 0, 255, 0, 0, 255, 255, 0, 0, 255, 255],
-        };
-        let (top, bottom) = tint_of(&image);
-        // Pastels : très clairs, mais encore rouge en haut et bleu en bas.
-        assert!(top.r() > top.b() && bottom.b() > bottom.r());
-        assert!(top.g() > 150 && bottom.g() > 150);
     }
 }

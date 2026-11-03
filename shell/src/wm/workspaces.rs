@@ -1,5 +1,4 @@
-//! Espaces de travail, comme sur macOS : la page des widgets à gauche, puis les bureaux,
-//! chacun avec ses fenêtres. On passe de l'un à l'autre en glissant trois doigts vers la
+//! Espaces de travail, comme sur macOS : des bureaux côte à côte, chacun avec ses fenêtres. On passe de l'un à l'autre en glissant trois doigts vers la
 //! gauche ou la droite ; les pages suivent les doigts.
 //!
 //! Seules les fenêtres de la page affichée sont dans le `Space` : celles des autres bureaux
@@ -17,11 +16,6 @@ use smithay::{
 
 use crate::state::Ferrite;
 
-/// Page des widgets, tout à gauche.
-pub const WIDGETS: usize = 0;
-/// Bureau principal, juste à sa droite.
-pub const FIRST_DESKTOP: usize = 1;
-
 /// Durée du glissement jusqu'à la page d'arrivée.
 const GLIDE: Duration = Duration::from_millis(320);
 /// Course des doigts pour une page entière, en unités de libinput (environ 1/1000 de pouce
@@ -36,6 +30,9 @@ const SWIPE_MOMENTUM: f64 = 180.0;
 const SWIPE_STILL: Duration = Duration::from_millis(100);
 /// Course minimale d'un balayage vertical à trois doigts pour ouvrir la vue d'ensemble.
 const OVERVIEW_SWIPE: f64 = 150.0;
+/// Marge totale d'un aperçu dans sa case, et côté de son bouton de fermeture.
+const OVERVIEW_PADDING: i32 = 24;
+pub const OVERVIEW_CLOSE: f64 = 28.0;
 /// Au-delà de la première ou de la dernière page, les pages résistent.
 const RUBBER_BAND: f64 = 0.2;
 const RUBBER_LIMIT: f64 = 0.5;
@@ -45,14 +42,16 @@ pub fn overview_tiles(output: Rectangle<i32, Logical>, count: usize) -> Vec<Rect
     if count == 0 {
         return Vec::new();
     }
-    let columns = ((count as f64 * output.size.w as f64 / output.size.h.max(1) as f64 / 1.55)
+    // Côte à côte tant que l'écran large s'y prête.
+    let columns = ((count as f64 * output.size.w as f64 / output.size.h.max(1) as f64)
         .sqrt()
-        .round() as usize)
+        .ceil() as usize)
         .clamp(1, count);
     let rows = count.div_ceil(columns);
     let margin_x = output.size.w / 10;
-    let margin_top = output.size.h / 7;
-    let margin_bottom = output.size.h / 7;
+    // La bande des espaces occupe le haut ; le Dock, le bas.
+    let margin_top = (output.size.h / 7).max(150);
+    let margin_bottom = (output.size.h / 7).max(120);
     let gap_x = output.size.w / 40;
     let gap_y = output.size.h / 35;
     let area_width = output.size.w - 2 * margin_x - gap_x * (columns as i32 - 1);
@@ -74,6 +73,48 @@ pub fn overview_tiles(output: Rectangle<i32, Logical>, count: usize) -> Vec<Rect
             )
         })
         .collect()
+}
+
+/// Cadre d'une fenêtre dans sa case : réduit pour y tenir, jamais agrandi, et centré.
+pub fn overview_fit(tile: Rectangle<i32, Logical>, frame: Size<i32, Logical>) -> Rectangle<f64, Logical> {
+    let factor = ((tile.size.w - OVERVIEW_PADDING).max(1) as f64 / frame.w.max(1) as f64)
+        .min((tile.size.h - OVERVIEW_PADDING).max(1) as f64 / frame.h.max(1) as f64)
+        .min(1.0);
+    let (w, h) = (frame.w as f64 * factor, frame.h as f64 * factor);
+    Rectangle::new(
+        Point::from((
+            tile.loc.x as f64 + (tile.size.w as f64 - w) / 2.0,
+            tile.loc.y as f64 + (tile.size.h as f64 - h) / 2.0,
+        )),
+        Size::from((w, h)),
+    )
+}
+
+/// Bouton de fermeture d'un aperçu, à cheval sur son coin haut droit.
+pub fn overview_close_button(frame: Rectangle<f64, Logical>) -> Rectangle<f64, Logical> {
+    let side = OVERVIEW_CLOSE;
+    Rectangle::new(
+        Point::from((frame.loc.x + frame.size.w - side / 2.0, frame.loc.y - side / 2.0)),
+        Size::from((side, side)),
+    )
+}
+
+/// Ce qui est sous le pointeur dans la vue d'ensemble : l'index de l'aperçu, et s'il s'agit
+/// de son bouton de fermeture.
+pub fn overview_hit_index(
+    frames: &[Rectangle<f64, Logical>],
+    pos: Point<f64, Logical>,
+) -> Option<(usize, bool)> {
+    frames
+        .iter()
+        .position(|frame| overview_close_button(*frame).contains(pos))
+        .map(|index| (index, true))
+        .or_else(|| {
+            frames
+                .iter()
+                .position(|frame| frame.contains(pos))
+                .map(|index| (index, false))
+        })
 }
 
 /// Fenêtre d'un bureau qui n'est pas affiché.
@@ -110,12 +151,10 @@ enum Motion {
 /// Pages et fenêtres mises de côté (`T` : [`Parked`] ; les tests s'en passent).
 #[derive(Debug)]
 pub struct Workspaces<T> {
-    /// Une entrée par bureau, de la page 1 à la dernière, du dessous vers le dessus.
+    /// Une entrée par bureau, de gauche à droite ; dans chacune, du dessous vers le dessus.
     /// L'entrée du bureau affiché reste vide : ses fenêtres sont dans le `Space`.
     desktops: Vec<Vec<T>>,
     current: usize,
-    /// Dernier bureau affiché, où retourner quand une fenêtre s'ouvre depuis les widgets.
-    last_desktop: usize,
     motion: Motion,
     /// Position imposée pour les captures (`--demo-page`).
     frozen: Option<f64>,
@@ -125,8 +164,7 @@ impl<T> Default for Workspaces<T> {
     fn default() -> Self {
         Self {
             desktops: vec![Vec::new()],
-            current: FIRST_DESKTOP,
-            last_desktop: FIRST_DESKTOP,
+            current: 0,
             motion: Motion::Rest,
             frozen: None,
         }
@@ -138,23 +176,24 @@ impl<T> Workspaces<T> {
         self.current
     }
 
-    pub fn last_desktop(&self) -> usize {
-        self.last_desktop
-    }
-
     pub fn page_count(&self) -> usize {
-        self.desktops.len() + 1
+        self.desktops.len()
     }
 
     pub fn is_dragging(&self) -> bool {
         matches!(self.motion, Motion::Drag { .. })
     }
 
+    /// Met une fenêtre de côté sur `page`, au-dessus de celles qui y sont déjà.
+    pub fn park(&mut self, page: usize, item: T) {
+        if let Some(desktop) = self.desktops.get_mut(page) {
+            desktop.push(item);
+        }
+    }
+
     /// Fenêtres mises de côté sur `page`.
     pub fn parked(&self, page: usize) -> &[T] {
-        page.checked_sub(FIRST_DESKTOP)
-            .and_then(|index| self.desktops.get(index))
-            .map_or(&[], Vec::as_slice)
+        self.desktops.get(page).map_or(&[], Vec::as_slice)
     }
 
     /// Toutes les fenêtres mises de côté.
@@ -167,7 +206,6 @@ impl<T> Workspaces<T> {
         self.desktops
             .iter()
             .position(|desktop| desktop.iter().any(&mut matches))
-            .map(|index| index + FIRST_DESKTOP)
     }
 
     /// Oublie les fenêtres mises de côté qui ne répondent pas à `keep`.
@@ -178,21 +216,13 @@ impl<T> Workspaces<T> {
     }
 
     /// Change de page : range `outgoing` sur la page quittée et rend les fenêtres de `page`.
-    /// Sur la page des widgets, il n'y a rien à ranger.
     fn exchange(&mut self, page: usize, outgoing: Vec<T>) -> Vec<T> {
-        if let Some(desktop) = self
-            .current
-            .checked_sub(FIRST_DESKTOP)
-            .and_then(|index| self.desktops.get_mut(index))
-        {
+        if let Some(desktop) = self.desktops.get_mut(self.current) {
             *desktop = outgoing;
         }
         self.current = page;
-        if page != WIDGETS {
-            self.last_desktop = page;
-        }
-        page.checked_sub(FIRST_DESKTOP)
-            .and_then(|index| self.desktops.get_mut(index))
+        self.desktops
+            .get_mut(page)
             .map(std::mem::take)
             .unwrap_or_default()
     }
@@ -249,7 +279,7 @@ impl<T> Workspaces<T> {
 
     /// Page limite d'un geste : une seule page à la fois.
     fn drag_bounds(&self) -> (f64, f64) {
-        let last = self.page_count() - 1;
+        let last = self.page_count().saturating_sub(1);
         (
             self.current.saturating_sub(1) as f64,
             (self.current + 1).min(last) as f64,
@@ -322,7 +352,7 @@ impl<T> Workspaces<T> {
         }
         let mut index = 0;
         while index < self.desktops.len() {
-            let page = index + FIRST_DESKTOP;
+            let page = index;
             if page == self.current || index + 1 == self.desktops.len() || !self.desktops[index].is_empty() {
                 index += 1;
                 continue;
@@ -331,13 +361,10 @@ impl<T> Workspaces<T> {
             if self.current > page {
                 self.current -= 1;
             }
-            if self.last_desktop > page {
-                self.last_desktop -= 1;
-            }
         }
         let count = self.desktops.len();
-        let last_is_free = self.desktops.last().is_some_and(Vec::is_empty)
-            && !(self.current == count + FIRST_DESKTOP - 1 && occupied);
+        let last_is_free =
+            self.desktops.last().is_some_and(Vec::is_empty) && !(self.current + 1 == count && occupied);
         if !last_is_free {
             self.desktops.push(Vec::new());
         }
@@ -349,9 +376,6 @@ impl<T> Workspaces<T> {
         self.current = position.ceil().max(0.0) as usize;
         while self.page_count() <= self.current {
             self.desktops.push(Vec::new());
-        }
-        if self.current != WIDGETS {
-            self.last_desktop = self.current;
         }
     }
 }
@@ -438,6 +462,31 @@ impl Ferrite {
         self.swap_windows(page);
     }
 
+    /// Envoie `window`, affichée, sur la page `page` ; on y reste.
+    pub fn move_window_to_page(&mut self, window: &Window, page: usize) {
+        let page = page.min(self.workspaces.page_count().saturating_sub(1));
+        if page == self.workspaces.current() {
+            return;
+        }
+        let Some(location) = self.space.element_location(window) else {
+            return;
+        };
+        self.space.unmap_elem(window);
+        window.set_activated(false);
+        if let Some(toplevel) = window.toplevel() {
+            toplevel.send_pending_configure();
+        }
+        self.workspaces.park(
+            page,
+            Parked {
+                window: window.clone(),
+                location,
+            },
+        );
+        let next = self.top_window();
+        self.focus_window(next);
+    }
+
     /// Page voisine (`step` : -1 à gauche, 1 à droite).
     pub fn go_to_neighbor_page(&mut self, step: i32) {
         let page = self.workspaces.current() as i32 + step;
@@ -446,28 +495,18 @@ impl Ferrite {
         }
     }
 
-    /// Une fenêtre arrive alors que la page des widgets est affichée (elle n'a pas de
-    /// fenêtres) : on retourne au dernier bureau.
-    pub fn leave_widgets(&mut self) {
-        if self.workspaces.current() == WIDGETS {
-            let now = Instant::now();
-            let from = self.workspaces.position(now);
-            self.workspaces.glide_from(from, now);
-            self.swap_windows(self.workspaces.last_desktop());
-        }
-    }
-
     pub fn swipe_begin(&mut self, fingers: u32) {
-        let free = self
-            .seat
-            .get_pointer()
-            .is_some_and(|pointer| !pointer.is_grabbed());
-        self.swipe = (fingers == 3 && free && self.pending_power.is_none()).then(Swipe::default);
+        let free = self.lock.is_none()
+            && self
+                .seat
+                .get_pointer()
+                .is_some_and(|pointer| !pointer.is_grabbed());
+        self.swipe = (matches!(fingers, 3 | 4) && free && self.pending_power.is_none()).then(Swipe::default);
     }
 
     pub fn swipe_update(&mut self, dx: f64, dy: f64) {
         if let Some((horizontal, _)) = self.swipe.as_mut().and_then(|swipe| swipe.update(dx, dy)) {
-            if self.swipe.as_ref().is_some_and(Swipe::is_horizontal) {
+            if !self.overview && self.swipe.as_ref().is_some_and(Swipe::is_horizontal) {
                 // Comme sur macOS, les pages suivent les doigts : vers la gauche, la page de droite.
                 self.workspaces.drag_by(-horizontal / SWIPE_PAGE, Instant::now());
             }
@@ -477,6 +516,9 @@ impl Ferrite {
     pub fn swipe_end(&mut self, cancelled: bool) {
         if let Some(swipe) = self.swipe.take() {
             if swipe.is_horizontal() {
+                if self.overview {
+                    return;
+                }
                 let target = self.workspaces.drag_end(cancelled, Instant::now());
                 if target != self.workspaces.current() {
                     self.swap_windows(target);
@@ -484,15 +526,70 @@ impl Ferrite {
             } else if swipe.is_vertical() && !cancelled {
                 let distance = swipe.vertical_distance();
                 if distance < -OVERVIEW_SWIPE {
-                    if self.workspaces.current() == WIDGETS {
-                        self.go_to_page(self.workspaces.last_desktop());
-                    }
-                    self.overview = true;
+                    self.open_overview();
                 } else if distance > OVERVIEW_SWIPE {
-                    self.overview = false;
+                    self.close_overview();
                 }
             }
         }
+    }
+
+    /// Ouvre la vue d'ensemble du bureau courant.
+    pub fn open_overview(&mut self) {
+        if self.overview {
+            return;
+        }
+        self.popover = None;
+        self.overview = true;
+        self.overview_order = self.space.elements().rev().cloned().collect();
+        self.refresh_pointer_focus();
+    }
+
+    pub fn close_overview(&mut self) {
+        if self.overview {
+            self.overview = false;
+            self.refresh_pointer_focus();
+        }
+    }
+
+    /// Aperçus de la vue d'ensemble : chaque fenêtre et son cadre de destination, dans
+    /// l'ordre de l'ouverture, les fenêtres apparues depuis à la fin.
+    pub fn overview_layout(&self, output: Rectangle<i32, Logical>) -> Vec<(Window, Rectangle<f64, Logical>)> {
+        let in_space = |window: &&Window| self.space.elements().any(|other| other == *window);
+        let added = self
+            .space
+            .elements()
+            .rev()
+            .filter(|window| !self.overview_order.contains(window));
+        let windows: Vec<&Window> = self.overview_order.iter().filter(in_space).chain(added).collect();
+        let tiles = overview_tiles(output, windows.len());
+        windows
+            .into_iter()
+            .zip(tiles)
+            .filter_map(|(window, tile)| {
+                let frame = self.window_frame(window)?;
+                Some((window.clone(), overview_fit(tile, frame.size)))
+            })
+            .collect()
+    }
+
+    /// Cadre d'une fenêtre à sa place sur le bureau, barre de titre comprise.
+    pub fn window_frame(&self, window: &Window) -> Option<Rectangle<i32, Logical>> {
+        let content = self.space.element_geometry(window)?;
+        Some(if crate::wm::is_server_decorated(window) {
+            crate::wm::decoration::frame(content)
+        } else {
+            content
+        })
+    }
+
+    /// Aperçu sous le pointeur, et s'il s'agit de son bouton de fermeture.
+    pub fn overview_hit(&self, pos: Point<f64, Logical>) -> Option<(Window, bool)> {
+        let output = self.space.outputs().next()?;
+        let layout = self.overview_layout(self.space.output_geometry(output)?);
+        let frames: Vec<_> = layout.iter().map(|(_, frame)| *frame).collect();
+        let (index, close) = overview_hit_index(&frames, pos)?;
+        Some((layout[index].0.clone(), close))
     }
 
     /// Range les fenêtres de la page affichée, sort celles de `page` et leur rend le clavier.
@@ -536,7 +633,7 @@ impl Ferrite {
     }
 
     /// La fenêtre sous le pointeur a changé sans qu'il bouge.
-    fn refresh_pointer_focus(&mut self) {
+    pub fn refresh_pointer_focus(&mut self) {
         let Some(pointer) = self.seat.get_pointer() else {
             return;
         };
@@ -571,26 +668,30 @@ mod tests {
         START.with(|start| *start + Duration::from_millis(ms))
     }
 
-    /// Trois bureaux : le premier et le deuxième occupés, le dernier vide.
+    /// Quatre bureaux, le dernier vide ; on est sur le deuxième.
     fn three_desktops() -> Workspaces<u32> {
-        let mut pages = Workspaces::<u32>::default();
-        pages.desktops = vec![vec![1], vec![2], Vec::new()];
-        pages
+        Workspaces {
+            desktops: vec![vec![0], vec![1], vec![2], Vec::new()],
+            current: 1,
+            ..Workspaces::default()
+        }
     }
 
     #[test]
-    fn la_page_des_widgets_est_a_gauche_du_bureau_principal() {
+    fn on_commence_sur_le_premier_bureau() {
         let pages = Workspaces::<u32>::default();
-        assert_eq!(pages.current(), FIRST_DESKTOP);
-        assert_eq!(pages.page_count(), 2);
-        assert_eq!(FIRST_DESKTOP - 1, WIDGETS);
-        assert!(pages.parked(WIDGETS).is_empty());
+        assert_eq!(pages.current(), 0);
+        assert_eq!(pages.page_count(), 1);
+        assert!(pages.parked(0).is_empty());
     }
 
     #[test]
     fn chaque_bureau_garde_ses_fenetres() {
-        let mut pages = Workspaces::<u32>::default();
-        pages.desktops = vec![Vec::new(), vec![7, 8], Vec::new()];
+        let mut pages = Workspaces::<u32> {
+            desktops: vec![Vec::new(), Vec::new(), vec![7, 8], Vec::new()],
+            current: 1,
+            ..Workspaces::default()
+        };
         // Le bureau 1 affiche la fenêtre 5 ; on passe au bureau 2.
         let incoming = pages.exchange(2, vec![5]);
         assert_eq!(incoming, vec![7, 8]);
@@ -605,46 +706,37 @@ mod tests {
     }
 
     #[test]
-    fn les_widgets_retiennent_le_dernier_bureau() {
-        let mut pages = three_desktops();
-        pages.exchange(2, vec![1]);
-        let incoming = pages.exchange(WIDGETS, vec![2]);
-        assert!(incoming.is_empty());
-        assert_eq!(pages.current(), WIDGETS);
-        assert_eq!(pages.last_desktop(), 2);
-        assert_eq!(pages.exchange(pages.last_desktop(), Vec::new()), vec![2]);
-    }
-
-    #[test]
     fn un_bureau_vide_reste_toujours_au_bout() {
         let now = at(0);
         let mut pages = Workspaces::<u32>::default();
-        // Bureau 1 vide : pas de bureau de plus.
+        // Premier bureau vide : pas de bureau de plus.
         pages.sync(false, now);
-        assert_eq!(pages.page_count(), 2);
+        assert_eq!(pages.page_count(), 1);
         // Une fenêtre s'y ouvre : un nouveau bureau vide apparaît.
         pages.sync(true, now);
-        assert_eq!(pages.page_count(), 3);
+        assert_eq!(pages.page_count(), 2);
         pages.sync(true, now);
-        assert_eq!(pages.page_count(), 3);
+        assert_eq!(pages.page_count(), 2);
     }
 
     #[test]
     fn un_bureau_vide_quitte_disparait() {
         let now = at(0);
-        let mut pages = Workspaces::<u32>::default();
-        pages.desktops = vec![vec![1], Vec::new(), vec![3], Vec::new()];
-        pages.current = 4;
-        pages.last_desktop = 4;
+        let mut pages = Workspaces::<u32> {
+            desktops: vec![vec![0], vec![1], Vec::new(), vec![3], Vec::new()],
+            current: 4,
+            ..Workspaces::default()
+        };
         pages.sync(false, now);
         assert_eq!(pages.page_count(), 4);
         assert_eq!(pages.current(), 3);
-        assert_eq!(pages.last_desktop(), 3);
         assert_eq!(pages.parked(2), &[3]);
         // Le bureau affiché reste, même vide et au milieu.
-        let mut pages = Workspaces::<u32>::default();
-        pages.desktops = vec![vec![1], Vec::new(), vec![3], Vec::new()];
-        pages.current = 2;
+        let mut pages = Workspaces::<u32> {
+            desktops: vec![vec![0], vec![1], Vec::new(), vec![3], Vec::new()],
+            current: 2,
+            ..Workspaces::default()
+        };
         pages.sync(false, now);
         assert_eq!(pages.current(), 2);
         assert_eq!(pages.page_count(), 5);
@@ -653,6 +745,7 @@ mod tests {
     #[test]
     fn rien_ne_disparait_pendant_un_glissement() {
         let mut pages = three_desktops();
+        pages.current = 3;
         pages.desktops[1].clear();
         pages.glide_from(1.0, at(0));
         pages.sync(false, at(10));
@@ -721,13 +814,13 @@ mod tests {
         pages.drag_by(5.0, at(0));
         assert!(pages.position(at(0)) <= 2.0 + RUBBER_LIMIT * RUBBER_BAND);
         assert_eq!(pages.drag_end(false, at(1)), 2);
-        // Vers la gauche depuis les widgets : rien, les pages résistent puis reviennent.
+        // Vers la gauche depuis le premier bureau : rien, les pages résistent puis reviennent.
         let mut pages = three_desktops();
-        pages.current = WIDGETS;
+        pages.current = 0;
         pages.drag_by(-0.4, at(0));
         let position = pages.position(at(0));
         assert!(position < 0.0 && position > -0.4 * RUBBER_BAND - 1e-9);
-        assert_eq!(pages.drag_end(false, at(1)), WIDGETS);
+        assert_eq!(pages.drag_end(false, at(1)), 0);
     }
 
     #[test]
@@ -760,6 +853,38 @@ mod tests {
                 && tile.loc.x + tile.size.w <= output.loc.x + output.size.w
                 && tile.loc.y + tile.size.h <= output.loc.y + output.size.h
         }));
+    }
+
+    #[test]
+    fn un_apercu_tient_dans_sa_case_sans_etre_agrandi() {
+        let tile = Rectangle::new(Point::from((100, 100)), Size::from((424, 324)));
+        let large = overview_fit(tile, Size::from((800, 600)));
+        assert_eq!(large.size, Size::from((400.0, 300.0)));
+        assert_eq!(large.loc, Point::from((112.0, 112.0)));
+        let small = overview_fit(tile, Size::from((100, 50)));
+        assert_eq!(small.size, Size::from((100.0, 50.0)));
+    }
+
+    #[test]
+    fn le_bouton_de_fermeture_passe_avant_l_apercu() {
+        let frames = [
+            Rectangle::new(Point::from((0.0, 0.0)), Size::from((100.0, 100.0))),
+            Rectangle::new(Point::from((200.0, 0.0)), Size::from((100.0, 100.0))),
+        ];
+        assert_eq!(
+            overview_hit_index(&frames, Point::from((250.0, 50.0))),
+            Some((1, false))
+        );
+        // Au coin, et même juste au-dehors : c'est le bouton.
+        assert_eq!(
+            overview_hit_index(&frames, Point::from((99.0, 1.0))),
+            Some((0, true))
+        );
+        assert_eq!(
+            overview_hit_index(&frames, Point::from((110.0, -10.0))),
+            Some((0, true))
+        );
+        assert_eq!(overview_hit_index(&frames, Point::from((150.0, 50.0))), None);
     }
 
     #[test]

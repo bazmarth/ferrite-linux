@@ -55,6 +55,27 @@ pub struct Device {
     pub name: String,
     pub paired: bool,
     pub connected: bool,
+    /// Genre annoncé (« audio-headset », « input-mouse »…).
+    pub icon: String,
+    pub battery: Option<u8>,
+}
+
+/// Nom sous lequel l'ordinateur est visible.
+pub fn adapter_name() -> Option<String> {
+    let show = command::run("bluetoothctl", &["show"]).ok()?;
+    parse_field(&show, "Alias").map(str::to_owned)
+}
+
+/// Valeur d'une ligne « Nom: valeur » de `bluetoothctl show` ou `info`.
+fn parse_field<'a>(text: &'a str, name: &str) -> Option<&'a str> {
+    text.lines()
+        .find_map(|line| line.trim().strip_prefix(name)?.strip_prefix(':').map(str::trim))
+}
+
+/// Pourcentage de « Battery Percentage: 0x50 (80) ».
+pub fn parse_battery(info: &str) -> Option<u8> {
+    let value = parse_field(info, "Battery Percentage")?;
+    value.split_once('(')?.1.trim_end_matches(')').parse().ok()
 }
 
 /// Appareils connus, avec leur état d'appairage et de connexion.
@@ -74,11 +95,16 @@ pub fn devices() -> Result<Vec<Device>, Error> {
     let (paired, connected) = (addresses(&paired), addresses(&connected));
     let mut devices: Vec<Device> = parse_devices(&list)
         .into_iter()
-        .map(|(address, name)| Device {
-            paired: paired.contains(&address),
-            connected: connected.contains(&address),
-            address,
-            name,
+        .map(|(address, name)| {
+            let info = command::run("bluetoothctl", &["info", &address]).unwrap_or_default();
+            Device {
+                paired: paired.contains(&address),
+                connected: connected.contains(&address),
+                icon: parse_field(&info, "Icon").unwrap_or_default().to_owned(),
+                battery: parse_battery(&info),
+                address,
+                name,
+            }
         })
         .collect();
     devices.sort_by(|a, b| {
@@ -147,5 +173,13 @@ mod tests {
             devices,
             vec![("AA:BB:CC:DD:EE:FF".to_owned(), "Casque Audio".to_owned())]
         );
+    }
+
+    #[test]
+    fn genre_et_batterie_d_un_appareil() {
+        let info = "Device AA\n\tName: Casque\n\tIcon: audio-headset\n\tBattery Percentage: 0x50 (80)\n";
+        assert_eq!(parse_field(info, "Icon"), Some("audio-headset"));
+        assert_eq!(parse_battery(info), Some(80));
+        assert_eq!(parse_battery("Name: x"), None);
     }
 }

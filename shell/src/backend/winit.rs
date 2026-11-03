@@ -39,7 +39,7 @@ pub fn init(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (mut backend, winit) = winit::init::<GlesRenderer>()?;
 
-    let scale = options.scale.unwrap_or(1.0);
+    let scale = options.scale.unwrap_or(2.0);
     let mode = Mode {
         size: backend.window_size(),
         refresh: REFRESH_MHZ,
@@ -136,6 +136,7 @@ fn redraw(
         .window()
         .set_cursor(host_cursor_icon(state.cursor_shape()));
     state.run_genie_demo();
+    render::take_screenshot(backend.renderer(), state, assets, output);
     let size = backend.window_size();
     let capture_now = pending_capture
         .as_ref()

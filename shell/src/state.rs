@@ -41,12 +41,24 @@ use tracing::{info, warn};
 use crate::desktop::panels::Popover;
 use crate::desktop::widgets::{Dashboard, DashboardEdit};
 use crate::system::{SystemLink, WallpaperChoice};
-use crate::wm::{Hit, Minimized, Placement, decoration::TrafficLight};
+use crate::wm::{Hit, Minimized, decoration::WindowButton};
 use ferrite_system::{
     Snapshot,
     applications::DesktopEntry,
     config::{Accent, Appearance, Settings, split_layout},
 };
+
+/// Disposition du clavier telle qu'affichée : « FR (AZERTY) ».
+fn keyboard_label(layout: &str) -> String {
+    let (base, _) = split_layout(layout);
+    let family = match base.as_str() {
+        "fr" | "be" => " (AZERTY)",
+        "us" | "gb" => " (QWERTY)",
+        "de" | "ch" => " (QWERTZ)",
+        _ => "",
+    };
+    format!("{}{family}", base.to_uppercase())
+}
 
 /// Répétition des touches : délai (ms) et fréquence (par seconde).
 const KEY_REPEAT_DELAY: i32 = 300;
@@ -66,9 +78,6 @@ pub struct Ferrite {
     pub applications: Vec<DesktopEntry>,
     /// Recherche tapée dans le menu Applications.
     pub launcher_query: String,
-    /// Rubrique choisie dans le lanceur, et éléments récemment ouverts.
-    pub launcher_section: Option<crate::desktop::apps::Section>,
-    pub launcher_recent: Vec<crate::desktop::apps::AppKey>,
     pub launcher_scroll: u32,
     /// Volume et luminosité réglés à la main récemment : la relecture du système attend.
     pub volume_held_until: Option<Instant>,
@@ -109,6 +118,8 @@ pub struct Ferrite {
         Vec<crate::desktop::launch::DockMenuAction>,
         smithay::utils::Point<f64, smithay::utils::Logical>,
     )>,
+    /// Position du clic qui a ouvert ce menu : l'agrandissement y reste figé.
+    pub dock_menu_pointer: Option<smithay::utils::Point<f64, smithay::utils::Logical>>,
     /// Fenêtres en train d'être réduites ou rappelées.
     pub window_animations: std::cell::RefCell<Vec<crate::wm::animation::WindowAnimation>>,
     /// Bords tirés pendant un redimensionnement à la souris (forme du curseur).
@@ -123,6 +134,7 @@ pub struct Ferrite {
     pub pending_power: Option<PowerAction>,
     pub appearance: Appearance,
     pub accent: Accent,
+    pub scroll_inverted: bool,
     pub wallpaper: WallpaperChoice,
 
     /// Plan 2D sur lequel sont posées les fenêtres et les écrans.
@@ -130,16 +142,55 @@ pub struct Ferrite {
     pub workspaces: crate::wm::workspaces::Workspaces<crate::wm::workspaces::Parked>,
     pub swipe: Option<crate::wm::workspaces::Swipe>,
     pub overview: bool,
+    /// Listes Wi-Fi et Bluetooth du centre de contrôle.
+    pub controls: crate::desktop::controls::Controls,
+    /// Écran de verrouillage affiché, et canal de ses réponses.
+    pub lock: Option<crate::desktop::lock::Lock>,
+    pub lock_events: Option<smithay::reexports::calloop::channel::Sender<crate::desktop::lock::Event>>,
+    pub media_link: Option<crate::desktop::lock::MediaLink>,
+    /// Tuilage automatique (Super+T), fenêtres dans leur ordre de tuilage, et fenêtres
+    /// réduites par « afficher le bureau » (Super+D) à remettre.
+    pub tiling: bool,
+    pub tile_order: Vec<Window>,
+    pub desktop_shown: Vec<Window>,
+    /// Dernier accrochage au clavier : Super+← répété passe de la moitié aux deux tiers, puis au tiers.
+    pub last_snap: Option<(Window, crate::wm::Snap)>,
+    /// Économie d'énergie demandée, et clavier affiché dans le centre de contrôle.
+    pub power_saver: bool,
+    pub keyboard_label: String,
+    /// Notifications reçues, et lien avec le service du bus de session.
+    pub notifications: crate::desktop::notifications::Center,
+    pub notification_link: Option<crate::desktop::notifications::Link>,
+    /// Sélecteur Alt+Tab ouvert.
+    pub switcher: Option<crate::wm::switcher::Switcher>,
+    /// Sélection à la souris de la zone à capturer, et capture à faire à la prochaine image.
+    pub region_select: Option<crate::render::capture::RegionSelect>,
+    pub screenshot_request: Option<crate::render::capture::Request>,
+    /// Fenêtres de la vue d'ensemble, dans l'ordre de son ouverture : une fenêtre garde
+    /// sa case même si on la met au premier plan.
+    pub overview_order: Vec<Window>,
+    /// Part affichée de la vue d'ensemble, de 0 à 1, et dernier pas de son animation.
+    pub overview_shown: std::cell::Cell<(f64, Option<std::time::Instant>)>,
     pub popups: PopupManager,
-    pub placement: Placement,
     /// Fenêtres réduites (la plus récente en dernier).
     pub minimized: Vec<Minimized>,
     pub dashboard: Dashboard,
     pub dashboard_editing: Option<DashboardEdit>,
+    /// Super+W : widgets ramenés devant les fenêtres.
+    pub widgets_front: bool,
+    /// Mode d'édition des widgets, et widget en train d'être déplacé ou redimensionné.
+    pub widgets_edit: bool,
+    pub widget_drag: Option<crate::input::WidgetDrag>,
+    /// Part de l'estompe des widgets, recouverts par une fenêtre.
+    pub widgets_faded: std::cell::Cell<(f64, Option<std::time::Instant>)>,
+    /// Molette accumulée au-dessus d'un widget.
+    pub widget_scroll: f64,
+    /// Coin du menu du bureau.
+    pub desktop_menu: Option<(i32, i32)>,
     /// Dernier clic sur une barre de titre, pour reconnaître le double-clic.
     pub last_titlebar_click: Option<(Instant, Window)>,
     /// Feu tricolore enfoncé : l'action a lieu au relâchement, s'il est toujours dessus.
-    pub pressed_light: Option<(Window, TrafficLight)>,
+    pub pressed_light: Option<(Window, WindowButton)>,
     /// Curseur demandé par le client sous le pointeur (seul « caché » est respecté pour
     /// l'instant : sinon, ferrite-shell dessine sa flèche).
     pub cursor_status: CursorImageStatus,
@@ -147,6 +198,9 @@ pub struct Ferrite {
     pub change_vt: Option<Box<dyn FnMut(i32)>>,
     /// Fraction figée pour la démonstration `--demo-genie`.
     pub genie_demo: Option<(f64, Option<Instant>)>,
+    /// Options de démonstration : actions faites à l'apparition de la première fenêtre.
+    pub demo_switcher: bool,
+    pub demo_screenshot: bool,
 
     pub compositor_state: CompositorState,
     pub xdg_shell_state: XdgShellState,
@@ -229,8 +283,6 @@ impl Ferrite {
             popover: None,
             applications: Vec::new(),
             launcher_query: String::new(),
-            launcher_section: None,
-            launcher_recent: Vec::new(),
             launcher_scroll: 0,
             slider_drag: None,
             dock_config: crate::desktop::dock::DockConfig::from_settings(&settings),
@@ -263,16 +315,40 @@ impl Ferrite {
             pending_power: None,
             appearance: settings.appearance(),
             accent: settings.accent(),
+            scroll_inverted: settings.scroll_inverted(),
             wallpaper: WallpaperChoice::default(),
             space: Space::default(),
             workspaces: Default::default(),
             swipe: None,
             overview: false,
+            controls: Default::default(),
+            lock: None,
+            lock_events: None,
+            media_link: None,
+            tiling: false,
+            tile_order: Vec::new(),
+            desktop_shown: Vec::new(),
+            last_snap: None,
+            power_saver: false,
+            keyboard_label: keyboard_label(&layout),
+            notifications: Default::default(),
+            notification_link: None,
+            switcher: None,
+            region_select: None,
+            screenshot_request: None,
+            overview_order: Vec::new(),
+            overview_shown: std::cell::Cell::new((0.0, None)),
             popups: PopupManager::default(),
-            placement: Placement::default(),
             minimized: Vec::new(),
             dashboard: Dashboard::load(),
             dashboard_editing: None,
+            widgets_front: false,
+            widgets_edit: false,
+            widget_drag: None,
+            widgets_faded: std::cell::Cell::new((0.0, None)),
+            widget_scroll: 0.0,
+            desktop_menu: None,
+            dock_menu_pointer: None,
             last_titlebar_click: None,
             pressed_light: None,
             cursor_status: CursorImageStatus::default_named(),
@@ -294,6 +370,8 @@ impl Ferrite {
             x_display: None,
             seat,
             genie_demo: None,
+            demo_switcher: false,
+            demo_screenshot: false,
         })
     }
 
@@ -356,7 +434,14 @@ impl Ferrite {
         crate::desktop::apps::launcher_entries(&self.applications, &self.launcher_query)
     }
 
+    /// Pointeur qui agrandit les icônes du Dock : celui du clic tant que le menu d'une icône
+    /// est ouvert, pour que l'agrandissement reste figé sous le menu.
     pub fn dock_pointer(&self) -> Option<Point<f64, Logical>> {
+        if self.popover == Some(crate::desktop::panels::Popover::DockMenu)
+            && let Some(frozen) = self.dock_menu_pointer
+        {
+            return Some(frozen);
+        }
         self.pointer_location()
     }
 
@@ -398,22 +483,15 @@ impl Ferrite {
         ));
     }
 
-    /// Ajoute un nouvel onglet au serveur tmux partagé par les terminaux Ferrite.
-    pub fn new_terminal_tmux_window(&self) {
-        let mut command = std::process::Command::new("tmux");
-        command.args([
-            "-f",
-            "/home/bazoum/.config/tmux.conf",
-            "new-window",
-            "-t",
-            "ferrite",
-        ]);
-        if let Err(err) = ferrite_system::command::spawn_detached(command) {
-            warn!(%err, "nouvel onglet du Terminal indisponible");
-        }
-    }
-
     pub fn run_genie_demo(&mut self) {
+        if self.top_window().is_some() {
+            if std::mem::take(&mut self.demo_switcher) {
+                self.switcher_step(1);
+            }
+            if std::mem::take(&mut self.demo_screenshot) {
+                self.screenshot_request = Some(crate::render::capture::Request { region: None });
+            }
+        }
         let Some((fraction, None)) = self.genie_demo else {
             return;
         };
@@ -452,7 +530,10 @@ impl Ferrite {
             ..XkbConfig::default()
         };
         match keyboard.set_xkb_config(self, xkb) {
-            Ok(()) => info!(layout, "disposition du clavier appliquée"),
+            Ok(()) => {
+                info!(layout, "disposition du clavier appliquée");
+                self.keyboard_label = keyboard_label(layout);
+            }
             Err(err) => warn!(layout, ?err, "disposition du clavier refusée"),
         }
     }

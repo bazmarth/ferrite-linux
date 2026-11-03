@@ -21,7 +21,9 @@ set_ovmf_files() {
         OVMF_CODE=/usr/share/OVMF/OVMF_CODE_4M.fd
         OVMF_VARS_TEMPLATE=/usr/share/OVMF/OVMF_VARS_4M.fd
     elif [ -f /usr/share/OVMF/OVMF_CODE.fd ] && [ -f /usr/share/OVMF/OVMF_VARS.fd ]; then
+        # shellcheck disable=SC2034 # lue par les scripts qui incluent ce fichier.
         OVMF_CODE=/usr/share/OVMF/OVMF_CODE.fd
+        # shellcheck disable=SC2034 # lue par les scripts qui incluent ce fichier.
         OVMF_VARS_TEMPLATE=/usr/share/OVMF/OVMF_VARS.fd
     else
         die "OVMF absent (Fedora : sudo dnf install edk2-ovmf ; Debian/WSL : sudo tools/setup-wsl.sh)"

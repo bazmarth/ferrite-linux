@@ -30,148 +30,60 @@ impl LauncherEntry<'_> {
     }
 }
 
-impl LauncherEntry<'_> {
-    /// Rubrique du lanceur, d'après les catégories freedesktop de l'application.
-    pub fn section(&self) -> Section {
-        match self {
-            LauncherEntry::Builtin(App::TextEdit) => Section::Productivity,
-            LauncherEntry::Builtin(_) => Section::Utilities,
-            LauncherEntry::Installed(entry) => Section::of(&entry.categories),
-        }
-    }
-}
+impl LauncherEntry<'_> {}
 
-/// Rubriques du lanceur, dans l'ordre d'affichage (après les suggestions).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Section {
-    Productivity,
-    Internet,
-    Creation,
-    Entertainment,
-    Development,
-    Utilities,
-    Other,
-}
-
-impl Section {
-    pub const ALL: [Section; 7] = [
-        Section::Productivity,
-        Section::Internet,
-        Section::Creation,
-        Section::Entertainment,
-        Section::Development,
-        Section::Utilities,
-        Section::Other,
-    ];
-
-    pub fn title(self) -> &'static str {
-        match self {
-            Section::Productivity => "Productivité",
-            Section::Internet => "Internet",
-            Section::Creation => "Création",
-            Section::Entertainment => "Divertissement",
-            Section::Development => "Développement",
-            Section::Utilities => "Utilitaires",
-            Section::Other => "Autres",
-        }
-    }
-
-    /// Rubrique d'une liste de catégories freedesktop : la première règle qui s'applique,
-    /// des plus précises (développement, jeux) aux plus générales (utilitaires).
-    fn of(categories: &[String]) -> Section {
-        let has = |names: &[&str]| {
-            categories
-                .iter()
-                .any(|category| names.contains(&category.as_str()))
-        };
-        if has(&["Development", "IDE"]) {
-            Section::Development
-        } else if has(&["Game", "AudioVideo", "Audio", "Video", "Player", "Music", "TV"]) {
-            Section::Entertainment
-        } else if has(&[
-            "Graphics",
-            "Photography",
-            "2DGraphics",
-            "3DGraphics",
-            "RasterGraphics",
-            "VectorGraphics",
-        ]) {
-            Section::Creation
-        } else if has(&[
-            "Network",
-            "WebBrowser",
-            "Email",
-            "Chat",
-            "InstantMessaging",
-            "FileTransfer",
-        ]) {
-            Section::Internet
-        } else if has(&[
-            "Office",
-            "TextEditor",
-            "WordProcessor",
-            "Spreadsheet",
-            "Presentation",
-            "Education",
-            "Science",
-        ]) {
-            Section::Productivity
-        } else if has(&[
-            "System",
-            "Utility",
-            "Settings",
-            "Monitor",
-            "FileManager",
-            "TerminalEmulator",
-            "Accessibility",
-        ]) {
-            Section::Utilities
-        } else {
-            Section::Other
-        }
-    }
+/// Clé de tri : sans casse ni accent, pour que « Éditeur » suive « Dock » et non « Zoom ».
+fn sort_key(name: &str) -> String {
+    name.chars()
+        .flat_map(char::to_lowercase)
+        .map(|character| match character {
+            'à' | 'á' | 'â' | 'ä' | 'ã' => "a".to_owned(),
+            'é' | 'è' | 'ê' | 'ë' => "e".to_owned(),
+            'î' | 'ï' | 'í' => "i".to_owned(),
+            'ô' | 'ö' | 'ó' => "o".to_owned(),
+            'ù' | 'û' | 'ü' | 'ú' => "u".to_owned(),
+            'ç' => "c".to_owned(),
+            'œ' => "oe".to_owned(),
+            'æ' => "ae".to_owned(),
+            other => other.to_string(),
+        })
+        .collect()
 }
 
 /// Les applications Ferrite d'abord, puis les applications installées, filtrées par
 /// `query` (sans tenir compte de la casse).
 pub fn launcher_entries<'a>(installed: &'a [DesktopEntry], query: &str) -> Vec<LauncherEntry<'a>> {
     let query = query.trim().to_lowercase();
-    App::ALL
+    let mut entries: Vec<LauncherEntry<'a>> = App::ALL
         .into_iter()
         .map(LauncherEntry::Builtin)
         .chain(installed.iter().map(LauncherEntry::Installed))
         .filter(|entry| query.is_empty() || entry.name().to_lowercase().contains(&query))
-        .collect()
+        .collect();
+    entries.sort_by_cached_key(|entry| sort_key(entry.name()));
+    entries
+}
+
+/// Commande d'un exécutable Ferrite : celui placé à côté de ferrite-shell (compilation de
+/// développement) passe avant celui du `PATH`.
+fn ferrite_command(program: &str) -> Command {
+    std::env::current_exe()
+        .ok()
+        .map(|path| path.with_file_name(program))
+        .filter(|path| path.is_file())
+        .map(Command::new)
+        .unwrap_or_else(|| Command::new(program))
 }
 
 /// Lance une application installée ; les programmes en mode texte s'ouvrent dans le
 /// Terminal.
-fn configure_terminal_zoom(command: &mut Command) {
-    command
-        .arg("-o")
-        .arg("main.resize-keep-grid=no")
-        .arg("-o")
-        .arg("key-bindings.font-increase=Control+plus Control+equal Control+KP_Add")
-        .arg("-o")
-        .arg("key-bindings.font-decrease=Control+minus Control+KP_Subtract")
-        .arg("-o")
-        .arg("key-bindings.font-reset=Control+0 Control+KP_0")
-        .arg("-o")
-        .arg("mouse-bindings.font-increase=Control+BTN_WHEEL_BACK")
-        .arg("-o")
-        .arg("mouse-bindings.font-decrease=Control+BTN_WHEEL_FORWARD")
-        .arg("-o")
-        .arg("main.pad=12x8 center");
-}
-
 fn launch_entry(entry: &DesktopEntry, env: &[(String, String)]) {
     let Some((program, args)) = entry.exec.split_first() else {
         return;
     };
     let mut command = if entry.terminal {
-        let mut command = Command::new("foot");
-        configure_terminal_zoom(&mut command);
-        command.arg("--").arg(program).args(args);
+        let mut command = ferrite_command("ferrite-apps");
+        command.arg("terminal").arg("-e").arg(program).args(args);
         command
     } else {
         let mut command = Command::new(program);
@@ -311,6 +223,8 @@ pub enum App {
     Calculator,
     Settings,
     Monitor,
+    /// Corbeille, toujours en dernière case du Dock : la vue Corbeille de Fichiers.
+    Trash,
 }
 
 impl App {
@@ -341,6 +255,7 @@ impl App {
             App::Calculator => "Calculatrice",
             App::Settings => "Paramètres",
             App::Monitor => "Moniteur d'activité",
+            App::Trash => "Corbeille",
         }
     }
 
@@ -353,6 +268,7 @@ impl App {
             App::Calculator => "app-calculator",
             App::Settings => "app-settings",
             App::Monitor => "app-monitor",
+            App::Trash => "places-trash",
         }
     }
 
@@ -361,10 +277,11 @@ impl App {
         match self {
             App::Files => "ferrite-files",
             App::TextEdit => "ferrite-textedit",
-            App::Terminal => "foot",
+            App::Terminal => "ferrite-terminal",
             App::Calculator => "ferrite-calculator",
             App::Settings => "ferrite-settings",
             App::Monitor => "ferrite-monitor",
+            App::Trash => "ferrite-trash",
         }
     }
 
@@ -372,36 +289,33 @@ impl App {
         match self {
             App::Files => ("ferrite-apps", Some("files")),
             App::TextEdit => ("ferrite-apps", Some("textedit")),
-            App::Terminal => ("foot", None),
+            App::Terminal => ("ferrite-apps", Some("terminal")),
             App::Calculator => ("ferrite-apps", Some("calculator")),
             App::Settings => ("ferrite-apps", Some("settings")),
             App::Monitor => ("ferrite-apps", Some("monitor")),
+            App::Trash => ("ferrite-apps", Some("files")),
         }
     }
 
-    /// Lance l'application comme client du compositeur. Les exécutables placés à côté de
-    /// ferrite-shell (compilation de développement) passent avant ceux du `PATH`.
+    /// Paramètres sur une rubrique : s'il est déjà ouvert, la fenêtre existante y va.
+    pub fn open_settings_page(page: &str, env: &[(String, String)]) {
+        let mut command = ferrite_command("ferrite-apps");
+        command.args(["settings", page]);
+        command.envs(env.iter().map(|(key, value)| (key, value)));
+        if let Err(err) = spawn_detached(command) {
+            tracing::warn!(%err, "Paramètres indisponibles");
+        }
+    }
+
+    /// Lance l'application comme client du compositeur.
     pub fn launch(self, env: &[(String, String)]) {
         let (program, argument) = self.command();
-        let mut command = std::env::current_exe()
-            .ok()
-            .map(|path| path.with_file_name(program))
-            .filter(|path| path.is_file())
-            .map(Command::new)
-            .unwrap_or_else(|| Command::new(program));
-        if self == App::Terminal {
-            configure_terminal_zoom(&mut command);
-            command
-                .arg("tmux")
-                .arg("-f")
-                .arg("/home/bazoum/.config/tmux.conf")
-                .arg("new-session")
-                .arg("-A")
-                .arg("-s")
-                .arg("ferrite");
-        }
+        let mut command = ferrite_command(program);
         if let Some(argument) = argument {
             command.arg(argument);
+        }
+        if self == App::Trash {
+            command.arg("corbeille:");
         }
         command.envs(env.iter().map(|(key, value)| (key, value)));
         match spawn_detached(command) {
@@ -428,20 +342,17 @@ mod tests {
     }
 
     #[test]
-    fn rubriques_d_apres_les_categories() {
-        let with =
-            |categories: &[&str]| Section::of(&categories.iter().map(|c| c.to_string()).collect::<Vec<_>>());
-        assert_eq!(with(&["AudioVideo", "Player"]), Section::Entertainment);
-        assert_eq!(with(&["Network", "WebBrowser"]), Section::Internet);
-        assert_eq!(with(&["Development", "TextEditor"]), Section::Development);
-        assert_eq!(with(&["Graphics", "Photography"]), Section::Creation);
-        assert_eq!(with(&["Office", "Spreadsheet"]), Section::Productivity);
-        assert_eq!(with(&["GTK", "System", "Settings"]), Section::Utilities);
-        assert_eq!(with(&[]), Section::Other);
-        assert_eq!(
-            LauncherEntry::Builtin(App::Calculator).section(),
-            Section::Utilities
-        );
+    fn le_lanceur_liste_de_a_a_z_sans_tenir_compte_des_accents() {
+        let installed = [entry("zoom"), entry("Évince"), entry("brave")];
+        let entries = launcher_entries(&installed, "");
+        let names: Vec<&str> = entries.iter().map(LauncherEntry::name).collect();
+        let mut sorted = names.clone();
+        sorted.sort_by_cached_key(|name| sort_key(name));
+        assert_eq!(names, sorted);
+        let position = |name: &str| names.iter().position(|known| *known == name).unwrap();
+        assert!(position("brave") < position("Évince"));
+        assert!(position("Évince") < position("zoom"));
+        assert_eq!(sort_key("Éditeur Œuvre"), "editeur oeuvre");
     }
 
     #[test]
@@ -486,11 +397,11 @@ mod tests {
     }
 
     #[test]
-    fn le_menu_met_ferrite_en_premier_et_filtre() {
+    fn le_menu_trie_et_filtre() {
         let installed = [entry("Brave Web Browser"), entry("VLC media player")];
         let all = launcher_entries(&installed, "");
         assert_eq!(all.len(), App::ALL.len() + 2);
-        assert_eq!(all[0].name(), "Fichiers");
+        assert_eq!(all[0].name(), "Brave Web Browser");
         let found = launcher_entries(&installed, "vlc");
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].name(), "VLC media player");

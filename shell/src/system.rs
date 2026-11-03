@@ -18,6 +18,7 @@ use ferrite_system::{
     audio, bluetooth, command,
     config::{Accent, Appearance, Settings},
     display, network,
+    rfkill::{self, Radio},
 };
 use ferrite_ui::wallpaper::{self, Builtin, Image, Source};
 use smithay::reexports::calloop::{
@@ -49,6 +50,8 @@ pub enum Change {
     Brightness(u8),
     /// Toutes les radios bloquées (`true`) ou débloquées.
     Airplane(bool),
+    /// Niveau du rétroéclairage du clavier.
+    KeyboardLight(u8),
     /// Profil d'énergie du système.
     PowerSaver(bool),
     Power(PowerAction),
@@ -314,13 +317,25 @@ fn worker(receiver: mpsc::Receiver<Change>, events: channel::Sender<Event>, nest
 
 fn apply(change: Change) -> Result<(), String> {
     match change {
-        Change::Wifi(enabled) => network::set_wifi(enabled),
-        Change::Bluetooth(enabled) => bluetooth::set_powered(enabled),
+        Change::Wifi(enabled) => {
+            // Un blocage resté d'un mode avion ferait échouer NetworkManager.
+            if enabled {
+                let _ = rfkill::set_blocked(Radio::Wlan, false);
+            }
+            network::set_wifi(enabled)
+        }
+        Change::Bluetooth(enabled) => {
+            if enabled {
+                let _ = rfkill::set_blocked(Radio::Bluetooth, false);
+            }
+            bluetooth::set_powered(enabled)
+        }
         Change::Volume(level) => audio::set_volume(level),
         Change::Muted(muted) => audio::set_muted(muted),
         Change::MicMuted(muted) => audio::set_input_muted(muted),
         Change::Brightness(level) => display::set_brightness(level),
-        Change::Airplane(on) => ferrite_system::rfkill::set_airplane(on),
+        Change::Airplane(on) => rfkill::set_airplane(on),
+        Change::KeyboardLight(level) => display::set_keyboard_light(level),
         Change::PowerSaver(enabled) => command::run(
             "powerprofilesctl",
             &["set", if enabled { "power-saver" } else { "balanced" }],
@@ -412,6 +427,9 @@ impl Ferrite {
             }
             Change::MicMuted(muted) => self.system.mic_muted = Some(muted),
             Change::Airplane(on) => self.system.airplane = Some(on),
+            Change::KeyboardLight(level) => {
+                self.system.keyboard_light = self.system.keyboard_light.map(|(_, max)| (level, max));
+            }
             Change::PowerSaver(enabled) => self.power_saver = enabled,
             Change::Brightness(level) => {
                 self.brightness_held_until = Some(Instant::now() + HOLD);

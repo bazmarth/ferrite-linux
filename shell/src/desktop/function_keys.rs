@@ -155,8 +155,9 @@ impl Ferrite {
         }
     }
 
-    /// Le noyau bascule parfois lui-même toutes les radios sur cette touche (`rfkill-input`) :
-    /// on regarde un instant après si l'état a changé, et on ne bascule que sinon.
+    /// Le noyau bascule parfois lui-même les radios sur cette touche (`rfkill-input`), mais
+    /// chaque sorte à part : un Wi-Fi allumé et un Bluetooth éteint restaient décalés. Un
+    /// instant après, on impose donc à toutes les radios l'état voulu, calculé avant l'appui.
     fn toggle_airplane(&mut self) {
         let Some(before) = rfkill::airplane() else {
             return;
@@ -164,14 +165,8 @@ impl Ferrite {
         let _ = self
             .loop_handle
             .insert_source(Timer::from_duration(RFKILL_SETTLE), move |_, _, state| {
-                let now = rfkill::airplane().unwrap_or(before);
-                if now == before {
-                    state.request_system_change(Change::Airplane(!before));
-                    state.show_osd(airplane_osd(!before));
-                } else {
-                    state.system.airplane = Some(now);
-                    state.show_osd(airplane_osd(now));
-                }
+                state.request_system_change(Change::Airplane(!before));
+                state.show_osd(airplane_osd(!before));
                 TimeoutAction::Drop
             });
     }

@@ -79,6 +79,8 @@ const CONTROLS_WIDTH: f64 = 380.0;
 const CONTROLS_GAP: f64 = 14.0;
 const CONTROLS_PAD: f64 = 16.0;
 const CONTROLS_TILE: f64 = 64.0;
+/// Rangées de tuiles du centre de contrôle, deux par rangée.
+const CONTROLS_TILE_ROWS: f64 = 4.0;
 const CONTROLS_ROW: f64 = 36.0;
 /// Listes Wi-Fi et Bluetooth : haut (retour, titre), bas (état, lien), ligne, titre de groupe,
 /// et place du mot de passe demandé sur une ligne.
@@ -212,6 +214,9 @@ pub enum DesktopAction {
     ToggleDoNotDisturb,
     ToggleDarkMode,
     TogglePowerSaver,
+    ToggleAirplane,
+    /// Rétroéclairage du clavier : niveau suivant, puis éteint.
+    CycleKeyboardLight,
     /// Tuile Clavier : passe à l'autre disposition.
     ToggleKeyboardLayout,
     /// Chevron d'une tuile, ou retour aux tuiles.
@@ -578,6 +583,9 @@ pub struct DesktopView {
     pub bluetooth: Option<bool>,
     pub volume: Option<u8>,
     pub brightness: Option<u8>,
+    pub airplane: Option<bool>,
+    /// Rétroéclairage du clavier : niveau et maximum.
+    pub keyboard_light: Option<(u8, u8)>,
     pub power: Option<PowerAction>,
     /// Dernier réglage refusé par le système.
     pub error: Option<String>,
@@ -1769,7 +1777,17 @@ impl Panels {
         } else {
             "Désactivée"
         };
-        let tiles: [(Control, &str, &str, &str, bool); 6] = [
+        let airplane = match view.airplane {
+            None => "Aucune radio",
+            Some(on) => on_off(on),
+        };
+        let keyboard_light = match view.keyboard_light {
+            None => "Absent",
+            Some((0, _)) => "Éteint",
+            Some((level, max)) if level >= max => "Fort",
+            Some(_) => "Faible",
+        };
+        let tiles: [(Control, &str, &str, &str, bool); 8] = [
             (
                 Control::Wifi,
                 "cc-wifi",
@@ -1800,6 +1818,20 @@ impl Panels {
                 view.power_saver,
             ),
             (Control::Keyboard, "cc-keyboard", "Clavier", &view.keyboard, false),
+            (
+                Control::Airplane,
+                "cc-airplane",
+                "Mode avion",
+                airplane,
+                view.airplane == Some(true),
+            ),
+            (
+                Control::KeyboardLight,
+                "cc-keyboard-light",
+                "Rétroéclairage",
+                keyboard_light,
+                view.keyboard_light.is_some_and(|(level, _)| level > 0),
+            ),
         ];
         for (control, glyph, name, status, on) in tiles {
             let tile = layout.control_row(control);
@@ -3053,6 +3085,10 @@ pub fn action_at(
                     DesktopAction::TogglePowerSaver
                 } else if on(Control::Keyboard) {
                     DesktopAction::ToggleKeyboardLayout
+                } else if on(Control::Airplane) && view.airplane.is_some() {
+                    DesktopAction::ToggleAirplane
+                } else if on(Control::KeyboardLight) && view.keyboard_light.is_some() {
+                    DesktopAction::CycleKeyboardLight
                 } else if on(Control::Settings) {
                     DesktopAction::OpenSettings
                 } else if on(Control::Lock) {
@@ -3395,6 +3431,8 @@ enum Control {
     DoNotDisturb,
     Saver,
     Keyboard,
+    Airplane,
+    KeyboardLight,
     Volume,
     Brightness,
     /// Chevrons des tuiles Wi-Fi et Bluetooth.
@@ -3559,8 +3597,8 @@ impl Layout {
                     .count() as f64;
                 let error = if self.error { 22.0 } else { 0.0 };
                 2.0 * CONTROLS_PAD
-                    + 3.0 * CONTROLS_TILE
-                    + 2.0 * 10.0
+                    + CONTROLS_TILE_ROWS * CONTROLS_TILE
+                    + (CONTROLS_TILE_ROWS - 1.0) * 10.0
                     + CONTROLS_GAP
                     + sliders * (CONTROLS_ROW + 6.0)
                     + CONTROLS_GAP
@@ -3751,7 +3789,8 @@ impl Layout {
                 CONTROLS_TILE,
             )
         };
-        let sliders_top = top + 3.0 * CONTROLS_TILE + 20.0 + CONTROLS_GAP;
+        let sliders_top =
+            top + CONTROLS_TILE_ROWS * CONTROLS_TILE + (CONTROLS_TILE_ROWS - 1.0) * 10.0 + CONTROLS_GAP;
         let row = |index: f64| {
             Rect::new(
                 left,
@@ -3777,6 +3816,8 @@ impl Layout {
             Control::DoNotDisturb => tile(1.0, 1.0),
             Control::Saver => tile(0.0, 2.0),
             Control::Keyboard => tile(1.0, 2.0),
+            Control::Airplane => tile(0.0, 3.0),
+            Control::KeyboardLight => tile(1.0, 3.0),
             Control::Volume if self.volume => row(0.0),
             Control::Brightness if self.brightness => row(if self.volume { 1.0 } else { 0.0 }),
             Control::Volume | Control::Brightness => Rect::new(card.x, card.y, 0.0, 0.0),
@@ -5205,6 +5246,8 @@ mod tests {
             bluetooth: Some(false),
             volume: Some(60),
             brightness: Some(70),
+            airplane: Some(false),
+            keyboard_light: Some((1, 2)),
             bar_visible: true,
             bar_height: 34,
             ..DesktopView::default()
@@ -5558,6 +5601,13 @@ mod tests {
         assert_eq!(at(Control::DoNotDisturb), Some(DesktopAction::ToggleDoNotDisturb));
         assert_eq!(at(Control::Saver), Some(DesktopAction::TogglePowerSaver));
         assert_eq!(at(Control::Keyboard), Some(DesktopAction::ToggleKeyboardLayout));
+        assert_eq!(at(Control::Airplane), Some(DesktopAction::ToggleAirplane));
+        assert_eq!(
+            at(Control::KeyboardLight),
+            Some(DesktopAction::CycleKeyboardLight)
+        );
+        // La quatrième rangée de tuiles reste au-dessus des curseurs.
+        assert!(layout.control_row(Control::Airplane).bottom() < layout.control_row(Control::Volume).y);
         assert_eq!(
             at(Control::WifiMore),
             Some(DesktopAction::ControlsPage(ControlsPage::Wifi))

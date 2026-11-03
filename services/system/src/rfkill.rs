@@ -28,16 +28,29 @@ pub fn airplane_in(dir: &Path) -> Option<bool> {
     (radios > 0).then_some(true)
 }
 
+/// Sortes de radios (`RFKILL_TYPE_*`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Radio {
+    All = 0,
+    Wlan = 1,
+    Bluetooth = 2,
+}
+
 /// Bloque (`true`) ou débloque toutes les radios d'un coup.
 pub fn set_airplane(on: bool) -> Result<(), Error> {
-    // `struct rfkill_event` : idx (u32), type, op, soft, hard ; RFKILL_TYPE_ALL = 0,
-    // RFKILL_OP_CHANGE_ALL = 3.
-    let event = [0, 0, 0, 0, 0, 3, u8::from(on), 0];
+    set_blocked(Radio::All, on)
+}
+
+/// Bloque ou débloque toutes les radios d'une sorte. Allumer le Wi-Fi ou le Bluetooth
+/// commence par là : un blocage resté d'un mode avion ferait échouer NetworkManager ou BlueZ.
+pub fn set_blocked(radio: Radio, blocked: bool) -> Result<(), Error> {
+    // `struct rfkill_event` : idx (u32), type, op, soft, hard ; RFKILL_OP_CHANGE_ALL = 3.
+    let event = [0, 0, 0, 0, radio as u8, 3, u8::from(blocked), 0];
     fs::OpenOptions::new()
         .write(true)
         .open("/dev/rfkill")
         .and_then(|mut device| device.write_all(&event))
-        .map_err(|err| format!("Mode avion impossible : {err}"))
+        .map_err(|err| format!("Radios non réglables : {err}"))
 }
 
 #[cfg(test)]

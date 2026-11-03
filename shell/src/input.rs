@@ -1300,6 +1300,16 @@ impl Ferrite {
                 ));
             }
             DesktopAction::ToggleKeyboardLayout => self.toggle_keyboard_layout(),
+            DesktopAction::ToggleAirplane => {
+                let on = self.system.airplane != Some(true);
+                self.request_system_change(Change::Airplane(on));
+            }
+            DesktopAction::CycleKeyboardLight => {
+                if let Some((level, max)) = self.system.keyboard_light {
+                    let next = if level >= max { 0 } else { level + 1 };
+                    self.request_system_change(Change::KeyboardLight(next));
+                }
+            }
             DesktopAction::ControlsPage(page) => self.show_controls_page(page),
             DesktopAction::NetworkJoin(index) => self.join_network(index),
             DesktopAction::PasswordCancel => self.password_cancel(),

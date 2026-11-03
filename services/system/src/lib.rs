@@ -32,6 +32,8 @@ pub struct Snapshot {
     /// Micro par défaut coupé.
     pub mic_muted: Option<bool>,
     pub airplane: Option<bool>,
+    /// Rétroéclairage du clavier : niveau et maximum.
+    pub keyboard_light: Option<(u8, u8)>,
 }
 
 impl Snapshot {
@@ -44,6 +46,7 @@ impl Snapshot {
             brightness: display::brightness(),
             mic_muted: audio::input_muted(),
             airplane: rfkill::airplane(),
+            keyboard_light: display::keyboard_light(),
         }
     }
 }

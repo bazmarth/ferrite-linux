@@ -126,3 +126,52 @@ mod tests {
         assert!(type_rank("raw") < type_rank("firmware"));
     }
 }
+
+/// Rétroéclairage du clavier (`/sys/class/leds/*kbd_backlight`) : niveau et maximum.
+/// `None` sans clavier rétroéclairé.
+pub fn keyboard_light() -> Option<(u8, u8)> {
+    let dir = keyboard_light_dir()?;
+    let max = read(&dir, "max_brightness")?.min(u8::MAX as u64) as u8;
+    let level = read(&dir, "brightness")?.min(max as u64) as u8;
+    (max > 0).then_some((level, max))
+}
+
+fn keyboard_light_dir() -> Option<PathBuf> {
+    fs::read_dir("/sys/class/leds")
+        .ok()?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| {
+            path.file_name()
+                .is_some_and(|name| name.to_string_lossy().ends_with("kbd_backlight"))
+        })
+}
+
+/// Règle le rétroéclairage du clavier : écriture directe, sinon `SetBrightness` de logind
+/// (sous-système `leds`), qui ne demande pas les droits de root à la session active.
+pub fn set_keyboard_light(level: u8) -> Result<(), Error> {
+    let dir = keyboard_light_dir().ok_or("Pas de clavier rétroéclairé")?;
+    let value = level.to_string();
+    if fs::write(dir.join("brightness"), &value).is_ok() {
+        return Ok(());
+    }
+    let name = dir
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    command::run(
+        "busctl",
+        &[
+            "call",
+            "org.freedesktop.login1",
+            "/org/freedesktop/login1/session/auto",
+            "org.freedesktop.login1.Session",
+            "SetBrightness",
+            "ssu",
+            "leds",
+            &name,
+            &value,
+        ],
+    )
+    .map(drop)
+}

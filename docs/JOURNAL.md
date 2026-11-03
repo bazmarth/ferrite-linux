@@ -713,3 +713,24 @@ Vérifié :
   tout marche.
 
 Reste : F7 (écran externe), la touche du pavé tactile et la touche étoile ne font encore rien.
+
+## 2026-11-03 — Mode avion et rétroéclairage du clavier dans le centre de contrôle
+
+Fait :
+- Constat : après F8, le Bluetooth restait bloqué par rfkill (`bluetoothctl power on` →
+  `org.bluez.Error.Failed`) alors que le Wi-Fi était revenu. `rfkill-input` bascule chaque
+  sorte de radio à part : un état mélangé le reste. La touche impose désormais, 300 ms
+  après, l'état voulu à toutes les radios ; allumer le Wi-Fi ou le Bluetooth lève d'abord
+  leur blocage rfkill (`rfkill::set_blocked`).
+- Centre de contrôle : quatrième rangée, « Mode avion » et « Rétroéclairage » (Éteint,
+  Faible, Fort, puis Éteint). Le clavier passe par `SetBrightness` de logind (sous-système
+  `leds`), sans droits de root ; son niveau est relu avec l'état du système (Fn+Espace
+  reste géré par le micrologiciel).
+
+Vérifié :
+- Bluetooth débloqué puis allumé à la main avec le même événement rfkill.
+- `SetBrightness leds platform::kbd_backlight` 1 puis 0 depuis la session : appliqué.
+- Tests (139 shell, 31 services) dont les clics sur les deux tuiles ; clippy, fmt ;
+  capture du centre de contrôle.
+
+Reste : essai réel des tuiles et de F8 avec un état mélangé.

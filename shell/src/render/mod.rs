@@ -958,6 +958,8 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
             .volume
             .map(|volume| if volume.muted { 0 } else { volume.level }),
         brightness: system.brightness,
+        airplane: system.airplane,
+        keyboard_light: system.keyboard_light,
         power: state.pending_power,
         error: state.system_error.clone(),
         bar_visible: state.bar_visible(),

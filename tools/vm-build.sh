@@ -8,10 +8,14 @@ set -eu
 
 command -v podman >/dev/null 2>&1 || die "Podman absent (Fedora : sudo dnf install podman)"
 
+mkdir -p "$REPO/target"
+
+# Pas de :Z : le dépôt peut être sur un disque NTFS, qui refuse les étiquettes SELinux.
 podman run --rm \
-    -v "$REPO:/src:rw,Z" \
+    --security-opt label=disable \
+    -v "$REPO:/src:rw" \
     -v ferrite-cargo-cache:/root/.cargo \
-    -v "$REPO/target:/src/target:rw,Z" \
+    -v "$REPO/target:/src/target:rw" \
     -w /src \
     docker.io/library/debian:trixie \
     sh -eu -c '
@@ -32,6 +36,7 @@ podman run --rm \
         rustup toolchain install stable --profile minimal
         export CARGO_TARGET_DIR=/tmp/ferrite-vm-target
         cargo build --release --locked -p ferrite-shell -p ferrite-apps --bins --example faux-lecteur
+        mkdir -p /src/target/release
         install -m 0755 /tmp/ferrite-vm-target/release/ferrite-shell /src/target/release/ferrite-shell
         install -m 0755 /tmp/ferrite-vm-target/release/ferrite-apps /src/target/release/ferrite-apps
         install -m 0755 /tmp/ferrite-vm-target/release/examples/faux-lecteur /src/target/release/faux-lecteur

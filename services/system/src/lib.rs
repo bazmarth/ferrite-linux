@@ -17,6 +17,7 @@ pub mod config;
 pub mod display;
 pub mod drag;
 pub mod network;
+pub mod night;
 pub mod rfkill;
 pub mod time;
 pub mod weather;

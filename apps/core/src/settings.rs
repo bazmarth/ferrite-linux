@@ -1917,6 +1917,69 @@ impl SettingsState {
                 self.act(ctx, "", move || display::set_brightness(brightness.max(5)));
             }
         }
+        ui.add_space(20.0);
+        self.night_group(ui);
+    }
+
+    /// Mode nuit : programmation, horaires et chaleur de la teinte. Le bureau suit les
+    /// réglages dans la seconde.
+    fn night_group(&mut self, ui: &mut egui::Ui) {
+        use ferrite_system::night::{
+            NightSettings, Schedule, TEMPERATURE_MAX, TEMPERATURE_MIN, format_time, local_now,
+        };
+        let settings = Settings::load();
+        let mut night = NightSettings::load(&settings);
+        let before = night;
+        let place = ferrite_system::weather::Place::from_settings(&settings);
+        let options: Vec<(Schedule, &str)> = Schedule::ALL
+            .iter()
+            .map(|schedule| (*schedule, schedule.label()))
+            .collect();
+        group(ui, &mut self.icons, "Mode nuit", |rows| {
+            rows.row(
+                Row::new("Teinte orangée le soir").hint("Repose les yeux ; aussi dans le centre de contrôle"),
+                |ui| rows::pick(ui, "nuit-programme", &mut night.schedule, &options),
+            );
+            match night.schedule {
+                Schedule::Sun => {
+                    let (day, _, offset) = local_now();
+                    let text = match night.window(&place, day, offset) {
+                        Some((start, end)) => format!(
+                            "De {} à {}, à {}",
+                            format_time(start),
+                            format_time(end),
+                            place.name
+                        ),
+                        None => "Horaire indisponible".to_owned(),
+                    };
+                    rows.text(Row::new("Ce soir").hint(&text));
+                }
+                Schedule::Hours => {
+                    rows.row(Row::new("Début"), |ui| time_editor(ui, &mut night.start));
+                    rows.row(Row::new("Fin"), |ui| time_editor(ui, &mut night.end));
+                }
+                Schedule::Off | Schedule::Always => {}
+            }
+            if night.schedule != Schedule::Off {
+                // Curseur de 0 (peu teinté) à 100 (très chaud).
+                let span = TEMPERATURE_MAX - TEMPERATURE_MIN;
+                let mut warmth = ((TEMPERATURE_MAX - night.temperature) * 100 / span) as u8;
+                let text = format!("{} K", night.temperature);
+                let response = rows
+                    .row(Row::new("Chaleur"), |ui| rows::slider(ui, &mut warmth, &text))
+                    .0;
+                if response.changed() {
+                    night.temperature = TEMPERATURE_MAX - u32::from(warmth) * span / 100;
+                }
+            }
+        });
+        if night != before {
+            let mut settings = Settings::load();
+            night.store(&mut settings);
+            if let Err(error) = settings.save() {
+                eprintln!("mode nuit non enregistré : {error}");
+            }
+        }
     }
 
     fn accounts_page(&mut self, ui: &mut egui::Ui) {
@@ -3181,4 +3244,23 @@ mod tests {
             "Intel Core i7-8550U"
         );
     }
+}
+
+/// Heure modifiable (heures et minutes, par pas de 5 min) ; `minutes` depuis minuit.
+fn time_editor(ui: &mut egui::Ui, minutes: &mut u32) {
+    let (mut hours, mut rest) = (*minutes / 60, *minutes % 60);
+    ui.add(
+        egui::DragValue::new(&mut rest)
+            .range(0..=55)
+            .speed(0.2)
+            .custom_formatter(|value, _| format!("{value:02}")),
+    );
+    ui.label(":");
+    ui.add(
+        egui::DragValue::new(&mut hours)
+            .range(0..=23)
+            .speed(0.1)
+            .custom_formatter(|value, _| format!("{value:02}")),
+    );
+    *minutes = hours * 60 + rest / 5 * 5;
 }

@@ -1,5 +1,5 @@
-//! Applications de base Ferrite : Fichiers, TextEdit, Terminal, Calculatrice, Paramètres
-//! et Moniteur d'activité.
+//! Applications de base Ferrite : Fichiers, TextEdit, Terminal, Calculatrice, Paramètres,
+//! Moniteur d'activité et Visionneuse.
 
 mod calculator;
 mod details;
@@ -11,6 +11,7 @@ mod settings;
 mod single;
 mod style;
 mod terminal;
+mod viewer;
 
 use std::{
     env,
@@ -22,7 +23,7 @@ use eframe::egui;
 
 use crate::{
     calculator::CalculatorState, editor::EditorState, files::FilesState, monitor::MonitorState,
-    settings::SettingsState, terminal::TerminalState,
+    settings::SettingsState, terminal::TerminalState, viewer::ViewerState,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -33,6 +34,7 @@ enum AppKind {
     Calculator,
     Settings,
     Monitor,
+    Viewer,
 }
 
 impl AppKind {
@@ -44,6 +46,7 @@ impl AppKind {
             "calculator" => Some(Self::Calculator),
             "settings" => Some(Self::Settings),
             "monitor" => Some(Self::Monitor),
+            "viewer" => Some(Self::Viewer),
             _ => None,
         }
     }
@@ -56,6 +59,7 @@ impl AppKind {
             Self::Calculator => "Calculatrice",
             Self::Settings => "Paramètres",
             Self::Monitor => "Moniteur d'activité",
+            Self::Viewer => "Visionneuse",
         }
     }
 
@@ -68,6 +72,7 @@ impl AppKind {
             Self::Calculator => "ferrite-calculator",
             Self::Settings => "ferrite-settings",
             Self::Monitor => "ferrite-monitor",
+            Self::Viewer => "ferrite-viewer",
         }
     }
 
@@ -80,6 +85,7 @@ impl AppKind {
             Self::Calculator => ([320.0, 470.0], [280.0, 420.0]),
             Self::Settings => ([1008.0, 640.0], [720.0, 440.0]),
             Self::Monitor => ([1000.0, 640.0], [680.0, 460.0]),
+            Self::Viewer => ([1180.0, 760.0], [640.0, 440.0]),
         }
     }
 }
@@ -95,7 +101,7 @@ fn main() -> eframe::Result {
     }
     let Some(kind) = args.next().and_then(|arg| AppKind::parse(&arg)) else {
         eprintln!(
-            "Utilisation : ferrite-apps <files|textedit|terminal|calculator|settings|monitor> [dossier ou fichier]"
+            "Utilisation : ferrite-apps <files|textedit|terminal|calculator|settings|monitor|viewer> [dossier ou fichier]"
         );
         return Ok(());
     };
@@ -164,6 +170,7 @@ struct FerriteApp {
     settings: Option<SettingsState>,
     monitor: Option<MonitorState>,
     terminal: Option<TerminalState>,
+    viewer: Option<ViewerState>,
     /// Lancements suivants de la même application (instance unique).
     requests: Option<single::Requests>,
     settings_stamp: Option<SystemTime>,
@@ -185,6 +192,7 @@ impl FerriteApp {
             *waker = Some(context.egui_ctx.clone());
         }
         let mut editor = EditorState::default();
+        let viewer = (kind == AppKind::Viewer).then(|| ViewerState::new(initial_file.clone()));
         let mut files = (kind == AppKind::Files).then(FilesState::default);
         let mut settings = (kind == AppKind::Settings).then(SettingsState::default);
         if let Some(path) = initial_file {
@@ -192,7 +200,7 @@ impl FerriteApp {
                 settings.open_page(&path.to_string_lossy());
             } else if let Some(files) = &mut files {
                 files.open_at(path);
-            } else {
+            } else if kind != AppKind::Viewer {
                 editor.open(path);
             }
         }
@@ -204,6 +212,7 @@ impl FerriteApp {
             settings,
             monitor: (kind == AppKind::Monitor).then(MonitorState::default),
             terminal: (kind == AppKind::Terminal).then(|| TerminalState::new(&context.egui_ctx, launch)),
+            viewer,
             requests,
             settings_stamp: {
                 watch_settings(context.egui_ctx.clone());
@@ -241,6 +250,8 @@ impl FerriteApp {
                 settings.open_page(&file.to_string_lossy());
             } else if let Some(files) = &mut self.files {
                 files.open_at(file);
+            } else if let Some(viewer) = &mut self.viewer {
+                viewer.open(file);
             } else {
                 self.editor.open(file);
             }
@@ -285,6 +296,11 @@ impl eframe::App for FerriteApp {
             AppKind::Monitor => {
                 if let Some(monitor) = &mut self.monitor {
                     monitor.update(ui);
+                }
+            }
+            AppKind::Viewer => {
+                if let Some(viewer) = &mut self.viewer {
+                    viewer.update(ui);
                 }
             }
         }

@@ -87,6 +87,7 @@ icons![
     "app-text-editor" => "apps/accessories-text-editor",
     "app-calculator" => "apps/accessories-calculator",
     "app-monitor" => "apps/utilities-system-monitor",
+    "app-photos" => "apps/image-viewer",
     "app-calendar" => "apps/x-office-calendar",
     "app-clock" => "apps/preferences-system-time",
     "file-generic" => "mimetypes/text-x-generic",

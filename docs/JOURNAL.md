@@ -734,3 +734,32 @@ Vérifié :
   capture du centre de contrôle.
 
 Reste : essai réel des tuiles et de F8 avec un état mélangé.
+
+## 2026-11-03 — Visionneuse d'images
+
+Fait (d'après les planches « Visionneuse d'images » clair et sombre de la maquette) :
+- `ferrite-apps viewer [image ou dossier]` (`apps/core/src/viewer.rs`), `app_id`
+  `ferrite-viewer` : image PNG ou JPEG sur une scène (thème du système), images du dossier
+  en bandeau de vignettes, barre flottante (zoom −/+, « Ajusté » ou pourcentage, pivoter à
+  gauche et à droite, corbeille avec « Annuler »), boutons précédent/suivant sur les côtés,
+  panneau d'informations (dimensions, taille, format, date, dossier, cinq couleurs
+  dominantes, « Définir comme fond d'écran »), diaporama plein écran (4 s par image).
+- Molette ou pincement : zoom autour du pointeur ; glisser : déplacer l'image zoomée ;
+  double-clic : 100 % ou ajustée. Clavier : ← →, Début/Fin, + − 0 1, R et Maj+R, Suppr, I,
+  Espace (diaporama, pause), Échap.
+- Décodage dans des fils à part (image affichée réduite au maximum des textures, vignettes
+  une à une). Sans fichier, elle ouvre `~/Images`. Le panneau se cache si la fenêtre est
+  trop étroite.
+- Fichiers ouvre les PNG et JPEG dans la Visionneuse ; menu Applications (icône
+  `image-viewer`) ; `ferrite-viewer.desktop` et `mimeapps.list` dans l'image.
+- `files::trash::trash` renvoie la place de l'élément dans la Corbeille (pour annuler).
+- Pas repris de la maquette : « Modifier », « Partager » et Favoris (rien derrière),
+  bouton de thème (les applications suivent le thème du système).
+
+Vérifié :
+- Tests (4 nouveaux : extensions, réduction, couleurs dominantes, tri du dossier), clippy,
+  fmt ; captures dans le bureau en fenêtre, dont `ferrite-aurore.png` (3840 × 2160).
+- Le test `terminal::tests::saisie_et_onglets_de_bout_en_bout` échoue (Tab de fish dans le
+  terminal) : il porte sur `terminal/mod.rs`, modifié avant cette session, pas sur la
+  Visionneuse.
+- Sur le ThinkBook, ouverte depuis Fichiers : tout marche.

@@ -23,7 +23,7 @@ mod look;
 mod ops;
 mod places;
 mod thumbs;
-mod trash;
+pub(crate) mod trash;
 mod view;
 
 use std::{
@@ -577,10 +577,17 @@ apercu={}
             self.go(Location::Folder(path));
             return;
         }
-        let result = if is_text_file(&path) {
-            // TextEdit est le même exécutable que Fichiers.
+        // TextEdit et la Visionneuse sont le même exécutable que Fichiers.
+        let builtin = if is_text_file(&path) {
+            Some("textedit")
+        } else if crate::viewer::supported(&path) {
+            Some("viewer")
+        } else {
+            None
+        };
+        let result = if let Some(app) = builtin {
             env::current_exe().map(Command::new).and_then(|mut command| {
-                command.arg("textedit").arg(&path);
+                command.arg(app).arg(&path);
                 spawn_detached(command)
             })
         } else {
@@ -1819,7 +1826,7 @@ fn plural(count: usize) -> &'static str {
     if count > 1 { "s" } else { "" }
 }
 
-fn format_size(size: u64) -> String {
+pub(crate) fn format_size(size: u64) -> String {
     const UNITS: [&str; 5] = ["o", "Ko", "Mo", "Go", "To"];
     let mut value = size as f64;
     let mut unit = 0;
@@ -1847,7 +1854,7 @@ fn format_time(time: Option<SystemTime>) -> String {
     }
 }
 
-fn format_date(time: Option<SystemTime>) -> String {
+pub(crate) fn format_date(time: Option<SystemTime>) -> String {
     let relative = format_time(time);
     if relative.is_empty() {
         "Inconnu".into()

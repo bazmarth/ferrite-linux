@@ -1,2 +1,4 @@
 [Default Applications]
 inode/directory=ferrite-files.desktop
+image/png=ferrite-viewer.desktop
+image/jpeg=ferrite-viewer.desktop

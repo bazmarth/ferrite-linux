@@ -265,19 +265,21 @@ pub enum App {
     Calculator,
     Settings,
     Monitor,
+    Viewer,
     /// Corbeille, toujours en dernière case du Dock : la vue Corbeille de Fichiers.
     Trash,
 }
 
 impl App {
     /// Applications Ferrite du menu Applications.
-    pub const ALL: [App; 6] = [
+    pub const ALL: [App; 7] = [
         App::Files,
         App::TextEdit,
         App::Terminal,
         App::Calculator,
         App::Settings,
         App::Monitor,
+        App::Viewer,
     ];
 
     /// Applications épinglées dans le Dock.
@@ -297,6 +299,7 @@ impl App {
             App::Calculator => "Calculatrice",
             App::Settings => "Paramètres",
             App::Monitor => "Moniteur d'activité",
+            App::Viewer => "Visionneuse",
             App::Trash => "Corbeille",
         }
     }
@@ -310,6 +313,7 @@ impl App {
             App::Calculator => "app-calculator",
             App::Settings => "app-settings",
             App::Monitor => "app-monitor",
+            App::Viewer => "app-photos",
             App::Trash => "places-trash",
         }
     }
@@ -323,6 +327,7 @@ impl App {
             App::Calculator => "ferrite-calculator",
             App::Settings => "ferrite-settings",
             App::Monitor => "ferrite-monitor",
+            App::Viewer => "ferrite-viewer",
             App::Trash => "ferrite-trash",
         }
     }
@@ -335,6 +340,7 @@ impl App {
             App::Calculator => ("ferrite-apps", Some("calculator")),
             App::Settings => ("ferrite-apps", Some("settings")),
             App::Monitor => ("ferrite-apps", Some("monitor")),
+            App::Viewer => ("ferrite-apps", Some("viewer")),
             App::Trash => ("ferrite-apps", Some("files")),
         }
     }

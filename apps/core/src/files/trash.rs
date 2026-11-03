@@ -40,8 +40,8 @@ fn info_path(item: &Path) -> PathBuf {
     root().join("info").join(format!("{name}.trashinfo"))
 }
 
-/// Met `path` à la Corbeille.
-pub fn trash(path: &Path) -> Result<(), String> {
+/// Met `path` à la Corbeille ; renvoie sa place dans la Corbeille (pour [`restore`]).
+pub fn trash(path: &Path) -> Result<PathBuf, String> {
     let files = files_dir();
     let info = root().join("info");
     fs::create_dir_all(&files).map_err(|error| error.to_string())?;
@@ -68,7 +68,7 @@ pub fn trash(path: &Path) -> Result<(), String> {
             return Err(error);
         }
     }
-    Ok(())
+    Ok(target)
 }
 
 /// Éléments de la Corbeille, les plus récents d'abord.

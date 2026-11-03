@@ -189,6 +189,12 @@ ferrite-linux/
 - **Test réel** : clé USB live (`tools/usb.sh` produit l'ISO ; l'utilisateur l'écrit avec
   Rufus/balenaEtcher) sur le ThinkBook, entrée UEFI du menu de démarrage.
 - **Captures automatiques** : `tools/screenshot.sh` (via screencopy) pour vérifier le rendu.
+- **Depuis Ferrite lui-même** (installé sur le disque par `tools/install-dev.sh`) :
+  applications recompilées et lancées à côté des anciennes (`target/release/ferrite-apps NOM`) ;
+  bureau essayé dans une fenêtre (`tools/shell-dev.sh`) ; puis en vrai avec `tools/dev-on.sh`
+  et Ctrl+Alt+Retour arrière (repli automatique sur `/usr/local/bin` si la version plante deux
+  fois ; `tools/dev-off.sh` pour revenir). Ctrl+Alt+F2 donne une console, Fedora reste dans
+  GRUB. Démarrage, partitions et installateur : toujours en QEMU.
 - **CI locale** : `tools/ci.sh` = `cargo fmt --check`, `cargo clippy`, `cargo test`, construction
   des `.deb`, construction de l'image.
 

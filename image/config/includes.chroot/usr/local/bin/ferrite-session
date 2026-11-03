@@ -10,24 +10,47 @@ export XDG_SESSION_DESKTOP=ferrite
 
 log="${XDG_RUNTIME_DIR:-/tmp}/ferrite-shell.log"
 
-# Mode développement (QEMU avec le partage « ferrite-dev », voir ferrite-dev.service) :
-# les binaires compilés sur l'hôte remplacent ceux de l'image, et quitter le bureau
-# (Ctrl+Alt+Retour arrière) le relance avec la dernière compilation.
-bin=/usr/local/bin
-dev=0
-if [ -x /run/ferrite-dev/ferrite-shell ]; then
-    bin=/run/ferrite-dev
-    dev=1
-    export PATH="/run/ferrite-dev:$PATH"
-    printf '\n  Mode développement : binaires de %s\n' "$bin"
-fi
+# Mode développement : les binaires compilés remplacent ceux de /usr/local/bin, et quitter
+# le bureau (Ctrl+Alt+Retour arrière) le relance avec la dernière version. Deux sources :
+# - le partage « ferrite-dev » de QEMU (voir ferrite-dev.service) ;
+# - sur le disque, le dossier rempli par tools/dev-on.sh (vidé par tools/dev-off.sh).
+# Une version de développement qui plante deux fois de suite est écartée : la session repart
+# sur les binaires stables jusqu'à la prochaine copie par tools/dev-on.sh.
+stable=/usr/local/bin
+disk_dev="${XDG_DATA_HOME:-$HOME/.local/share}/ferrite-dev"
+system_path=$PATH
+rejected=""
+
+# Choisit $bin et $dev pour le prochain lancement (relu à chaque tour de boucle).
+choose_bin() {
+    bin=$stable
+    dev=0
+    for candidate in /run/ferrite-dev "$disk_dev"; do
+        [ -x "$candidate/ferrite-shell" ] || continue
+        [ "$candidate:$(stat -c %Y "$candidate/ferrite-shell")" = "$rejected" ] && continue
+        bin=$candidate
+        dev=1
+        printf '\n  Mode développement : binaires de %s\n' "$bin"
+        return
+    done
+}
+
 # Le bureau redémarre seul s'il s'arrête sur une erreur ; après 3 arrêts en moins de
 # 2 minutes, on retombe sur la console pour ne pas boucler. Ctrl+Alt+Retour arrière
 # (code 0) ramène directement à la console.
 crashes=0
+dev_crashes=0
 window_start=$(date +%s)
 first=1
+choose_bin
 while [ -x "$bin/ferrite-shell" ]; do
+    # Les applications lancées par le bureau viennent du même dossier que lui.
+    if [ "$dev" = 1 ]; then
+        PATH="$bin:$system_path"
+    else
+        PATH=$system_path
+    fi
+    export PATH
     if [ "$first" = 1 ]; then
         printf '\n  Démarrage du bureau Ferrite… (journal : %s)\n' "$log"
         client="ferrite-apps files"
@@ -44,11 +67,25 @@ while [ -x "$bin/ferrite-shell" ]; do
         # En développement, quitter le bureau sert à le relancer ; Ctrl+Alt+F2 donne une console.
         [ "$dev" = 1 ] || break
         crashes=0
+        dev_crashes=0
+        choose_bin
         continue
     fi
 
     printf "\n  \033[31mLe bureau Ferrite s'est arrêté (code %s).\033[0m Dernières lignes du journal :\n\n" "$status"
     tail -n 15 "$log" | sed 's/^/    /'
+    if [ "$dev" = 1 ]; then
+        dev_crashes=$((dev_crashes + 1))
+        if [ "$dev_crashes" -ge 2 ]; then
+            rejected="$bin:$(stat -c %Y "$bin/ferrite-shell")"
+            printf '\n  Version de développement écartée : retour aux binaires de %s.\n' "$stable"
+            dev_crashes=0
+            crashes=0
+            choose_bin
+            sleep 2
+            continue
+        fi
+    fi
     now=$(date +%s)
     if [ $((now - window_start)) -gt 120 ]; then
         window_start=$now

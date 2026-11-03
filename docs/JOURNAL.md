@@ -648,3 +648,25 @@ disparaît : le premier bureau est la page 0. Écran de verrouillage au repos et
 quatre fonds propres, notifications sans contenu, lecture en cours (MPRIS), secousse au refus.
 Menus contextuels de 32 px et popover « Trier » (tri par type ajouté) dans Fichiers, survol
 accentué dans les menus du bureau et du Dock. `curl` manquait à l'ISO : la météo n'y arrivait pas.
+
+## 2026-11-03 — Développer depuis Ferrite ; Wi-Fi stable
+
+Fait :
+- `tools/dev-on.sh` (option `--sans-compiler`) et `tools/dev-off.sh` : mode développement
+  sur le disque, voir DECISIONS. `ferrite-session` choisit ses binaires à chaque relance
+  (QEMU, puis `~/.local/share/ferrite-dev`, puis `/usr/local/bin`), met le dossier choisi en
+  tête du PATH pour les applications, et écarte une version de développement après deux
+  plantages de suite.
+- Wi-Fi : économie d'énergie du pilote rtw89 et de NetworkManager désactivée dans l'image ;
+  `ferrite-check` le vérifie.
+
+Vérifié :
+- Wi-Fi sur le ThinkBook, réglage posé à la main puis redémarrage : 80 pings vers la box,
+  0 % de pertes, 1,3 ms en moyenne (avant : 1,25 % de pertes, pointes à 110 ms).
+- `ferrite-session` simulé avec de faux binaires : la version de développement qui plante est
+  lancée deux fois puis écartée, la stable prend le relais ; après `dev-off.sh`, Ctrl+Alt+Retour
+  arrière relance la stable. `dev-on.sh --sans-compiler` et `dev-off.sh` dans un dossier
+  temporaire. `sh -n` et `dash -n` (shellcheck absent de Ferrite).
+
+Reste : installer la nouvelle `ferrite-session` dans `/usr/local/bin` (sudo) et faire un
+vrai relancement du bureau avec `dev-on.sh`.

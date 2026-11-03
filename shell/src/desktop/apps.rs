@@ -78,6 +78,12 @@ fn ferrite_command(program: &str) -> Command {
 /// Lance une application installée ; les programmes en mode texte s'ouvrent dans le
 /// Terminal.
 fn launch_entry(entry: &DesktopEntry, env: &[(String, String)]) {
+    launch_entry_with(entry, env, &[]);
+}
+
+/// Comme [`launch_entry`], avec des fichiers à ouvrir (ajoutés à la ligne de commande,
+/// comme les codes `%f` et `%U` du fichier `.desktop`).
+fn launch_entry_with(entry: &DesktopEntry, env: &[(String, String)], files: &[std::path::PathBuf]) {
     let Some((program, args)) = entry.exec.split_first() else {
         return;
     };
@@ -93,6 +99,7 @@ fn launch_entry(entry: &DesktopEntry, env: &[(String, String)]) {
         if is_chromium(program) {
             command.arg("--ozone-platform-hint=auto");
         }
+        command.args(files);
         command
     };
     command.envs(env.iter().map(|(key, value)| (key, value)));
@@ -190,6 +197,41 @@ impl AppKey {
             AppKey::Installed(_) => match self.entry(installed) {
                 Some(entry) => {
                     launch_entry(entry, env);
+                    true
+                }
+                None => false,
+            },
+            AppKey::Other(_) => false,
+        }
+    }
+
+    /// Nom affiché de l'application.
+    pub fn name(&self, installed: &[DesktopEntry]) -> String {
+        match self {
+            AppKey::Builtin(app) => app.name().to_owned(),
+            AppKey::Installed(_) => self
+                .entry(installed)
+                .map_or_else(|| self.token(), |entry| entry.name.clone()),
+            AppKey::Other(id) => id.clone(),
+        }
+    }
+
+    /// Lance l'application avec `files` à ouvrir ; une application Ferrite déjà ouverte
+    /// les reçoit dans sa fenêtre. Faux si on ne sait pas la lancer.
+    pub fn launch_with(
+        &self,
+        installed: &[DesktopEntry],
+        env: &[(String, String)],
+        files: &[std::path::PathBuf],
+    ) -> bool {
+        match self {
+            AppKey::Builtin(app) => {
+                app.launch_with(env, files);
+                true
+            }
+            AppKey::Installed(_) => match self.entry(installed) {
+                Some(entry) => {
+                    launch_entry_with(entry, env, files);
                     true
                 }
                 None => false,
@@ -309,13 +351,33 @@ impl App {
 
     /// Lance l'application comme client du compositeur.
     pub fn launch(self, env: &[(String, String)]) {
+        self.launch_with(env, &[]);
+    }
+
+    /// Lance l'application avec des fichiers à ouvrir : Fichiers montre le premier, TextEdit
+    /// ouvre chacun, le Terminal s'ouvre dans le dossier du premier. La Corbeille, elle, y
+    /// met les fichiers.
+    pub fn launch_with(self, env: &[(String, String)], files: &[std::path::PathBuf]) {
         let (program, argument) = self.command();
         let mut command = ferrite_command(program);
-        if let Some(argument) = argument {
-            command.arg(argument);
-        }
-        if self == App::Trash {
-            command.arg("corbeille:");
+        match (self, files.first()) {
+            (App::Trash, Some(_)) => {
+                command.arg("corbeille").args(files);
+            }
+            (App::Trash, None) => {
+                command.args(["files", "corbeille:"]);
+            }
+            (App::Terminal, Some(first)) => {
+                let dir = if first.is_dir() {
+                    first.as_path()
+                } else {
+                    first.parent().unwrap_or(first)
+                };
+                command.arg("terminal").arg(dir);
+            }
+            (_, _) => {
+                command.args(argument).args(files);
+            }
         }
         command.envs(env.iter().map(|(key, value)| (key, value)));
         match spawn_detached(command) {

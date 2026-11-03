@@ -1,7 +1,11 @@
 //! Sélecteur de fenêtres (Alt+Tab) et raccourcis qui agissent sur la fenêtre active :
 //! fermer, réduire, aimanter, tuiler, envoyer sur un autre espace, afficher le bureau.
 
-use smithay::{desktop::Window, utils::IsAlive, wayland::seat::WaylandFocus};
+use smithay::{
+    desktop::Window,
+    utils::{IsAlive, Logical, Point, Rectangle},
+    wayland::seat::WaylandFocus,
+};
 
 use crate::state::Ferrite;
 
@@ -265,15 +269,58 @@ impl Ferrite {
 
     /// Super+Entrée en tuilage : échange la fenêtre active et la principale.
     pub fn swap_with_main(&mut self) {
-        let Some(active) = self.active_window() else {
-            return;
-        };
-        if let Some(index) = self.tile_order.iter().position(|window| *window == active)
-            && index > 0
-        {
-            self.tile_order.swap(0, index);
-            self.apply_tiling();
+        if let Some(active) = self.active_window() {
+            self.promote_tiled(&active);
         }
+    }
+
+    /// En tuilage, met `window` en grand à gauche ; la grande d'avant rejoint la pile à sa
+    /// place. Renvoie faux si `window` n'est pas rangée dans la pile (hors tuilage, ou déjà
+    /// la grande).
+    pub fn promote_tiled(&mut self, window: &Window) -> bool {
+        match self.tile_order.iter().position(|tiled| tiled == window) {
+            Some(index) if self.tiling && index > 0 => {
+                self.tile_order.swap(0, index);
+                self.apply_tiling();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Fenêtre rangée par le tuilage sous `point`, autre que `moving` (sa place dans
+    /// l'ordre et son cadre).
+    pub fn tile_at(
+        &self,
+        point: Point<f64, Logical>,
+        moving: &Window,
+    ) -> Option<(usize, Rectangle<i32, Logical>)> {
+        if !self.tiling || !self.tile_order.contains(moving) {
+            return None;
+        }
+        self.tile_order.iter().enumerate().find_map(|(index, window)| {
+            let frame = self.window_frame(window)?;
+            (window != moving && frame.to_f64().contains(point)).then_some((index, frame))
+        })
+    }
+
+    /// Fin du déplacement d'une fenêtre en tuilage : lâchée sur une autre, elles échangent
+    /// leurs places (sur la grande, elle passe en grand) ; ailleurs, elle retourne à la
+    /// sienne. Renvoie faux hors tuilage.
+    pub fn drop_tiled(&mut self, window: &Window, point: Point<f64, Logical>) -> bool {
+        let Some(from) = self
+            .tile_order
+            .iter()
+            .position(|tiled| tiled == window)
+            .filter(|_| self.tiling)
+        else {
+            return false;
+        };
+        if let Some((to, _)) = self.tile_at(point, window) {
+            self.tile_order.swap(from, to);
+        }
+        self.apply_tiling();
+        true
     }
 
     /// Super+H : réduit toutes les fenêtres de l'application active sur la page affichée.

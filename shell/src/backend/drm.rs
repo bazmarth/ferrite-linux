@@ -33,7 +33,8 @@ use smithay::{
     output::{Mode, Output, PhysicalProperties, Scale},
     reexports::{
         calloop::{
-            EventLoop, LoopHandle,
+            EventLoop, LoopHandle, RegistrationToken,
+            ping::make_ping,
             timer::{TimeoutAction, Timer},
         },
         drm::control::{Device as _, ModeTypeFlags, connector, crtc},
@@ -68,8 +69,9 @@ struct Drm {
     active: bool,
     /// Une image a été envoyée et attend d'être affichée (VBlank).
     frame_pending: bool,
-    /// Un rendu est déjà programmé.
-    render_scheduled: bool,
+    /// Rendu déjà programmé, et s'il s'agit d'un essai au repos (`IDLE_REDRAW`), qu'un
+    /// changement à l'écran peut avancer.
+    render_scheduled: Option<(RegistrationToken, bool)>,
 }
 
 pub fn init(
@@ -176,7 +178,7 @@ pub fn init(
         assets,
         active: true,
         frame_pending: false,
-        render_scheduled: false,
+        render_scheduled: None,
     }));
     let handle = event_loop.handle();
 
@@ -199,6 +201,18 @@ pub fn init(
         })?;
     }
 
+    // Commit d'un client, animation qui démarre : on dessine sans attendre l'essai au
+    // repos, qui tomberait n'importe où entre deux VBlank et ferait sauter des images.
+    {
+        let (ping, source) = make_ping()?;
+        let drm = drm.clone();
+        let loop_handle = handle.clone();
+        handle.insert_source(source, move |(), _, _state| {
+            schedule_render(&drm, &loop_handle, Duration::ZERO);
+        })?;
+        state.redraw = Some(ping);
+    }
+
     // Entrées.
     let mut libinput_context =
         Libinput::new_with_udev::<LibinputSessionInterface<LibSeatSession>>(session.clone().into());
@@ -212,6 +226,7 @@ pub fn init(
                 configure_input_device(device);
             }
             state.process_input_event(event);
+            state.request_redraw();
         },
     )?;
 
@@ -313,22 +328,26 @@ fn configure_input_device(device: &mut libinput::Device) {
     info!(nom = device.name(), "périphérique d'entrée");
 }
 
-/// Programme un rendu dans `delay` (sauf s'il y en a déjà un de prévu).
+/// Programme un rendu dans `delay` (sauf s'il y en a déjà un de prévu ; un essai au repos
+/// est avancé par un rendu immédiat).
 fn schedule_render(drm: &Rc<RefCell<Drm>>, handle: &LoopHandle<'static, Ferrite>, delay: Duration) {
-    {
-        let mut drm = drm.borrow_mut();
-        if drm.render_scheduled {
+    let mut guard = drm.borrow_mut();
+    match guard.render_scheduled.take() {
+        Some((token, true)) if delay.is_zero() => handle.remove(token),
+        Some(scheduled) => {
+            guard.render_scheduled = Some(scheduled);
             return;
         }
-        drm.render_scheduled = true;
+        None => {}
     }
-    let drm = drm.clone();
+    let drm_for_timer = drm.clone();
     let loop_handle = handle.clone();
     let timer = Timer::from_duration(delay);
     let inserted = handle.insert_source(timer, move |_, _, state| {
+        let drm = &drm_for_timer;
         let idle = {
             let mut drm = drm.borrow_mut();
-            drm.render_scheduled = false;
+            drm.render_scheduled = None;
             if !drm.active || drm.frame_pending {
                 false
             } else {
@@ -337,12 +356,13 @@ fn schedule_render(drm: &Rc<RefCell<Drm>>, handle: &LoopHandle<'static, Ferrite>
         };
         // Rien n'a changé : on réessaie un peu plus tard. Sinon le VBlank relancera.
         if idle {
-            schedule_render(&drm, &loop_handle, IDLE_REDRAW);
+            schedule_render(drm, &loop_handle, IDLE_REDRAW);
         }
         TimeoutAction::Drop
     });
-    if let Err(err) = inserted {
-        error!("programmation du rendu impossible : {err}");
+    match inserted {
+        Ok(token) => guard.render_scheduled = Some((token, !delay.is_zero())),
+        Err(err) => error!("programmation du rendu impossible : {err}"),
     }
 }
 

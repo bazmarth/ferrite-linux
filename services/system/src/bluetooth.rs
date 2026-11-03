@@ -58,6 +58,8 @@ pub struct Device {
     /// Genre annoncé (« audio-headset », « input-mouse »…).
     pub icon: String,
     pub battery: Option<u8>,
+    /// Approuvé : il peut se reconnecter seul.
+    pub trusted: bool,
 }
 
 /// Nom sous lequel l'ordinateur est visible.
@@ -102,6 +104,7 @@ pub fn devices() -> Result<Vec<Device>, Error> {
                 connected: connected.contains(&address),
                 icon: parse_field(&info, "Icon").unwrap_or_default().to_owned(),
                 battery: parse_battery(&info),
+                trusted: parse_field(&info, "Trusted") == Some("yes"),
                 address,
                 name,
             }
@@ -152,6 +155,12 @@ pub fn connect(address: &str) -> Result<(), Error> {
 
 pub fn disconnect(address: &str) -> Result<(), Error> {
     command::run("bluetoothctl", &["disconnect", address]).map(drop)
+}
+
+/// Approuve l'appareil (il se reconnecte seul) ou lui retire sa confiance.
+pub fn set_trusted(address: &str, trusted: bool) -> Result<(), Error> {
+    let verb = if trusted { "trust" } else { "untrust" };
+    command::run("bluetoothctl", &[verb, address]).map(drop)
 }
 
 pub fn forget(address: &str) -> Result<(), Error> {

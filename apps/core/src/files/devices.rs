@@ -14,6 +14,8 @@ pub struct Device {
     pub label: String,
     pub size: String,
     pub mount: Option<PathBuf>,
+    /// Espace libre et taille, une fois montée.
+    pub usage: Option<(u64, u64)>,
 }
 
 /// Partitions amovibles portant un système de fichiers.
@@ -58,6 +60,7 @@ pub fn parse_lsblk(output: &str) -> Vec<Device> {
                 mount: Some(field("MOUNTPOINT"))
                     .filter(|mount| !mount.is_empty())
                     .map(PathBuf::from),
+                usage: None,
                 path,
             })
         })
@@ -98,12 +101,6 @@ pub fn eject(device: &Device) -> Result<(), String> {
         &["power-off", "--no-user-interaction", "-b", &device.disk],
     );
     Ok(())
-}
-
-/// Espace libre du système de fichiers qui contient `path`, en octets.
-pub fn free_space(path: &std::path::Path) -> Option<u64> {
-    let output = command::run("df", &["-B1", "--output=avail", &path.to_string_lossy()]).ok()?;
-    output.lines().nth(1)?.trim().parse().ok()
 }
 
 #[cfg(test)]

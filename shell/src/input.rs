@@ -55,10 +55,16 @@ enum Action {
     SuperUp,
     /// Super+V : historique du presse-papiers.
     ToggleClipboard,
-    /// Panneau Super+V : ligne précédente ou suivante, coller, supprimer.
+    /// Panneau Super+V : ligne précédente ou suivante, coller, supprimer ; recherche
+    /// (caractère tapé, ou `None` pour effacer le dernier), filtre suivant, coller la
+    /// n-ième ligne (chiffres 1 à 9).
     ClipboardMove(isize),
     ClipboardPasteSelected,
     ClipboardDeleteSelected,
+    ClipboardType(Option<char>),
+    ClipboardClearQuery,
+    ClipboardNextFilter,
+    ClipboardPasteNth(usize),
     /// Recherche dans le menu Applications ouvert.
     LauncherType(char),
     LauncherErase,
@@ -384,15 +390,35 @@ impl Ferrite {
                         }
                     }
                 }
-                // Panneau Super+V ouvert : flèches, Entrée et Suppr le pilotent.
+                // Panneau Super+V ouvert : flèches, Entrée et Suppr le pilotent, Tab change de
+                // filtre, le reste s'écrit dans la recherche ; sans recherche, un chiffre colle
+                // la ligne qui le porte.
                 if pressed && state.popover == Some(Popover::Clipboard) {
-                    match sym {
+                    let searching = !state.clipboard_query.is_empty();
+                    match keysym.modified_sym() {
                         Keysym::Up => return FilterResult::Intercept(Action::ClipboardMove(-1)),
                         Keysym::Down => return FilterResult::Intercept(Action::ClipboardMove(1)),
                         Keysym::Return | Keysym::KP_Enter => {
                             return FilterResult::Intercept(Action::ClipboardPasteSelected);
                         }
                         Keysym::Delete => return FilterResult::Intercept(Action::ClipboardDeleteSelected),
+                        Keysym::Tab | Keysym::ISO_Left_Tab => {
+                            return FilterResult::Intercept(Action::ClipboardNextFilter);
+                        }
+                        Keysym::Escape if searching => {
+                            return FilterResult::Intercept(Action::ClipboardClearQuery);
+                        }
+                        Keysym::BackSpace => return FilterResult::Intercept(Action::ClipboardType(None)),
+                        sym if !modifiers.ctrl && !modifiers.alt && !modifiers.logo => {
+                            if let Some(character) = sym.key_char().filter(|c| !c.is_control()) {
+                                return FilterResult::Intercept(match character.to_digit(10) {
+                                    Some(digit @ 1..=9) if !searching => {
+                                        Action::ClipboardPasteNth(digit as usize - 1)
+                                    }
+                                    _ => Action::ClipboardType(Some(character)),
+                                });
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -534,9 +560,26 @@ impl Ferrite {
                 self.handle_desktop_action(DesktopAction::TogglePopover(Popover::Clipboard));
             }
             Some(Action::ClipboardMove(step)) => self.move_clipboard_selection(step),
-            Some(Action::ClipboardPasteSelected) => self.paste_history(self.clipboard_selected),
+            Some(Action::ClipboardPasteSelected) => {
+                if let Some(index) = self.clipboard_selected_entry() {
+                    self.paste_history(index);
+                }
+            }
             Some(Action::ClipboardDeleteSelected) => {
-                self.handle_desktop_action(DesktopAction::ClipboardDelete(self.clipboard_selected));
+                if let Some(index) = self.clipboard_selected_entry() {
+                    self.delete_clipboard_entry(index);
+                }
+            }
+            Some(Action::ClipboardType(character)) => self.type_clipboard_query(character),
+            Some(Action::ClipboardClearQuery) => {
+                self.clipboard_query.clear();
+                self.clamp_clipboard_view();
+            }
+            Some(Action::ClipboardNextFilter) => self.next_clipboard_filter(),
+            Some(Action::ClipboardPasteNth(position)) => {
+                if let Some(index) = self.clipboard_shown().get(position).copied() {
+                    self.paste_history(index);
+                }
             }
             Some(Action::SwitcherStep(step)) => self.switcher_step(step),
             Some(Action::SwitcherCancel) => self.switcher = None,
@@ -664,8 +707,8 @@ impl Ferrite {
                 output.size.w as f64 / 2.0,
                 output.size.h as f64 / 2.0,
             )));
-        let width = 380.0_f64;
-        let height = 456.0_f64;
+        let width = crate::desktop::panels::CLIPBOARD_WIDTH;
+        let height = crate::desktop::panels::clipboard_height(output.size.h as f64);
         let x = (pointer.x - width / 2.0)
             .round()
             .clamp(8.0, (output.size.w as f64 - width - 8.0).max(8.0));
@@ -687,8 +730,8 @@ impl Ferrite {
         else {
             return;
         };
-        let width = 380.0_f64;
-        let height = 456.0_f64;
+        let width = crate::desktop::panels::CLIPBOARD_WIDTH;
+        let height = crate::desktop::panels::clipboard_height(output.size.h as f64);
         let x = (location.x - offset_x as f64).clamp(
             output.loc.x as f64 + 8.0,
             output.loc.x as f64 + (output.size.w as f64 - width - 8.0).max(8.0),
@@ -737,17 +780,24 @@ impl Ferrite {
             .dock_pointer_motion_at
             .replace(Some(now))
             .map(|last| now.duration_since(last));
-        if let (Some(elapsed), Some(output)) = (elapsed, self.space.outputs().next())
-            && let Some(output_geo) = self.space.output_geometry(output)
-            && crate::desktop::dock::fast_approach(
-                previous,
-                location,
-                (output_geo.loc.y + output_geo.size.h) as f64,
+        if let Some(elapsed) = elapsed {
+            let speed = crate::desktop::dock::descent_speed(
+                self.dock_descent_speed.get(),
+                location.y - previous.y,
                 elapsed,
-            )
-        {
-            self.dock_fast_approach_until
-                .set(Some(now + crate::desktop::dock::REVEAL_APPROACH_GRACE));
+            );
+            self.dock_descent_speed.set(speed);
+            if let Some(output) = self.space.outputs().next()
+                && let Some(output_geo) = self.space.output_geometry(output)
+                && crate::desktop::dock::fast_approach(
+                    speed,
+                    location,
+                    (output_geo.loc.y + output_geo.size.h) as f64,
+                )
+            {
+                self.dock_fast_approach_until
+                    .set(Some(now + crate::desktop::dock::REVEAL_APPROACH_GRACE));
+            }
         }
         // Coins actifs : le pointeur qui arrive dans un angle de l'écran déclenche son action.
         if let Some(area) = self.screen_area()
@@ -766,6 +816,7 @@ impl Ferrite {
             self.drag_clipboard(location);
         }
         self.drag_widget(location);
+        self.file_drag_motion(location);
         let under = if self.slider_drag.is_some() {
             None
         } else {
@@ -789,6 +840,15 @@ impl Ferrite {
         let Some(pointer) = self.seat.get_pointer() else {
             return;
         };
+        // Glisser de fichiers repris par ferrite-shell : le relâchement est le dépôt.
+        if self.file_drag.as_ref().is_some_and(|file| file.shown()) {
+            pointer.button(self, &button);
+            pointer.frame(self);
+            return;
+        }
+        if button.state == ButtonState::Released {
+            self.file_drag_released();
+        }
         let location = pointer.current_location();
 
         if self.lock.is_some() {
@@ -802,10 +862,22 @@ impl Ferrite {
             && button.state == ButtonState::Released
             && self.widget_drag.take().is_some()
         {
-            // La place enregistrée est celle qu'on voit.
+            // Lâché, le widget s'aligne sur la grille, à une place libre.
             let last = self.dashboard.layout.len().saturating_sub(1);
+            let bar = crate::render::desktop_view(self).bar_height as i32;
             if let Some(shown) = self.shown_widget(last) {
                 self.dashboard.layout[last] = shown;
+            }
+            if let Some(area) = self.screen_area()
+                && let Some(placed) = crate::desktop::widgets::place_on_grid(
+                    &self.dashboard.layout,
+                    last,
+                    area.size.w,
+                    area.size.h,
+                    bar,
+                )
+            {
+                self.dashboard.layout[last] = placed;
             }
             self.save_dashboard();
             return;
@@ -1011,9 +1083,8 @@ impl Ferrite {
                 self.controls.password = None;
                 self.launcher_query.clear();
                 self.reset_launcher_view();
-                self.clipboard_selected = 0;
-                self.clipboard_first = 0;
                 if opening_clipboard {
+                    self.reset_clipboard_view();
                     self.place_clipboard_near_pointer();
                 }
             }
@@ -1119,6 +1190,10 @@ impl Ferrite {
             DesktopAction::DashboardConsume => {
                 self.stop_dashboard_editing();
             }
+            DesktopAction::DashboardApp(index) => {
+                self.stop_dashboard_editing();
+                self.open_recent_app(index);
+            }
             DesktopAction::GoToPage(page) => self.go_to_page(page),
             DesktopAction::LaunchTile(index) => {
                 let key = self
@@ -1162,15 +1237,14 @@ impl Ferrite {
                 self.request_system_change(Change::Power(power));
             }
             DesktopAction::ClipboardPaste(index) => self.paste_history(index),
-            DesktopAction::ClipboardPin(index) => self.clipboard.toggle_pin(index),
-            DesktopAction::ClipboardDelete(index) => {
-                self.clipboard.remove(index);
+            DesktopAction::ClipboardPin(index) => {
+                self.clipboard.toggle_pin(index);
                 self.clamp_clipboard_view();
             }
-            DesktopAction::ClipboardClear => {
-                self.clipboard.clear();
-                self.clamp_clipboard_view();
-            }
+            DesktopAction::ClipboardDelete(index) => self.delete_clipboard_entry(index),
+            DesktopAction::ClipboardClear => self.clear_clipboard(),
+            DesktopAction::ClipboardFilter(filter) => self.set_clipboard_filter(filter),
+            DesktopAction::ClipboardUndo => self.undo_clipboard(),
             DesktopAction::NotificationActivate(id) => self.activate_notification(id),
             DesktopAction::NotificationAction(id, index) => self.notification_action(id, index),
             DesktopAction::NotificationsClear => self.clear_notifications(),
@@ -1390,7 +1464,7 @@ impl Ferrite {
                 .unwrap_or(0.0)
                 * direction;
             if amount != 0.0 {
-                self.scroll_clipboard(if amount > 0.0 { 1 } else { -1 });
+                self.scroll_clipboard((amount * 2.5).clamp(-96.0, 96.0));
             }
             return;
         }

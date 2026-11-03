@@ -46,7 +46,7 @@ pub use lock_screen::{LOCK_WALLS, LockAction, lock_action_at};
 
 use cards::dashboard_action_at;
 
-use crate::clipboard::{Thumbnail, VISIBLE as CLIPBOARD_VISIBLE};
+use crate::clipboard::{self, Filter as ClipFilter, Kind as ClipKind, Thumbnail};
 use crate::desktop::svg::{self, IconCache, Style};
 use crate::state::PowerAction;
 
@@ -54,6 +54,8 @@ const FONT_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/Inter-Medium.t
 const FONT_BOLD: &[u8] = include_bytes!("../../../assets/fonts/Inter-SemiBold.ttf");
 /// Grande heure de l'écran de verrouillage.
 const FONT_LIGHT: &[u8] = include_bytes!("../../../assets/fonts/InterDisplay-Light.ttf");
+/// Code, couleurs et chemins copiés, dans le presse-papiers.
+const FONT_MONO: &[u8] = include_bytes!("../../../assets/fonts/JetBrainsMono-Regular.ttf");
 
 /// Écart entre la barre (ou le bord de l'écran) et un menu déroulant.
 const POPOVER_MARGIN: f64 = 8.0;
@@ -85,10 +87,27 @@ const CONTROLS_LIST_BOTTOM: f64 = 46.0;
 const CONTROLS_LIST_ROW: f64 = 54.0;
 const CONTROLS_HEADING: f64 = 26.0;
 const CONTROLS_PASSWORD: f64 = 118.0;
-const CLIPBOARD_WIDTH: f64 = 380.0;
-const CLIPBOARD_HEADER: f64 = 50.0;
-const CLIPBOARD_ROW: f64 = 70.0;
-const CLIPBOARD_GAP: f64 = 6.0;
+/// Panneau Super+V : largeur, hauteur au plus, en-tête (jusqu'à son filet), pied, et
+/// marges de la liste en haut et en bas.
+pub const CLIPBOARD_WIDTH: f64 = 440.0;
+const CLIPBOARD_MAX_HEIGHT: f64 = 760.0;
+const CLIPBOARD_HEAD: f64 = 152.0;
+const CLIPBOARD_FOOT: f64 = 44.0;
+const CLIPBOARD_LIST_PAD: (f64, f64) = (6.0, 10.0);
+/// Largeur des pastilles de filtre, dans l'ordre de `Filter::ALL`, et du bouton « Tout
+/// effacer ».
+const CLIPBOARD_FILTERS: [f64; 5] = [48.0, 54.0, 52.0, 64.0, 70.0];
+const CLIPBOARD_CLEAR: f64 = 98.0;
+
+/// Hauteur du panneau Super+V sur un écran haut de `screen_h` points.
+pub fn clipboard_height(screen_h: f64) -> f64 {
+    (screen_h - 34.0 - 2.0 * POPOVER_MARGIN).clamp(380.0, CLIPBOARD_MAX_HEIGHT)
+}
+
+/// Hauteur visible de la liste du panneau Super+V.
+pub fn clipboard_list_height(screen_h: f64) -> f64 {
+    clipboard_height(screen_h) - CLIPBOARD_HEAD - CLIPBOARD_FOOT - CLIPBOARD_LIST_PAD.0 - CLIPBOARD_LIST_PAD.1
+}
 const DIALOG: (f64, f64) = (420.0, 168.0);
 /// Fréquence de relecture de l'état de la batterie.
 const BATTERY_REFRESH: Duration = Duration::from_secs(20);
@@ -213,6 +232,8 @@ pub enum DesktopAction {
     ClipboardPin(usize),
     ClipboardDelete(usize),
     ClipboardClear,
+    ClipboardFilter(ClipFilter),
+    ClipboardUndo,
     /// Déplacement du panneau presse-papiers depuis sa barre ; décalage pointeur/carte.
     ClipboardDragStart(i32, i32),
     DashboardAddNote,
@@ -223,6 +244,8 @@ pub enum DesktopAction {
     DashboardDeleteTask(usize),
     DashboardMonth(i32),
     DashboardConsume,
+    /// Application du mini-Dock (indice dans `DashboardView::apps`).
+    DashboardApp(usize),
     /// Note précédente ou suivante du widget Notes.
     DashboardNoteStep(i32),
     /// Mode d'édition des widgets.
@@ -242,20 +265,26 @@ pub enum DesktopAction {
     Consume,
 }
 
-/// Aperçu d'un élément de l'historique du presse-papiers.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ClipPreview {
-    /// Premières lignes du texte.
-    Text(Vec<String>),
-    Image(Thumbnail),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ClipItem {
-    /// Position dans la liste complète.
+/// Ligne visible du panneau Super+V.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClipRow {
+    /// Position dans l'historique complet.
     pub index: usize,
-    pub preview: ClipPreview,
+    pub kind: crate::clipboard::Kind,
+    pub label: String,
+    /// Application d'origine et âge (« Terminal · il y a 2 min »).
+    pub sub: String,
+    /// Chiffre qui colle l'élément (les neuf premiers).
+    pub key: Option<usize>,
     pub pinned: bool,
+    pub selected: bool,
+    /// Ordonnée depuis le haut de la liste, défilement compris, et hauteur.
+    pub y: f64,
+    pub h: f64,
+    pub thumbnail: Option<Thumbnail>,
+    /// Icône du fichier copié ; teinte d'une couleur copiée.
+    pub file_icon: &'static str,
+    pub swatch: Option<Color>,
 }
 
 /// Menu d'une icône du Dock, posé au-dessus d'elle.
@@ -268,14 +297,23 @@ pub struct DockMenuView {
 }
 
 impl Eq for DockMenuView {}
+impl Eq for ClipRow {}
+impl Eq for ClipboardView {}
 
-/// Lignes affichées du panneau Super+V.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+/// Panneau Super+V, d'après la planche « Presse-papiers ».
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct ClipboardView {
-    pub items: Vec<ClipItem>,
-    pub selected: usize,
-    /// Éléments au-delà de ceux affichés.
-    pub more: usize,
+    /// Lignes visibles et titres de section, aux ordonnées de la liste.
+    pub rows: Vec<ClipRow>,
+    pub sections: Vec<(&'static str, f64)>,
+    /// Éléments de l'historique, filtrés ou non.
+    pub count: usize,
+    pub query: String,
+    pub filter: ClipFilter,
+    /// Liste vide : titre et explication.
+    pub empty: Option<(&'static str, &'static str)>,
+    /// Bandeau d'une suppression, qui propose « Annuler ».
+    pub toast: Option<&'static str>,
     /// Position personnalisée de la carte, en pixels logiques sur l'écran.
     pub position: Option<(i32, i32)>,
 }
@@ -504,6 +542,18 @@ pub struct DashboardView {
     /// Mode d'édition, et widget en train d'être déplacé.
     pub edit: bool,
     pub drag: Option<usize>,
+    /// Case de la grille où ira le widget déplacé, montrée en creux.
+    pub target: Option<crate::desktop::widgets::WidgetSlot>,
+    /// Mini-Dock : applications récemment utilisées.
+    pub apps: Vec<DashboardApp>,
+}
+
+/// Application du mini-Dock des widgets.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DashboardApp {
+    pub icon: crate::desktop::apps::AppIcon,
+    pub name: String,
+    pub running: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -598,23 +648,44 @@ struct Battery {
     charging: bool,
 }
 
+/// Largeur et hauteur d'une image, en pixels.
+type PixelSize = (u32, u32);
+/// Toile (largeur, hauteur, échelle), panneau et teinte du verre du menu Applications.
+type LauncherBackdropKey = (u32, u32, u32, Rect, Color);
+/// Invitation de l'écran de verrouillage : écran (largeur, hauteur, échelle, thème
+/// sombre), image, et place en logique (haut, hauteur).
+type InvitationImage = ((u32, u32, u32, bool), MemoryRenderBuffer, (f64, f64));
+
 #[derive(Debug)]
 pub struct Panels {
     regular: Font,
     bold: Font,
     light: Font,
+    mono: Font,
     icons: IconCache,
     battery: RefCell<(Option<Instant>, Option<Battery>)>,
     system: RefCell<SystemMonitor>,
     cached: RefCell<Option<(VisualState, MemoryRenderBuffer, Option<PopoverLayer>)>>,
+    /// Barre du haut, dessinée à part : elle change (opaque quand une fenêtre est
+    /// agrandie, heure) sans qu'il faille redessiner tout l'écran.
+    /// Image et sa taille en pixels.
+    bar: RefCell<Option<(VisualState, MemoryRenderBuffer, PixelSize)>>,
+    /// Invitation de l'écran de verrouillage, qui pulse par son opacité.
+    invitation: RefCell<Option<InvitationImage>>,
     /// Widgets, dessinés à part : ils passent sous les fenêtres.
     dashboard: RefCell<Option<(VisualState, MemoryRenderBuffer)>>,
+    /// Verre des widgets, gardé d'un dessin à l'autre (voir `cards::GlassKey`).
+    glass: RefCell<Option<(cards::GlassKey, Vec<u8>)>>,
+    /// Images du glisser d'un widget (voir `push_dragged_dashboard`).
+    drag_layers: RefCell<DragLayers>,
     /// Dernier panneau animé affiché (centre de contrôle, session), gardé pour s'effacer
     /// après sa fermeture, et sa part d'apparition (0 à 1).
     layer: RefCell<Option<PopoverLayer>>,
     layer_shown: Cell<(f64, Option<Instant>)>,
     /// Verre du lanceur, dernier calculé.
     frost: RefCell<Option<(FrostKey, Arc<Frost>)>>,
+    /// Fond du menu Applications (voile, ombre et verre), gardé d'un dessin à l'autre.
+    launcher_backdrop: RefCell<Option<(LauncherBackdropKey, Vec<u8>)>>,
     /// Fond de l'écran de verrouillage.
     lock_wall: RefCell<Option<(LockWallKey, Vec<u8>)>>,
 }
@@ -670,18 +741,25 @@ impl Panels {
         let regular = Font::from_bytes(FONT_REGULAR, FontSettings::default()).map_err(|e| e.to_string())?;
         let bold = Font::from_bytes(FONT_BOLD, FontSettings::default()).map_err(|e| e.to_string())?;
         let light = Font::from_bytes(FONT_LIGHT, FontSettings::default()).map_err(|e| e.to_string())?;
+        let mono = Font::from_bytes(FONT_MONO, FontSettings::default()).map_err(|e| e.to_string())?;
         Ok(Self {
             regular,
             bold,
             light,
+            mono,
             icons: IconCache::default(),
             battery: RefCell::new((None, None)),
             system: RefCell::new(SystemMonitor::default()),
             cached: RefCell::new(None),
+            bar: RefCell::new(None),
+            invitation: RefCell::new(None),
             dashboard: RefCell::new(None),
+            glass: RefCell::new(None),
+            drag_layers: RefCell::new(DragLayers::default()),
             layer: RefCell::new(None),
             layer_shown: Cell::new((0.0, None)),
             frost: RefCell::new(None),
+            launcher_backdrop: RefCell::new(None),
             lock_wall: RefCell::new(None),
         })
     }
@@ -710,6 +788,44 @@ impl Panels {
             clock: clock_snapshot(SystemTime::now()),
             system: SystemMetrics::default(),
         };
+        // La barre a sa propre image ; le reste ne dépend ni de son opacité ni de sa
+        // présence, qui changent quand une fenêtre est agrandie.
+        let bar_visible = state.view.bar_visible;
+        // L'invitation de l'écran de verrouillage pulse par l'opacité de sa propre image.
+        let pulse = state.view.lock.as_ref().map(|lock| lock.pulse);
+        let rest = VisualState {
+            view: DesktopView {
+                bar_opaque: false,
+                bar_visible: true,
+                lock: state.view.lock.clone().map(|lock| LockView {
+                    pulse: lock_screen::PULSE_APART,
+                    ..lock
+                }),
+                ..state.view.clone()
+            },
+            ..state.clone()
+        };
+        let invitation = state.view.lock.as_ref().map(|lock| {
+            let key = (state.width, state.height, state.scale_milli, lock.dark);
+            let mut cache = self.invitation.borrow_mut();
+            if !cache.as_ref().is_some_and(|(known, _, _)| *known == key) {
+                let (buffer, place) = self.rasterize_invitation(&state, lock, scale);
+                *cache = Some((key, buffer, place));
+            }
+            let (_, buffer, place) = cache.as_ref().expect("rempli juste avant");
+            (buffer.clone(), *place)
+        });
+        let mut bar_cache = self.bar.borrow_mut();
+        if state.view.bar_visible && !bar_cache.as_ref().is_some_and(|(key, _, _)| key == &state) {
+            let (buffer, size) = self.rasterize_bar(&state, scale);
+            *bar_cache = Some((state, buffer, size));
+        }
+        let bar = bar_cache
+            .as_ref()
+            .filter(|_| bar_visible)
+            .map(|(_, buffer, size)| (buffer.clone(), *size));
+        drop(bar_cache);
+        let state = rest;
         let mut cache = self.cached.borrow_mut();
         if !cache.as_ref().is_some_and(|(key, _, _)| key == &state) {
             let buffer = self.rasterize(&state, scale);
@@ -752,6 +868,22 @@ impl Panels {
             }
         }
 
+        if let (Some((image, (top, height))), Some(pulse)) = (invitation, pulse) {
+            let size = (output_geo.size.w as f64 * scale, (height * scale).round());
+            match MemoryRenderBufferRenderElement::from_buffer(
+                renderer,
+                Point::<f64, Logical>::from((0.0, top)).to_physical(scale),
+                &image,
+                Some(lock_screen::pulse_level(pulse) as f32),
+                Some(Rectangle::<f64, Logical>::from_size(size.into())),
+                Some(Size::from((output_geo.size.w, height.round() as i32))),
+                Kind::Unspecified,
+            ) {
+                Ok(element) => out.push(super::super::render::OutputElement::Memory(element)),
+                Err(err) => tracing::warn!(?err, output = output.name(), "invitation non importée"),
+            }
+        }
+
         let physical_size = (output_geo.size.w as f64 * scale, output_geo.size.h as f64 * scale);
         match MemoryRenderBufferRenderElement::from_buffer(
             renderer,
@@ -764,6 +896,27 @@ impl Panels {
         ) {
             Ok(element) => out.push(super::super::render::OutputElement::Memory(element)),
             Err(err) => tracing::warn!(?err, output = output.name(), "panneau du bureau non importé"),
+        }
+
+        // Barre du haut, sous les menus.
+        if let Some((bar, (width, height))) = bar {
+            match MemoryRenderBufferRenderElement::from_buffer(
+                renderer,
+                Point::from((0.0, 0.0)),
+                &bar,
+                None,
+                Some(Rectangle::<f64, Logical>::from_size(
+                    (width as f64, height as f64).into(),
+                )),
+                Some(Size::from((
+                    output_geo.size.w,
+                    (height as f64 / scale).round() as i32,
+                ))),
+                Kind::Unspecified,
+            ) {
+                Ok(element) => out.push(super::super::render::OutputElement::Memory(element)),
+                Err(err) => tracing::warn!(?err, output = output.name(), "barre du haut non importée"),
+            }
         }
     }
 
@@ -795,9 +948,18 @@ impl Panels {
             clock: clock_snapshot(SystemTime::now()),
             system: self.system_metrics(),
         };
+        let dashboard = &state.view.dashboard;
+        if let Some(index) = dashboard
+            .drag
+            .filter(|&index| dashboard.edit && index < dashboard.layout.len())
+        {
+            self.push_dragged_dashboard(renderer, output, scale, &state, index, alpha, out);
+            return;
+        }
+        *self.drag_layers.borrow_mut() = DragLayers::default();
         let mut cache = self.dashboard.borrow_mut();
         if !cache.as_ref().is_some_and(|(key, _)| key == &state) {
-            let buffer = self.rasterize_dashboard(&state, scale);
+            let buffer = self.rasterize_dashboard(&state, scale, None);
             *cache = Some((state, buffer));
         }
         let Some((_, buffer)) = cache.as_ref() else {
@@ -818,10 +980,89 @@ impl Panels {
         }
     }
 
-    fn rasterize_dashboard(&self, state: &VisualState, scale: f64) -> MemoryRenderBuffer {
-        let width = (state.width as f64 * scale).round().max(1.0) as u32;
-        let height = (state.height as f64 * scale).round().max(1.0) as u32;
+    /// Widget déplacé ou redimensionné : tout redessiner à chaque image prendrait plus de
+    /// 100 ms. Le reste du tableau de bord est figé (heure et mesures comprises) jusqu'au
+    /// lâcher ; la case visée et le widget saisi sont deux petites images posées par-dessus,
+    /// que le glisser ne fait que déplacer. Le verre du widget saisi montre le fond vu à
+    /// l'endroit où il a été pris.
+    #[allow(clippy::too_many_arguments)] // Rendu, écran, état et opacité.
+    fn push_dragged_dashboard(
+        &self,
+        renderer: &mut GlesRenderer,
+        output: &Output,
+        scale: f64,
+        state: &VisualState,
+        index: usize,
+        alpha: f32,
+        out: &mut Vec<super::super::render::OutputElement>,
+    ) {
         let layout = Layout::new(state.width as f64, state.height as f64, &state.view);
+        let card = layout.dashboard_cards(&state.view.dashboard.layout)[index];
+        let target = state.view.dashboard.target.map(|target| {
+            let slot = target.clamped(layout.w as i32, layout.h as i32, layout.bar as i32);
+            Rect::new(
+                f64::from(slot.x),
+                f64::from(slot.y),
+                f64::from(slot.w),
+                f64::from(slot.h),
+            )
+        });
+        // Ce dont dépendent les images : tout, sauf la place du widget saisi et la case visée.
+        let mut key = state.clone();
+        key.clock = ClockSnapshot::default();
+        key.system = SystemMetrics::default();
+        key.view.dashboard.target = None;
+        let slot = &mut key.view.dashboard.layout[index];
+        let size = (slot.w, slot.h);
+        (slot.x, slot.y, slot.w, slot.h) = (0, 0, 0, 0);
+
+        let mut layers = self.drag_layers.borrow_mut();
+        if !layers.rest.as_ref().is_some_and(|(known, _)| *known == key) {
+            let mut rest = state.clone();
+            rest.view.dashboard.target = None;
+            layers.rest = Some((key.clone(), self.rasterize_dashboard(&rest, scale, Some(index))));
+        }
+        if !layers
+            .card
+            .as_ref()
+            .is_some_and(|(known, known_size, ..)| *known == key && *known_size == size)
+        {
+            layers.card = Some((key, size, self.rasterize_lifted(state, index, card, scale)));
+        }
+        if let Some(target) = target {
+            let target_key = (target.w as i32, target.h as i32, state.scale_milli);
+            if !layers
+                .target
+                .as_ref()
+                .is_some_and(|(known, ..)| *known == target_key)
+            {
+                layers.target = Some((target_key, self.rasterize_target(target, scale)));
+            }
+        }
+
+        // Du dessus vers le dessous : widget saisi, case visée, reste.
+        if let Some((.., (buffer, pixels))) = &layers.card {
+            let at = (card.x - LIFT_MARGIN, card.y - LIFT_MARGIN);
+            push_layer(renderer, output, buffer, *pixels, at, scale, alpha, out);
+        }
+        if let (Some(target), Some((_, (buffer, pixels)))) = (target, &layers.target) {
+            let at = (target.x - TARGET_MARGIN, target.y - TARGET_MARGIN);
+            push_layer(renderer, output, buffer, *pixels, at, scale, alpha, out);
+        }
+        if let Some((_, buffer)) = &layers.rest {
+            let pixels = (
+                (state.width as f64 * scale).round() as i32,
+                (state.height as f64 * scale).round() as i32,
+            );
+            push_layer(renderer, output, buffer, pixels, (0.0, 0.0), scale, alpha, out);
+        }
+    }
+
+    /// Widget `index` seul, dans une image à peine plus grande que lui (son badge de retrait
+    /// déborde) ; et la taille de l'image en pixels.
+    fn rasterize_lifted(&self, state: &VisualState, index: usize, card: Rect, scale: f64) -> Layer {
+        let width = ((card.w + 2.0 * LIFT_MARGIN) * scale).ceil().max(1.0) as u32;
+        let height = ((card.h + 2.0 * LIFT_MARGIN) * scale).ceil().max(1.0) as u32;
         let mut canvas = Canvas {
             pixels: vec![0; width as usize * height as usize * 4],
             width,
@@ -830,7 +1071,59 @@ impl Panels {
             bold: &self.bold,
             icons: &self.icons,
         };
-        self.draw_dashboard(&mut canvas, &layout, state);
+        let placement = cards::Placement {
+            x: card.x - LIFT_MARGIN,
+            y: card.y - LIFT_MARGIN,
+            screen: (
+                (state.width as f64 * scale).round().max(1.0),
+                (state.height as f64 * scale).round().max(1.0),
+            ),
+        };
+        let local = Rect::new(LIFT_MARGIN, LIFT_MARGIN, card.w, card.h);
+        self.draw_card(&mut canvas, state, index, local, true, Some(placement));
+        canvas_buffer(canvas)
+    }
+
+    /// Case visée par le widget saisi, de la taille de `target`.
+    fn rasterize_target(&self, target: Rect, scale: f64) -> Layer {
+        let width = ((target.w + 2.0 * TARGET_MARGIN) * scale).ceil().max(1.0) as u32;
+        let height = ((target.h + 2.0 * TARGET_MARGIN) * scale).ceil().max(1.0) as u32;
+        let mut canvas = Canvas {
+            pixels: vec![0; width as usize * height as usize * 4],
+            width,
+            height,
+            scale: scale as f32,
+            bold: &self.bold,
+            icons: &self.icons,
+        };
+        let local = Rect::new(TARGET_MARGIN, TARGET_MARGIN, target.w, target.h);
+        cards::target_hollow(&mut canvas, local);
+        canvas_buffer(canvas)
+    }
+
+    fn rasterize_dashboard(
+        &self,
+        state: &VisualState,
+        scale: f64,
+        skip: Option<usize>,
+    ) -> MemoryRenderBuffer {
+        let width = (state.width as f64 * scale).round().max(1.0) as u32;
+        let height = (state.height as f64 * scale).round().max(1.0) as u32;
+        let layout = Layout::new(state.width as f64, state.height as f64, &state.view);
+        // Hors édition, les cartes ne se chevauchent pas : leur verre peut être posé
+        // d'abord, d'un bloc, depuis le cache.
+        let glass =
+            (!state.view.dashboard.edit).then(|| self.glass_pixels(&layout, state, width, height, scale));
+        let glass_drawn = glass.is_some();
+        let mut canvas = Canvas {
+            pixels: glass.unwrap_or_else(|| vec![0; width as usize * height as usize * 4]),
+            width,
+            height,
+            scale: scale as f32,
+            bold: &self.bold,
+            icons: &self.icons,
+        };
+        self.draw_dashboard(&mut canvas, &layout, state, glass_drawn, skip);
         MemoryRenderBuffer::from_slice(
             &canvas.pixels,
             Fourcc::Argb8888,
@@ -903,6 +1196,31 @@ impl Panels {
         monitor.metrics.clone()
     }
 
+    /// Barre du haut seule, dans une image de sa hauteur.
+    fn rasterize_bar(&self, state: &VisualState, scale: f64) -> (MemoryRenderBuffer, PixelSize) {
+        let layout = Layout::new(state.width as f64, state.height as f64, &state.view);
+        let width = (state.width as f64 * scale).round().max(1.0) as u32;
+        let height = (layout.bar * scale).ceil().max(1.0) as u32;
+        let mut canvas = Canvas {
+            pixels: vec![0; width as usize * height as usize * 4],
+            width,
+            height,
+            scale: scale as f32,
+            bold: &self.bold,
+            icons: &self.icons,
+        };
+        self.draw_bar(&mut canvas, &layout, state);
+        let buffer = MemoryRenderBuffer::from_slice(
+            &canvas.pixels,
+            Fourcc::Argb8888,
+            (width as i32, height as i32),
+            1,
+            smithay::utils::Transform::Normal,
+            None,
+        );
+        (buffer, (width, height))
+    }
+
     fn rasterize(&self, state: &VisualState, scale: f64) -> MemoryRenderBuffer {
         let width = (state.width as f64 * scale).round().max(1.0) as u32;
         let height = (state.height as f64 * scale).round().max(1.0) as u32;
@@ -937,10 +1255,7 @@ impl Panels {
             );
         }
 
-        // Barre du haut (sauf en plein écran, tant que la souris ne la rappelle pas).
-        if view.bar_visible {
-            self.draw_bar(&mut canvas, &layout, state);
-        }
+        // Barre du haut : dessinée à part, par `rasterize_bar`.
 
         match view.popover {
             Some(Popover::Launcher) => self.draw_launcher(&mut canvas, &layout, &view.launcher),
@@ -1220,15 +1535,32 @@ impl Panels {
     fn draw_launcher(&self, canvas: &mut Canvas, layout: &Layout, launcher: &LauncherView) {
         let card = layout.launcher();
         let content = layout.launcher_content();
-        // Voile de 40 % sur tout le bureau, sous la carte.
-        canvas.fill(
-            Rect::new(0.0, 0.0, layout.w, layout.h),
-            0.0,
-            Color::BLACK.with_alpha(102),
-        );
-        canvas.panel_shadow(card, LAUNCHER_RADIUS);
         let frost = self.frost(canvas, card);
-        canvas.blit_frost(&frost, None);
+        // Voile de 40 % sur tout le bureau, ombre et verre : ils ne changent qu'avec
+        // l'écran, alors que le reste est redessiné à chaque touche de la recherche et à
+        // chaque pas de défilement. Le menu est dessiné le premier, sur une toile vide.
+        let key = (
+            canvas.width,
+            canvas.height,
+            canvas.scale.to_bits(),
+            card,
+            panel_fill(),
+        );
+        let mut backdrop = self.launcher_backdrop.borrow_mut();
+        match backdrop.as_ref() {
+            Some((known, pixels)) if *known == key => canvas.pixels.copy_from_slice(pixels),
+            _ => {
+                canvas.fill(
+                    Rect::new(0.0, 0.0, layout.w, layout.h),
+                    0.0,
+                    Color::BLACK.with_alpha(102),
+                );
+                canvas.panel_shadow(card, LAUNCHER_RADIUS);
+                canvas.blit_frost(&frost, None);
+                *backdrop = Some((key, canvas.pixels.clone()));
+            }
+        }
+        drop(backdrop);
 
         // Ce qui défile peut déborder du panneau : l'écran autour est gardé puis remis.
         let margin = LAUNCHER_CELL.1 + LAUNCHER_TITLE + LAUNCHER_GAP;
@@ -1891,115 +2223,240 @@ impl Panels {
         canvas.label(&self.regular, text, row.x + 10.0, row.y + 8.0, px(13.0), ink);
     }
 
-    /// Historique du presse-papiers, comme Windows + V.
+    /// Historique du presse-papiers (planche « Presse-papiers ») : en-tête avec recherche
+    /// et filtres, épinglés puis récents, pied des raccourcis, bandeau « Annuler ».
     fn draw_clipboard(&self, canvas: &mut Canvas, layout: &Layout, view: &ClipboardView) {
+        let t = clip_tokens();
         let card = layout.clipboard();
-        canvas.glass(card, 14.0);
-        canvas.label(
+        canvas.panel_shadow(card, 18.0);
+        canvas.fill(card, 18.0, t.panel);
+        canvas.stroke(card, 18.0, t.ring, 1.0);
+
+        // En-tête : titre et nombre, thème et « Tout effacer ».
+        canvas.text(
             &self.bold,
             "Presse-papiers",
-            card.x + 16.0,
-            card.y + 16.0,
-            13.0,
-            primary_text(),
+            card.x + 18.0,
+            card.y + 24.0,
+            17.0,
+            t.fg,
         );
-        if view.items.is_empty() {
-            let lines = [
-                (&self.bold, "Rien n’a encore été copié", primary_text(), 12.0),
-                (
-                    &self.regular,
-                    "Le texte et les images copiés apparaîtront ici.",
-                    text_secondary(),
-                    11.0,
-                ),
-            ];
-            for (index, (font, text, color, size)) in lines.into_iter().enumerate() {
-                let width = canvas.text_width(font, text, size);
-                let y = card.y + card.h / 2.0 - 24.0 + index as f64 * 24.0;
-                canvas.label(font, text, card.x + (card.w - width) / 2.0, y, size, color);
-            }
-            return;
-        }
-        let clear = layout.clipboard_clear();
-        let width = canvas.text_width(&self.regular, "Tout effacer", 11.0);
-        canvas.label(
+        let count = format!("{} élément{}", view.count, if view.count > 1 { "s" } else { "" });
+        let title_w = canvas.css_width(&self.bold, "Presse-papiers", 17.0);
+        canvas.text(
             &self.regular,
-            "Tout effacer",
-            clear.right() - width - 6.0,
-            clear.y + 6.0,
-            11.0,
+            &count,
+            card.x + 18.0 + title_w + 8.0,
+            card.y + 28.0,
+            13.0,
+            t.fg3,
+        );
+        let theme = layout.clipboard_theme();
+        canvas.fill(theme, 9.0, t.chip);
+        let glyph = themed("clip-moon", "clip-sun");
+        canvas.icon(glyph, theme.center(), 15.0, Style::Symbolic(t.icon));
+        let clear = layout.clipboard_clear();
+        canvas.fill(clear, 9.0, t.chip);
+        centered_text(canvas, &self.regular, "Tout effacer", clear, 13.0, t.fg2);
+
+        // Recherche, toujours active : le clavier y écrit.
+        let search = layout.clipboard_search();
+        canvas.fill(search, 10.0, t.field);
+        canvas.stroke(search, 10.0, t.field_ring, 1.0);
+        canvas.icon(
+            "clip-search",
+            (search.x + 19.0, search.center().1),
+            14.0,
+            Style::Symbolic(t.fg3),
+        );
+        let text_x = search.x + 34.0;
+        let text_top = search.center().1 - 8.5;
+        if view.query.is_empty() {
+            canvas.text(
+                &self.regular,
+                "Rechercher dans l’historique",
+                text_x,
+                text_top,
+                14.0,
+                t.fg3,
+            );
+        }
+        let query = ellipsize_to(canvas, &self.regular, &view.query, px(14.0), search.w - 48.0);
+        canvas.text(&self.regular, &query, text_x, text_top, 14.0, t.fg);
+        let caret = text_x + canvas.css_width(&self.regular, &query, 14.0) + 1.0;
+        canvas.fill(
+            Rect::new(caret, search.center().1 - 9.0, 1.5, 18.0),
+            0.75,
             accent(),
         );
-        for (slot, item) in view.items.iter().enumerate() {
-            let row = layout.clipboard_row(slot);
-            let selected = item.index == view.selected;
-            canvas.fill(
-                row,
-                9.0,
-                if selected {
-                    themed(Color::rgb(0xDCE8F8), accent().with_alpha(70))
-                } else {
-                    themed(Color::rgb(0xF0F0F2), palette().control_hover)
-                },
-            );
-            if selected {
-                canvas.fill(Rect::new(row.x, row.y + 12.0, 3.0, row.h - 24.0), 1.5, accent());
-            }
-            match &item.preview {
-                ClipPreview::Text(lines) => {
-                    for (number, line) in lines.iter().take(2).enumerate() {
-                        let text = ellipsize_to(canvas, &self.regular, line, 11.5, row.w - 96.0);
-                        canvas.label(
-                            &self.regular,
-                            &text,
-                            row.x + 14.0,
-                            row.y + 14.0 + number as f64 * 21.0,
-                            11.5,
-                            primary_text(),
-                        );
-                    }
-                }
-                ClipPreview::Image(thumbnail) => {
-                    canvas.image(
-                        Rect::new(row.x + 12.0, row.y + 7.0, row.w - 96.0, row.h - 14.0),
-                        thumbnail,
-                    );
-                }
-            }
-            // Épingle (bleue si l'élément est épinglé) et croix de suppression.
-            let pin = layout.clipboard_pin(slot);
-            let ink = if item.pinned { accent() } else { text_secondary() };
-            let (cx, cy) = pin.center();
-            canvas.fill(Rect::new(cx - 5.0, cy - 8.0, 10.0, 10.0), 5.0, ink);
-            canvas.fill(Rect::new(cx - 6.0, cy + 1.0, 12.0, 2.0), 1.0, ink);
-            canvas.fill(Rect::new(cx - 0.9, cy + 2.0, 1.8, 7.0), 0.9, ink);
-            let delete = layout.clipboard_delete(slot);
-            let width = canvas.text_width(&self.regular, "×", 16.0);
-            canvas.label(
-                &self.regular,
-                "×",
-                delete.center().0 - width / 2.0,
-                delete.y + 3.0,
-                16.0,
-                text_secondary(),
-            );
-        }
-        if view.more > 0 {
-            let text = if view.more == 1 {
-                "1 autre élément plus bas".to_owned()
+
+        for (slot, filter) in ClipFilter::ALL.into_iter().enumerate() {
+            let pill = layout.clipboard_filter(slot);
+            let on = view.filter == filter;
+            canvas.fill(pill, 14.0, if on { t.filter_on } else { t.chip });
+            let (font, ink) = if on {
+                (&self.bold, t.filter_on_fg)
             } else {
-                format!("{} autres éléments plus bas", view.more)
+                (&self.regular, t.fg2)
             };
-            let width = canvas.text_width(&self.regular, &text, 10.0);
-            canvas.label(
-                &self.regular,
-                &text,
-                card.x + (card.w - width) / 2.0,
-                card.bottom() - 22.0,
-                10.0,
-                text_secondary(),
+            centered_text(canvas, font, filter.label(), pill, 12.0, ink);
+        }
+        canvas.fill(
+            Rect::new(card.x, card.y + CLIPBOARD_HEAD - 1.0, card.w, 1.0),
+            0.0,
+            t.line,
+        );
+
+        // Liste, coupée entre le filet de l'en-tête et le pied.
+        let clip = layout.clipboard_clip();
+        let above = canvas.save_rows(card.y - 30.0, clip.y);
+        let below = canvas.save_rows(clip.bottom(), card.bottom() + clipboard::ROW_TALL + 30.0);
+        let list = layout.clipboard_list();
+        for (title, y) in &view.sections {
+            canvas.tracked(
+                &self.bold,
+                &title.to_uppercase(),
+                list.x + 8.0,
+                list.y + y + 12.0,
+                11.0,
+                0.06,
+                t.fg3,
             );
         }
+        for row in &view.rows {
+            self.clipboard_row(canvas, layout.clipboard_row(row), row, &t);
+        }
+        canvas.restore_rows(above);
+        canvas.restore_rows(below);
+        if let Some((title, hint)) = view.empty {
+            let (cx, cy) = clip.center();
+            let tile = Rect::new(cx - 28.0, cy - 64.0, 56.0, 56.0);
+            canvas.fill(tile, 16.0, t.chip);
+            canvas.icon("clip-empty", tile.center(), 26.0, Style::Symbolic(t.fg3));
+            let line = Rect::new(clip.x + 30.0, tile.bottom() + 10.0, clip.w - 60.0, 22.0);
+            centered_text(canvas, &self.bold, title, line, 15.0, t.fg);
+            let lines = wrap_two_lines(canvas, &self.regular, hint, px(13.0), clip.w - 60.0);
+            for (number, text) in lines.iter().enumerate() {
+                let rect = Rect::new(line.x, line.bottom() + 6.0 + number as f64 * 19.5, line.w, 19.5);
+                centered_text(canvas, &self.regular, text, rect, 13.0, t.fg2);
+            }
+        }
+
+        // Pied : raccourcis.
+        let foot = Rect::new(card.x, card.bottom() - CLIPBOARD_FOOT, card.w, CLIPBOARD_FOOT);
+        canvas.fill(Rect::new(foot.x, foot.y, foot.w, 1.0), 0.0, t.line);
+        let mut x = foot.x + 16.0;
+        for (keys, what) in [("↑↓", "naviguer"), ("Entrée", "coller")] {
+            x = self.kbd(canvas, keys, x, foot.center().1, &t) + 6.0;
+            canvas.text(&self.regular, what, x, foot.center().1 - 7.5, 12.0, t.fg3);
+            x += canvas.css_width(&self.regular, what, 12.0) + 14.0;
+        }
+        let shortcut = "Super + V";
+        let width = canvas.css_width(&self.bold, shortcut, 11.0) + 12.0;
+        self.kbd(canvas, shortcut, foot.right() - 16.0 - width, foot.center().1, &t);
+
+        // Bandeau d'une suppression, avec « Annuler ».
+        if let Some(text) = view.toast {
+            let toast = layout.clipboard_toast();
+            canvas.panel_shadow(toast, 12.0);
+            canvas.fill(toast, 12.0, t.toast_bg);
+            let fit = ellipsize_to(canvas, &self.regular, text, px(13.0), toast.w - 120.0);
+            canvas.text(
+                &self.regular,
+                &fit,
+                toast.x + 16.0,
+                toast.center().1 - 8.0,
+                13.0,
+                t.toast_fg,
+            );
+            let undo = layout.clipboard_undo();
+            canvas.fill(undo, 8.0, Color::WHITE.with_alpha(36));
+            centered_text(canvas, &self.bold, "Annuler", undo, 13.0, t.toast_action);
+        }
+    }
+
+    /// Une ligne : tuile du type, texte et origine, chiffre, épingle et croix.
+    fn clipboard_row(&self, canvas: &mut Canvas, rect: Rect, row: &ClipRow, t: &ClipTokens) {
+        if row.selected {
+            canvas.fill(rect, 12.0, accent().with_alpha(themed(26, 36)));
+            canvas.stroke(rect, 12.0, accent(), 1.5);
+        }
+        let cy = rect.center().1;
+        let tile = Rect::new(rect.x + 10.0, cy - 22.0, 44.0, 44.0);
+        match (&row.thumbnail, row.kind) {
+            (Some(thumbnail), _) => canvas.image_cover(tile, thumbnail, 10.0),
+            (None, ClipKind::Files) => {
+                canvas.fill(tile, 10.0, t.tile);
+                canvas.icon(row.file_icon, tile.center(), 34.0, Style::Color);
+            }
+            (None, ClipKind::Color) => {
+                canvas.fill(tile, 10.0, t.tile);
+                let swatch = Rect::new(tile.x + 8.0, tile.y + 8.0, 28.0, 28.0);
+                canvas.fill(swatch, 8.0, row.swatch.unwrap_or(t.fg3));
+                canvas.stroke(swatch, 8.0, Color::BLACK.with_alpha(31), 1.0);
+            }
+            (None, kind) => {
+                canvas.fill(tile, 10.0, t.tile);
+                let glyph = match kind {
+                    ClipKind::Code => "clip-code",
+                    ClipKind::Link => "clip-link",
+                    _ => "clip-text",
+                };
+                canvas.icon(glyph, tile.center(), 20.0, Style::Symbolic(t.icon));
+            }
+        }
+        let delete = clipboard_delete(rect);
+        canvas.icon("clip-close", delete.center(), 12.0, Style::Symbolic(t.fg3));
+        let pin = clipboard_pin(rect);
+        let (glyph, ink) = if row.pinned {
+            ("clip-pin-on", accent())
+        } else {
+            ("clip-pin", t.fg3)
+        };
+        canvas.icon(glyph, pin.center(), 16.0, Style::Symbolic(ink));
+        let mut right = pin.x;
+        if let Some(key) = row.key {
+            let kbd = Rect::new(pin.x - 4.0 - 22.0, cy - 11.0, 22.0, 22.0);
+            canvas.stroke(kbd, 6.0, t.kbd_ring, 1.0);
+            centered_text(canvas, &self.bold, &key.to_string(), kbd, 11.0, t.fg3);
+            right = kbd.x;
+        }
+        let x = tile.right() + 12.0;
+        let width = right - 12.0 - x;
+        let (font, size) = match row.kind {
+            ClipKind::Code | ClipKind::Color | ClipKind::Files => (&self.mono, 13.0),
+            _ => (&self.regular, 14.0),
+        };
+        let lines = if row.h > clipboard::ROW {
+            wrap_two_lines(canvas, font, &row.label, px(size as f32), width)
+        } else {
+            vec![ellipsize_to(canvas, font, &row.label, px(size as f32), width)]
+        };
+        let line_h = size * 1.4;
+        let block = lines.len() as f64 * line_h + 3.0 + 15.0;
+        let top = cy - block / 2.0;
+        for (number, line) in lines.iter().enumerate() {
+            let y = top + number as f64 * line_h + (line_h - size * 1.21) / 2.0;
+            canvas.text(font, line, x, y, size, t.fg);
+        }
+        let sub = ellipsize_to(canvas, &self.regular, &row.sub, px(12.0), width);
+        canvas.text(
+            &self.regular,
+            &sub,
+            x,
+            top + lines.len() as f64 * line_h + 3.0,
+            12.0,
+            t.fg3,
+        );
+    }
+
+    /// Touche dessinée en `x`, centrée sur `cy` ; rend son bord droit.
+    fn kbd(&self, canvas: &mut Canvas, keys: &str, x: f64, cy: f64, t: &ClipTokens) -> f64 {
+        let width = canvas.css_width(&self.bold, keys, 11.0) + 12.0;
+        let rect = Rect::new(x, cy - 10.0, width, 20.0);
+        canvas.stroke(rect, 5.0, t.kbd_ring, 1.0);
+        centered_text(canvas, &self.bold, keys, rect, 11.0, t.fg3);
+        rect.right()
     }
 
     /// Sur chaque aperçu : l'icône de l'application à cheval sur le bas ; au survol, un
@@ -2576,31 +3033,40 @@ pub fn action_at(
         },
         Popover::Clipboard if layout.clipboard().contains(pos) => {
             let clipboard = &view.clipboard;
-            if layout.clipboard_header().contains(pos) {
+            let filter = ClipFilter::ALL
+                .into_iter()
+                .enumerate()
+                .find(|(slot, _)| layout.clipboard_filter(*slot).contains(pos));
+            if clipboard.toast.is_some() && layout.clipboard_undo().contains(pos) {
+                DesktopAction::ClipboardUndo
+            } else if layout.clipboard_theme().contains(pos) {
+                DesktopAction::ToggleDarkMode
+            } else if layout.clipboard_clear().contains(pos) {
+                DesktopAction::ClipboardClear
+            } else if let Some((_, filter)) = filter {
+                DesktopAction::ClipboardFilter(filter)
+            } else if layout.clipboard_header().contains(pos) {
                 let card = layout.clipboard();
                 DesktopAction::ClipboardDragStart(
                     (pos.x - card.x).round() as i32,
                     (pos.y - card.y).round() as i32,
                 )
-            } else {
-                let row = clipboard
-                    .items
+            } else if layout.clipboard_clip().contains(pos)
+                && let Some(row) = clipboard
+                    .rows
                     .iter()
-                    .enumerate()
-                    .find(|(slot, _)| layout.clipboard_row(*slot).contains(pos));
-                if !clipboard.items.is_empty() && layout.clipboard_clear().contains(pos) {
-                    DesktopAction::ClipboardClear
-                } else if let Some((slot, item)) = row {
-                    if layout.clipboard_pin(slot).contains(pos) {
-                        DesktopAction::ClipboardPin(item.index)
-                    } else if layout.clipboard_delete(slot).contains(pos) {
-                        DesktopAction::ClipboardDelete(item.index)
-                    } else {
-                        DesktopAction::ClipboardPaste(item.index)
-                    }
+                    .find(|row| layout.clipboard_row(row).contains(pos))
+            {
+                let rect = layout.clipboard_row(row);
+                if clipboard_pin(rect).contains(pos) {
+                    DesktopAction::ClipboardPin(row.index)
+                } else if clipboard_delete(rect).contains(pos) {
+                    DesktopAction::ClipboardDelete(row.index)
                 } else {
-                    DesktopAction::Consume
+                    DesktopAction::ClipboardPaste(row.index)
                 }
+            } else {
+                DesktopAction::Consume
             }
         }
         Popover::Notifications if layout.calendar(view.notifications.history.len()).contains(pos) => {
@@ -2683,6 +3149,77 @@ pub fn launcher_scroll_limit(output: Rectangle<i32, Logical>, view: &DesktopView
     let layout = Layout::new(output.size.w as f64, output.size.h as f64, view);
     let (_, height) = launcher_flow(&view.launcher);
     (height - layout.launcher_content().h).max(0.0).ceil() as u32
+}
+
+/// Marges autour du widget saisi (son badge de retrait déborde de 6 points) et de la case
+/// visée (son liseré).
+const LIFT_MARGIN: f64 = 10.0;
+const TARGET_MARGIN: f64 = 2.0;
+
+/// Images du glisser d'un widget, chacune avec ce dont elle dépend : le reste du tableau
+/// de bord, le widget saisi (et sa taille) et la case visée (taille et échelle).
+type DragKey = VisualState;
+/// Image prête et sa taille en pixels.
+type Layer = (MemoryRenderBuffer, (i32, i32));
+#[derive(Default)]
+struct DragLayers {
+    rest: Option<(DragKey, MemoryRenderBuffer)>,
+    card: Option<(DragKey, (i32, i32), Layer)>,
+    target: Option<((i32, i32, u32), Layer)>,
+}
+
+impl std::fmt::Debug for DragLayers {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DragLayers").finish_non_exhaustive()
+    }
+}
+
+/// Tampon d'un canevas, et sa taille en pixels.
+fn canvas_buffer(canvas: Canvas) -> Layer {
+    let pixels = (canvas.width as i32, canvas.height as i32);
+    let buffer = MemoryRenderBuffer::from_slice(
+        &canvas.pixels,
+        Fourcc::Argb8888,
+        pixels,
+        1,
+        smithay::utils::Transform::Normal,
+        None,
+    );
+    (buffer, pixels)
+}
+
+/// Pose `buffer` (`pixels` de côté) au point logique `at`, pixel exact.
+#[allow(clippy::too_many_arguments)] // Rendu, image, place et opacité.
+fn push_layer(
+    renderer: &mut GlesRenderer,
+    output: &Output,
+    buffer: &MemoryRenderBuffer,
+    pixels: (i32, i32),
+    at: (f64, f64),
+    scale: f64,
+    alpha: f32,
+    out: &mut Vec<super::super::render::OutputElement>,
+) {
+    let position =
+        Point::<f64, smithay::utils::Physical>::from(((at.0 * scale).round(), (at.1 * scale).round()));
+    let size = Size::<i32, Logical>::from((
+        (f64::from(pixels.0) / scale).round() as i32,
+        (f64::from(pixels.1) / scale).round() as i32,
+    ));
+    match MemoryRenderBufferRenderElement::from_buffer(
+        renderer,
+        position,
+        buffer,
+        Some(alpha),
+        Some(Rectangle::<f64, Logical>::from_size(
+            (f64::from(pixels.0), f64::from(pixels.1)).into(),
+        )),
+        Some(size),
+        Kind::Unspecified,
+    ) {
+        Ok(element) => out.push(super::super::render::OutputElement::Memory(element)),
+        Err(err) => tracing::warn!(?err, output = output.name(), "widget déplacé non importé"),
+    }
 }
 
 /// Couleur du fond flouté au point (`u`, `v`) de l'écran (0 à 1), interpolée.
@@ -3357,49 +3894,150 @@ impl Layout {
         )
     }
 
-    /// Panneau Super+V : position personnalisée ou emplacement par défaut en bas à droite.
+    /// Panneau Super+V : position personnalisée ou emplacement par défaut à droite, sous la
+    /// barre.
     fn clipboard(&self) -> Rect {
-        let h = CLIPBOARD_HEADER + CLIPBOARD_VISIBLE as f64 * (CLIPBOARD_ROW + CLIPBOARD_GAP) + 26.0;
+        let h = clipboard_height(self.h);
         if let Some((x, y)) = self.clipboard_position {
             return Rect::new(x as f64, y as f64, CLIPBOARD_WIDTH, h);
         }
         Rect::new(
             (self.w - POPOVER_MARGIN - 10.0 - CLIPBOARD_WIDTH).max(POPOVER_MARGIN),
-            (self.h - h - 96.0).max(self.bar + POPOVER_MARGIN),
+            self.bar + POPOVER_MARGIN + 8.0,
             CLIPBOARD_WIDTH,
             h,
         )
     }
 
+    /// Haut du panneau, par où on le déplace.
     fn clipboard_header(&self) -> Rect {
         let card = self.clipboard();
-        Rect::new(card.x, card.y, card.w, CLIPBOARD_HEADER)
+        Rect::new(card.x, card.y, card.w, 58.0)
     }
 
-    fn clipboard_row(&self, slot: usize) -> Rect {
-        let card = self.clipboard();
-        Rect::new(
-            card.x + 10.0,
-            card.y + CLIPBOARD_HEADER + slot as f64 * (CLIPBOARD_ROW + CLIPBOARD_GAP),
-            card.w - 20.0,
-            CLIPBOARD_ROW,
-        )
-    }
-
-    fn clipboard_pin(&self, slot: usize) -> Rect {
-        let row = self.clipboard_row(slot);
-        Rect::new(row.right() - 68.0, row.y + 6.0, 30.0, 30.0)
-    }
-
-    fn clipboard_delete(&self, slot: usize) -> Rect {
-        let row = self.clipboard_row(slot);
-        Rect::new(row.right() - 36.0, row.y + 6.0, 30.0, 30.0)
+    fn clipboard_theme(&self) -> Rect {
+        let clear = self.clipboard_clear();
+        Rect::new(clear.x - 6.0 - 32.0, clear.y, 32.0, 32.0)
     }
 
     fn clipboard_clear(&self) -> Rect {
         let card = self.clipboard();
-        Rect::new(card.right() - 120.0, card.y + 10.0, 110.0, 30.0)
+        Rect::new(
+            card.right() - 18.0 - CLIPBOARD_CLEAR,
+            card.y + 18.0,
+            CLIPBOARD_CLEAR,
+            32.0,
+        )
     }
+
+    fn clipboard_search(&self) -> Rect {
+        let card = self.clipboard();
+        Rect::new(card.x + 18.0, card.y + 62.0, card.w - 36.0, 38.0)
+    }
+
+    fn clipboard_filter(&self, slot: usize) -> Rect {
+        let card = self.clipboard();
+        let x = card.x + 18.0 + CLIPBOARD_FILTERS[..slot].iter().map(|w| w + 6.0).sum::<f64>();
+        Rect::new(x, card.y + 112.0, CLIPBOARD_FILTERS[slot], 28.0)
+    }
+
+    /// Zone où la liste défile, entre le filet de l'en-tête et le pied.
+    fn clipboard_clip(&self) -> Rect {
+        let card = self.clipboard();
+        Rect::new(
+            card.x,
+            card.y + CLIPBOARD_HEAD,
+            card.w,
+            card.h - CLIPBOARD_HEAD - CLIPBOARD_FOOT,
+        )
+    }
+
+    /// Haut de la liste (ordonnée 0 des lignes) et sa largeur.
+    fn clipboard_list(&self) -> Rect {
+        let clip = self.clipboard_clip();
+        Rect::new(
+            clip.x + 10.0,
+            clip.y + CLIPBOARD_LIST_PAD.0,
+            clip.w - 20.0,
+            clip.h - CLIPBOARD_LIST_PAD.0 - CLIPBOARD_LIST_PAD.1,
+        )
+    }
+
+    fn clipboard_row(&self, row: &ClipRow) -> Rect {
+        let list = self.clipboard_list();
+        Rect::new(list.x, list.y + row.y, list.w, row.h)
+    }
+
+    fn clipboard_toast(&self) -> Rect {
+        let card = self.clipboard();
+        Rect::new(card.x + 20.0, card.bottom() - 60.0 - 48.0, card.w - 40.0, 48.0)
+    }
+
+    fn clipboard_undo(&self) -> Rect {
+        let toast = self.clipboard_toast();
+        Rect::new(toast.right() - 10.0 - 80.0, toast.y + 10.0, 80.0, 28.0)
+    }
+}
+
+/// Épingle et croix d'une ligne du presse-papiers, à sa droite.
+fn clipboard_delete(row: Rect) -> Rect {
+    Rect::new(row.right() - 8.0 - 30.0, row.center().1 - 15.0, 30.0, 30.0)
+}
+
+fn clipboard_pin(row: Rect) -> Rect {
+    let delete = clipboard_delete(row);
+    Rect::new(delete.x - 2.0 - 30.0, delete.y, 30.0, 30.0)
+}
+
+/// Couleurs de la planche « Presse-papiers », claires ou sombres.
+struct ClipTokens {
+    fg: Color,
+    fg2: Color,
+    fg3: Color,
+    icon: Color,
+    panel: Color,
+    line: Color,
+    chip: Color,
+    field: Color,
+    field_ring: Color,
+    ring: Color,
+    tile: Color,
+    kbd_ring: Color,
+    toast_bg: Color,
+    toast_fg: Color,
+    toast_action: Color,
+    filter_on: Color,
+    filter_on_fg: Color,
+}
+
+fn clip_tokens() -> ClipTokens {
+    let pick = |light: u32, dark: u32| Color::rgb(themed(light, dark));
+    ClipTokens {
+        fg: pick(0x111827, 0xE5E7EB),
+        fg2: pick(0x4B5563, 0x9CA3AF),
+        fg3: pick(0x6B7280, 0x8B93A0),
+        icon: pick(0x1F2937, 0xE5E7EB),
+        panel: pick(0xFFFFFF, 0x22262D),
+        line: pick(0xE3E6EB, 0x353A42),
+        chip: pick(0xEEF0F4, 0x2A2E35),
+        field: pick(0xF7F8FA, 0x1E2127),
+        field_ring: pick(0xE3E6EB, 0x353A42),
+        ring: themed(Color::BLACK.with_alpha(20), Color::WHITE.with_alpha(15)),
+        tile: pick(0xF2F3F6, 0x2A2E35),
+        kbd_ring: pick(0xD5D9E0, 0x3A3F47),
+        toast_bg: pick(0x16181C, 0xE5E7EB),
+        toast_fg: pick(0xFFFFFF, 0x16181C),
+        toast_action: pick(0x9CC7FF, 0x174F9E),
+        filter_on: pick(0x16181C, 0xE5E7EB),
+        filter_on_fg: pick(0xFFFFFF, 0x16181C),
+    }
+}
+
+/// Texte de `css` pixels centré dans `rect`.
+fn centered_text(canvas: &mut Canvas, font: &Font, text: &str, rect: Rect, css: f64, color: Color) {
+    let width = canvas.css_width(font, text, css);
+    let (cx, cy) = rect.center();
+    canvas.text(font, text, cx - width / 2.0, cy - css * 0.6, css, color);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -3460,6 +4098,45 @@ impl Canvas<'_> {
         let top = (y - 1.0).floor().max(0.0) as u32;
         let right = (x + w + 1.0).ceil().clamp(0.0, self.width as f32) as u32;
         let bottom = (y + h + 1.0).ceil().clamp(0.0, self.height as f32) as u32;
+        if radius <= 0.0 {
+            // Rectangle droit (voiles plein écran) : la part de chaque pixel recouverte
+            // suffit, sans calcul de distance à des coins arrondis.
+            let cover = |p: u32, start: f32, end: f32| {
+                ((p as f32 + 1.0).min(end) - (p as f32).max(start)).clamp(0.0, 1.0)
+            };
+            // Intérieur entièrement couvert : une boucle serrée, sans calcul par pixel.
+            let inner = (
+                x.ceil().max(0.0) as u32,
+                ((x + w).floor().max(0.0) as u32).min(self.width),
+            );
+            let alpha = u32::from(color.a);
+            let inverse = 255 - alpha;
+            let source = [color.b, color.g, color.r].map(|channel| u32::from(channel) * alpha / 255);
+            for py in top..bottom {
+                let row = cover(py, y, y + h);
+                if row <= 0.0 {
+                    continue;
+                }
+                if row < 1.0 || inner.0 >= inner.1 {
+                    for px in left..right {
+                        self.blend(px, py, color, row * cover(px, x, x + w));
+                    }
+                    continue;
+                }
+                for px in (left..inner.0).chain(inner.1..right) {
+                    self.blend(px, py, color, cover(px, x, x + w));
+                }
+                let start = ((py * self.width + inner.0) * 4) as usize;
+                let end = ((py * self.width + inner.1) * 4) as usize;
+                for pixel in self.pixels[start..end].chunks_exact_mut(4) {
+                    for (channel, value) in source.iter().enumerate() {
+                        pixel[channel] = (value + u32::from(pixel[channel]) * inverse / 255).min(255) as u8;
+                    }
+                    pixel[3] = (alpha + u32::from(pixel[3]) * inverse / 255).min(255) as u8;
+                }
+            }
+            return;
+        }
         for py in top..bottom {
             for px in left..right {
                 let qx = (px as f32 + 0.5 - (x + w * 0.5)).abs() - (w * 0.5 - radius);
@@ -3719,33 +4396,44 @@ impl Canvas<'_> {
         )
     }
 
-    /// Vignette d'image, réduite pour tenir dans `rect` (alignée à gauche, centrée en hauteur).
-    fn image(&mut self, rect: Rect, thumbnail: &Thumbnail) {
+    /// Vignette qui couvre `rect` (recadrée au centre), coins arrondis de `radius`.
+    fn image_cover(&mut self, rect: Rect, thumbnail: &Thumbnail, radius: f64) {
         let s = self.scale as f64;
-        let ratio = (rect.w * s / thumbnail.width as f64).min(rect.h * s / thumbnail.height as f64);
-        let (w, h) = (
-            (thumbnail.width as f64 * ratio).round().max(1.0) as u32,
-            (thumbnail.height as f64 * ratio).round().max(1.0) as u32,
+        let (w, h) = (rect.w * s, rect.h * s);
+        let ratio = (w / thumbnail.width as f64).max(h / thumbnail.height as f64);
+        let (offset_x, offset_y) = (
+            (thumbnail.width as f64 * ratio - w) / 2.0,
+            (thumbnail.height as f64 * ratio - h) / 2.0,
         );
-        let x0 = (rect.x * s).round() as i64;
-        let y0 = (rect.y * s + (rect.h * s - h as f64) / 2.0).round() as i64;
-        for y in 0..h {
-            for x in 0..w {
-                let (px, py) = (x0 + x as i64, y0 + y as i64);
+        let r = radius * s;
+        let (x0, y0) = ((rect.x * s).round() as i64, (rect.y * s).round() as i64);
+        for y in 0..h.round() as i64 {
+            for x in 0..w.round() as i64 {
+                let (px, py) = (x0 + x, y0 + y);
                 if px < 0 || py < 0 || px >= self.width as i64 || py >= self.height as i64 {
                     continue;
                 }
-                let sx = ((x as f64 + 0.5) / ratio) as u32;
-                let sy = ((y as f64 + 0.5) / ratio) as u32;
+                // Coin arrondi : couverture d'après la distance au coin.
+                let (cx, cy) = (x as f64 + 0.5, y as f64 + 0.5);
+                let qx = (cx - w / 2.0).abs() - (w / 2.0 - r);
+                let qy = (cy - h / 2.0).abs() - (h / 2.0 - r);
+                let distance = qx.max(0.0).hypot(qy.max(0.0)) - r;
+                let coverage = (0.5 - distance).clamp(0.0, 1.0);
+                if coverage == 0.0 {
+                    continue;
+                }
+                let sx = ((cx + offset_x) / ratio) as u32;
+                let sy = ((cy + offset_y) / ratio) as u32;
                 let i = ((sy.min(thumbnail.height - 1) * thumbnail.width + sx.min(thumbnail.width - 1)) * 4)
                     as usize;
                 let source = &thumbnail.pixels[i..i + 4];
                 let offset = ((py as u32 * self.width + px as u32) * 4) as usize;
-                let inverse = 255 - source[3] as u32;
+                let alpha = (source[3] as f64 * coverage) as u32;
+                let inverse = 255 - alpha;
                 let pixel = &mut self.pixels[offset..offset + 4];
                 for channel in 0..4 {
-                    pixel[channel] =
-                        (source[channel] as u32 + pixel[channel] as u32 * inverse / 255).min(255) as u8;
+                    let value = (source[channel] as f64 * coverage) as u32;
+                    pixel[channel] = (value + pixel[channel] as u32 * inverse / 255).min(255) as u8;
                 }
             }
         }
@@ -4395,7 +5083,7 @@ mod tests {
         calendar.x = 40;
         calendar.y = 440;
         desktop.dashboard.layout.push(calendar);
-        assert_eq!(widget_at(output, &desktop, point(60.0, 460.0)), Some(5));
+        assert_eq!(widget_at(output, &desktop, point(60.0, 460.0)), Some(6));
         // Plus haute, la carte des tâches en montre plus.
         desktop.dashboard.tasks = (0..8)
             .map(|index| DashboardTaskView {

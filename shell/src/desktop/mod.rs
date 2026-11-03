@@ -3,6 +3,7 @@
 pub mod apps;
 pub mod controls;
 pub mod dock;
+pub mod file_drag;
 pub mod launch;
 pub mod lock;
 pub mod notifications;

@@ -91,7 +91,34 @@ icons![
     "app-clock" => "apps/preferences-system-time",
     "file-generic" => "mimetypes/text-x-generic",
     "places-trash" => "places/user-trash",
+    // Fichiers glissés depuis Fichiers (image sous le pointeur).
+    "file-text" => "mimetypes/text-x-generic",
+    "file-image" => "mimetypes/image-x-generic",
+    "file-audio" => "mimetypes/audio-x-generic",
+    "file-video" => "mimetypes/video-x-generic",
+    "file-pdf" => "mimetypes/application-pdf",
+    "file-archive" => "mimetypes/package-x-generic",
+    "file-script" => "mimetypes/text-x-script",
+    "file-executable" => "mimetypes/application-x-executable",
+    "places-folder" => "places/folder",
+    "places-desktop" => "places/user-desktop",
+    "places-documents" => "places/folder-documents",
+    "places-downloads" => "places/folder-download",
+    "places-home" => "places/user-home",
+    "places-music" => "places/folder-music",
+    "places-pictures" => "places/folder-pictures",
+    "places-public" => "places/folder-publicshare",
+    "places-templates" => "places/folder-templates",
+    "places-videos" => "places/folder-videos",
 ];
+
+/// Nom d'icône embarquée correspondant à `name`, s'il en existe une.
+pub fn known(name: &str) -> Option<&'static str> {
+    SOURCES
+        .iter()
+        .map(|(known, _)| *known)
+        .find(|known| *known == name)
+}
 
 /// Pictogrammes au trait des réglages rapides, dessinés en noir puis teintés comme les
 /// icônes symboliques.
@@ -203,6 +230,46 @@ const GLYPHS: &[(&str, &str)] = &[
     (
         "glyph-gear",
         r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6" fill="none" stroke="#000" stroke-width="2.8" stroke-dasharray="3.4 3.35"/><circle cx="12" cy="12" r="5.9" fill="none" stroke="#000" stroke-width="3.2"/></svg>"##,
+    ),
+    (
+        "clip-code",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M8 8 L4 12 L8 16 M16 8 L20 12 L16 16 M13.5 6 L10.5 18" fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.9"/></svg>"##,
+    ),
+    (
+        "clip-link",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 14 a4 4 0 0 0 5.7 0 L19 10.7 a4 4 0 0 0 -5.7 -5.7 L12 6.3 M14 10 a4 4 0 0 0 -5.7 0 L5 13.3 a4 4 0 0 0 5.7 5.7 L12 17.7" fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.9"/></svg>"##,
+    ),
+    (
+        "clip-text",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M5 6 H19 M5 10 H19 M5 14 H19 M5 18 H13" fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.9"/></svg>"##,
+    ),
+    (
+        "clip-pin",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9 3 H15 L14 9 L18 13 H6 L10 9 Z M12 13 V21" fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"/></svg>"##,
+    ),
+    (
+        "clip-pin-on",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9 3 H15 L14 9 L18 13 H6 L10 9 Z M12 13 V21" fill="#000" stroke="#000" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "clip-close",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12"><path d="M2.5 2.5 L9.5 9.5 M9.5 2.5 L2.5 9.5" fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7"/></svg>"##,
+    ),
+    (
+        "clip-sun",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5" fill="none" stroke="#000" stroke-width="2"/><path d="M12 2.5 V4.5 M12 19.5 V21.5 M2.5 12 H4.5 M19.5 12 H21.5 M5.3 5.3 L6.7 6.7 M17.3 17.3 L18.7 18.7 M5.3 18.7 L6.7 17.3 M17.3 6.7 L18.7 5.3" fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/></svg>"##,
+    ),
+    (
+        "clip-moon",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 14 A8 8 0 1 1 10 4 A6.5 6.5 0 0 0 20 14 Z" fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/></svg>"##,
+    ),
+    (
+        "clip-search",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 14 14"><circle cx="6" cy="6" r="4.2" fill="none" stroke="#000" stroke-width="1.6"/><path d="M9.2 9.2 L12.5 12.5" fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.6"/></svg>"##,
+    ),
+    (
+        "clip-empty",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M8 4 H16 V7 H8 Z M6 5.5 H5 V21 H19 V5.5 H18" fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8"/></svg>"##,
     ),
 ];
 

@@ -2,6 +2,7 @@
 //! et Moniteur d'activité.
 
 mod calculator;
+mod details;
 mod editor;
 mod files;
 mod markdown;
@@ -85,6 +86,13 @@ impl AppKind {
 
 fn main() -> eframe::Result {
     let mut args = env::args().skip(1);
+    // Fichiers lâchés sur la Corbeille du Dock : ferrite-shell les confie ici, sans fenêtre.
+    if env::args().nth(1).as_deref() == Some("corbeille") {
+        for error in files::put_in_trash(&env::args().skip(2).map(PathBuf::from).collect::<Vec<_>>()) {
+            eprintln!("{error}");
+        }
+        return Ok(());
+    }
     let Some(kind) = args.next().and_then(|arg| AppKind::parse(&arg)) else {
         eprintln!(
             "Utilisation : ferrite-apps <files|textedit|terminal|calculator|settings|monitor> [dossier ou fichier]"
@@ -197,17 +205,22 @@ impl FerriteApp {
             monitor: (kind == AppKind::Monitor).then(MonitorState::default),
             terminal: (kind == AppKind::Terminal).then(|| TerminalState::new(&context.egui_ctx, launch)),
             requests,
-            settings_stamp: ferrite_system::config::Settings::modified(),
+            settings_stamp: {
+                watch_settings(context.egui_ctx.clone());
+                ferrite_system::config::Settings::modified()
+            },
             settings_checked_at: Instant::now(),
         }
     }
 
     fn refresh_preferences(&mut self, context: &egui::Context) {
-        if self.settings_checked_at.elapsed() < Duration::from_secs(1) {
+        // Réglages modifiés : tout de suite (voir `watch_settings`) ; sinon une fois par
+        // seconde, pour le thème qui suit l'heure.
+        let stamp = ferrite_system::config::Settings::modified();
+        if stamp == self.settings_stamp && self.settings_checked_at.elapsed() < Duration::from_secs(1) {
             return;
         }
         self.settings_checked_at = Instant::now();
-        let stamp = ferrite_system::config::Settings::modified();
         let settings = ferrite_system::config::Settings::load();
         if stamp != self.settings_stamp || style::wants_dark(&settings) != style::theme_is_dark() {
             self.settings_stamp = stamp;
@@ -275,5 +288,27 @@ impl eframe::App for FerriteApp {
                 }
             }
         }
+    }
+}
+
+/// Réveille l'application dès que les réglages changent : une fenêtre au repos ne se
+/// redessine pas, et ne verrait sinon le nouveau thème qu'au prochain survol, longtemps
+/// après les autres.
+fn watch_settings(context: egui::Context) {
+    let spawned = std::thread::Builder::new()
+        .name("réglages".into())
+        .spawn(move || {
+            let mut stamp = ferrite_system::config::Settings::modified();
+            loop {
+                std::thread::sleep(Duration::from_millis(150));
+                let current = ferrite_system::config::Settings::modified();
+                if current != stamp {
+                    stamp = current;
+                    context.request_repaint();
+                }
+            }
+        });
+    if let Err(err) = spawned {
+        eprintln!("surveillance des réglages impossible : {err}");
     }
 }

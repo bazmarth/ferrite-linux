@@ -6,10 +6,7 @@ use smithay::{
     reexports::wayland_server::{Resource, protocol::wl_surface::WlSurface},
     wayland::selection::{
         SelectionHandler, SelectionSource, SelectionTarget,
-        data_device::{
-            ClientDndGrabHandler, DataDeviceHandler, DataDeviceState, ServerDndGrabHandler,
-            set_data_device_focus,
-        },
+        data_device::{ClientDndGrabHandler, DataDeviceHandler, DataDeviceState, set_data_device_focus},
         primary_selection::set_primary_focus,
     },
 };
@@ -98,6 +95,5 @@ impl DataDeviceHandler for Ferrite {
 }
 
 impl ClientDndGrabHandler for Ferrite {}
-impl ServerDndGrabHandler for Ferrite {}
 
 delegate_data_device!(Ferrite);

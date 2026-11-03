@@ -462,12 +462,24 @@ pub fn header(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
 /// porte le bouton agrandir à droite ; avec `buttons` (fenêtre sans barre latérale), aussi le
 /// bouton fermer à gauche. Le vide sert à déplacer la fenêtre.
 pub fn toolbar(ui: &mut egui::Ui, buttons: bool, add: impl FnOnce(&mut egui::Ui)) {
+    toolbar_with(ui, buttons, header_color(), color(palette().titlebar_line), add);
+}
+
+/// Comme [`toolbar`], sur le fond `fill` et avec le filet `line` (Fichiers reprend les
+/// teintes de sa planche).
+pub fn toolbar_with(
+    ui: &mut egui::Ui,
+    buttons: bool,
+    fill: Color32,
+    line: Color32,
+    add: impl FnOnce(&mut egui::Ui),
+) {
     let left: i8 = if buttons { 46 } else { 14 };
     let right: i8 = 46;
     egui::Panel::top(ui.scope_id().with("ferrite-header"))
         .resizable(false)
         .exact_size(TOOLBAR_HEIGHT)
-        .frame(Frame::new().fill(header_color()).inner_margin(Margin {
+        .frame(Frame::new().fill(fill).inner_margin(Margin {
             left,
             right,
             top: 0,
@@ -482,7 +494,7 @@ pub fn toolbar(ui: &mut egui::Ui, buttons: bool, add: impl FnOnce(&mut egui::Ui)
             ui.painter().hline(
                 full.x_range(),
                 full.bottom() - 0.5,
-                Stroke::new(border::HAIRLINE, color(palette().titlebar_line)),
+                Stroke::new(border::HAIRLINE, line),
             );
             // Fond déplaçable, enregistré avant les boutons pour qu'ils restent prioritaires.
             drag_area(ui, full, "barre");
@@ -538,41 +550,6 @@ pub fn sidebar(
             let mut child = ui.new_child(egui::UiBuilder::new().max_rect(body));
             add(&mut child);
         });
-}
-
-/// Groupe de boutons en forme de pilule, avec contour et ombre légers. Les boutons de `add`
-/// sont collés.
-pub fn pill_group<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    Frame::new()
-        .fill(background())
-        .stroke(Stroke::new(border::HAIRLINE, color(palette().border)))
-        .corner_radius(16)
-        .shadow(egui::Shadow {
-            offset: [0, 1],
-            blur: 0,
-            spread: 0,
-            color: Color32::from_black_alpha(14),
-        })
-        .inner_margin(Margin::symmetric(2, 2))
-        .show(ui, |ui| {
-            ui.spacing_mut().item_spacing.x = 0.0;
-            ui.horizontal(add).inner
-        })
-        .inner
-}
-
-/// Contrôle segmenté : rail contrasté dans lequel le segment choisi est en relief.
-/// Les segments de `add` dessinent eux-mêmes leur état (voir [`segment_background`]).
-pub fn segmented<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    Frame::new()
-        .fill(control_background())
-        .corner_radius(8)
-        .inner_margin(Margin::symmetric(2, 2))
-        .show(ui, |ui| {
-            ui.spacing_mut().item_spacing.x = 0.0;
-            ui.horizontal(add).inner
-        })
-        .inner
 }
 
 /// Fond d'un segment de [`segmented`] : surface de fenêtre en relief s'il est choisi.
@@ -864,6 +841,16 @@ impl Icons {
             .clone()
     }
 
+    /// Texture de l'icône `name` à `size` points (pour la poser soi-même).
+    pub fn texture_for(
+        &mut self,
+        ctx: &egui::Context,
+        name: &'static str,
+        size: f32,
+    ) -> Option<TextureHandle> {
+        self.texture(ctx, name, size, IconStyle::Color)
+    }
+
     /// Dessine l'icône dans `rect`, sans créer de widget (donc sans capter la souris).
     pub fn paint(&mut self, ui: &egui::Ui, name: &'static str, rect: egui::Rect, style: IconStyle) {
         if let Some(texture) = self.texture(ui.ctx(), name, rect.width(), style) {
@@ -875,45 +862,6 @@ impl Icons {
 fn paint_texture(ui: &egui::Ui, texture: &TextureHandle, rect: egui::Rect) {
     let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
     ui.painter().image(texture.id(), rect, uv, Color32::WHITE);
-}
-
-/// Ligne de barre latérale : icône et texte dessinés, toute la ligne est cliquable.
-pub fn sidebar_item(
-    ui: &mut egui::Ui,
-    icons: &mut Icons,
-    icon: &'static str,
-    icon_style: IconStyle,
-    text: &str,
-    selected: bool,
-) -> egui::Response {
-    let height = 28.0 * sidebar_scale();
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), height), egui::Sense::click());
-    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
-    if selected {
-        ui.painter().rect_filled(rect, 7.0, sidebar_selected());
-    } else if response.hovered() {
-        ui.painter().rect_filled(rect, 7.0, tint(9));
-    }
-    let icon_size = 18.0 * sidebar_scale();
-    let icon_rect = egui::Rect::from_center_size(
-        egui::pos2(rect.left() + 8.0 + icon_size / 2.0, rect.center().y),
-        egui::vec2(icon_size, icon_size),
-    );
-    icons.paint(ui, icon, icon_rect, icon_style);
-    let font = FontId::proportional(13.5);
-    ui.painter().text(
-        egui::pos2(icon_rect.right() + 10.0, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        text,
-        font,
-        if selected {
-            sidebar_selected_text()
-        } else {
-            primary_text()
-        },
-    );
-    response
 }
 
 /// Ligne de colonne des Paramètres, comme dans les Réglages de macOS : pastille colorée

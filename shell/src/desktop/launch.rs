@@ -205,12 +205,35 @@ impl Ferrite {
     pub fn launch_app(&mut self, key: &AppKey) {
         let env = self.client_environment();
         if key.launch(&self.applications, &env) {
-            self.dock_bounces
-                .borrow_mut()
-                .entry(key.clone())
-                .or_insert_with(|| Bounce::new(std::time::Instant::now()));
+            self.start_bounce(key);
+            self.note_recent_app(key);
         } else {
             warn!(?key, "application sans commande de lancement");
+        }
+    }
+
+    /// L'icône de l'application rebondit jusqu'à ce que sa fenêtre apparaisse.
+    pub fn start_bounce(&mut self, key: &AppKey) {
+        self.dock_bounces
+            .borrow_mut()
+            .entry(key.clone())
+            .or_insert_with(|| Bounce::new(std::time::Instant::now()));
+    }
+
+    /// Fait venir l'application au premier plan (fenêtre devant, ou réduites restaurées),
+    /// sans jamais la réduire : survol de son icône pendant un glisser de fichiers.
+    pub fn bring_app_forward(&mut self, key: &AppKey) {
+        let (mapped, minimized) = self.app_windows(key);
+        if let Some(top) = mapped.first() {
+            self.focus_window(Some(top.clone()));
+        } else if let Some(&newest) = minimized.last() {
+            let last = self.minimized[newest].window.clone();
+            for &index in minimized.iter().rev() {
+                self.restore_minimized_at(index);
+            }
+            self.focus_window(Some(last));
+        } else if let Some(page) = self.app_parked_page(key) {
+            self.go_to_page(page);
         }
     }
 
@@ -225,8 +248,8 @@ impl Ferrite {
     }
 
     /// Clic sur une icône du Dock : lance l'application absente, ramène son application
-    /// au premier plan si elle est ouverte ailleurs, restaure sa dernière fenêtre si elle
-    /// est réduite, ou réduit sa fenêtre active si elle est déjà au premier plan.
+    /// au premier plan si elle est ouverte ailleurs, restaure toutes ses fenêtres si elles
+    /// sont réduites, ou réduit sa fenêtre active si elle est déjà au premier plan.
     pub fn activate_app(&mut self, key: &AppKey) {
         let (mapped, minimized) = self.app_windows(key);
         // Sa fenêtre est sur un autre bureau : on y va, comme sur macOS.
@@ -258,9 +281,19 @@ impl Ferrite {
             return;
         }
 
-        if let Some(&index) = minimized.last() {
+        // Toutes ses fenêtres reviennent, la dernière réduite au premier plan. Des
+        // indices les plus grands aux plus petits, pour que chaque retrait laisse les
+        // suivants valides.
+        let Some(last) = minimized
+            .last()
+            .map(|&index| self.minimized[index].window.clone())
+        else {
+            return;
+        };
+        for &index in minimized.iter().rev() {
             self.restore_minimized_at(index);
         }
+        self.focus_window(Some(last));
     }
 
     /// Entrées du menu d'une case du Dock.
@@ -329,5 +362,76 @@ impl Ferrite {
                 }
             }
         }
+    }
+}
+
+/// Applications récemment utilisées, gardées pour le mini-Dock des widgets : une par
+/// ligne, la plus récente d'abord.
+fn recent_apps_path() -> std::path::PathBuf {
+    ferrite_system::config::Settings::path().with_file_name("applications-recentes")
+}
+
+/// Nombre d'applications retenues.
+const RECENT_APPS: usize = 8;
+
+pub fn load_recent_apps() -> Vec<String> {
+    std::fs::read_to_string(recent_apps_path())
+        .map(|text| {
+            text.lines()
+                .filter(|line| !line.is_empty())
+                .map(str::to_owned)
+                .take(RECENT_APPS)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+impl Ferrite {
+    /// L'application vient d'être utilisée (fenêtre au premier plan ou lancement).
+    pub fn note_recent_app(&mut self, key: &AppKey) {
+        if matches!(key, AppKey::Other(_) | AppKey::Builtin(App::Trash)) {
+            return;
+        }
+        let token = key.token();
+        if self.recent_apps.first() == Some(&token) {
+            return;
+        }
+        self.recent_apps.retain(|known| *known != token);
+        self.recent_apps.insert(0, token);
+        self.recent_apps.truncate(RECENT_APPS);
+        let path = recent_apps_path();
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Err(err) = std::fs::write(&path, self.recent_apps.join("\n")) {
+            warn!(%err, "applications récentes non enregistrées");
+        }
+    }
+
+    /// Applications du mini-Dock, encore installées.
+    pub fn recent_app_keys(&self) -> Vec<AppKey> {
+        self.recent_apps
+            .iter()
+            .map(|token| AppKey::from_token(token, &self.applications))
+            .filter(|key| !matches!(key, AppKey::Other(_)))
+            .collect()
+    }
+
+    /// Clic sur une application du mini-Dock : elle vient au premier plan, ou démarre.
+    pub fn open_recent_app(&mut self, index: usize) {
+        if let Some(key) = self.recent_app_keys().get(index).cloned() {
+            let (mapped, minimized) = self.app_windows(&key);
+            if mapped.is_empty() && minimized.is_empty() && self.app_parked_page(&key).is_none() {
+                self.launch_app(&key);
+            } else {
+                self.bring_app_forward(&key);
+            }
+        }
+    }
+
+    /// L'application a-t-elle une fenêtre, visible ou réduite ?
+    pub fn app_running(&self, key: &AppKey) -> bool {
+        let (mapped, minimized) = self.app_windows(key);
+        !mapped.is_empty() || !minimized.is_empty()
     }
 }

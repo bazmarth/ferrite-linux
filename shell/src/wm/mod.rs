@@ -228,6 +228,20 @@ pub fn clamp_frame(
     ))
 }
 
+/// Taille du contenu d'une fenêtre trop grande pour `area` (avec sa barre de titre de
+/// `titlebar`), ramenée dans la zone sans descendre sous `min` ; `None` si elle y tient.
+pub fn fitted_size(
+    area: Rectangle<i32, Logical>,
+    size: Size<i32, Logical>,
+    titlebar: i32,
+    min: Size<i32, Logical>,
+) -> Option<Size<i32, Logical>> {
+    let max_w = area.size.w.max(min.w);
+    let max_h = (area.size.h - titlebar).max(min.h).max(1);
+    let fitted = Size::from((size.w.min(max_w), size.h.min(max_h)));
+    (fitted != size).then_some(fitted)
+}
+
 /// Zone utile d'un écran de taille `output` : tout sauf les bandes réservées à la barre du
 /// haut (`bar_reserved`) et au Dock (`dock_reserved`), nulles quand ils se cachent.
 pub fn usable_area(
@@ -385,6 +399,19 @@ pub struct Minimized {
 }
 
 impl Ferrite {
+    /// Contenu d'une fenêtre à sa place, à la taille qu'on vient de lui demander : elle
+    /// n'a peut-être pas encore redessiné, et les animations visent sa taille d'arrivée.
+    pub fn target_content(&self, window: &Window) -> Option<Rectangle<i32, Logical>> {
+        let content = self.space.element_geometry(window)?;
+        let pending = window
+            .toplevel()
+            .and_then(|toplevel| toplevel.with_pending_state(|state| state.size));
+        Some(match pending {
+            Some(size) if size.w > 0 && size.h > 0 => Rectangle::new(content.loc, size),
+            _ => content,
+        })
+    }
+
     /// Met `window` au premier plan et lui donne le clavier (ou retire le focus si `None`).
     pub fn focus_window(&mut self, window: Option<Window>) {
         let serial = SERIAL_COUNTER.next_serial();
@@ -403,6 +430,9 @@ impl Ferrite {
             .map(|surface| surface.into_owned());
         match &window {
             Some(window) => {
+                if let Some(key) = self.window_app(window) {
+                    self.note_recent_app(&key);
+                }
                 self.space.raise_element(window, true);
                 if let (Some(x11), Some(xwm)) = (window.x11_surface(), self.xwm.as_mut()) {
                     if let Err(err) = xwm.raise_window(x11) {
@@ -485,7 +515,15 @@ impl Ferrite {
 
     /// Commence le déplacement de `window` à la souris (barre de titre ou demande du client).
     pub fn start_move(&mut self, window: Window, start_data: GrabStartData<Ferrite>, serial: Serial) {
-        let initial_window_location = match self.release_snapped(&window, start_data.location) {
+        // En tuilage, une fenêtre rangée garde sa taille : lâchée, elle échange sa place
+        // ou y retourne (voir `drop_tiled`).
+        let tiled = self.tiling && self.tile_order.contains(&window);
+        let released = if tiled {
+            None
+        } else {
+            self.release_snapped(&window, start_data.location)
+        };
+        let initial_window_location = match released {
             Some(location) => location,
             None => match self.space.element_location(&window) {
                 Some(location) => location,
@@ -618,7 +656,13 @@ impl Ferrite {
             .borrow_mut()
             .retain(|animation| animation.window != window);
         self.space.map_element(window.clone(), location, true);
-        if let (Some(icon), Some(content)) = (icon, self.space.element_geometry(&window)) {
+        // En tuilage, elle ressort directement à la place qui l'attend (sans le glissement
+        // que le tuilage vient de lancer).
+        self.retile();
+        self.window_animations
+            .borrow_mut()
+            .retain(|animation| animation.window != window);
+        if let (Some(icon), Some(content)) = (icon, self.target_content(&window)) {
             self.window_animations
                 .borrow_mut()
                 .push(animation::WindowAnimation::new(
@@ -642,7 +686,12 @@ impl Ferrite {
     pub fn activate_light(&mut self, window: &Window, button: WindowButton) {
         match button {
             WindowButton::Close => close_window(window),
-            WindowButton::Zoom => self.toggle_maximize(window),
+            // En tuilage, le bouton vert d'une fenêtre de la pile la met en grand.
+            WindowButton::Zoom => {
+                if !self.promote_tiled(window) {
+                    self.toggle_maximize(window);
+                }
+            }
         }
     }
 
@@ -675,6 +724,22 @@ mod tests {
         assert_eq!(usable_area(rect(0, 0, 1440, 900), 30, 84), rect(0, 30, 1440, 786));
         // Barre masquable : les fenêtres montent jusqu'en haut.
         assert_eq!(usable_area(rect(0, 0, 1440, 900), 0, 0), rect(0, 0, 1440, 900));
+    }
+
+    #[test]
+    fn une_fenetre_trop_grande_est_ramenee_dans_la_zone_utile() {
+        let area = rect(0, 30, 1440, 786);
+        let size = |w, h| Size::from((w, h));
+        assert_eq!(fitted_size(area, size(800, 600), 46, size(0, 0)), None);
+        assert_eq!(
+            fitted_size(area, size(1920, 1080), 46, size(0, 0)),
+            Some(size(1440, 740))
+        );
+        // Jamais sous la taille minimale demandée par l'application.
+        assert_eq!(
+            fitted_size(area, size(1920, 1080), 46, size(1600, 900)),
+            Some(size(1600, 900))
+        );
     }
 
     #[test]

@@ -5,7 +5,7 @@ use crate::desktop::widgets::{Dashboard, DashboardEdit, Priority, WidgetEdges, W
 use super::*;
 
 /// Barre de l'éditeur, au-dessus du Dock.
-const EDITOR_BAR: (f64, f64) = (808.0, 44.0);
+const EDITOR_BAR: (f64, f64) = (908.0, 44.0);
 /// Largeur de la zone des bords qui redimensionnent.
 const EDGE: f64 = 8.0;
 /// Largeurs à partir desquelles une carte montre plus de choses.
@@ -137,6 +137,31 @@ fn task_row(card: Rect, row: usize) -> Rect {
         card.w - 36.0,
         TASK_ROW,
     )
+}
+
+/// Cases des applications du mini-Dock : icône de 44 et nom dessous, sur des lignes
+/// centrées, autant qu'il en tient.
+fn app_cells(card: Rect, count: usize) -> Vec<Rect> {
+    const CELL: (f64, f64) = (68.0, 74.0);
+    let area = Rect::new(card.x + 12.0, card.y + 40.0, card.w - 24.0, card.h - 48.0);
+    let columns = ((area.w / CELL.0).floor() as usize).max(1);
+    let rows = ((area.h / CELL.1).floor() as usize).max(1);
+    let shown = count.min(columns * rows);
+    let used_rows = shown.div_ceil(columns).max(1);
+    let top = area.y + (area.h - used_rows as f64 * CELL.1) / 2.0;
+    (0..shown)
+        .map(|index| {
+            let row = index / columns;
+            let in_row = (shown - row * columns).min(columns);
+            let left = area.x + (area.w - in_row as f64 * CELL.0) / 2.0;
+            Rect::new(
+                left + (index % columns) as f64 * CELL.0,
+                top + row as f64 * CELL.1,
+                CELL.0,
+                CELL.1,
+            )
+        })
+        .collect()
 }
 
 /// Lignes de tâches qui tiennent dans la carte.
@@ -273,6 +298,10 @@ pub(super) fn dashboard_action_at(
                 )
             }
         }
+        WidgetKind::Apps => app_cells(*card, view.dashboard.apps.len())
+            .iter()
+            .position(|cell| cell.contains(pos))
+            .map_or(DesktopAction::DashboardConsume, DesktopAction::DashboardApp),
         WidgetKind::Tasks => {
             if add_button(*card).contains(pos) {
                 return Some(DesktopAction::DashboardAddTask);
@@ -296,7 +325,7 @@ pub(super) fn dashboard_action_at(
 
 impl Canvas<'_> {
     /// Verre sombre : le fond flouté vu au travers, teinté à 55 %, liseré blanc à 10 %.
-    fn frosted(&mut self, rect: Rect, radius: f32, backdrop: Option<&Image>) {
+    fn frosted(&mut self, rect: Rect, radius: f32, backdrop: Option<&Image>, placement: Option<Placement>) {
         let s = self.scale;
         let (x, y, w, h) = (
             rect.x as f32 * s,
@@ -306,7 +335,9 @@ impl Canvas<'_> {
         );
         let radius = (radius * s).min(w.min(h) * 0.5);
         let tone = [GLASS_TONE.r, GLASS_TONE.g, GLASS_TONE.b].map(f32::from);
-        let (screen_w, screen_h) = (self.width as f64, self.height as f64);
+        let (screen_w, screen_h) = placement.map_or((self.width as f64, self.height as f64), |at| at.screen);
+        let (shift_x, shift_y) =
+            placement.map_or((0.0, 0.0), |at| (at.x * f64::from(s), at.y * f64::from(s)));
         let left = x.floor().max(0.0) as u32;
         let top = y.floor().max(0.0) as u32;
         let right = ((x + w).ceil() as u32).min(self.width);
@@ -324,7 +355,11 @@ impl Canvas<'_> {
                 }
                 match backdrop {
                     Some(image) => {
-                        let behind = sample(image, f64::from(sx) / screen_w, f64::from(sy) / screen_h);
+                        let behind = sample(
+                            image,
+                            (f64::from(sx) + shift_x) / screen_w,
+                            (f64::from(sy) + shift_y) / screen_h,
+                        );
                         let luma = 0.3 * behind[0] + 0.59 * behind[1] + 0.11 * behind[2];
                         let [r, g, b] = [0, 1, 2].map(|c| {
                             let vivid = (luma + (behind[c] - luma) * 1.5).clamp(0.0, 255.0);
@@ -341,31 +376,128 @@ impl Canvas<'_> {
     }
 }
 
+/// Ce dont dépend le verre des cartes (fond dépoli, papier des notes) : calculé pixel par
+/// pixel, il est coûteux (plus de 200 ms en plein écran) et ne change qu'avec la taille de
+/// l'écran, la place des cartes et le fond d'écran, pas avec leur contenu (heure,
+/// mesures du système toutes les 2 s).
+#[derive(Debug, PartialEq)]
+pub(super) struct GlassKey {
+    size: (u32, u32, u32),
+    cards: Vec<(bool, Rect)>,
+    backdrop: Option<usize>,
+}
+
 impl Panels {
-    pub(super) fn draw_dashboard(&self, canvas: &mut Canvas, layout: &Layout, state: &VisualState) {
+    /// Verre de toutes les cartes, depuis le cache s'il est à jour.
+    pub(super) fn glass_pixels(
+        &self,
+        layout: &Layout,
+        state: &VisualState,
+        width: u32,
+        height: u32,
+        scale: f64,
+    ) -> Vec<u8> {
+        let view = &state.view.dashboard;
+        let cards: Vec<(bool, Rect)> = view
+            .layout
+            .iter()
+            .zip(layout.dashboard_cards(&view.layout))
+            .map(|(slot, card)| (slot.kind == WidgetKind::Notes, card))
+            .collect();
+        let key = GlassKey {
+            size: (width, height, state.scale_milli),
+            cards,
+            backdrop: view.backdrop.as_ref().map(|image| Arc::as_ptr(image) as usize),
+        };
+        let mut cache = self.glass.borrow_mut();
+        if let Some((cached, pixels)) = cache.as_ref()
+            && *cached == key
+        {
+            return pixels.clone();
+        }
+        let mut canvas = Canvas {
+            pixels: vec![0; width as usize * height as usize * 4],
+            width,
+            height,
+            scale: scale as f32,
+            bold: &self.bold,
+            icons: &self.icons,
+        };
+        for (notes, card) in &key.cards {
+            card_glass(&mut canvas, *notes, *card, view.backdrop.as_deref(), None);
+        }
+        let pixels = canvas.pixels;
+        *cache = Some((key, pixels.clone()));
+        pixels
+    }
+
+    /// `glass_drawn` : le verre des cartes est déjà posé (voir `glass_pixels`) ; `skip` :
+    /// carte saisie, dessinée à part pendant qu'elle est déplacée (voir `push_dashboard`).
+    pub(super) fn draw_dashboard(
+        &self,
+        canvas: &mut Canvas,
+        layout: &Layout,
+        state: &VisualState,
+        glass_drawn: bool,
+        skip: Option<usize>,
+    ) {
         let view = &state.view.dashboard;
         let cards = layout.dashboard_cards(&view.layout);
+        // Case de la grille visée par le widget déplacé, en creux sous lui.
+        if let Some(target) = view.target {
+            let slot = target.clamped(layout.w as i32, layout.h as i32, layout.bar as i32);
+            let rect = Rect::new(
+                f64::from(slot.x),
+                f64::from(slot.y),
+                f64::from(slot.w),
+                f64::from(slot.h),
+            );
+            target_hollow(canvas, rect);
+        }
         // Du dessous vers le dessus : le verre de chaque carte cache ce qu'elle recouvre.
-        for (index, (slot, card)) in view.layout.iter().zip(cards.iter().copied()).enumerate() {
-            if slot.kind == WidgetKind::Notes {
-                canvas.fill(card, RADIUS, NOTE_FILL);
-            } else {
-                canvas.frosted(card, RADIUS, view.backdrop.as_deref());
-            }
-            match slot.kind {
-                WidgetKind::Clock => self.clock_card(canvas, card, state),
-                WidgetKind::Calendar => self.calendar_card(canvas, card, state),
-                WidgetKind::System => self.system_card(canvas, card, state),
-                WidgetKind::Tasks => self.tasks_card(canvas, card, view),
-                WidgetKind::Notes => self.notes_card(canvas, card, state),
-                WidgetKind::Quote => self.quote_card(canvas, card),
-            }
-            if view.edit {
-                self.draw_handles(canvas, card, slot.kind, view.drag == Some(index));
+        for (index, card) in cards.iter().copied().enumerate() {
+            if Some(index) != skip {
+                self.draw_card(canvas, state, index, card, !glass_drawn, None);
             }
         }
         if view.edit {
             self.draw_editor_bar(canvas, layout, view);
+        }
+    }
+
+    /// Carte `index` dans `card`, avec son verre si `glass` ; `placement` : où se trouve
+    /// sur l'écran une image plus petite que lui (pour voir le bon morceau du fond).
+    pub(super) fn draw_card(
+        &self,
+        canvas: &mut Canvas,
+        state: &VisualState,
+        index: usize,
+        card: Rect,
+        glass: bool,
+        placement: Option<Placement>,
+    ) {
+        let view = &state.view.dashboard;
+        let kind = view.layout[index].kind;
+        if glass {
+            card_glass(
+                canvas,
+                kind == WidgetKind::Notes,
+                card,
+                view.backdrop.as_deref(),
+                placement,
+            );
+        }
+        match kind {
+            WidgetKind::Clock => self.clock_card(canvas, card, state),
+            WidgetKind::Calendar => self.calendar_card(canvas, card, state),
+            WidgetKind::System => self.system_card(canvas, card, state),
+            WidgetKind::Tasks => self.tasks_card(canvas, card, view),
+            WidgetKind::Notes => self.notes_card(canvas, card, state),
+            WidgetKind::Quote => self.quote_card(canvas, card),
+            WidgetKind::Apps => self.apps_card(canvas, card, view),
+        }
+        if view.edit {
+            self.draw_handles(canvas, card, kind, view.drag == Some(index));
         }
     }
 
@@ -746,6 +878,39 @@ impl Panels {
         }
     }
 
+    /// Mini-Dock : les applications récemment utilisées, un point sous celles ouvertes.
+    fn apps_card(&self, canvas: &mut Canvas, card: Rect, view: &DashboardView) {
+        let x = card.x + 16.0;
+        self.caption(canvas, "Applications récentes", x, card.y + 16.0, DIM);
+        if view.apps.is_empty() {
+            let hint = canvas.fit_text(
+                &self.regular,
+                "Les applications utilisées apparaissent ici.",
+                px(13.0),
+                card.w - 32.0,
+            );
+            canvas.text(&self.regular, &hint, x, card.y + card.h / 2.0, 13.0, SOFT);
+            return;
+        }
+        for (app, cell) in view.apps.iter().zip(app_cells(card, view.apps.len())) {
+            let center = (cell.x + cell.w / 2.0, cell.y + 24.0);
+            canvas.app_icon(&app.icon, center, 44.0);
+            let name = canvas.fit_text(&self.regular, &app.name, px(11.0), cell.w - 6.0);
+            let width = canvas.css_width(&self.regular, &name, 11.0);
+            canvas.text(
+                &self.regular,
+                &name,
+                cell.x + (cell.w - width) / 2.0,
+                cell.y + 52.0,
+                11.0,
+                SOFT,
+            );
+            if app.running {
+                canvas.fill(Rect::new(center.0 - 2.0, cell.y + 68.0, 4.0, 4.0), 2.0, INK);
+            }
+        }
+    }
+
     fn quote_card(&self, canvas: &mut Canvas, card: Rect) {
         let x = card.x + 22.0;
         let text_x = x + 44.0;
@@ -806,7 +971,7 @@ impl Panels {
     /// Barre de l'éditeur : widgets à ajouter, Rétablir et Terminé.
     fn draw_editor_bar(&self, canvas: &mut Canvas, layout: &Layout, view: &DashboardView) {
         let bar = layout.editor_bar();
-        canvas.frosted(bar, 22.0, view.backdrop.as_deref());
+        canvas.frosted(bar, 22.0, view.backdrop.as_deref(), None);
         for (index, kind) in Dashboard::absent_widgets(&view.layout).into_iter().enumerate() {
             let chip = add_chip(bar, index);
             canvas.fill(chip, 16.0, Color::WHITE.with_alpha(26));
@@ -854,4 +1019,34 @@ enum Glyph {
     Minus,
     Previous,
     Next,
+}
+
+/// Fond d'une carte : papier pour les notes, verre dépoli pour les autres.
+fn card_glass(
+    canvas: &mut Canvas,
+    notes: bool,
+    card: Rect,
+    backdrop: Option<&Image>,
+    placement: Option<Placement>,
+) {
+    if notes {
+        canvas.fill(card, RADIUS, NOTE_FILL);
+    } else {
+        canvas.frosted(card, RADIUS, backdrop, placement);
+    }
+}
+
+/// Case visée par le widget déplacé : en creux, liseré blanc.
+pub(super) fn target_hollow(canvas: &mut Canvas, rect: Rect) {
+    canvas.fill(rect, RADIUS, Color::WHITE.with_alpha(38));
+    canvas.stroke(rect, RADIUS, Color::WHITE.with_alpha(110), 1.5);
+}
+
+/// Place sur l'écran d'une image qui n'en couvre qu'une partie : origine logique de
+/// l'image et taille de l'écran en pixels.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Placement {
+    pub x: f64,
+    pub y: f64,
+    pub screen: (f64, f64),
 }

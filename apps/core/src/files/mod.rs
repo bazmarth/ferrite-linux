@@ -10,14 +10,21 @@
 //! - ouvrir, ouvrir avec…, propriétés, ouvrir un terminal ici ;
 //! - montage et éjection des clés USB ;
 //! - mode sélecteur (`FilesState::picker`) : les autres applications l'affichent pour
-//!   choisir le fichier à ouvrir ou l'emplacement d'enregistrement.
+//!   choisir le fichier à ouvrir ou l'emplacement d'enregistrement ;
+//! - fichiers récents, étiquettes, panneau d'aperçu et aperçu rapide (Espace), vignettes ;
+//! - glisser-déposer vers un dossier, la barre latérale, le chemin ou la Corbeille, et
+//!   hors de la fenêtre vers le Dock ou une autre application (voir `view`).
 //!
 //! L'interface ne modifie jamais l'état pendant son propre dessin : chaque clic produit une
 //! `Action`, appliquée une fois l'image construite.
 
 mod devices;
+mod look;
 mod ops;
+mod places;
+mod thumbs;
 mod trash;
+mod view;
 
 use std::{
     collections::BTreeSet,
@@ -36,9 +43,6 @@ use ferrite_system::{applications::DesktopEntry, command::spawn_detached};
 use self::{devices::Device, ops::Job, trash::TrashItem};
 use crate::style::{self, IconStyle, Icons};
 
-const ROW: f32 = 32.0;
-const GRID_CELL: egui::Vec2 = egui::vec2(122.0, 118.0);
-
 #[derive(Debug, Clone)]
 struct FileEntry {
     name: String,
@@ -55,6 +59,10 @@ struct FileEntry {
 enum Location {
     Folder(PathBuf),
     Trash,
+    /// Fichiers ouverts récemment (toutes applications).
+    Recent,
+    /// Fichiers qui portent cette étiquette.
+    Tag(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,12 +111,30 @@ struct Properties {
     kind: String,
     size: Option<(u64, u64)>,
     modified: Option<SystemTime>,
-    permissions: String,
+    /// Droits (`0o644`…), propriétaire et groupe.
+    mode: u32,
+    owner: String,
+    group: String,
+    /// Place occupée sur le disque, en octets.
+    on_disk: Option<u64>,
+    icon: &'static str,
+    opener: &'static str,
+    /// Nom en cours de saisie dans le dialogue.
+    name: String,
+}
+
+/// Espace de disques et contenu des Téléchargements, relus en arrière-plan.
+struct Disks {
+    devices: Vec<Device>,
+    /// Système de fichiers du dossier affiché, et celui du dossier personnel.
+    folder: Option<(u64, u64)>,
+    system: Option<(u64, u64)>,
+    downloads: usize,
 }
 
 /// Résultat d'un calcul en arrière-plan.
 enum Update {
-    Devices(Vec<Device>, Option<u64>),
+    Devices(Disks),
     FolderSize(PathBuf, (u64, u64)),
 }
 
@@ -116,12 +142,28 @@ enum Update {
 #[derive(Debug, Clone)]
 enum Action {
     Navigate(PathBuf),
+    Show(Location),
     ShowTrash,
+    ToggleTheme,
+    TogglePreview,
+    Share(Vec<PathBuf>),
+    ToggleTag(PathBuf, String),
+    QuickLook,
+    StartDrag(usize),
+    Drop {
+        target: view::Target,
+        paths: Vec<PathBuf>,
+        copy: bool,
+    },
     Back,
     Forward,
     Up,
     Open(PathBuf, bool),
-    Select { index: usize, ctrl: bool, shift: bool },
+    Select {
+        index: usize,
+        ctrl: bool,
+        shift: bool,
+    },
     SelectOnly(usize),
     SelectAll,
     ClearSelection,
@@ -176,7 +218,22 @@ pub struct FilesState {
     dialog: Option<Dialog>,
     jobs: Vec<Job>,
     devices: Vec<Device>,
-    free_space: Option<u64>,
+    /// Espace du disque du dossier affiché et du disque système.
+    usage: Option<(u64, u64)>,
+    system_usage: Option<(u64, u64)>,
+    /// Éléments du dossier Téléchargements (compteur de la barre latérale).
+    downloads: usize,
+    /// Panneau d'aperçu affiché, aperçu rapide ouvert, glisser en cours.
+    preview: bool,
+    quick: Option<PathBuf>,
+    drag: Option<view::Dragging>,
+    /// Fichiers lâchés sur la fenêtre par ferrite-shell (voir `view::Deposits`).
+    deposits: Option<view::Deposits>,
+    /// Sélection au rectangle en cours, et place des éléments relevée au dessin.
+    lasso: Option<view::Lasso>,
+    item_rects: Vec<(egui::Rect, PathBuf)>,
+    tags: places::Tags,
+    thumbs: thumbs::Thumbnails,
     devices_checked: Option<Instant>,
     devices_pending: bool,
     sender: Sender<Update>,
@@ -217,7 +274,17 @@ impl Default for FilesState {
             dialog: None,
             jobs: Vec::new(),
             devices: Vec::new(),
-            free_space: None,
+            usage: None,
+            system_usage: None,
+            downloads: 0,
+            preview: true,
+            quick: None,
+            drag: None,
+            deposits: None,
+            lasso: None,
+            item_rects: Vec::new(),
+            tags: places::Tags::load(),
+            thumbs: thumbs::Thumbnails::default(),
             devices_checked: None,
             devices_pending: false,
             sender,
@@ -311,6 +378,7 @@ impl FilesState {
                 Some(("tri", "type")) => self.sort = SortKey::Kind,
                 Some(("croissant", value)) => self.ascending = value == "oui",
                 Some(("caches", value)) => self.show_hidden = value == "oui",
+                Some(("apercu", value)) => self.preview = value == "oui",
                 _ => {}
             }
         }
@@ -323,6 +391,7 @@ impl FilesState {
 tri={}
 croissant={}
 caches={}
+apercu={}
 ",
             match self.view {
                 View::List => "liste",
@@ -336,6 +405,7 @@ caches={}
             },
             yes_no(self.ascending),
             yes_no(self.show_hidden),
+            yes_no(self.preview),
         );
         let path = preferences_path();
         if let Some(parent) = path.parent() {
@@ -347,7 +417,7 @@ caches={}
     fn current_dir(&self) -> Option<&Path> {
         match &self.location {
             Location::Folder(path) => Some(path),
-            Location::Trash => None,
+            Location::Trash | Location::Recent | Location::Tag(_) => None,
         }
     }
 
@@ -417,6 +487,21 @@ caches={}
                     })
                     .collect()
             }
+            Location::Recent => {
+                self.loaded = None;
+                places::recent()
+                    .into_iter()
+                    .filter_map(|path| entry_for(&path))
+                    .collect()
+            }
+            Location::Tag(tag) => {
+                self.loaded = None;
+                self.tags
+                    .tagged(tag)
+                    .into_iter()
+                    .filter_map(|path| entry_for(&path))
+                    .collect()
+            }
             Location::Folder(dir) => {
                 self.loaded = modified(dir);
                 match fs::read_dir(dir) {
@@ -446,7 +531,10 @@ caches={}
                 }
             }
         };
-        self.sort_entries();
+        if self.location != Location::Recent {
+            self.sort_entries();
+        }
+        self.thumbs.forget();
         let paths: BTreeSet<PathBuf> = self.entries.iter().map(|e| e.path.clone()).collect();
         self.selected.retain(|path| paths.contains(path));
         self.anchor = None;
@@ -519,7 +607,44 @@ caches={}
     fn apply(&mut self, action: Action, ctx: &egui::Context) {
         match action {
             Action::Navigate(path) => self.go(Location::Folder(path)),
+            Action::Show(location) => self.go(location),
             Action::ShowTrash => self.go(Location::Trash),
+            Action::ToggleTheme => {
+                let mut settings = ferrite_system::config::Settings::load();
+                let dark = !style::theme_is_dark();
+                settings.set("apparence", if dark { "sombre" } else { "clair" });
+                if let Err(error) = settings.save() {
+                    self.error(format!("Thème non enregistré : {error}"));
+                }
+                style::apply_preferences(ctx, &settings);
+            }
+            Action::TogglePreview => {
+                self.preview = !self.preview;
+                self.save_preferences();
+            }
+            Action::Share(paths) => {
+                let count = paths.len();
+                ctx.copy_text(ferrite_system::drag::uri_list(&paths).trim_end().to_owned());
+                self.info(if count > 1 {
+                    format!("Adresses des {count} éléments copiées")
+                } else {
+                    "Adresse du fichier copiée".to_owned()
+                });
+            }
+            Action::ToggleTag(path, tag) => {
+                self.tags.toggle(&path, &tag);
+                if matches!(self.location, Location::Tag(_)) {
+                    self.refresh();
+                }
+            }
+            Action::QuickLook => {
+                self.quick = match (&self.quick, self.selected.len()) {
+                    (None, 1) => self.selection().pop(),
+                    _ => None,
+                };
+            }
+            Action::StartDrag(index) => self.start_drag(index),
+            Action::Drop { target, paths, copy } => self.drop_on(target, paths, copy),
             Action::Back => self.go_back(),
             Action::Forward => self.go_forward(),
             Action::Up => {
@@ -858,9 +983,11 @@ caches={}
     fn poll(&mut self, ctx: &egui::Context) {
         while let Ok(update) = self.receiver.try_recv() {
             match update {
-                Update::Devices(devices, free) => {
-                    self.devices = devices;
-                    self.free_space = free;
+                Update::Devices(disks) => {
+                    self.devices = disks.devices;
+                    self.usage = disks.folder;
+                    self.system_usage = disks.system;
+                    self.downloads = disks.downloads;
                     self.devices_pending = false;
                 }
                 Update::FolderSize(path, size) => {
@@ -883,7 +1010,23 @@ caches={}
             let dir = self.current_dir().map(Path::to_path_buf).unwrap_or_else(home);
             let ctx = ctx.clone();
             thread::spawn(move || {
-                let _ = sender.send(Update::Devices(devices::removable(), devices::free_space(&dir)));
+                let home = home();
+                let devices = devices::removable()
+                    .into_iter()
+                    .map(|device| Device {
+                        usage: device.mount.as_deref().and_then(places::disk_usage),
+                        ..device
+                    })
+                    .collect();
+                let disks = Disks {
+                    devices,
+                    folder: places::disk_usage(&dir),
+                    system: places::disk_usage(&home),
+                    downloads: fs::read_dir(home.join("Téléchargements"))
+                        .map(|dir| dir.count())
+                        .unwrap_or(0),
+                };
+                let _ = sender.send(Update::Devices(disks));
                 ctx.request_repaint();
             });
         }
@@ -909,6 +1052,7 @@ caches={}
         let stamp = match &self.location {
             Location::Folder(dir) => modified(dir),
             Location::Trash => modified(&trash::files_dir()),
+            Location::Recent | Location::Tag(_) => None,
         };
         if self.rename.is_none() && stamp != self.loaded {
             self.refresh();
@@ -917,37 +1061,6 @@ caches={}
             ctx.request_repaint_after(Duration::from_millis(100));
         } else {
             ctx.request_repaint_after(Duration::from_secs(2));
-        }
-    }
-
-    pub fn update(&mut self, ui: &mut egui::Ui) {
-        let ctx = ui.ctx().clone();
-        self.poll(&ctx);
-        let mut actions = Vec::new();
-        self.keyboard(ui, &mut actions);
-
-        // Barre de titre sur toute la largeur (bouton fermer compris, sauf dans une feuille),
-        // puis la barre latérale et le contenu dessous.
-        let buttons = self.picker.is_none();
-        style::toolbar(ui, buttons, |ui| self.header(ui, &mut actions));
-        style::sidebar(ui, "emplacements", 210.0, style::sidebar_color(), false, |ui| {
-            self.sidebar(ui, &mut actions)
-        });
-        if self.picker.is_some() {
-            self.picker_bar(ui, &mut actions);
-        } else {
-            self.status_bar(ui, &mut actions);
-        }
-        egui::CentralPanel::no_frame()
-            .frame(Frame::new().fill(style::background()))
-            .show(ui, |ui| match self.view {
-                View::List => self.list(ui, &mut actions),
-                View::Grid => self.grid(ui, &mut actions),
-            });
-        self.dialogs(&ctx, &mut actions);
-
-        for action in actions {
-            self.apply(action, &ctx);
         }
     }
 
@@ -1009,16 +1122,25 @@ caches={}
                     Action::Trash
                 });
             }
-            if pressed(Key::F2) && self.selected.len() == 1 {
+            // Comme le Finder : Entrée renomme, Ctrl+O ou Ctrl+↓ ouvre, Espace montre
+            // l'aperçu rapide.
+            let single = self.selected.len() == 1;
+            if single && (pressed(Key::F2) || (pressed(Key::Enter) && !alt && self.picker.is_none())) {
                 actions.push(Action::StartRename(self.selection()[0].clone()));
             }
-            if pressed(Key::Enter) && alt && self.selected.len() == 1 {
+            if pressed(Key::Enter) && alt && single {
                 actions.push(Action::Properties(self.selection()[0].clone()));
-            } else if pressed(Key::Enter) && self.selected.len() == 1 {
+            } else if single
+                && ((ctrl && (pressed(Key::O) || pressed(Key::ArrowDown)))
+                    || (pressed(Key::Enter) && self.picker.is_some()))
+            {
                 let path = self.selection()[0].clone();
                 actions.push(Action::Open(path.clone(), path.is_dir()));
             }
-            if pressed(Key::Escape) {
+            if pressed(Key::Space) && self.quick.is_none() {
+                actions.push(Action::QuickLook);
+            }
+            if pressed(Key::Escape) && self.quick.is_none() {
                 actions.push(if self.picker.is_some() {
                     Action::CancelPicker
                 } else {
@@ -1027,203 +1149,6 @@ caches={}
             }
             if pressed(Key::F5) {
                 self.loaded = None;
-            }
-        });
-    }
-
-    fn header(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
-        // Précédent / suivant en pilule, comme le Fichiers du Ferrite d'origine.
-        style::pill_group(ui, |ui| {
-            if nav_button(ui, Glyph::Back, !self.back.is_empty(), "Précédent (Alt+←)").clicked() {
-                actions.push(Action::Back);
-            }
-            if nav_button(ui, Glyph::Forward, !self.forward.is_empty(), "Suivant (Alt+→)").clicked() {
-                actions.push(Action::Forward);
-            }
-        });
-        ui.add_space(10.0);
-        // Côté droit d'abord (vue, recherche), puis le chemin dans la place restante.
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            style::segmented(ui, |ui| {
-                if view_button(ui, Glyph::Grid, self.view == View::Grid, "Grille").clicked() {
-                    actions.push(Action::SetView(View::Grid));
-                }
-                if view_button(ui, Glyph::List, self.view == View::List, "Liste").clicked() {
-                    actions.push(Action::SetView(View::List));
-                }
-            });
-            ui.add_space(6.0);
-            self.sort_button(ui, actions);
-            ui.add_space(6.0);
-            ui.add(
-                egui::TextEdit::singleline(&mut self.search)
-                    .hint_text("Rechercher")
-                    .desired_width(180.0),
-            );
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                if let Some(text) = &mut self.path_edit {
-                    let response =
-                        ui.add(egui::TextEdit::singleline(text).desired_width(ui.available_width() - 8.0));
-                    if !response.has_focus() {
-                        // Ouverture du champ : tout le chemin est sélectionné, la saisie le remplace.
-                        response.request_focus();
-                        select_all(ui, response.id, text);
-                    }
-                    if ui.input(|input| input.key_pressed(Key::Enter)) {
-                        actions.push(Action::CommitPath);
-                    } else if ui.input(|input| input.key_pressed(Key::Escape)) || response.lost_focus() {
-                        self.path_edit = None;
-                    }
-                } else {
-                    self.breadcrumb(ui, actions);
-                }
-            });
-        });
-    }
-
-    fn breadcrumb(&self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
-        let Some(dir) = self.current_dir() else {
-            ui.label(RichText::new("Corbeille").family(style::strong_family()));
-            return;
-        };
-        let home = home();
-        // Le dossier personnel s'appelle « Accueil », comme dans la barre latérale.
-        let (start, mut parts): (Option<PathBuf>, Vec<PathBuf>) = if dir.starts_with(&home) {
-            (
-                Some(home.clone()),
-                dir.ancestors()
-                    .take_while(|p| *p != home)
-                    .map(Path::to_path_buf)
-                    .collect(),
-            )
-        } else {
-            (None, dir.ancestors().map(Path::to_path_buf).collect())
-        };
-        if let Some(home) = start {
-            parts.push(home);
-        }
-        parts.reverse();
-        let last = parts.len().saturating_sub(1);
-        for (index, part) in parts.iter().enumerate() {
-            let name = if *part == home {
-                "Accueil".to_owned()
-            } else {
-                part.file_name()
-                    .map(|name| name.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| "Ordinateur".to_owned())
-            };
-            if index > 0 {
-                ui.label(RichText::new("›").color(style::text_secondary()));
-            }
-            let text = if index == last {
-                RichText::new(name).family(style::strong_family())
-            } else {
-                RichText::new(name)
-            };
-            let response = ui.add(egui::Button::new(text).frame_when_inactive(false));
-            if response.clicked() {
-                if index == last {
-                    actions.push(Action::EditPath);
-                } else {
-                    actions.push(Action::Navigate(part.clone()));
-                }
-            }
-        }
-        // Un clic dans la zone vide du chemin permet de le saisir.
-        let rest = ui.allocate_response(ui.available_size(), Sense::click());
-        if rest.clicked() {
-            actions.push(Action::EditPath);
-        }
-    }
-
-    fn sidebar(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
-        let home = home();
-        let mut favorites = vec![("Accueil", home.clone(), "places-home")];
-        for (name, folder, icon) in [
-            ("Bureau", "Bureau", "places-desktop"),
-            ("Documents", "Documents", "places-documents"),
-            ("Téléchargements", "Téléchargements", "places-downloads"),
-            ("Images", "Images", "places-pictures"),
-            ("Musique", "Musique", "places-music"),
-            ("Vidéos", "Vidéos", "places-videos"),
-        ] {
-            let path = home.join(folder);
-            if path.is_dir() {
-                favorites.push((name, path, icon));
-            }
-        }
-        // Les icônes du thème, en couleur : une seule teinte effacerait le dessin des dossiers.
-        let tint = IconStyle::Color;
-        egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
-            style::sidebar_heading(ui, "Favoris");
-            for (name, path, icon) in favorites {
-                let selected = self.current_dir() == Some(path.as_path());
-                if style::sidebar_item(ui, &mut self.icons, icon, tint, name, selected).clicked() {
-                    actions.push(Action::Navigate(path));
-                }
-            }
-            let trash_selected = self.location == Location::Trash;
-            let trash_icon = if trash::is_empty() {
-                "places-trash"
-            } else {
-                "places-trash-full"
-            };
-            if self.picker.is_none()
-                && style::sidebar_item(ui, &mut self.icons, trash_icon, tint, "Corbeille", trash_selected)
-                    .clicked()
-            {
-                actions.push(Action::ShowTrash);
-            }
-            ui.add_space(8.0);
-            style::sidebar_heading(ui, "Appareils");
-            let root = PathBuf::from("/");
-            let selected = self.current_dir() == Some(root.as_path());
-            if style::sidebar_item(
-                ui,
-                &mut self.icons,
-                "places-computer",
-                tint,
-                "Ordinateur",
-                selected,
-            )
-            .clicked()
-            {
-                actions.push(Action::Navigate(root));
-            }
-            for device in self.devices.clone() {
-                let selected = device
-                    .mount
-                    .as_deref()
-                    .is_some_and(|mount| self.current_dir() == Some(mount));
-                let response =
-                    style::sidebar_item(ui, &mut self.icons, "places-usb", tint, &device.label, selected)
-                        .on_hover_text(format!("{} · {}", device.size, device.path));
-                // Bouton d'éjection à droite de la ligne.
-                let eject = egui::Rect::from_center_size(
-                    egui::pos2(response.rect.right() - 16.0, response.rect.center().y),
-                    egui::vec2(22.0, 22.0),
-                );
-                let eject_response = ui
-                    .interact(eject, response.id.with("ejecter"), Sense::click())
-                    .on_hover_text("Éjecter");
-                paint_glyph(
-                    ui,
-                    Glyph::Eject,
-                    eject,
-                    if eject_response.hovered() {
-                        style::primary_text()
-                    } else {
-                        style::text_secondary()
-                    },
-                );
-                if eject_response.clicked() {
-                    actions.push(Action::Eject(device));
-                } else if response.clicked() {
-                    actions.push(match &device.mount {
-                        Some(mount) => Action::Navigate(mount.clone()),
-                        None => Action::Mount(device),
-                    });
-                }
             }
         });
     }
@@ -1297,76 +1222,6 @@ caches={}
             });
     }
 
-    fn status_bar(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
-        let visible = self.visible().len();
-        let selected = self.selected.len();
-        let selected_size: u64 = self
-            .entries
-            .iter()
-            .filter(|entry| self.selected.contains(&entry.path))
-            .filter_map(|entry| entry.size)
-            .sum();
-        let jobs: Vec<(String, ops::Progress)> = self
-            .jobs
-            .iter()
-            .map(|job| (job.title.clone(), job.snapshot()))
-            .collect();
-        let message = self.message.clone();
-        let free = self.free_space;
-        let in_trash = self.location == Location::Trash;
-        style::status_bar(ui, |ui| {
-            if let Some((index, (title, progress))) = jobs.iter().enumerate().next() {
-                let fraction = if progress.total_bytes > 0 {
-                    progress.done_bytes as f32 / progress.total_bytes as f32
-                } else {
-                    0.0
-                };
-                ui.label(format!("{title} : {}", progress.current));
-                ui.add(
-                    egui::ProgressBar::new(fraction)
-                        .desired_width(160.0)
-                        .desired_height(6.0),
-                );
-                if ui.small_button("Annuler").clicked() {
-                    actions.push(Action::CancelJob(index));
-                }
-                return;
-            }
-            let summary = if selected > 0 {
-                let size = if selected_size > 0 {
-                    format!(" ({})", format_size(selected_size))
-                } else {
-                    String::new()
-                };
-                format!("{selected} sur {visible} sélectionné{}{size}", plural(selected))
-            } else {
-                match visible {
-                    0 => "Dossier vide".to_owned(),
-                    1 => "1 élément".to_owned(),
-                    count => format!("{count} éléments"),
-                }
-            };
-            ui.label(summary);
-            if let Some((text, error)) = &message {
-                ui.label("·");
-                if *error {
-                    ui.colored_label(style::error(), text);
-                } else {
-                    ui.label(text);
-                }
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if in_trash {
-                    if ui.small_button("Vider la Corbeille").clicked() {
-                        actions.push(Action::AskEmptyTrash);
-                    }
-                } else if let Some(free) = free {
-                    ui.label(format!("{} disponibles", format_size(free)));
-                }
-            });
-        });
-    }
-
     /// Menu contextuel d'un élément.
     fn item_menu(&self, ui: &mut egui::Ui, entry: &FileEntry, actions: &mut Vec<Action>) {
         let single = self.selected.len() <= 1;
@@ -1429,75 +1284,6 @@ caches={}
         }
     }
 
-    /// Bouton « Trier » et son popover : flèche vers le bouton, coins de 10, marge de 12.
-    fn sort_button(&self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
-        let (rect, button) = ui.allocate_exact_size(egui::vec2(74.0, 30.0), Sense::click());
-        let visuals = ui.visuals();
-        ui.painter().rect(
-            rect,
-            CornerRadius::same(8),
-            if button.hovered() {
-                visuals.widgets.hovered.bg_fill
-            } else {
-                visuals.window_fill
-            },
-            Stroke::new(1.0, style::separator()),
-            egui::StrokeKind::Inside,
-        );
-        ui.painter().text(
-            egui::pos2(rect.left() + 12.0, rect.center().y),
-            egui::Align2::LEFT_CENTER,
-            "Trier",
-            egui::FontId::proportional(13.0),
-            style::primary_text(),
-        );
-        let (x, y) = (rect.right() - 16.0, rect.center().y);
-        let chevron = Stroke::new(1.6, style::text_secondary());
-        ui.painter()
-            .line_segment([egui::pos2(x - 3.0, y - 1.5), egui::pos2(x, y + 1.5)], chevron);
-        ui.painter()
-            .line_segment([egui::pos2(x, y + 1.5), egui::pos2(x + 3.0, y - 1.5)], chevron);
-
-        egui::Popup::from_toggle_button_response(&button)
-            .gap(14.0)
-            .align(egui::RectAlign::BOTTOM)
-            .frame(
-                Frame::popup(ui.style())
-                    .corner_radius(CornerRadius::same(10))
-                    .inner_margin(Margin::same(12)),
-            )
-            .show(|ui| {
-                ui.set_width(216.0);
-                ui.spacing_mut().item_spacing.y = 0.0;
-                // Flèche de 10 px, pointée vers le bouton.
-                let fill = ui.visuals().window_fill;
-                let top = ui.min_rect().top() - 12.0;
-                let tip = rect.center().x;
-                ui.painter()
-                    .with_clip_rect(ui.ctx().content_rect())
-                    .add(egui::Shape::convex_polygon(
-                        vec![
-                            egui::pos2(tip - 10.0, top),
-                            egui::pos2(tip, top - 10.0),
-                            egui::pos2(tip + 10.0, top),
-                        ],
-                        fill,
-                        Stroke::NONE,
-                    ));
-                for (label, key) in [
-                    ("Nom", SortKey::Name),
-                    ("Date de modification", SortKey::Modified),
-                    ("Taille", SortKey::Size),
-                    ("Type", SortKey::Kind),
-                ] {
-                    // Le choix en cours ne s'inverse pas ici : les en-têtes de la liste le font.
-                    if style::radio_row(ui, label, self.sort == key).clicked() && self.sort != key {
-                        actions.push(Action::Sort(key));
-                    }
-                }
-            });
-    }
-
     /// Menu contextuel de la zone vide du dossier.
     fn folder_menu(&self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         style::menu_style(ui);
@@ -1526,6 +1312,7 @@ caches={}
             "Afficher les fichiers cachés"
         };
         item(ui, hidden, true, Action::ToggleHidden);
+
         if let Some(dir) = self.current_dir() {
             style::menu_separator(ui);
             item(
@@ -1534,6 +1321,18 @@ caches={}
                 true,
                 Action::Properties(dir.to_path_buf()),
             );
+        }
+        style::menu_separator(ui);
+        for (label, key) in [
+            ("Trier par nom", SortKey::Name),
+            ("Trier par date", SortKey::Modified),
+            ("Trier par taille", SortKey::Size),
+            ("Trier par type", SortKey::Kind),
+        ] {
+            if style::radio_row(ui, label, self.sort == key).clicked() {
+                actions.push(Action::Sort(key));
+                ui.close();
+            }
         }
     }
 
@@ -1546,6 +1345,10 @@ caches={}
         actions: &mut Vec<Action>,
     ) {
         let entry = &self.entries[index];
+        if response.drag_started() && self.picker.is_none() && self.location != Location::Trash {
+            actions.push(Action::StartDrag(index));
+            return;
+        }
         if response.double_clicked() {
             actions.push(Action::Open(entry.path.clone(), entry.directory));
         } else if response.clicked() {
@@ -1598,235 +1401,11 @@ caches={}
         true
     }
 
-    fn list(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
-        let width = ui.available_width();
-        let in_trash = self.location == Location::Trash;
-        let third = if in_trash { "Supprimé le" } else { "Modifié" };
-        let columns = [width - 300.0, 110.0, 160.0];
-        // En-têtes cliquables : tri.
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 0.0;
-            ui.add_space(46.0);
-            for (index, (title, key)) in [
-                ("Nom", SortKey::Name),
-                ("Taille", SortKey::Size),
-                (third, SortKey::Modified),
-            ]
-            .into_iter()
-            .enumerate()
-            {
-                let arrow = match (self.sort == key, self.ascending) {
-                    (true, true) => " ▲",
-                    (true, false) => " ▼",
-                    _ => "",
-                };
-                let width = columns[index] - if index == 0 { 46.0 } else { 0.0 };
-                let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 28.0), Sense::click());
-                let color = if self.sort == key {
-                    style::primary_text()
-                } else {
-                    style::text_secondary()
-                };
-                ui.painter().text(
-                    egui::pos2(rect.left(), rect.center().y),
-                    egui::Align2::LEFT_CENTER,
-                    format!("{title}{arrow}"),
-                    egui::FontId::proportional(11.5),
-                    color,
-                );
-                if response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
-                    actions.push(Action::Sort(key));
-                }
-            }
-        });
-        let line = ui.cursor().top();
-        ui.painter().hline(
-            ui.max_rect().x_range(),
-            line,
-            Stroke::new(1.0, style::separator()),
-        );
-
-        let visible = self.visible();
-        let scroll = egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 0.0;
-            for (row_index, &index) in visible.iter().enumerate() {
-                let entry = self.entries[index].clone();
-                let (rect, response) = ui.allocate_exact_size(egui::vec2(width, ROW), Sense::click());
-                let selected = self.selected.contains(&entry.path);
-                let fill = if selected {
-                    Some(style::accent())
-                } else if response.hovered() {
-                    Some(style::control_hover())
-                } else if row_index % 2 == 1 {
-                    Some(style::content_gray())
-                } else {
-                    None
-                };
-                if let Some(fill) = fill {
-                    ui.painter()
-                        .rect_filled(rect.shrink2(egui::vec2(8.0, 0.0)), 5.0, fill);
-                }
-                let ink = if selected {
-                    style::accent_text()
-                } else {
-                    style::primary_text()
-                };
-                let secondary = if selected {
-                    style::accent_text().gamma_multiply(0.82)
-                } else {
-                    style::text_secondary()
-                };
-                let icon = egui::Rect::from_center_size(
-                    egui::pos2(rect.left() + 28.0, rect.center().y),
-                    egui::vec2(22.0, 22.0),
-                );
-                self.icons.paint(ui, entry_icon(&entry), icon, IconStyle::Color);
-                let name_left = rect.left() + 46.0;
-                let mut child = ui.new_child(
-                    egui::UiBuilder::new()
-                        .max_rect(egui::Rect::from_min_size(
-                            egui::pos2(name_left, rect.top() + 2.0),
-                            egui::vec2(columns[0] - 52.0, ROW - 4.0),
-                        ))
-                        .layout(egui::Layout::left_to_right(egui::Align::Center)),
-                );
-                if !self.rename_field(&mut child, &entry.path, columns[0] - 60.0, actions) {
-                    let name = if entry.symlink {
-                        format!("{} (lien)", entry.name)
-                    } else {
-                        entry.name.clone()
-                    };
-                    paint_text(
-                        ui,
-                        &name,
-                        egui::pos2(name_left, rect.center().y),
-                        columns[0] - 56.0,
-                        ink,
-                        false,
-                    );
-                }
-                let size = match (entry.directory, entry.size) {
-                    (true, _) => "—".to_owned(),
-                    (false, Some(size)) => format_size(size),
-                    (false, None) => String::new(),
-                };
-                let x = rect.left() + columns[0];
-                paint_text(
-                    ui,
-                    &size,
-                    egui::pos2(x, rect.center().y),
-                    columns[1] - 8.0,
-                    secondary,
-                    false,
-                );
-                let date = match &entry.trash {
-                    Some(item) => item.deleted.replace('T', " à ").chars().take(18).collect(),
-                    None => format_time(entry.modified),
-                };
-                paint_text(
-                    ui,
-                    &date,
-                    egui::pos2(x + columns[1], rect.center().y),
-                    columns[2] - 8.0,
-                    secondary,
-                    false,
-                );
-                let response = response.on_hover_text_at_pointer(match &entry.trash {
-                    Some(item) => format!("Origine : {}", item.original.display()),
-                    None => entry.name.clone(),
-                });
-                self.item_response(&response, index, ui, actions);
-                response.context_menu(|ui| self.item_menu(ui, &entry, actions));
-            }
-            // Zone vide sous la liste : désélection et menu du dossier.
-            let rest = ui.allocate_response(ui.available_size().max(egui::vec2(width, 80.0)), Sense::click());
-            if rest.clicked() {
-                actions.push(Action::ClearSelection);
-            }
-            rest.context_menu(|ui| self.folder_menu(ui, actions));
-        });
-        let _ = scroll;
-        if visible.is_empty() {
-            empty_state(ui, &self.search, self.location == Location::Trash);
-        }
-    }
-
-    fn grid(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
-        let visible = self.visible();
-        let width = ui.available_width();
-        let columns = ((width - 16.0) / GRID_CELL.x).floor().max(1.0) as usize;
-        egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
-            ui.add_space(10.0);
-            for row in visible.chunks(columns) {
-                ui.horizontal(|ui| {
-                    ui.add_space(8.0);
-                    ui.spacing_mut().item_spacing.x = 0.0;
-                    for &index in row {
-                        let entry = self.entries[index].clone();
-                        let (rect, response) = ui.allocate_exact_size(GRID_CELL, Sense::click());
-                        let selected = self.selected.contains(&entry.path);
-                        let icon_rect = egui::Rect::from_center_size(
-                            egui::pos2(rect.center().x, rect.top() + 40.0),
-                            egui::vec2(68.0, 68.0),
-                        );
-                        if selected || response.hovered() {
-                            let fill = if selected { style::tint(18) } else { style::tint(8) };
-                            ui.painter().rect_filled(icon_rect.expand(6.0), 10.0, fill);
-                        }
-                        self.icons
-                            .paint(ui, entry_icon(&entry), icon_rect, IconStyle::Color);
-                        let label_center = egui::pos2(rect.center().x, rect.top() + 94.0);
-                        let mut child = ui.new_child(
-                            egui::UiBuilder::new()
-                                .max_rect(egui::Rect::from_center_size(
-                                    label_center,
-                                    egui::vec2(GRID_CELL.x - 8.0, 24.0),
-                                ))
-                                .layout(egui::Layout::left_to_right(egui::Align::Center)),
-                        );
-                        if !self.rename_field(&mut child, &entry.path, GRID_CELL.x - 12.0, actions) {
-                            let galley_width = paint_text(
-                                ui,
-                                &entry.name,
-                                label_center,
-                                GRID_CELL.x - 10.0,
-                                style::primary_text(),
-                                true,
-                            );
-                            if selected {
-                                let pill = egui::Rect::from_center_size(
-                                    label_center,
-                                    egui::vec2(galley_width + 12.0, 20.0),
-                                );
-                                ui.painter().rect_filled(pill, 6.0, style::accent());
-                                paint_text(
-                                    ui,
-                                    &entry.name,
-                                    label_center,
-                                    GRID_CELL.x - 10.0,
-                                    Color32::WHITE,
-                                    true,
-                                );
-                            }
-                        }
-                        let response = response.on_hover_text_at_pointer(&entry.name);
-                        self.item_response(&response, index, ui, actions);
-                        response.context_menu(|ui| self.item_menu(ui, &entry, actions));
-                    }
-                });
-            }
-            let rest = ui.allocate_response(ui.available_size().max(egui::vec2(width, 80.0)), Sense::click());
-            if rest.clicked() {
-                actions.push(Action::ClearSelection);
-            }
-            rest.context_menu(|ui| self.folder_menu(ui, actions));
-        });
-        if visible.is_empty() {
-            empty_state(ui, &self.search, self.location == Location::Trash);
-        }
-    }
-
     fn dialogs(&mut self, ctx: &egui::Context, actions: &mut Vec<Action>) {
+        if matches!(self.dialog, Some(Dialog::Properties(_))) {
+            self.properties_dialog(ctx, actions);
+            return;
+        }
         let Some(dialog) = &self.dialog else { return };
         let modal = egui::Modal::new(egui::Id::unique("fichiers-dialogue")).show(ctx, |ui| {
             ui.set_width(380.0);
@@ -1858,56 +1437,8 @@ caches={}
                         None => {}
                     }
                 }
-                Dialog::Properties(properties) => {
-                    let name = properties
-                        .path
-                        .file_name()
-                        .map(|name| name.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| properties.path.display().to_string());
-                    ui.heading(name);
-                    ui.add_space(8.0);
-                    egui::Grid::new("proprietes")
-                        .num_columns(2)
-                        .spacing([16.0, 8.0])
-                        .show(ui, |ui| {
-                            let mut row = |title: &str, value: String| {
-                                ui.label(RichText::new(title).color(style::text_secondary()));
-                                ui.label(value);
-                                ui.end_row();
-                            };
-                            row("Type", properties.kind.clone());
-                            row(
-                                "Taille",
-                                match properties.size {
-                                    Some((bytes, files)) if properties.path.is_dir() => {
-                                        format!(
-                                            "{} · {files} fichier{}",
-                                            format_size(bytes),
-                                            plural(files as usize)
-                                        )
-                                    }
-                                    Some((bytes, _)) => format_size(bytes),
-                                    None => "Calcul en cours…".to_owned(),
-                                },
-                            );
-                            row(
-                                "Emplacement",
-                                properties
-                                    .path
-                                    .parent()
-                                    .map(|parent| parent.display().to_string())
-                                    .unwrap_or_default(),
-                            );
-                            row("Modifié", format_date(properties.modified));
-                            row("Droits", properties.permissions.clone());
-                        });
-                    ui.add_space(12.0);
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if style::suggested_button(ui, "Fermer").clicked() {
-                            actions.push(Action::CloseDialog);
-                        }
-                    });
-                }
+                // Dessiné à part (voir `properties_dialog`).
+                Dialog::Properties(_) => {}
                 Dialog::Replace(path) => {
                     ui.heading(format!("Remplacer « {} » ?", file_name(path)));
                     ui.label(
@@ -1992,56 +1523,8 @@ fn dialog_buttons(ui: &mut egui::Ui, confirm: &str) -> Option<bool> {
     .inner
 }
 
-fn empty_state(ui: &mut egui::Ui, search: &str, trash: bool) {
-    let text = if !search.trim().is_empty() {
-        "Aucun résultat dans ce dossier"
-    } else if trash {
-        "La Corbeille est vide"
-    } else {
-        "Ce dossier est vide"
-    };
-    let center = ui.max_rect().center();
-    ui.painter().text(
-        center,
-        egui::Align2::CENTER_CENTER,
-        text,
-        egui::FontId::proportional(15.0),
-        style::text_secondary(),
-    );
-}
-
-/// Écrit `text` sur une ligne, coupé avec « … » au-delà de `max_width` ; renvoie sa largeur.
-fn paint_text(
-    ui: &egui::Ui,
-    text: &str,
-    anchor: egui::Pos2,
-    max_width: f32,
-    color: Color32,
-    centered: bool,
-) -> f32 {
-    let font = egui::FontId::proportional(13.0);
-    let mut shown = text.to_owned();
-    let mut galley = ui.painter().layout_no_wrap(shown.clone(), font.clone(), color);
-    while galley.size().x > max_width && shown.chars().count() > 1 {
-        shown.pop();
-        galley = ui
-            .painter()
-            .layout_no_wrap(format!("{}…", shown.trim_end()), font.clone(), color);
-    }
-    let width = galley.size().x;
-    let pos = if centered {
-        egui::pos2(anchor.x - width / 2.0, anchor.y - galley.size().y / 2.0)
-    } else {
-        egui::pos2(anchor.x, anchor.y - galley.size().y / 2.0)
-    };
-    ui.painter().galley(pos, galley, color);
-    width
-}
-
 #[derive(Clone, Copy)]
 enum Glyph {
-    Back,
-    Forward,
     List,
     Grid,
     Eject,
@@ -2054,12 +1537,6 @@ fn paint_glyph(ui: &egui::Ui, glyph: Glyph, rect: egui::Rect, color: Color32) {
     let stroke = Stroke::new(1.8, color);
     let p = |x: f32, y: f32| egui::pos2(c.x + x, c.y + y);
     match glyph {
-        Glyph::Back => {
-            painter.line(vec![p(3.0, -6.0), p(-3.0, 0.0), p(3.0, 6.0)], stroke);
-        }
-        Glyph::Forward => {
-            painter.line(vec![p(-3.0, -6.0), p(3.0, 0.0), p(-3.0, 6.0)], stroke);
-        }
         Glyph::List => {
             for y in [-5.0, 0.0, 5.0] {
                 painter.line_segment([p(-7.0, y), p(7.0, y)], stroke);
@@ -2086,48 +1563,21 @@ fn paint_glyph(ui: &egui::Ui, glyph: Glyph, rect: egui::Rect, color: Color32) {
     }
 }
 
-fn nav_button(ui: &mut egui::Ui, glyph: Glyph, enabled: bool, hint: &str) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(34.0, 28.0),
-        if enabled { Sense::click() } else { Sense::hover() },
-    );
-    if enabled && response.hovered() {
-        ui.painter()
-            .rect_filled(rect.shrink(1.0), 13.0, style::control_hover());
-    }
-    let color = if enabled {
-        style::primary_text()
-    } else {
-        style::text_secondary()
-    };
-    paint_glyph(ui, glyph, rect, color);
-    response.on_hover_text(hint)
-}
-
-/// Segment de vue (liste, grille) : la vue active est blanche et en relief.
-fn view_button(ui: &mut egui::Ui, glyph: Glyph, active: bool, hint: &str) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(36.0, 22.0), Sense::click());
-    style::segment_background(ui, rect, active, response.hovered());
-    paint_glyph(ui, glyph, rect, style::primary_text());
-    response.on_hover_text(hint)
-}
-
 fn properties(path: &Path) -> Properties {
+    use std::os::unix::fs::MetadataExt;
     let metadata = path.symlink_metadata().ok();
     let directory = metadata.as_ref().is_some_and(|m| m.is_dir());
-    let kind = match &metadata {
-        Some(m) if m.file_type().is_symlink() => format!(
+    let entry = entry_for(path);
+    let kind = match (&metadata, &entry) {
+        (Some(m), _) if m.file_type().is_symlink() => format!(
             "Lien vers {}",
             fs::read_link(path)
                 .map(|p| p.display().to_string())
                 .unwrap_or_default()
         ),
-        Some(_) if directory => "Dossier".to_owned(),
-        Some(_) => match path.extension().and_then(|e| e.to_str()) {
-            Some(extension) => format!("Fichier {}", extension.to_uppercase()),
-            None => "Fichier".to_owned(),
-        },
-        None => "Introuvable".to_owned(),
+        (Some(_), Some(entry)) => view::kind_label(entry),
+        (Some(_), None) => "Fichier".to_owned(),
+        (None, _) => "Introuvable".to_owned(),
     };
     Properties {
         path: path.to_path_buf(),
@@ -2138,27 +1588,65 @@ fn properties(path: &Path) -> Properties {
             metadata.as_ref().map(|m| (m.len(), 1))
         },
         modified: metadata.as_ref().and_then(|m| m.modified().ok()),
-        permissions: metadata
-            .map(|m| permissions(m.permissions().mode()))
+        mode: metadata.as_ref().map_or(0, |m| m.permissions().mode() & 0o7777),
+        owner: metadata
+            .as_ref()
+            .map(|m| account_name("/etc/passwd", m.uid()))
             .unwrap_or_default(),
+        group: metadata
+            .as_ref()
+            .map(|m| account_name("/etc/group", m.gid()))
+            .unwrap_or_default(),
+        on_disk: metadata.as_ref().filter(|_| !directory).map(|m| m.blocks() * 512),
+        icon: entry.as_ref().map_or("file-generic", entry_icon),
+        opener: entry.as_ref().map_or("—", view::opener_label),
+        name: file_name(path),
     }
 }
 
-/// « rwxr-xr-x » et sa lecture en français.
-fn permissions(mode: u32) -> String {
-    let mut text = String::new();
-    for shift in [6, 3, 0] {
-        let bits = (mode >> shift) & 0o7;
-        text.push(if bits & 4 != 0 { 'r' } else { '-' });
-        text.push(if bits & 2 != 0 { 'w' } else { '-' });
-        text.push(if bits & 1 != 0 { 'x' } else { '-' });
+/// Nom du compte (utilisateur ou groupe) numéro `id`, lu dans `file` (`/etc/passwd`,
+/// `/etc/group`) ; le numéro s'il n'y figure pas.
+fn account_name(file: &str, id: u32) -> String {
+    fs::read_to_string(file)
+        .ok()
+        .and_then(|text| {
+            text.lines().find_map(|line| {
+                let mut fields = line.split(':');
+                let name = fields.next()?;
+                (fields.nth(1)?.parse::<u32>().ok()? == id).then(|| name.to_owned())
+            })
+        })
+        .unwrap_or_else(|| id.to_string())
+}
+
+/// Accès d'une classe (propriétaire, groupe, autres) : 0 aucun, 1 lecture, 2 lecture et
+/// écriture ; `shift` vaut 6, 3 ou 0.
+fn access_level(mode: u32, shift: u32) -> usize {
+    match (mode >> shift) & 0o6 {
+        0o6 | 0o2 => 2,
+        0o4 => 1,
+        _ => 0,
     }
-    let owner = match (mode >> 6) & 0o7 {
-        7 | 6 => "lecture et écriture",
-        5 | 4 => "lecture seule",
-        _ => "aucun accès",
-    };
-    format!("{text} (vous : {owner})")
+}
+
+/// `mode` avec l'accès `level` pour la classe `shift`, son droit d'exécution gardé.
+fn with_access(mode: u32, shift: u32, level: usize) -> u32 {
+    let bits = [0, 0o4, 0o6][level.min(2)];
+    (mode & !(0o6 << shift)) | (bits << shift)
+}
+
+/// « rw-r--r-- ».
+fn mode_text(mode: u32) -> String {
+    (0..9)
+        .rev()
+        .map(|bit| {
+            if mode & (1 << bit) == 0 {
+                '-'
+            } else {
+                ['x', 'w', 'r'][bit % 3]
+            }
+        })
+        .collect()
 }
 
 /// Extension d'un nom de fichier, pour le tri par type.
@@ -2203,6 +1691,25 @@ fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
             }
         }
     }
+}
+
+/// Met `paths` à la Corbeille ; renvoie les erreurs rencontrées.
+pub fn put_in_trash(paths: &[PathBuf]) -> Vec<String> {
+    paths.iter().filter_map(|path| trash::trash(path).err()).collect()
+}
+
+/// Élément de `path`, hors de la lecture d'un dossier (Récents, étiquettes).
+fn entry_for(path: &Path) -> Option<FileEntry> {
+    let metadata = fs::metadata(path).ok()?;
+    Some(FileEntry {
+        name: file_name(path),
+        path: path.to_path_buf(),
+        directory: metadata.is_dir(),
+        symlink: path.symlink_metadata().is_ok_and(|m| m.file_type().is_symlink()),
+        modified: metadata.modified().ok(),
+        size: (!metadata.is_dir()).then_some(metadata.len()),
+        trash: None,
+    })
 }
 
 /// Icône du dossier `icons/SVG` selon la nature de l'entrée.
@@ -2383,8 +1890,13 @@ mod tests {
 
     #[test]
     fn droits_lisibles() {
-        assert_eq!(permissions(0o644), "rw-r--r-- (vous : lecture et écriture)");
-        assert_eq!(permissions(0o555), "r-xr-xr-x (vous : lecture seule)");
+        assert_eq!(mode_text(0o644), "rw-r--r--");
+        assert_eq!(mode_text(0o755), "rwxr-xr-x");
+        assert_eq!(access_level(0o640, 6), 2);
+        assert_eq!(access_level(0o640, 3), 1);
+        assert_eq!(access_level(0o640, 0), 0);
+        assert_eq!(with_access(0o755, 3, 0), 0o715);
+        assert_eq!(with_access(0o600, 0, 1), 0o604);
     }
 
     #[test]

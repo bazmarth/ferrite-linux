@@ -110,6 +110,7 @@ fn run(options: Options) -> Result<(), Box<dyn std::error::Error>> {
         _ => backend::winit::init(&mut event_loop, &mut state, &options)?,
     }
     info!(socket = ?state.socket_name, "ferrite-shell prêt");
+    desktop::file_drag::listen(&event_loop.handle(), &state.socket_name.to_string_lossy());
     protocols::xwayland::start(&event_loop.handle(), &mut state);
     state.publish_environment();
 

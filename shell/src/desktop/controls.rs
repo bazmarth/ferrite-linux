@@ -353,6 +353,7 @@ mod tests {
             connected: true,
             icon: "audio-headset".to_owned(),
             battery: Some(80),
+            trusted: true,
         };
         assert_eq!(device_hint(&device), "Connecté · batterie 80 %");
         assert_eq!(device_glyph(&device), "cc-head");

@@ -261,6 +261,8 @@ uniform vec4 icon;
 uniform float top;
 uniform float bottom;
 uniform float squeeze;
+uniform vec2 crop;
+uniform float radius;
 
 void main() {
     vec2 p = geo.xy + v_coords * geo.zw;
@@ -279,12 +281,25 @@ void main() {
         return;
     }
 
-    float u = (p.x - left) / max(right - left, 1.0);
-    float v = (p.y - top) / max(bottom - top, 1.0);
+    // `crop` : part de l'image posée sur le cadre (1 : toute l'image, étirée) ; au-delà
+    // de l'image, rien.
+    float u = (p.x - left) / max(right - left, 1.0) * crop.x;
+    float v = (p.y - top) / max(bottom - top, 1.0) * crop.y;
+    if (u > 1.0 || v > 1.0) {
+        gl_FragColor = vec4(0.0);
+        return;
+    }
     vec4 color = texture2D(tex, vec2(u, v));
 #if defined(NO_ALPHA)
     color = vec4(color.rgb, 1.0);
 #endif
+    // Coins arrondis du cadre, pour le bord d'une image rognée.
+    if (radius > 0.0) {
+        vec2 hs = vec2(right - left, bottom - top) * 0.5;
+        vec2 q = abs(p - vec2(left, top) - hs) - (hs - radius);
+        float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - radius;
+        color *= clamp(0.5 - d, 0.0, 1.0);
+    }
     gl_FragColor = color * alpha;
 }
 "#;
@@ -351,6 +366,8 @@ impl Shaders {
                 float("top"),
                 float("bottom"),
                 float("squeeze"),
+                UniformName::new("crop", UniformType::_2f),
+                float("radius"),
             ],
         )?;
         Ok(Shaders {

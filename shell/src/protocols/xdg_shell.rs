@@ -17,8 +17,8 @@ use smithay::{
     wayland::{
         compositor::with_states,
         shell::xdg::{
-            PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState,
-            XdgToplevelSurfaceData,
+            PopupSurface, PositionerState, SurfaceCachedState, ToplevelSurface, XdgShellHandler,
+            XdgShellState, XdgToplevelSurfaceData,
         },
     },
 };
@@ -58,10 +58,14 @@ impl XdgShellHandler for Ferrite {
         } else {
             TITLEBAR_HEIGHT as i32
         };
-        let window = Window::new_wayland_window(surface);
         let area = self
             .usable_area()
             .unwrap_or_else(|| Rectangle::from_size(Size::from(NEW_WINDOW_SIZE)));
+        // Taille utile annoncée à l'application, qui s'ouvre ainsi à une taille qui tient.
+        surface.with_pending_state(|state| {
+            state.bounds = Some(Size::from((area.size.w, (area.size.h - titlebar_height).max(1))));
+        });
+        let window = Window::new_wayland_window(surface);
         let frame_size = Size::from((NEW_WINDOW_SIZE.0, NEW_WINDOW_SIZE.1 + titlebar_height));
         let frame = wm::centered_position(area, frame_size);
         window.user_data().insert_if_missing(|| PendingPlacement {
@@ -505,11 +509,29 @@ impl Ferrite {
             })
         });
         if let (Some(titlebar_height), Some(area)) = (placement, self.usable_area()) {
+            // Plus grande que la zone utile (le bas passerait sous le Dock) : elle est
+            // ramenée à une taille qui tient, comme les fenêtres X11.
+            let min = with_states(surface, |states| {
+                states.cached_state.get::<SurfaceCachedState>().current().min_size
+            });
+            let size = match (
+                wm::fitted_size(area, size, titlebar_height, min),
+                window.toplevel(),
+            ) {
+                (Some(fitted), Some(toplevel)) => {
+                    toplevel.with_pending_state(|state| state.size = Some(fitted));
+                    toplevel.send_pending_configure();
+                    fitted
+                }
+                _ => size,
+            };
             let frame_size = Size::from((size.w, size.h + titlebar_height));
             let frame = wm::clamp_frame(area, wm::centered_position(area, frame_size), frame_size);
             let content = frame + Point::from((0, titlebar_height));
             self.space.map_element(window.clone(), content, true);
         }
+        // En tuilage, elle apparaît directement à sa place dans la grille.
+        self.retile();
         self.animate_opening(&window);
     }
 }

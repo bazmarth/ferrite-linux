@@ -19,7 +19,8 @@ sont pas interceptés, sauf Ctrl + Alt + T et les combinaisons Ctrl + Alt ci-des
 | Quarts | — | glisser vers un coin |
 | Centrer (64 % de la largeur) | Super + C | — |
 | Tuilage automatique | Super + T | — |
-| Échanger avec la principale (en tuilage) | Super + Entrée | — |
+| Échanger avec la principale (en tuilage) | Super + Entrée | bouton d'agrandissement d'une fenêtre de la pile, ou la glisser sur la principale |
+| Échanger deux fenêtres (en tuilage) | — | glisser l'une sur l'autre |
 | Afficher le bureau | Super + D | — |
 
 ## Espaces de travail

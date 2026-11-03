@@ -35,6 +35,7 @@ use ferrite_system::{
 };
 use ferrite_ui::wallpaper::{self, Builtin, Image, Source};
 
+use crate::details;
 use crate::style::{self, Icons};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -185,7 +186,7 @@ enum Update {
     Sinks(Result<Vec<Sink>, String>),
     Known(Vec<KnownWifi>),
     Options(Option<WifiOptions>),
-    Details(Result<Vec<(String, String)>, String>),
+    Details(Result<Vec<(String, String)>, String>, Option<network::WifiFlags>),
     Hotspot(Result<String, String>),
     ScanDone,
     BluetoothName(Option<String>),
@@ -212,6 +213,7 @@ enum ListAction {
     Connect(String),
     Disconnect(String),
     Forget(String),
+    Details(String),
 }
 
 pub struct SettingsState {
@@ -235,8 +237,11 @@ pub struct SettingsState {
     hidden_network: bool,
     known: Vec<KnownWifi>,
     wifi_options: Option<WifiOptions>,
-    /// Adresse et serveurs du réseau actuel, affichés par « Détails ».
+    /// Adresse et serveurs du réseau actuel, affichés par « Détails », avec ses options.
     details: Option<Vec<(String, String)>>,
+    wifi_flags: Option<network::WifiFlags>,
+    /// Appareil Bluetooth dont les détails sont ouverts (son adresse).
+    bluetooth_details: Option<String>,
     hotspot: bool,
     /// Dernier balayage Wi-Fi et Bluetooth, pour les relancer tant que la page est ouverte.
     wifi_scanned: Option<Instant>,
@@ -302,6 +307,8 @@ impl Default for SettingsState {
             known: Vec::new(),
             wifi_options: None,
             details: None,
+            wifi_flags: None,
+            bluetooth_details: None,
             hotspot: false,
             wifi_scanned: None,
             bluetooth_scanned: None,
@@ -398,8 +405,11 @@ impl SettingsState {
                 },
                 Update::Known(known) => self.known = known,
                 Update::Options(options) => self.wifi_options = options,
-                Update::Details(result) => match result {
-                    Ok(details) => self.details = Some(details),
+                Update::Details(result, flags) => match result {
+                    Ok(details) => {
+                        self.details = Some(details);
+                        self.wifi_flags = flags;
+                    }
                     Err(error) => self.fail(error),
                 },
                 Update::Hotspot(result) => {
@@ -581,6 +591,7 @@ impl SettingsState {
                     });
             });
         self.wifi_details_dialog(&ctx);
+        self.bluetooth_details_dialog(&ctx);
         self.wifi_password_dialog(&ctx);
     }
 
@@ -906,8 +917,12 @@ impl SettingsState {
                     .find(|device| device.kind == "wifi" && device.state.starts_with("connected"))
                     .map(|device| device.name.clone());
                 if let Some(device) = device {
+                    let name = name.clone().unwrap_or_default();
                     self.spawn(ctx, move || {
-                        vec![Update::Details(network::device_details(&device))]
+                        vec![Update::Details(
+                            network::device_details(&device),
+                            network::wifi_flags(&name).ok(),
+                        )]
                     });
                 }
             }
@@ -968,52 +983,104 @@ impl SettingsState {
         }
     }
 
-    /// « Détails » du réseau actuel, et sa déconnexion.
+    /// « Détails » du réseau actuel (planche « Dialogues de détails ») : sécurité, bande
+    /// et signal, adresses à copier, options de la connexion ; l'oublier ou s'en
+    /// déconnecter.
     fn wifi_details_dialog(&mut self, ctx: &egui::Context) {
-        let Some(details) = self.details.clone() else {
+        let Some(addresses) = self.details.clone() else {
             return;
         };
-        let ssid = self
+        let Some(network) = self
             .networks
             .iter()
             .flatten()
             .find(|network| network.connected)
-            .map(|network| network.ssid.clone());
-        let (mut close, mut disconnect) = (false, false);
-        egui::Window::new("Détails du réseau")
-            .collapsible(false)
-            .resizable(false)
-            .title_bar(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-            .frame(dialog_frame())
-            .show(ctx, |ui| {
-                ui.set_width(380.0);
-                ui.label(
-                    RichText::new(ssid.as_deref().unwrap_or("Réseau"))
-                        .size(16.0)
-                        .family(style::strong_family()),
-                );
-                ui.add_space(10.0);
-                for (label, value) in &details {
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(label).size(13.0).color(style::text_secondary()));
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(RichText::new(value).size(13.0));
-                        });
-                    });
-                }
-                ui.add_space(14.0);
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    close = rows::button(ui, "Fermer", true).clicked();
-                    disconnect = rows::button(ui, "Déconnecter", false).clicked();
-                });
-            });
-        if close || disconnect || ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+            .cloned()
+        else {
             self.details = None;
+            return;
+        };
+        let mut flags = self.wifi_flags;
+        let (mut closed, mut footer, mut changed) = (false, details::Footer::default(), None);
+        let escape = details::show(ctx, "details-wifi", |ui, t| {
+            closed = details::header(
+                ui,
+                t,
+                52.0,
+                43.0,
+                |ui, rect| {
+                    details::lead_tile(ui, rect, style::accent(), |painter, rect| {
+                        wifi_glyph(painter, rect, style::accent_text());
+                    })
+                },
+                |ui| details::title_and_state(ui, t, &network.ssid, "Connecté", t.ok),
+            );
+            details::tiles(
+                ui,
+                t,
+                &[
+                    ("Sécurité", security_label(&network.security)),
+                    ("Bande", band_label(&network.frequency)),
+                    ("Signal", signal_label(network.signal)),
+                ],
+            );
+            details::section(ui, t, 18.0, "Adresses", None, |rows| {
+                let mut dns = 0;
+                for (label, value) in &addresses {
+                    let label = match label.as_str() {
+                        "DNS" => {
+                            dns += 1;
+                            match dns {
+                                1 => "DNS principal".to_owned(),
+                                2 => "DNS secondaire".to_owned(),
+                                n => format!("DNS {n}"),
+                            }
+                        }
+                        other => other.to_owned(),
+                    };
+                    rows.copy(&label, value);
+                }
+            });
+            if let Some(flags) = flags.as_mut() {
+                details::section(ui, t, 18.0, "Options", None, |rows| {
+                    if rows.switch(
+                        "Connexion automatique",
+                        "Se reconnecter dès que le réseau est à portée",
+                        &mut flags.autoconnect,
+                    ) {
+                        changed = Some((network::WifiFlag::Autoconnect, flags.autoconnect));
+                    }
+                    if rows.switch(
+                        "Connexion limitée",
+                        "Réduit les téléchargements en arrière-plan",
+                        &mut flags.metered,
+                    ) {
+                        changed = Some((network::WifiFlag::Metered, flags.metered));
+                    }
+                });
+            }
+            footer = details::footer(
+                ui,
+                t,
+                details::Left::Danger("Oublier ce réseau"),
+                &["Déconnecter", "OK"],
+            );
+        });
+        self.wifi_flags = flags;
+        let ssid = network.ssid.clone();
+        if let Some((flag, enabled)) = changed {
+            self.act(ctx, "", move || network::set_wifi_flag(&ssid, flag, enabled));
         }
-        if let (true, Some(ssid)) = (disconnect, ssid) {
+        let ssid = network.ssid;
+        if footer.left {
+            self.wifi_scanned = None;
+            self.act(ctx, "Réseau oublié", move || network::forget_wifi(&ssid));
+        } else if footer.button == Some(0) {
             self.wifi_scanned = None;
             self.act(ctx, "", move || network::disconnect_wifi(&ssid));
+        }
+        if closed || escape || footer.left || footer.button.is_some() {
+            self.details = None;
         }
     }
 
@@ -1242,6 +1309,8 @@ impl SettingsState {
                         } else {
                             ListAction::Connect(device.address.clone())
                         });
+                    } else if response.clicked() {
+                        action = Some(ListAction::Details(device.address.clone()));
                     }
                     response.context_menu(|ui| {
                         if ui.button("Oublier cet appareil").clicked() {
@@ -1294,7 +1363,117 @@ impl SettingsState {
             Some(ListAction::Forget(address)) => {
                 self.bluetooth_action(ctx, "Appareil oublié", move || bluetooth::forget(&address));
             }
+            Some(ListAction::Details(address)) => self.bluetooth_details = Some(address),
             None => {}
+        }
+    }
+
+    /// Détails d'un appareil associé (même dialogue que le Wi-Fi) : type, batterie,
+    /// adresse, reconnexion automatique ; l'oublier, le connecter ou le déconnecter.
+    fn bluetooth_details_dialog(&mut self, ctx: &egui::Context) {
+        let Some(address) = self.bluetooth_details.clone() else {
+            return;
+        };
+        let Some(mut device) = self
+            .bluetooth_devices
+            .iter()
+            .flatten()
+            .find(|device| device.address == address)
+            .cloned()
+        else {
+            self.bluetooth_details = None;
+            return;
+        };
+        let (glyph, color) = match device_lead(&device) {
+            Lead::Tile(glyph, color) => (glyph, color),
+            _ => ("glyph-bluetooth", 0x2779E0),
+        };
+        let icons = &mut self.icons;
+        let (mut closed, mut footer, mut trust) = (false, details::Footer::default(), None);
+        let connect_label = if device.connected {
+            "Déconnecter"
+        } else {
+            "Connecter"
+        };
+        let escape = details::show(ctx, "details-bluetooth", |ui, t| {
+            let (state, state_color) = if device.connected {
+                ("Connecté", t.ok)
+            } else {
+                ("Non connecté", t.fg3)
+            };
+            closed = details::header(
+                ui,
+                t,
+                52.0,
+                43.0,
+                |ui, rect| {
+                    let fill = Color32::from_rgb((color >> 16) as u8, (color >> 8) as u8, color as u8);
+                    ui.painter().rect_filled(rect, 14.0, fill);
+                    icons.paint(
+                        ui,
+                        glyph,
+                        rect.shrink(12.0),
+                        style::IconStyle::Tinted(Color32::WHITE),
+                    );
+                },
+                |ui| details::title_and_state(ui, t, &device.name, state, state_color),
+            );
+            details::tiles(
+                ui,
+                t,
+                &[
+                    ("Type", device_kind(glyph).to_owned()),
+                    (
+                        "Batterie",
+                        device
+                            .battery
+                            .map_or_else(|| "—".to_owned(), |battery| format!("{battery} %")),
+                    ),
+                    ("Associé", if device.paired { "Oui" } else { "Non" }.to_owned()),
+                ],
+            );
+            details::section(ui, t, 18.0, "Appareil", None, |rows| {
+                rows.copy("Adresse", &device.address);
+            });
+            details::section(ui, t, 18.0, "Options", None, |rows| {
+                if rows.switch(
+                    "Connexion automatique",
+                    "Se reconnecter dès qu’il est allumé et à portée",
+                    &mut device.trusted,
+                ) {
+                    trust = Some(device.trusted);
+                }
+            });
+            footer = details::footer(
+                ui,
+                t,
+                details::Left::Danger("Oublier cet appareil"),
+                &[connect_label, "OK"],
+            );
+        });
+        if let Some(trusted) = trust {
+            if let Some(known) = self
+                .bluetooth_devices
+                .iter_mut()
+                .flatten()
+                .find(|known| known.address == address)
+            {
+                known.trusted = trusted;
+            }
+            let address = address.clone();
+            self.bluetooth_action(ctx, "", move || bluetooth::set_trusted(&address, trusted));
+        }
+        if footer.left {
+            self.bluetooth_action(ctx, "Appareil oublié", move || bluetooth::forget(&address));
+        } else if footer.button == Some(0) {
+            if device.connected {
+                self.bluetooth_action(ctx, "Déconnecté", move || bluetooth::disconnect(&address));
+            } else {
+                self.bluetooth_action(ctx, "Connecté", move || bluetooth::connect(&address));
+            }
+        }
+        if closed || escape || footer.left || footer.button.is_some() {
+            self.bluetooth_details = None;
         }
     }
 
@@ -2266,6 +2445,20 @@ fn device_lead(device: &bluetooth::Device) -> Lead {
     }
 }
 
+/// Genre d'appareil, d'après son symbole (voir `device_lead`).
+fn device_kind(glyph: &str) -> &'static str {
+    match glyph {
+        "glyph-head" => "Casque",
+        "glyph-mouse" => "Souris",
+        "glyph-keyboard" => "Clavier",
+        "glyph-phone" => "Téléphone",
+        "glyph-watch" => "Montre",
+        "glyph-laptop" => "Ordinateur",
+        "glyph-speaker" => "Enceinte",
+        _ => "Appareil",
+    }
+}
+
 /// « Connecté · batterie 80 % », « Non connecté ».
 fn device_hint(device: &bluetooth::Device) -> String {
     match (device.connected, device.battery) {
@@ -2433,18 +2626,73 @@ fn add_wallpaper_tile(ui: &mut egui::Ui) -> egui::Response {
 }
 
 /// Cadre des fenêtres de dialogue de la page.
-fn dialog_frame() -> Frame {
-    Frame::new()
-        .fill(style::background())
-        .corner_radius(14)
-        .inner_margin(Margin::same(20))
-        .stroke(Stroke::new(1.0, style::separator()))
-        .shadow(egui::Shadow {
-            offset: [0, 12],
-            blur: 32,
-            spread: 0,
-            color: Color32::from_black_alpha(64),
-        })
+/// Sécurité lisible : la plus forte annoncée (« WPA2 WPA3 » → « WPA3 »).
+fn security_label(security: &str) -> String {
+    security
+        .split_whitespace()
+        .rfind(|part| *part != "--")
+        .unwrap_or("Ouvert")
+        .to_owned()
+}
+
+/// Bande d'après la fréquence (« 5180 MHz »).
+fn band_label(frequency: &str) -> String {
+    let megahertz: u32 = frequency
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect::<String>()
+        .parse()
+        .unwrap_or(0);
+    match megahertz {
+        0 => "—".to_owned(),
+        5900.. => "6 GHz".to_owned(),
+        4900.. => "5 GHz".to_owned(),
+        _ => "2,4 GHz".to_owned(),
+    }
+}
+
+fn signal_label(signal: u8) -> String {
+    match signal {
+        75.. => "Excellent",
+        50.. => "Bon",
+        25.. => "Moyen",
+        _ => "Faible",
+    }
+    .to_owned()
+}
+
+/// Ondes Wi-Fi dans `rect`, comme la planche : trois arcs centrés sous eux, et un point.
+fn wifi_glyph(painter: &egui::Painter, rect: egui::Rect, color: Color32) {
+    let scale = rect.width() / 24.0;
+    let at = |x: f32, y: f32| rect.min + egui::vec2(x, y) * scale;
+    let stroke = Stroke::new(2.0 * scale, color);
+    // Rayon et demi-largeur de chaque arc, de la planche (`M2 9 a15 15 0 0 1 20 0`…).
+    for (radius, half) in [(15.0_f32, 10.0_f32), (10.0, 6.5), (5.0, 3.0)] {
+        let rise = (radius * radius - half * half).sqrt();
+        let (start, end) = ((-rise).atan2(-half), (-rise).atan2(half));
+        let points: Vec<egui::Pos2> = (0..=20)
+            .map(|step| {
+                let angle = start + (end - start) * step as f32 / 20.0;
+                at(12.0 + radius * angle.cos(), 20.0 + radius * angle.sin())
+            })
+            .collect();
+        painter.add(egui::Shape::line(points, stroke));
+    }
+    painter.circle_filled(at(12.0, 19.5), 1.5 * scale, color);
+}
+
+#[cfg(test)]
+mod details_tests {
+    use super::*;
+
+    #[test]
+    fn libelles_du_reseau() {
+        assert_eq!(security_label("WPA2 WPA3"), "WPA3");
+        assert_eq!(security_label(""), "Ouvert");
+        assert_eq!(band_label("5180 MHz"), "5 GHz");
+        assert_eq!(band_label("2437 MHz"), "2,4 GHz");
+        assert_eq!(signal_label(80), "Excellent");
+    }
 }
 
 const MULTI_WINDOW_APPS: [(&str, &str); 5] = [

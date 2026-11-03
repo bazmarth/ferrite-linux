@@ -54,6 +54,7 @@ impl CompositorHandler for Ferrite {
         }
         xdg_shell::handle_commit(&mut self.popups, &self.space, surface);
         wm::handle_resize_commit(&mut self.space, surface);
+        self.request_redraw();
     }
 }
 

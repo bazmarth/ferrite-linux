@@ -5,6 +5,7 @@ pub mod capture;
 mod cursor;
 mod decorations;
 mod genie;
+mod ghost;
 mod rounded;
 mod shaders;
 mod title;
@@ -44,8 +45,8 @@ use crate::{
         apps::{AppIcon, AppKey, LauncherEntry},
         dock::Dock,
         panels::{
-            ClipItem, ClipPreview, ClipboardView, DashboardNoteView, DashboardTaskView, DashboardView,
-            DesktopView, DockMenuView, LauncherSection, LauncherView, LockNotice, LockView, NotificationView,
+            ClipRow, ClipboardView, DashboardNoteView, DashboardTaskView, DashboardView, DesktopView,
+            DockMenuView, LauncherSection, LauncherView, LockNotice, LockView, NotificationView,
             NotificationsView, OverviewTile, OverviewView, Panels, Popover, RegionView, SpaceThumb,
             SwitcherView, Tile, TileIcon,
         },
@@ -76,6 +77,8 @@ pub struct RenderAssets {
     pub wallpaper: Wallpaper,
     pub decorations: Decorations,
     pub cursor: Cursor,
+    /// Image des fichiers glissés sous le pointeur.
+    pub ghost: ghost::Ghost,
     pub dock: Dock,
     pub panels: Panels,
     overview_overlay: MemoryRenderBuffer,
@@ -96,6 +99,7 @@ impl RenderAssets {
             wallpaper: Wallpaper::default(),
             decorations: Decorations::new(renderer)?,
             cursor: Cursor::default(),
+            ghost: ghost::Ghost::default(),
             dock: Dock::new(),
             panels: Panels::new()?,
             overview_overlay,
@@ -126,6 +130,21 @@ pub fn output_elements(
                 push_cursor(renderer, &assets.cursor, shape, location, scale, &mut elements);
             }
         }
+    }
+
+    // Fichiers glissés, sous le curseur et au-dessus de tout le reste.
+    if let Some(file) = state.file_drag.as_ref().filter(|file| file.shown())
+        && let Some(pointer) = state.seat.get_pointer()
+    {
+        let location = pointer.current_location() - output_geo.loc.to_f64();
+        assets.ghost.push(
+            renderer,
+            &file.drag.icon,
+            file.drag.paths.len(),
+            location,
+            scale,
+            &mut elements,
+        );
     }
 
     let locked = state.lock.is_some();
@@ -209,29 +228,67 @@ pub fn output_elements(
         // Fenêtres qui filent vers le Dock ou en reviennent, au-dessus des autres.
         let mut animations = state.window_animations.borrow_mut();
         // « Réduire les animations » : les fenêtres changent de place sans transition.
-        animations.retain(|animation| !animation.finished(now) && !state.dock_config.reduce_motion);
+        animations.retain(|animation| {
+            animation.advance(now);
+            !animation.finished() && !state.dock_config.reduce_motion
+        });
         for animation in animations.iter() {
             let frame = Rectangle::new(
                 animation.window_rect.loc - output_geo.loc.to_f64(),
                 animation.window_rect.size,
             );
-            let target = Rectangle::new(
-                animation.dock_rect.loc - output_geo.loc.to_f64(),
-                animation.dock_rect.size,
-            );
-            let shape = animation.genie(frame, target, now);
+            // Vers le Dock ou depuis lui : l'icône est suivie à chaque image, car le Dock
+            // glisse et ses icônes changent de taille sous la souris.
+            let dock_rect = match animation.motion {
+                wm::animation::Motion::Minimize | wm::animation::Motion::Restore => state
+                    .dock_icon_rect(state.window_app(&animation.window).as_ref())
+                    .unwrap_or(animation.dock_rect),
+                _ => animation.dock_rect,
+            };
+            let target = Rectangle::new(dock_rect.loc - output_geo.loc.to_f64(), dock_rect.size);
+            let shape = animation.genie(frame, target);
             let cached = animation.snapshot.borrow().clone();
             let texture = cached.or_else(|| {
                 let texture = window_texture(renderer, assets, &animation.window, dark_theme, scale)?;
                 *animation.snapshot.borrow_mut() = Some(texture.clone());
                 Some(texture)
             });
+            // Changement de taille : le contenu garde son échelle, rogné au cadre qui glisse,
+            // pour que l'ancien et le nouveau se superposent exactement pendant le fondu.
+            let clip = (animation.motion == wm::animation::Motion::Zoom).then(|| {
+                if wm::is_maximized(&animation.window) {
+                    0.0
+                } else {
+                    f64::from(ferrite_ui::theme::WINDOW_RADIUS)
+                }
+            });
+            // Changement de taille : le nouveau contenu, dès qu'il existe, en fondu au-dessus.
+            if animation.wants_next()
+                && let Some(next) = window_texture(renderer, assets, &animation.window, dark_theme, scale)
+            {
+                animation.set_next(next);
+            }
+            let next = animation.next.borrow().clone();
+            if let Some(next) = next {
+                let faded = wm::animation::Genie {
+                    alpha: shape.alpha * animation.next_alpha(),
+                    ..shape
+                };
+                elements.push(OutputElement::Genie(genie::GenieElement::new(
+                    next,
+                    assets.decorations.shaders.genie.clone(),
+                    &faded,
+                    scale,
+                    clip,
+                )));
+            }
             if let Some(texture) = texture {
                 elements.push(OutputElement::Genie(genie::GenieElement::new(
                     texture,
                     assets.decorations.shaders.genie.clone(),
                     &shape,
                     scale,
+                    clip,
                 )));
             } else {
                 push_animation_fallback(renderer, animation, &shape, scale, &mut elements);
@@ -531,6 +588,7 @@ fn push_overview(
             assets.decorations.shaders.genie.clone(),
             &shape,
             scale,
+            None,
         )));
     }
 
@@ -807,21 +865,47 @@ impl Ferrite {
         let items = self.dock_items();
         let dock = crate::desktop::dock::layout(output, self.dock_config, &items, 1.0, None, 0.0).plate;
         let pointer = self.pointer_location();
-        let pointer_over_dock = pointer.is_some_and(|pointer| dock.contains(pointer))
-            || self
-                .dock_fast_approach_until
-                .get()
-                .is_some_and(|until| std::time::Instant::now() < until);
-        crate::desktop::dock::should_show(crate::desktop::dock::Visibility {
+        let now = std::time::Instant::now();
+        // Souris glissée vite vers le bas, au-dessus de l'emplacement du Dock.
+        let approached = self
+            .dock_fast_approach_until
+            .get()
+            .is_some_and(|until| now < until)
+            && pointer
+                .is_some_and(|pointer| pointer.x >= dock.loc.x && pointer.x <= dock.loc.x + dock.size.w);
+        // Sorti, il reste tant que la souris est dessus (ou dessous, dans la marge du bas),
+        // puis encore `REVEAL_HOLD`.
+        let on_dock = self.dock_was_shown.get()
+            && pointer.is_some_and(|pointer| {
+                pointer.y >= dock.loc.y && pointer.x >= dock.loc.x && pointer.x <= dock.loc.x + dock.size.w
+            });
+        // Fichiers glissés vers le bas de l'écran : le Dock vient les recevoir.
+        let dragging = self.file_drag.as_ref().is_some_and(|file| !file.dropped)
+            && pointer.is_some_and(|pointer| pointer.y >= dock.loc.y - crate::desktop::file_drag::DOCK_REACH);
+        if approached || on_dock || dragging {
+            self.dock_held_until
+                .set(Some(now + crate::desktop::dock::REVEAL_HOLD));
+        }
+        // Une fenêtre qui file vers son icône, ou en ressort, la garde affichée.
+        let genie = self.window_animations.try_borrow().is_ok_and(|animations| {
+            animations.iter().any(|animation| {
+                matches!(
+                    animation.motion,
+                    wm::animation::Motion::Minimize | wm::animation::Motion::Restore
+                )
+            })
+        });
+        let called = genie || self.dock_held_until.get().is_some_and(|until| now < until);
+        let shown = crate::desktop::dock::should_show(crate::desktop::dock::Visibility {
             config: self.dock_config,
-            output,
             dock,
-            pointer,
-            pointer_over_dock,
+            called,
             windows: &frames,
             fullscreen: self.top_fullscreen(),
             launcher_open: matches!(self.popover, Some(Popover::Launcher | Popover::DockMenu)),
-        })
+        });
+        self.dock_was_shown.set(shown);
+        shown
     }
 
     /// La barre du haut est-elle affichée ? Masquée (plein écran ou réglage de
@@ -944,6 +1028,25 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
             front: state.widgets_front,
             edit: state.widgets_edit,
             drag: state.widget_drag.map(|drag| drag.index),
+            target: state.widget_drag.and_then(|drag| {
+                let area = state.screen_area()?;
+                crate::desktop::widgets::place_on_grid(
+                    &state.dashboard.layout,
+                    drag.index,
+                    area.size.w,
+                    area.size.h,
+                    state.dock_config.bar_height as i32,
+                )
+            }),
+            apps: state
+                .recent_app_keys()
+                .into_iter()
+                .map(|key| crate::desktop::panels::DashboardApp {
+                    icon: key.icon(&state.applications),
+                    name: key.name(&state.applications),
+                    running: state.app_running(&key),
+                })
+                .collect(),
         },
         desktop_menu: state.desktop_menu,
         menu_pointer: state
@@ -1153,36 +1256,112 @@ fn render_screenshot(
     Ok(())
 }
 
-/// Lignes visibles du panneau Super+V.
+/// Panneau Super+V : lignes visibles de la liste filtrée, à leur place après défilement.
 fn clipboard_view(state: &Ferrite) -> ClipboardView {
-    let entries = state.clipboard.entries();
-    let first = state.clipboard_first.min(entries.len());
-    let end = (first + crate::clipboard::VISIBLE).min(entries.len());
-    let items = entries[first..end]
+    use crate::clipboard::{self, Content, Kind};
+    let history = &state.clipboard;
+    let shown = state.clipboard_shown();
+    let placement = history.place(&shown);
+    let visible = state.clipboard_list_height();
+    let scroll = state.clipboard_scroll;
+    let now = std::time::SystemTime::now();
+    let rows = placement
+        .rows
         .iter()
         .enumerate()
-        .map(|(offset, entry)| ClipItem {
-            index: first + offset,
-            pinned: entry.pinned,
-            preview: match &entry.content {
-                crate::clipboard::Content::Text(text) => ClipPreview::Text(
-                    text.lines()
-                        .map(|line| line.trim().replace('\t', " "))
-                        .filter(|line| !line.is_empty())
-                        .take(2)
-                        .map(|line| line.chars().take(300).collect())
-                        .collect(),
-                ),
-                crate::clipboard::Content::Image { thumbnail, .. } => ClipPreview::Image(thumbnail.clone()),
-            },
+        .filter(|(_, placed)| placed.y + placed.h > scroll && placed.y < scroll + visible)
+        .map(|(position, placed)| {
+            let entry = &history.entries()[placed.index];
+            let kind = entry.kind();
+            let age = clipboard::ago(now, entry.copied);
+            let file = match &entry.content {
+                Content::Text(text) if kind == Kind::Files => clipboard::file_paths(text).into_iter().next(),
+                _ => None,
+            };
+            ClipRow {
+                index: placed.index,
+                kind,
+                label: clipboard::label(entry),
+                sub: match &entry.source {
+                    Some(source) => format!("{source} · {age}"),
+                    None => age,
+                },
+                key: (position < 9).then_some(position + 1),
+                pinned: entry.pinned,
+                selected: position == state.clipboard_selected,
+                y: placed.y - scroll,
+                h: placed.h,
+                thumbnail: match &entry.content {
+                    Content::Image { thumbnail, .. } => Some(thumbnail.clone()),
+                    Content::Text(_) => None,
+                },
+                file_icon: file.as_deref().map_or("file-generic", file_icon),
+                swatch: match &entry.content {
+                    Content::Text(text) if kind == Kind::Color => hex_color(text.trim()),
+                    _ => None,
+                },
+            }
         })
         .collect();
+    let total = history.entries().len();
     ClipboardView {
-        items,
-        selected: state.clipboard_selected,
-        more: entries.len() - end,
+        rows,
+        sections: placement
+            .sections
+            .iter()
+            .map(|(title, y)| (*title, y - scroll))
+            .filter(|(_, y)| *y + crate::clipboard::SECTION > 0.0 && *y < visible)
+            .collect(),
+        count: total,
+        query: state.clipboard_query.clone(),
+        filter: state.clipboard_filter,
+        empty: shown.is_empty().then_some({
+            if total == 0 {
+                (
+                    "Rien à coller pour l’instant",
+                    "Copiez du texte, une image ou un fichier : il apparaîtra ici.",
+                )
+            } else {
+                ("Aucun résultat", "Essayez un autre mot ou un autre filtre.")
+            }
+        }),
+        toast: state.clipboard_toast(),
         position: state.clipboard_position,
     }
+}
+
+/// Icône d'un fichier copié, d'après son extension.
+fn file_icon(path: &std::path::Path) -> &'static str {
+    if path.is_dir() {
+        return "places-folder";
+    }
+    let extension = path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    match extension.as_str() {
+        "pdf" => "file-pdf",
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" => "file-image",
+        "mp3" | "ogg" | "flac" | "wav" | "opus" | "m4a" => "file-audio",
+        "mp4" | "mkv" | "webm" | "avi" | "mov" => "file-video",
+        "zip" | "tar" | "gz" | "xz" | "zst" | "7z" | "rar" => "file-archive",
+        "sh" | "py" | "rs" | "js" | "ts" | "c" | "h" | "cpp" | "go" => "file-script",
+        _ => "file-text",
+    }
+}
+
+/// Couleur d'un texte `#RGB`, `#RRGGBB` ou `#RRGGBBAA` (l'opacité est ignorée).
+fn hex_color(text: &str) -> Option<ferrite_ui::theme::Color> {
+    let hex = text.strip_prefix('#')?;
+    let full: String = match hex.len() {
+        3 => hex.chars().flat_map(|c| [c, c]).collect(),
+        6 | 8 => hex[..6].to_owned(),
+        _ => return None,
+    };
+    u32::from_str_radix(&full, 16)
+        .ok()
+        .map(ferrite_ui::theme::Color::rgb)
 }
 
 /// Toutes les applications du lanceur, de A à Z.

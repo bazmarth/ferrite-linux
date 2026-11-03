@@ -25,6 +25,9 @@ const LEFT: i32 = 32;
 const TOP: i32 = 58;
 /// Marge gardée autour d'un widget, pour qu'il ne sorte jamais de l'écran.
 const SCREEN_MARGIN: i32 = 8;
+/// Pas de la grille des widgets : une demi-case. Places et tailles s'y alignent, les
+/// bords des widgets tombent donc en face les uns des autres, écart de 16 compris.
+pub const GRID: i32 = (CELL + GAP) / 2;
 
 /// Widgets disponibles.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,16 +38,19 @@ pub enum WidgetKind {
     Tasks,
     Notes,
     Quote,
+    /// Mini-Dock des applications récemment utilisées.
+    Apps,
 }
 
 impl WidgetKind {
-    pub const ALL: [WidgetKind; 6] = [
+    pub const ALL: [WidgetKind; 7] = [
         WidgetKind::Clock,
         WidgetKind::Calendar,
         WidgetKind::System,
         WidgetKind::Tasks,
         WidgetKind::Notes,
         WidgetKind::Quote,
+        WidgetKind::Apps,
     ];
 
     pub fn label(self) -> &'static str {
@@ -55,6 +61,7 @@ impl WidgetKind {
             WidgetKind::Tasks => "Tâches",
             WidgetKind::Notes => "Notes",
             WidgetKind::Quote => "Citation",
+            WidgetKind::Apps => "Applications",
         }
     }
 
@@ -66,6 +73,7 @@ impl WidgetKind {
             WidgetKind::Tasks => "taches",
             WidgetKind::Notes => "notes",
             WidgetKind::Quote => "citation",
+            WidgetKind::Apps => "applications",
         }
     }
 
@@ -78,6 +86,7 @@ impl WidgetKind {
             WidgetKind::Tasks => (220, 100),
             WidgetKind::Notes => (160, 100),
             WidgetKind::Quote => (200, 80),
+            WidgetKind::Apps => (170, 110),
         }
     }
 
@@ -91,7 +100,8 @@ impl WidgetKind {
             WidgetKind::System => (LEFT + wide + 2 * GAP + CELL, TOP, CELL, CELL),
             WidgetKind::Tasks => (LEFT, second_row, wide, CELL),
             WidgetKind::Notes => (LEFT + wide + GAP, second_row, wide, CELL),
-            WidgetKind::Quote => (LEFT, second_row + CELL + GAP, 2 * wide + GAP, 110),
+            WidgetKind::Quote => (LEFT, second_row + CELL + GAP, 2 * wide + GAP, CELL),
+            WidgetKind::Apps => (LEFT + 2 * (wide + GAP), second_row + CELL + GAP, wide, CELL),
         };
         WidgetSlot {
             kind: self,
@@ -114,7 +124,38 @@ pub struct WidgetSlot {
     pub h: i32,
 }
 
+/// `value` sur la ligne de la grille la plus proche, en partant de `origin`.
+fn snap(value: i32, origin: i32) -> i32 {
+    origin + ((value - origin) as f64 / f64::from(GRID)).round() as i32 * GRID
+}
+
+/// Taille d'un nombre entier de pas, écart compris, jamais sous `min`.
+fn snap_size(size: i32, min: i32) -> i32 {
+    let steps = (f64::from(size + GAP) / f64::from(GRID)).round().max(1.0) as i32;
+    let fitting = (f64::from(min + GAP) / f64::from(GRID)).ceil() as i32;
+    steps.max(fitting) * GRID - GAP
+}
+
 impl WidgetSlot {
+    /// Aligné sur la grille : place et taille.
+    pub fn snapped(self) -> Self {
+        let (min_w, min_h) = self.kind.min_size();
+        Self {
+            x: snap(self.x, LEFT),
+            y: snap(self.y, TOP),
+            w: snap_size(self.w, min_w),
+            h: snap_size(self.h, min_h),
+            ..self
+        }
+    }
+
+    fn overlaps(&self, other: &WidgetSlot) -> bool {
+        self.x < other.x + other.w + GAP
+            && other.x < self.x + self.w + GAP
+            && self.y < other.y + other.h + GAP
+            && other.y < self.y + self.h + GAP
+    }
+
     /// Ramené dans l'écran de `width` × `height`, sous la barre de hauteur `bar`.
     pub fn clamped(self, width: i32, height: i32, bar: i32) -> Self {
         let (min_w, min_h) = self.kind.min_size();
@@ -173,6 +214,49 @@ impl WidgetEdges {
     }
 }
 
+/// Place sur la grille du widget `index`, lâché à sa position actuelle : la case la plus
+/// proche, ou la plus proche qui ne chevauche aucun autre widget, dans l'écran de
+/// `width` × `height` sous la barre de hauteur `bar`.
+pub fn place_on_grid(
+    layout: &[WidgetSlot],
+    index: usize,
+    width: i32,
+    height: i32,
+    bar: i32,
+) -> Option<WidgetSlot> {
+    let wanted = layout.get(index)?.snapped();
+    let others: Vec<WidgetSlot> = layout
+        .iter()
+        .enumerate()
+        .filter(|(other, _)| *other != index)
+        .map(|(_, slot)| slot.clamped(width, height, bar))
+        .collect();
+    let fits = |slot: &WidgetSlot| {
+        slot.x >= SCREEN_MARGIN
+            && slot.y >= bar + SCREEN_MARGIN
+            && slot.x + slot.w <= width - SCREEN_MARGIN
+            && slot.y + slot.h <= height - SCREEN_MARGIN
+            && others.iter().all(|other| !slot.overlaps(other))
+    };
+    if fits(&wanted) {
+        return Some(wanted);
+    }
+    // Cases de la grille, de la plus proche à la plus lointaine.
+    let columns = (width - LEFT) / GRID + 1;
+    let rows = (height - TOP) / GRID + 1;
+    let mut candidates: Vec<WidgetSlot> = (-1..columns)
+        .flat_map(|column| (-1..rows).map(move |row| (column, row)))
+        .map(|(column, row)| WidgetSlot {
+            x: LEFT + column * GRID,
+            y: TOP + row * GRID,
+            ..wanted
+        })
+        .filter(fits)
+        .collect();
+    candidates.sort_by_key(|slot| (slot.x - wanted.x).pow(2) + (slot.y - wanted.y).pow(2));
+    Some(candidates.first().copied().unwrap_or(wanted))
+}
+
 /// Disposition d'origine : celle de la maquette.
 pub fn default_layout() -> Vec<WidgetSlot> {
     WidgetKind::ALL
@@ -192,13 +276,17 @@ fn parse_layout(text: &str) -> Vec<WidgetSlot> {
         if let (Some(kind), [x, y, w, h]) = (kind, numbers.as_slice())
             && layout.iter().all(|slot| slot.kind != kind)
         {
-            layout.push(WidgetSlot {
-                kind,
-                x: *x,
-                y: *y,
-                w: *w,
-                h: *h,
-            });
+            // Une disposition d'avant la grille s'y aligne.
+            layout.push(
+                WidgetSlot {
+                    kind,
+                    x: *x,
+                    y: *y,
+                    w: *w,
+                    h: *h,
+                }
+                .snapped(),
+            );
         }
     }
     layout
@@ -341,9 +429,21 @@ impl Dashboard {
         } else {
             sample_tasks()
         };
-        let layout = settings
+        let mut layout = settings
             .get("widgets_disposition")
             .map_or_else(default_layout, parse_layout);
+        // Le mini-Dock des applications récentes rejoint une fois les dispositions d'avant.
+        if settings.get("widgets_applications").is_none()
+            && layout.iter().all(|slot| slot.kind != WidgetKind::Apps)
+        {
+            let mut slot = WidgetKind::Apps.default_slot();
+            let bottom = layout.iter().map(|slot| slot.y + slot.h).max().unwrap_or(TOP);
+            if layout.iter().any(|other| other.overlaps(&slot)) {
+                slot.x = LEFT;
+                slot.y = snap(bottom + GAP, TOP);
+            }
+            layout.push(slot);
+        }
         Self {
             notes,
             tasks,
@@ -356,6 +456,7 @@ impl Dashboard {
     pub fn save(&self) -> std::io::Result<()> {
         let mut settings = Settings::load();
         settings.set("widgets_disposition", &layout_text(&self.layout));
+        settings.set("widgets_applications", "oui");
         settings.set("tableau_notes_nombre", &self.notes.len().to_string());
         for (index, note) in self.notes.iter().enumerate() {
             settings.set(&format!("tableau_note_{index}"), &encode(&note.text));
@@ -642,9 +743,53 @@ mod tests {
                 (590, 58, 170, 170),
                 (32, 244, 356, 170),
                 (404, 244, 356, 170),
-                (32, 430, 728, 110),
+                (32, 430, 728, 170),
+                (776, 430, 356, 170),
             ]
         );
+        // Toutes sur la grille.
+        assert!(default_layout().iter().all(|slot| slot.snapped() == *slot));
+    }
+
+    #[test]
+    fn un_widget_lache_s_aligne_sur_la_grille() {
+        let loose = WidgetSlot {
+            x: 900,
+            y: 300,
+            w: 400,
+            h: 260,
+            ..slot(WidgetKind::Notes)
+        };
+        let snapped = loose.snapped();
+        assert_eq!((snapped.x, snapped.y, snapped.w, snapped.h), (869, 337, 356, 263));
+        // Jamais sous la taille minimale : la citation garde deux pas de haut.
+        let thin = WidgetSlot {
+            h: 40,
+            ..slot(WidgetKind::Quote)
+        };
+        assert_eq!(thin.snapped().h, 170);
+    }
+
+    #[test]
+    fn un_widget_lache_sur_un_autre_prend_la_place_libre_la_plus_proche() {
+        let mut layout = default_layout();
+        // Le calendrier lâché presque sur l'horloge.
+        layout[1].x = 60;
+        layout[1].y = 70;
+        let placed = place_on_grid(&layout, 1, 1600, 1000, 34).expect("widget");
+        let others: Vec<WidgetSlot> = layout
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| *index != 1)
+            .map(|(_, slot)| *slot)
+            .collect();
+        assert!(others.iter().all(|other| !placed.overlaps(other)));
+        assert_eq!(placed.snapped(), placed);
+        // Lâché sur une place libre, il y reste.
+        layout[1].x = 1200;
+        layout[1].y = 60;
+        let free = place_on_grid(&layout, 1, 1600, 1000, 34).expect("widget");
+        assert_eq!((free.x, free.y), (1241, 58));
     }
 
     #[test]
@@ -656,10 +801,10 @@ mod tests {
             read,
             vec![WidgetSlot {
                 kind: WidgetKind::Notes,
-                x: 900,
-                y: 300,
-                w: 400,
-                h: 260
+                x: 869,
+                y: 337,
+                w: 356,
+                h: 263
             }]
         );
     }
@@ -714,16 +859,16 @@ mod tests {
             layout: default_layout(),
             ..Dashboard::default()
         };
-        assert_eq!(dashboard.raise_widget(1), 5);
-        assert_eq!(dashboard.layout[5].kind, WidgetKind::Calendar);
-        dashboard.remove_widget(5);
+        assert_eq!(dashboard.raise_widget(1), 6);
+        assert_eq!(dashboard.layout[6].kind, WidgetKind::Calendar);
+        dashboard.remove_widget(6);
         assert_eq!(
             Dashboard::absent_widgets(&dashboard.layout),
             vec![WidgetKind::Calendar]
         );
         dashboard.add_widget(WidgetKind::Calendar);
         dashboard.add_widget(WidgetKind::Calendar);
-        assert_eq!(dashboard.layout.len(), 6);
+        assert_eq!(dashboard.layout.len(), 7);
     }
 
     #[test]

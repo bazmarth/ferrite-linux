@@ -53,8 +53,16 @@ pub struct GenieElement {
 }
 
 impl GenieElement {
-    /// `genie` est en coordonnées logiques relatives à l'écran.
-    pub fn new(texture: GlesTexture, program: GlesTexProgram, genie: &Genie, scale: f64) -> Self {
+    /// `genie` est en coordonnées logiques relatives à l'écran. Avec `clip` (rayon des
+    /// coins, en logique), l'image n'est pas étirée : elle reste à l'échelle 1, ancrée en
+    /// haut à gauche du cadre et rognée à ses bords arrondis.
+    pub fn new(
+        texture: GlesTexture,
+        program: GlesTexProgram,
+        genie: &Genie,
+        scale: f64,
+        clip: Option<f64>,
+    ) -> Self {
         let physical = |rect: Rectangle<f64, Logical>| {
             let rect = rect.to_physical(scale);
             [
@@ -87,6 +95,20 @@ impl GenieElement {
             Uniform::new("top", (genie.top * scale) as f32),
             Uniform::new("bottom", (genie.bottom * scale) as f32),
             Uniform::new("squeeze", genie.squeeze as f32),
+            Uniform::new(
+                "crop",
+                match clip {
+                    Some(_) => {
+                        let size = texture.size();
+                        [
+                            (genie.window.size.w * scale / f64::from(size.w.max(1))) as f32,
+                            (genie.window.size.h * scale / f64::from(size.h.max(1))) as f32,
+                        ]
+                    }
+                    None => [1.0, 1.0],
+                },
+            ),
+            Uniform::new("radius", (clip.unwrap_or(0.0) * scale) as f32),
         ];
         GenieElement {
             // Nouvel identifiant à chaque image : la forme change, tout est à redessiner.

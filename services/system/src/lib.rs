@@ -15,6 +15,7 @@ pub mod bluetooth;
 pub mod command;
 pub mod config;
 pub mod display;
+pub mod drag;
 pub mod network;
 pub mod time;
 pub mod weather;

@@ -8,7 +8,7 @@
 //! une image de la fenêtre entre les bords courbes de l'entonnoir, ligne par ligne.
 
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     time::{Duration, Instant},
 };
 
@@ -27,6 +27,16 @@ pub const OPEN_DURATION: Duration = Duration::from_millis(260);
 pub const ZOOM_DURATION: Duration = Duration::from_millis(300);
 /// Taille de départ d'une nouvelle fenêtre, par rapport à sa taille finale.
 const OPEN_SCALE: f64 = 0.88;
+/// Côté du point, au centre de l'icône du Dock, où la fenêtre disparaît et d'où elle
+/// ressort.
+const POINT: f64 = 6.0;
+/// Fondu du nouveau contenu d'une fenêtre qui change de taille, dès que l'application
+/// l'a dessiné.
+const CROSSFADE: Duration = Duration::from_millis(120);
+/// Plus grand pas d'une image à la suivante (30 images par seconde) : après une image
+/// lente (instantané de la fenêtre, panneau redessiné), l'animation reprend où elle en
+/// était au lieu de sauter d'un coup.
+const MAX_STEP: Duration = Duration::from_millis(33);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Motion {
@@ -59,10 +69,17 @@ pub struct WindowAnimation {
     /// Icône du Dock, ou contenu de la fenêtre à sa nouvelle taille pour un
     /// agrandissement (inutilisé pour une ouverture).
     pub dock_rect: Rectangle<f64, Logical>,
-    pub start: Instant,
+    /// Temps d'animation écoulé, et instant de la dernière image : l'horloge part à la
+    /// première image dessinée, pas à la demande.
+    clock: Cell<(Duration, Option<Instant>)>,
     /// Image de la fenêtre (barre de titre comprise), prise à la première image de
     /// l'animation puis réutilisée.
     pub snapshot: RefCell<Option<GlesTexture>>,
+    /// Changement de taille : image du nouveau contenu, prise dès que l'application l'a
+    /// dessiné, et temps d'animation à ce moment ; elle apparaît en fondu sur l'ancienne
+    /// et arrive pixel pour pixel sur la vraie fenêtre.
+    pub next: RefCell<Option<GlesTexture>>,
+    next_at: Cell<Option<Duration>>,
     /// Animation figée à cette fraction (démonstration `--demo-genie`).
     pub frozen: Option<f64>,
 }
@@ -79,45 +96,79 @@ impl WindowAnimation {
             motion,
             window_rect,
             dock_rect,
-            start: Instant::now(),
+            clock: Cell::new((Duration::ZERO, None)),
             snapshot: RefCell::new(None),
+            next: RefCell::new(None),
+            next_at: Cell::new(None),
             frozen: None,
         }
     }
 
-    pub fn finished(&self, now: Instant) -> bool {
-        let elapsed = now.duration_since(self.start);
-        if self.frozen.is_some() || elapsed < self.motion.duration() {
-            return false;
-        }
-        // Un agrandissement attend (un peu) que l'application ait pris sa nouvelle taille,
-        // pour ne pas la montrer à l'ancienne une fraction de seconde.
-        if self.motion != Motion::Zoom {
-            return true;
-        }
+    /// Fait avancer l'animation jusqu'à l'image dessinée à `now` ; à appeler une fois par
+    /// image, avant [`Self::finished`] et [`Self::genie`].
+    pub fn advance(&self, now: Instant) {
+        let (elapsed, last) = self.clock.get();
+        let step = last.map_or(Duration::ZERO, |last| {
+            now.saturating_duration_since(last).min(MAX_STEP)
+        });
+        self.clock.set((elapsed + step, Some(now)));
+    }
+
+    /// Faut-il prendre l'image du nouveau contenu (l'application vient de le dessiner) ?
+    pub fn wants_next(&self) -> bool {
+        self.motion == Motion::Zoom && self.next.borrow().is_none() && self.reached(self.dock_rect)
+    }
+
+    pub fn set_next(&self, texture: GlesTexture) {
+        *self.next.borrow_mut() = Some(texture);
+        self.next_at.set(Some(self.elapsed()));
+    }
+
+    /// Opacité du nouveau contenu, posé sur l'ancien.
+    pub fn next_alpha(&self) -> f64 {
+        self.next_at.get().map_or(0.0, |at| {
+            (self.elapsed().saturating_sub(at).as_secs_f64() / CROSSFADE.as_secs_f64()).min(1.0)
+        })
+    }
+
+    /// L'application a-t-elle pris la taille du cadre `target` (barre de titre comprise) ?
+    fn reached(&self, target: Rectangle<f64, Logical>) -> bool {
         let titlebar = if crate::wm::is_server_decorated(&self.window) {
             TITLEBAR_HEIGHT as f64
         } else {
             0.0
         };
-        let target =
-            Size::<f64, Logical>::from((self.dock_rect.size.w, (self.dock_rect.size.h - titlebar).max(1.0)));
-        self.window.geometry().size.to_f64() == target || elapsed >= self.motion.duration() * 4
+        let target = Size::<f64, Logical>::from((target.size.w, (target.size.h - titlebar).max(1.0)));
+        self.window.geometry().size.to_f64() == target
     }
 
-    /// Déformation à l'instant `now` d'une fenêtre dont le cadre au repos est `frame` ;
-    /// `target` est l'icône du Dock, ou le cadre d'arrivée d'un agrandissement.
-    pub fn genie(
-        &self,
-        frame: Rectangle<f64, Logical>,
-        target: Rectangle<f64, Logical>,
-        now: Instant,
-    ) -> Genie {
-        let elapsed = match self.frozen {
+    fn elapsed(&self) -> Duration {
+        match self.frozen {
             Some(fraction) => self.motion.duration().mul_f64(fraction),
-            None => now.duration_since(self.start),
+            None => self.clock.get().0,
+        }
+    }
+
+    pub fn finished(&self) -> bool {
+        let elapsed = self.elapsed();
+        if self.frozen.is_some() || elapsed < self.motion.duration() {
+            return false;
+        }
+        // L'animation attend (un peu) que l'application ait pris sa nouvelle taille, pour
+        // ne pas la montrer à l'ancienne une fraction de seconde à sa nouvelle place ; un
+        // changement de taille attend aussi la fin du fondu de son nouveau contenu.
+        let reached = match self.motion {
+            Motion::Minimize => return true,
+            Motion::Zoom => self.next_alpha() >= 1.0,
+            Motion::Open | Motion::Restore => self.reached(self.window_rect),
         };
-        genie(self.motion, frame, target, elapsed)
+        reached || elapsed >= self.motion.duration() * 4
+    }
+
+    /// Déformation à l'image en cours d'une fenêtre dont le cadre au repos est `frame` ;
+    /// `target` est l'icône du Dock, ou le cadre d'arrivée d'un agrandissement.
+    pub fn genie(&self, frame: Rectangle<f64, Logical>, target: Rectangle<f64, Logical>) -> Genie {
+        genie(self.motion, frame, target, self.elapsed())
     }
 }
 
@@ -181,6 +232,14 @@ fn genie(
         Motion::Zoom => return zoom(window, icon, linear),
     };
     let phase = |from: f64, to: f64| smoothstep((t - from) / (to - from));
+    // La fenêtre file vers un petit point au centre de l'icône, pas vers toute l'icône.
+    let icon = Rectangle::new(
+        Point::from((
+            icon.loc.x + (icon.size.w - POINT) / 2.0,
+            icon.loc.y + (icon.size.h - POINT) / 2.0,
+        )),
+        Size::from((POINT, POINT)),
+    );
     Genie {
         window,
         icon,
@@ -192,7 +251,8 @@ fn genie(
             phase(0.0, 0.5),
         ),
         top: lerp(window.loc.y, icon.loc.y, phase(0.3, 1.0)),
-        alpha: 1.0,
+        // Le point s'efface en arrivant (et apparaît d'abord, au retour).
+        alpha: 1.0 - phase(0.85, 1.0),
     }
 }
 
@@ -263,13 +323,17 @@ mod tests {
         let start = genie(Motion::Minimize, window, icon, Duration::ZERO);
         assert_eq!(start.bounds(), window);
         assert_eq!(start.span(400.0), (200.0, 1000.0));
+        // Elle finit en un petit point au centre de l'icône, effacé.
+        let point = Rectangle::new(Point::from((323.0, 843.0)), Size::from((POINT, POINT)));
         let end = genie(Motion::Minimize, window, icon, DURATION);
-        assert_eq!(end.bounds(), icon);
-        assert_eq!(end.span(840.0), (300.0, 352.0));
+        assert_eq!(end.bounds(), point);
+        assert_eq!(end.span(846.0), (323.0, 329.0));
+        assert_eq!(end.alpha, 0.0);
+        assert_eq!(start.alpha, 1.0);
         // La réapparition fait le chemin inverse.
         assert_eq!(
             genie(Motion::Restore, window, icon, Duration::ZERO).bounds(),
-            icon
+            point
         );
         assert_eq!(genie(Motion::Restore, window, icon, DURATION).bounds(), window);
     }
@@ -297,11 +361,11 @@ mod tests {
         assert!(middle.bottom > icon.loc.y);
         assert!(middle.top < window.loc.y + 200.0);
         let (top_left, top_right) = middle.span(middle.top);
-        let (neck_left, neck_right) = middle.span(icon.loc.y);
+        let (neck_left, neck_right) = middle.span(843.0);
         assert!(top_right - top_left > 2.0 * (neck_right - neck_left));
-        // Le col est à la largeur de l'icône, aligné sur elle.
-        assert!((neck_left - icon.loc.x).abs() < 1.0);
-        assert!((neck_right - (icon.loc.x + icon.size.w)).abs() < 1.0);
+        // Le col est à la largeur du point, au centre de l'icône.
+        assert!((neck_left - 323.0).abs() < 1.0);
+        assert!((neck_right - 329.0).abs() < 1.0);
     }
 
     #[test]

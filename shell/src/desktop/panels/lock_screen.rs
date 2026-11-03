@@ -136,6 +136,21 @@ fn rgb(color: u32) -> [f32; 3] {
 }
 
 /// Toile de l'écran : un point vaut `scale` points de l'écran.
+/// Valeur de `LockView::pulse` qui retire l'invitation de l'image de l'écran : elle a sa
+/// propre petite image, dont la carte graphique fait varier l'opacité. Sinon tout l'écran
+/// serait redessiné à chaque pas de la pulsation.
+pub(super) const PULSE_APART: u8 = u8::MAX;
+
+/// Opacité de l'invitation pour un niveau de pulsation de 0 à 8.
+pub(super) fn pulse_level(pulse: u8) -> f64 {
+    0.5 + 0.5 * f64::from(pulse.min(8)) / 8.0
+}
+
+/// Bande de l'écran (en points de la toile) qui contient l'invitation : haut et hauteur.
+fn invitation_band(places_h: f64) -> (f64, f64) {
+    (places_h - 46.0 - 33.0 - 6.0, 40.0)
+}
+
 pub(super) fn lock_scale(width: f64, height: f64) -> f64 {
     (width / 1600.0).min(height / 1000.0).clamp(0.5, 2.0)
 }
@@ -477,6 +492,57 @@ impl Panels {
         pixels
     }
 
+    /// Chevron et texte de l'invitation ; `baseline` est le bas de l'écran moins sa marge.
+    fn draw_invitation(&self, canvas: &mut Canvas, center: f64, baseline: f64, tokens: &Tokens, level: f64) {
+        let ink = tokens.fg2.with_alpha((level * f64::from(tokens.fg2.a)) as u8);
+        let chevron = baseline - 33.0;
+        canvas.line((center - 9.0, chevron + 8.0), (center, chevron), 2.4, ink);
+        canvas.line((center, chevron), (center + 9.0, chevron + 8.0), 2.4, ink);
+        canvas.centered(
+            &self.regular,
+            "Appuyez sur une touche ou cliquez pour déverrouiller",
+            center,
+            baseline - 17.0,
+            14.0,
+            ink,
+        );
+    }
+
+    /// Invitation seule, pleinement opaque, dans une image de la largeur de l'écran ;
+    /// renvoie aussi sa place en logique (haut et hauteur).
+    pub(super) fn rasterize_invitation(
+        &self,
+        state: &VisualState,
+        lock: &LockView,
+        scale: f64,
+    ) -> (MemoryRenderBuffer, (f64, f64)) {
+        let (width, height) = (state.width as f64, state.height as f64);
+        let ratio = lock_scale(width, height);
+        let places = Places::new(width, height);
+        let (top, band) = invitation_band(places.h);
+        let pixels_w = (width * scale).round().max(1.0) as u32;
+        let pixels_h = (band * ratio * scale).ceil().max(1.0) as u32;
+        let mut canvas = Canvas {
+            pixels: vec![0; pixels_w as usize * pixels_h as usize * 4],
+            width: pixels_w,
+            height: pixels_h,
+            scale: (scale * ratio) as f32,
+            bold: &self.bold,
+            icons: &self.icons,
+        };
+        let tokens = tokens(lock.dark);
+        self.draw_invitation(&mut canvas, places.w / 2.0, places.h - 46.0 - top, &tokens, 1.0);
+        let buffer = MemoryRenderBuffer::from_slice(
+            &canvas.pixels,
+            Fourcc::Argb8888,
+            (pixels_w as i32, pixels_h as i32),
+            1,
+            smithay::utils::Transform::Normal,
+            None,
+        );
+        (buffer, (top * ratio, f64::from(pixels_h) / scale))
+    }
+
     pub(super) fn draw_lock(
         &self,
         canvas: &mut Canvas,
@@ -723,20 +789,11 @@ impl Panels {
             canvas.line((nx + 5.0, ny - 5.0), (nx + 5.0, ny + 5.0), 1.6, ink);
         }
 
-        // Invitation, qui pulse doucement.
-        let pulse = 0.5 + 0.5 * f64::from(lock.pulse) / 8.0;
-        let ink = tokens.fg2.with_alpha((pulse * f64::from(tokens.fg2.a)) as u8);
-        let chevron = places.h - 46.0 - 33.0;
-        canvas.line((center - 9.0, chevron + 8.0), (center, chevron), 2.4, ink);
-        canvas.line((center, chevron), (center + 9.0, chevron + 8.0), 2.4, ink);
-        canvas.centered(
-            &self.regular,
-            "Appuyez sur une touche ou cliquez pour déverrouiller",
-            center,
-            places.h - 46.0 - 17.0,
-            14.0,
-            ink,
-        );
+        // Invitation, qui pulse doucement (d'ordinaire dessinée à part, voir
+        // `PULSE_APART`).
+        if lock.pulse != PULSE_APART {
+            self.draw_invitation(canvas, center, places.h - 46.0, tokens, pulse_level(lock.pulse));
+        }
 
         // Personnaliser : thème et fond de cet écran.
         let group = places.customize();

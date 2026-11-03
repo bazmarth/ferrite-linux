@@ -90,9 +90,14 @@ pub struct Ferrite {
     pub snap_preview: Option<smithay::utils::Rectangle<i32, smithay::utils::Logical>>,
     /// Historique du presse-papiers (Super+V) et état de son panneau.
     pub clipboard: crate::clipboard::History,
-    pub clipboard_sender: Option<smithay::reexports::calloop::channel::Sender<crate::clipboard::Content>>,
+    pub clipboard_sender: Option<crate::clipboard::Copies>,
+    /// Panneau Super+V : ligne choisie (dans la liste montrée), défilement en points,
+    /// recherche, filtre, et liste d'avant la dernière suppression (pour « Annuler »).
     pub clipboard_selected: usize,
-    pub clipboard_first: usize,
+    pub clipboard_scroll: f64,
+    pub clipboard_query: String,
+    pub clipboard_filter: crate::clipboard::Filter,
+    pub clipboard_undo: Option<crate::clipboard::Undo>,
     pub clipboard_position: Option<(i32, i32)>,
     pub clipboard_drag_offset: Option<(i32, i32)>,
     /// Touche Super enfoncée, et utilisée avec une autre touche (Super+V) : relâchée
@@ -112,6 +117,11 @@ pub struct Ferrite {
     pub dock_motion: crate::desktop::dock::DockMotion,
     pub dock_pointer_motion_at: std::cell::Cell<Option<Instant>>,
     pub dock_fast_approach_until: std::cell::Cell<Option<Instant>>,
+    /// Vitesse de descente lissée de la souris (pixels logiques par seconde).
+    pub dock_descent_speed: std::cell::Cell<f64>,
+    /// Dock sorti gardé jusqu'à cet instant, et s'il était affiché à la dernière image.
+    pub dock_held_until: std::cell::Cell<Option<Instant>>,
+    pub dock_was_shown: std::cell::Cell<bool>,
     /// Menu d'une icône du Dock (clic droit) : application, choix, et position.
     pub dock_menu: Option<(
         crate::desktop::apps::AppKey,
@@ -196,6 +206,12 @@ pub struct Ferrite {
     pub cursor_status: CursorImageStatus,
     /// Changement de terminal virtuel (Ctrl+Alt+F1…F12), fourni par le backend DRM.
     pub change_vt: Option<Box<dyn FnMut(i32)>>,
+    /// Fichiers glissés depuis Fichiers (voir `desktop::file_drag`).
+    pub file_drag: Option<crate::desktop::file_drag::FileDrag>,
+    /// Applications récemment utilisées (jetons, la plus récente d'abord).
+    pub recent_apps: Vec<String>,
+    /// Demande au backend DRM de dessiner sans attendre son prochain essai au repos.
+    pub redraw: Option<smithay::reexports::calloop::ping::Ping>,
     /// Fraction figée pour la démonstration `--demo-genie`.
     pub genie_demo: Option<(f64, Option<Instant>)>,
     /// Options de démonstration : actions faites à l'apparition de la première fenêtre.
@@ -291,7 +307,10 @@ impl Ferrite {
             clipboard: crate::clipboard::History::load(),
             clipboard_sender: None,
             clipboard_selected: 0,
-            clipboard_first: 0,
+            clipboard_scroll: 0.0,
+            clipboard_query: String::new(),
+            clipboard_filter: crate::clipboard::Filter::All,
+            clipboard_undo: None,
             clipboard_position: None,
             clipboard_drag_offset: None,
             super_held: false,
@@ -304,6 +323,9 @@ impl Ferrite {
             dock_motion: Default::default(),
             dock_pointer_motion_at: Default::default(),
             dock_fast_approach_until: Default::default(),
+            dock_descent_speed: Default::default(),
+            dock_held_until: Default::default(),
+            dock_was_shown: Default::default(),
             dock_menu: None,
             window_animations: Default::default(),
             resizing: None,
@@ -353,6 +375,9 @@ impl Ferrite {
             pressed_light: None,
             cursor_status: CursorImageStatus::default_named(),
             change_vt: None,
+            redraw: None,
+            file_drag: None,
+            recent_apps: crate::desktop::launch::load_recent_apps(),
             compositor_state,
             xdg_shell_state,
             xdg_decoration_state,
@@ -445,8 +470,15 @@ impl Ferrite {
         self.pointer_location()
     }
 
+    /// Quelque chose a changé à l'écran : l'image suivante part tout de suite.
+    pub fn request_redraw(&self) {
+        if let Some(redraw) = &self.redraw {
+            redraw.ping();
+        }
+    }
+
     pub fn animate_opening(&mut self, window: &Window) {
-        let Some(rect) = self.space.element_geometry(window) else {
+        let Some(rect) = self.target_content(window) else {
             return;
         };
         let rect = crate::wm::animation_frame(window, rect);
@@ -458,15 +490,24 @@ impl Ferrite {
             rect.to_f64(),
             rect.to_f64(),
         ));
+        drop(animations);
+        self.request_redraw();
     }
 
     pub fn animate_frame_change(&mut self, window: &Window, change: impl FnOnce(&mut Self)) {
-        let before = self
-            .space
-            .element_geometry(window)
-            .map(|rect| crate::wm::animation_frame(window, rect));
+        // Une fenêtre qui glisse encore repart d'où elle est à l'écran, pas de sa place
+        // d'arrivée : le mouvement s'enchaîne sans saut.
+        let moving = self.window_animations.borrow().iter().find_map(|animation| {
+            (animation.window == *window && animation.motion == crate::wm::animation::Motion::Zoom)
+                .then(|| animation.genie(animation.window_rect, animation.dock_rect).window)
+        });
+        let before = moving.or_else(|| {
+            self.space
+                .element_geometry(window)
+                .map(|rect| crate::wm::animation_frame(window, rect))
+        });
         change(self);
-        let (Some(before), Some(after)) = (before, self.space.element_geometry(window)) else {
+        let (Some(before), Some(after)) = (before, self.target_content(window)) else {
             return;
         };
         let after = crate::wm::animation_frame(window, after);
@@ -481,6 +522,8 @@ impl Ferrite {
             before,
             after,
         ));
+        drop(animations);
+        self.request_redraw();
     }
 
     pub fn run_genie_demo(&mut self) {
@@ -495,7 +538,8 @@ impl Ferrite {
         let Some((fraction, None)) = self.genie_demo else {
             return;
         };
-        let Some(window) = self.top_window() else {
+        // La fenêtre doit avoir dessiné : son animation d'ouverture remplacerait la démo.
+        let Some(window) = self.top_window().filter(|window| window.geometry().size.w > 0) else {
             return;
         };
         let Some(window_rect) = self.space.element_geometry(&window) else {

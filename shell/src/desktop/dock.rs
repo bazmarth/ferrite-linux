@@ -56,14 +56,21 @@ const SEPARATOR: f64 = 9.0;
 const SEPARATOR_HEIGHT: f64 = 54.0;
 /// Débord du fond du Dock pour son ombre (0 12 32).
 pub const PLATE_SHADOW_MARGIN: i32 = 44;
-/// Hauteur de la bande du bas qui fait revenir un Dock masqué.
-const REVEAL_EDGE: f64 = 3.0;
-/// Zone d'approche où un mouvement rapide vers le bas rappelle le Dock.
+/// Zone du bas où un mouvement rapide vers le bas rappelle un Dock masqué : il ne sort
+/// que si on y glisse vite la souris, pas quand elle passe simplement par là.
 const REVEAL_APPROACH_ZONE: f64 = 20.0;
+/// Vitesse de descente (pixels logiques par seconde) qui rappelle le Dock.
 const REVEAL_APPROACH_SPEED: f64 = 650.0;
-const REVEAL_APPROACH_DISTANCE: f64 = 8.0;
+/// Temps de lissage de la vitesse, et pause au-delà de laquelle elle repart de zéro.
+const DESCENT_SMOOTHING: f64 = 0.04;
+const DESCENT_PAUSE: Duration = Duration::from_millis(100);
 /// Temps laissé pour rejoindre le Dock après une approche rapide.
 pub(crate) const REVEAL_APPROACH_GRACE: Duration = Duration::from_millis(600);
+/// Un Dock sorti reste ce temps après que la souris l'a quitté.
+pub(crate) const REVEAL_HOLD: Duration = Duration::from_millis(1500);
+/// Plus grand pas d'une image à la suivante pour les glissements et fondus (30 images
+/// par seconde).
+const MAX_STEP: Duration = Duration::from_millis(33);
 /// Durée du glissement du Dock.
 const SLIDE: Duration = Duration::from_millis(180);
 /// Agrandissement maximal d'une icône sous la souris, et portée de l'effet (en icônes,
@@ -403,30 +410,32 @@ pub(crate) fn dock_hover_area(plate: Rectangle<f64, Logical>, icon: f64) -> Rect
     )
 }
 
-/// L'approche descendante est-elle assez rapide et proche du bord pour rappeler le Dock ?
-pub(crate) fn fast_approach(
-    from: Point<f64, Logical>,
-    to: Point<f64, Logical>,
-    bottom: f64,
-    elapsed: Duration,
-) -> bool {
-    let distance = to.y - from.y;
-    distance >= REVEAL_APPROACH_DISTANCE
-        && bottom - to.y <= REVEAL_APPROACH_ZONE
-        && elapsed.as_secs_f64() > 0.0
-        && distance / elapsed.as_secs_f64() >= REVEAL_APPROACH_SPEED
+/// Vitesse de descente lissée après un déplacement de `dy` en `elapsed` : mesurée sur la
+/// course et non d'un événement à l'autre, car une souris à 1000 Hz ne bouge que d'un ou
+/// deux pixels par événement.
+pub(crate) fn descent_speed(previous: f64, dy: f64, elapsed: Duration) -> f64 {
+    let dt = elapsed.as_secs_f64();
+    if elapsed >= DESCENT_PAUSE || dt <= 0.0 {
+        return if dt > 0.0 { (dy / dt).max(0.0) } else { 0.0 };
+    }
+    let weight = 1.0 - (-dt / DESCENT_SMOOTHING).exp();
+    previous + ((dy / dt).max(0.0) - previous) * weight
+}
+
+/// La souris descend-elle assez vite, près du bas de l'écran, pour rappeler le Dock ?
+pub(crate) fn fast_approach(speed: f64, to: Point<f64, Logical>, bottom: f64) -> bool {
+    bottom - to.y <= REVEAL_APPROACH_ZONE && speed >= REVEAL_APPROACH_SPEED
 }
 
 /// Ce qui décide si le Dock est visible.
 #[derive(Debug, Clone, Copy)]
 pub struct Visibility<'a> {
     pub config: DockConfig,
-    pub output: Rectangle<i32, Logical>,
     /// Fond du Dock sorti, sans agrandissement.
     pub dock: Rectangle<f64, Logical>,
-    pub pointer: Option<Point<f64, Logical>>,
-    /// Le pointeur est sur le Dock actuellement affiché.
-    pub pointer_over_dock: bool,
+    /// Le Dock est appelé : approche rapide vers son emplacement, ou souris dessus (puis
+    /// pendant `REVEAL_HOLD`) depuis qu'il est sorti.
+    pub called: bool,
     /// Cadres des fenêtres affichées (barre de titre comprise).
     pub windows: &'a [Rectangle<i32, Logical>],
     /// La fenêtre du dessus est en plein écran.
@@ -437,11 +446,7 @@ pub struct Visibility<'a> {
 
 /// Le Dock doit-il être affiché ?
 pub fn should_show(v: Visibility<'_>) -> bool {
-    let pointer_calls = v.pointer.is_some_and(|pointer| {
-        let bottom = (v.output.loc.y + v.output.size.h) as f64;
-        pointer.y >= bottom - REVEAL_EDGE || v.dock.contains(pointer)
-    }) || v.pointer_over_dock;
-    if pointer_calls || v.launcher_open {
+    if v.called || v.launcher_open {
         return true;
     }
     if v.fullscreen {
@@ -477,11 +482,13 @@ impl Default for DockMotion {
 
 impl DockMotion {
     /// Fait avancer `value` vers `target` à la vitesse d'une course complète en `duration`.
+    /// Un pas ne dépasse jamais `MAX_STEP` : après une image lente, ou une longue pause
+    /// sans dessin, le mouvement reprend où il en était au lieu de sauter à sa fin.
     pub(crate) fn step(cell: &Cell<(f64, Option<Instant>)>, target: f64, duration: Duration) -> f64 {
         let (value, last) = cell.get();
         let now = Instant::now();
         let step = last.map_or(1.0, |last| {
-            now.duration_since(last).as_secs_f64() / duration.as_secs_f64()
+            now.duration_since(last).min(MAX_STEP).as_secs_f64() / duration.as_secs_f64()
         });
         let value = if value < target {
             (value + step).min(target)
@@ -911,10 +918,8 @@ mod tests {
         let dock = layout(output(), medium(), &items(&App::DOCK, &[]), 1.0, None, 0.0).plate;
         let base = Visibility {
             config: medium(),
-            output: output(),
             dock,
-            pointer: Some(Point::from((640.0, 300.0))),
-            pointer_over_dock: false,
+            called: false,
             windows: &far,
             fullscreen: false,
             launcher_open: false,
@@ -928,35 +933,11 @@ mod tests {
             fullscreen: true,
             ..base
         }));
-        // La souris en bas de l'écran le fait revenir, même en plein écran.
-        let bottom = Some(Point::from((640.0, 719.0)));
+        // Appelé (approche rapide, ou souris dessus), il revient, même en plein écran.
         assert!(should_show(Visibility {
             windows: &over,
             fullscreen: true,
-            pointer: bottom,
-            ..base
-        }));
-        let on_dock = Some(Point::from((
-            dock.loc.x + dock.size.w / 2.0,
-            dock.loc.y + dock.size.h / 2.0,
-        )));
-        assert!(should_show(Visibility {
-            windows: &over,
-            fullscreen: true,
-            pointer: on_dock,
-            ..base
-        }));
-        let above_dock = Some(Point::from((dock.loc.x + dock.size.w / 2.0, dock.loc.y - 20.0)));
-        assert!(!should_show(Visibility {
-            windows: &over,
-            fullscreen: true,
-            pointer: above_dock,
-            ..base
-        }));
-        assert!(should_show(Visibility {
-            windows: &over,
-            fullscreen: true,
-            pointer_over_dock: true,
+            called: true,
             ..base
         }));
         assert!(should_show(Visibility {
@@ -993,30 +974,24 @@ mod tests {
     #[test]
     fn une_approche_rapide_pres_de_la_zone_rappelle_le_dock() {
         let bottom = 720.0;
-        assert!(fast_approach(
-            Point::from((640.0, 680.0)),
-            Point::from((640.0, 705.0)),
-            bottom,
-            Duration::from_millis(25),
-        ));
-        assert!(!fast_approach(
-            Point::from((640.0, 680.0)),
-            Point::from((640.0, 705.0)),
-            bottom,
-            Duration::from_millis(100),
-        ));
-        assert!(!fast_approach(
-            Point::from((640.0, 580.0)),
-            Point::from((640.0, 620.0)),
-            bottom,
-            Duration::from_millis(20),
-        ));
-        assert!(!fast_approach(
-            Point::from((640.0, 680.0)),
-            Point::from((640.0, 620.0)),
-            bottom,
-            Duration::from_millis(20),
-        ));
+        let near = Point::from((640.0, 705.0));
+        // Souris à 1000 Hz : deux pixels par milliseconde (2000 px/s) pendant 100 ms.
+        let mut speed = 0.0;
+        for _ in 0..100 {
+            speed = descent_speed(speed, 2.0, Duration::from_millis(1));
+        }
+        assert!(speed > 1500.0);
+        assert!(fast_approach(speed, near, bottom));
+        // Trop loin du bas, ou trop lent.
+        assert!(!fast_approach(speed, Point::from((640.0, 620.0)), bottom));
+        let mut slow = 0.0;
+        for _ in 0..40 {
+            slow = descent_speed(slow, 0.2, Duration::from_millis(1));
+        }
+        assert!(!fast_approach(slow, near, bottom));
+        // Remonter ou s'arrêter fait retomber la vitesse.
+        assert_eq!(descent_speed(speed, -5.0, Duration::from_millis(200)), 0.0);
+        assert!(descent_speed(speed, -2.0, Duration::from_millis(1)) < speed);
     }
 
     #[test]

@@ -42,15 +42,19 @@ impl PointerGrab<Ferrite> for MoveSurfaceGrab {
         let mut location: Point<i32, Logical> =
             (self.initial_window_location.to_f64() + delta).to_i32_round();
         location.y = location.y.max(self.min_y);
-        // Aperçu de l'accrochage tant que le pointeur est au bord ou dans un coin.
-        data.snap_preview = data
-            .usable_area()
-            .zip(data.screen_area())
-            .and_then(|(area, screen)| {
-                super::snap_at(area, screen, event.location)
-                    .filter(|_| data.dock_config.snapping)
-                    .map(|snap| super::snap_zone(area, snap))
-            });
+        // En tuilage, aperçu de la place échangée sous le pointeur ; sinon, de l'accrochage
+        // tant que le pointeur est au bord ou dans un coin.
+        data.snap_preview = if data.tiling && data.tile_order.contains(&self.window) {
+            data.tile_at(event.location, &self.window).map(|(_, frame)| frame)
+        } else {
+            data.usable_area()
+                .zip(data.screen_area())
+                .and_then(|(area, screen)| {
+                    super::snap_at(area, screen, event.location)
+                        .filter(|_| data.dock_config.snapping)
+                        .map(|snap| super::snap_zone(area, snap))
+                })
+        };
         if self.window.x11_surface().is_some() {
             let size = self.window.geometry().size;
             data.place_x11(&self.window, Rectangle::new(location, size));
@@ -81,7 +85,9 @@ impl PointerGrab<Ferrite> for MoveSurfaceGrab {
             // reprendrait le verrou du pointeur, déjà tenu pendant le déplacement, et figerait
             // tout le compositeur.
             data.snap_preview = None;
-            if let Some((area, screen)) = data.usable_area().zip(data.screen_area()) {
+            if data.drop_tiled(&self.window, handle.current_location()) {
+                // Rangée par le tuilage : échangée, ou remise à sa place.
+            } else if let Some((area, screen)) = data.usable_area().zip(data.screen_area()) {
                 if let Some(snap) = super::snap_at(area, screen, handle.current_location())
                     .filter(|_| data.dock_config.snapping)
                 {

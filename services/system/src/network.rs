@@ -298,6 +298,54 @@ pub fn wifi_options(name: &str) -> Result<WifiOptions, Error> {
     })
 }
 
+/// Connexion automatique et connexion limitée (« metered ») d'un réseau enregistré.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct WifiFlags {
+    pub autoconnect: bool,
+    pub metered: bool,
+}
+
+/// Réglage de [`WifiFlags`] à changer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WifiFlag {
+    Autoconnect,
+    Metered,
+}
+
+pub fn wifi_flags(name: &str) -> Result<WifiFlags, Error> {
+    let output = command::run(
+        "nmcli",
+        &[
+            "-g",
+            "connection.autoconnect,connection.metered",
+            "connection",
+            "show",
+            "id",
+            name,
+        ],
+    )?;
+    Ok(parse_wifi_flags(&output))
+}
+
+/// Analyse `nmcli -g connection.autoconnect,connection.metered connection show` ; une
+/// connexion devinée limitée (`guess-yes`) compte comme limitée.
+pub fn parse_wifi_flags(output: &str) -> WifiFlags {
+    let mut lines = output.lines().map(str::trim);
+    WifiFlags {
+        autoconnect: lines.next() == Some("yes"),
+        metered: matches!(lines.next(), Some("yes" | "guess-yes")),
+    }
+}
+
+pub fn set_wifi_flag(name: &str, flag: WifiFlag, enabled: bool) -> Result<(), Error> {
+    let key = match flag {
+        WifiFlag::Autoconnect => "connection.autoconnect",
+        WifiFlag::Metered => "connection.metered",
+    };
+    let value = if enabled { "yes" } else { "no" };
+    command::run("nmcli", &["connection", "modify", "id", name, key, value]).map(drop)
+}
+
 /// Change l'adresse matérielle présentée, puis reconnecte.
 pub fn set_wifi_mac(name: &str, mac: &str) -> Result<(), Error> {
     command::run(
@@ -393,6 +441,18 @@ pub fn split_terse(line: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn options_d_une_connexion() {
+        assert_eq!(
+            parse_wifi_flags("yes\nguess-yes\n"),
+            WifiFlags {
+                autoconnect: true,
+                metered: true
+            }
+        );
+        assert_eq!(parse_wifi_flags("no\nunknown\n"), WifiFlags::default());
+    }
 
     #[test]
     fn liste_des_reseaux() {

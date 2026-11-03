@@ -24,6 +24,11 @@ wifi_driver() {
     ls /lib/firmware/rtw89/*8852b*
 }
 
+# Économie d'énergie rtw89 désactivée (évite les coupures, voir /etc/modprobe.d/ferrite-rtw89.conf).
+wifi_powersave_off() {
+    grep -x Y /sys/module/rtw89_core/parameters/disable_ps_mode
+}
+
 wifi_device() {
     nmcli -t -f DEVICE,TYPE,STATE device | grep ':wifi:'
 }
@@ -65,6 +70,7 @@ boot_time() {
     check "Démarrage" boot_time
     check "Pilote Wi-Fi rtw89 et firmware RTL8852B" wifi_driver
     check "Interface Wi-Fi vue par NetworkManager" wifi_device
+    check "Économie d'énergie Wi-Fi désactivée" wifi_powersave_off
     check "Sortie son PipeWire" sound_sink
     check "Clavier AZERTY (fr)" keyboard_fr
     check "Pavé tactile détecté" touchpad

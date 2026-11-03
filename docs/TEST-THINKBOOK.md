@@ -54,6 +54,11 @@ sudo dmesg | grep -i rtw89
 ls /lib/firmware/rtw89/
 ```
 
+Si le Wi-Fi coupe de temps en temps (pics de latence vers la box) : vérifier que
+`/sys/module/rtw89_core/parameters/disable_ps_mode` vaut `Y`. L'image désactive
+l'économie d'énergie du pilote (`/etc/modprobe.d/ferrite-rtw89.conf`) et de
+NetworkManager (`/etc/NetworkManager/conf.d/ferrite-wifi-powersave.conf`).
+
 ## 4. Persistance (facultatif)
 
 Sans persistance, tout est oublié à l'extinction. Pour garder ses fichiers sur la clé :

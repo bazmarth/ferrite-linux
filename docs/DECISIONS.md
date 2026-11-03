@@ -150,3 +150,7 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
   que l'application et leur nombre. Le lecteur d'empreintes n'est pas proposé (aucune
   authentification par fprintd) ; « Changer d'utilisateur » et Accessibilité sont visibles mais
   atténués, sans action. Thème et fond de cet écran sont propres à lui et enregistrés.
+- **2026-11-03 — Économie d'énergie Wi-Fi désactivée.** Sur le ThinkBook (RTL8852BE, pilote
+  rtw89), elle provoquait des coupures et des pics de latence jusqu'à 110 ms vers la box
+  (0 % de pertes et ~1 ms une fois coupée). L'image la désactive dans le pilote
+  (`modprobe.d/ferrite-rtw89.conf`) et dans NetworkManager ; un peu plus de consommation.

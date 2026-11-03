@@ -50,3 +50,8 @@ pub fn set_ntp(enabled: bool) -> Result<(), Error> {
             .map_err(|_| first),
     }
 }
+
+/// Heure locale (0 à 23), pour saluer selon le moment de la journée.
+pub fn local_hour() -> Option<u32> {
+    command::run("date", &["+%H"]).ok()?.trim().parse().ok()
+}

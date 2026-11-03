@@ -75,7 +75,7 @@ fn pictures_dir() -> Option<PathBuf> {
 }
 
 /// Réduit `image` pour que son plus grand côté tienne dans `side` (moyenne par blocs).
-fn shrink(image: &Image, side: u32) -> Image {
+pub(crate) fn shrink(image: &Image, side: u32) -> Image {
     let factor = side as f32 / image.width.max(image.height) as f32;
     if factor >= 1.0 {
         return image.clone();

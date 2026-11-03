@@ -282,6 +282,11 @@ fn blend(color: &mut [f32; 3], over: Color, amount: f32) {
 /// Lit une image PNG ou JPEG (reconnue à son contenu, pas à son extension).
 pub fn decode(path: &Path) -> Result<Image, String> {
     let data = fs::read(path).map_err(|error| format!("{} : {error}", path.display()))?;
+    decode_bytes(data)
+}
+
+/// Comme [`decode`], depuis le contenu du fichier (pochette intégrée à un morceau, par exemple).
+pub fn decode_bytes(data: Vec<u8>) -> Result<Image, String> {
     let image = if data.starts_with(b"\x89PNG") {
         decode_png(&data)
     } else if data.starts_with(&[0xFF, 0xD8]) {

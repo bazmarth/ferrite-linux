@@ -582,6 +582,8 @@ apercu={}
             Some("textedit")
         } else if crate::viewer::supported(&path) {
             Some("viewer")
+        } else if crate::music::supported(&path) {
+            Some("music")
         } else {
             None
         };

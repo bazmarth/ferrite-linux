@@ -1,5 +1,5 @@
 //! Applications de base Ferrite : Fichiers, TextEdit, Terminal, Calculatrice, Paramètres,
-//! Moniteur d'activité et Visionneuse.
+//! Moniteur d'activité, Visionneuse et Musique.
 
 mod calculator;
 mod details;
@@ -7,6 +7,7 @@ mod editor;
 mod files;
 mod markdown;
 mod monitor;
+mod music;
 mod settings;
 mod single;
 mod style;
@@ -23,7 +24,7 @@ use eframe::egui;
 
 use crate::{
     calculator::CalculatorState, editor::EditorState, files::FilesState, monitor::MonitorState,
-    settings::SettingsState, terminal::TerminalState, viewer::ViewerState,
+    music::MusicState, settings::SettingsState, terminal::TerminalState, viewer::ViewerState,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -35,6 +36,7 @@ enum AppKind {
     Settings,
     Monitor,
     Viewer,
+    Music,
 }
 
 impl AppKind {
@@ -47,6 +49,7 @@ impl AppKind {
             "settings" => Some(Self::Settings),
             "monitor" => Some(Self::Monitor),
             "viewer" => Some(Self::Viewer),
+            "music" => Some(Self::Music),
             _ => None,
         }
     }
@@ -60,6 +63,7 @@ impl AppKind {
             Self::Settings => "Paramètres",
             Self::Monitor => "Moniteur d'activité",
             Self::Viewer => "Visionneuse",
+            Self::Music => "Musique",
         }
     }
 
@@ -73,6 +77,7 @@ impl AppKind {
             Self::Settings => "ferrite-settings",
             Self::Monitor => "ferrite-monitor",
             Self::Viewer => "ferrite-viewer",
+            Self::Music => "ferrite-music",
         }
     }
 
@@ -86,6 +91,7 @@ impl AppKind {
             Self::Settings => ([1008.0, 640.0], [720.0, 440.0]),
             Self::Monitor => ([1000.0, 640.0], [680.0, 460.0]),
             Self::Viewer => ([1180.0, 760.0], [640.0, 440.0]),
+            Self::Music => ([1240.0, 800.0], [760.0, 520.0]),
         }
     }
 }
@@ -101,7 +107,7 @@ fn main() -> eframe::Result {
     }
     let Some(kind) = args.next().and_then(|arg| AppKind::parse(&arg)) else {
         eprintln!(
-            "Utilisation : ferrite-apps <files|textedit|terminal|calculator|settings|monitor|viewer> [dossier ou fichier]"
+            "Utilisation : ferrite-apps <files|textedit|terminal|calculator|settings|monitor|viewer|music> [dossier ou fichier]"
         );
         return Ok(());
     };
@@ -171,6 +177,7 @@ struct FerriteApp {
     monitor: Option<MonitorState>,
     terminal: Option<TerminalState>,
     viewer: Option<ViewerState>,
+    music: Option<MusicState>,
     /// Lancements suivants de la même application (instance unique).
     requests: Option<single::Requests>,
     settings_stamp: Option<SystemTime>,
@@ -193,6 +200,7 @@ impl FerriteApp {
         }
         let mut editor = EditorState::default();
         let viewer = (kind == AppKind::Viewer).then(|| ViewerState::new(initial_file.clone()));
+        let music = (kind == AppKind::Music).then(|| MusicState::new(initial_file.clone()));
         let mut files = (kind == AppKind::Files).then(FilesState::default);
         let mut settings = (kind == AppKind::Settings).then(SettingsState::default);
         if let Some(path) = initial_file {
@@ -200,7 +208,7 @@ impl FerriteApp {
                 settings.open_page(&path.to_string_lossy());
             } else if let Some(files) = &mut files {
                 files.open_at(path);
-            } else if kind != AppKind::Viewer {
+            } else if !matches!(kind, AppKind::Viewer | AppKind::Music) {
                 editor.open(path);
             }
         }
@@ -213,6 +221,7 @@ impl FerriteApp {
             monitor: (kind == AppKind::Monitor).then(MonitorState::default),
             terminal: (kind == AppKind::Terminal).then(|| TerminalState::new(&context.egui_ctx, launch)),
             viewer,
+            music,
             requests,
             settings_stamp: {
                 watch_settings(context.egui_ctx.clone());
@@ -252,6 +261,8 @@ impl FerriteApp {
                 files.open_at(file);
             } else if let Some(viewer) = &mut self.viewer {
                 viewer.open(file);
+            } else if let Some(music) = &mut self.music {
+                music.open(file);
             } else {
                 self.editor.open(file);
             }
@@ -301,6 +312,11 @@ impl eframe::App for FerriteApp {
             AppKind::Viewer => {
                 if let Some(viewer) = &mut self.viewer {
                     viewer.update(ui);
+                }
+            }
+            AppKind::Music => {
+                if let Some(music) = &mut self.music {
+                    music.update(ui);
                 }
             }
         }

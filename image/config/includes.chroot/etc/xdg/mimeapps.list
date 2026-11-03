@@ -2,3 +2,9 @@
 inode/directory=ferrite-files.desktop
 image/png=ferrite-viewer.desktop
 image/jpeg=ferrite-viewer.desktop
+audio/mpeg=ferrite-music.desktop
+audio/flac=ferrite-music.desktop
+audio/ogg=ferrite-music.desktop
+audio/x-vorbis+ogg=ferrite-music.desktop
+audio/x-wav=ferrite-music.desktop
+audio/mp4=ferrite-music.desktop

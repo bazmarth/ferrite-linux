@@ -686,3 +686,30 @@ Vérifié :
   (Fichiers ouvert comme au démarrage) ; code 4 puis « console » → console.
 
 Reste : essai réel sur le ThinkBook (nouvelle `ferrite-session` à installer avec sudo).
+
+## 2026-11-03 — Dock réordonnable ; touches de fonction
+
+Fait :
+- Dock : une icône épinglée tenue puis déplacée change de place en direct ; l'ordre est
+  enregistré au relâchement. Sans mouvement (moins de 6 px), c'est un clic, qui ouvre
+  désormais l'application au relâchement. La corbeille et les applications ouvertes non
+  épinglées ne se déplacent pas.
+- Touches de fonction (`desktop/function_keys.rs`) : volume ±5 %, muet, micro coupé,
+  luminosité ±5 % (5 % au moins), mode avion, calculatrice, recherche (menu Applications),
+  lecture/suivant/précédent (MPRIS), capture d'une zone (touche Lenovo). Volume et
+  luminosité se répètent quand la touche est maintenue ; son, micro, luminosité et mode
+  avion marchent aussi sur l'écran verrouillé. Bulle au-dessus du Dock pendant 1,5 s.
+- Mode avion : `ferrite_system::rfkill` (lecture de `/sys/class/rfkill`, écriture d'un
+  événement dans `/dev/rfkill`). Le noyau peut basculer lui-même les radios sur cette touche
+  (`rfkill-input`) : le bureau regarde l'état 300 ms après et ne bascule que s'il n'a pas changé.
+- `--demo-osd` affiche la bulle pour les captures.
+
+Vérifié :
+- Tests (139 pour le shell, 31 pour les services) : place visée dans le Dock, touches du
+  ThinkBook 14 G4+ (codes lus dans `/proc/bus/input/devices`), bulle du son, mode avion sur
+  un faux `/sys/class/rfkill`. Clippy, fmt. Capture de la bulle du volume.
+
+- Sur le ThinkBook, après « Relancer le bureau » : touches et glisser dans le Dock essayés,
+  tout marche.
+
+Reste : F7 (écran externe), la touche du pavé tactile et la touche étoile ne font encore rien.

@@ -108,6 +108,17 @@ pub fn input_volume() -> Option<u8> {
     parse_volume(&output).map(|volume| volume.level)
 }
 
+/// Micro par défaut coupé.
+pub fn input_muted() -> Option<bool> {
+    let output = command::run("wpctl", &["get-volume", "@DEFAULT_AUDIO_SOURCE@"]).ok()?;
+    parse_volume(&output).map(|volume| volume.muted)
+}
+
+pub fn set_input_muted(muted: bool) -> Result<(), Error> {
+    let value = if muted { "1" } else { "0" };
+    command::run("wpctl", &["set-mute", "@DEFAULT_AUDIO_SOURCE@", value]).map(drop)
+}
+
 pub fn set_input_volume(level: u8) -> Result<(), Error> {
     let value = format!("{}%", level.min(100));
     command::run("wpctl", &["set-volume", "@DEFAULT_AUDIO_SOURCE@", &value]).map(drop)

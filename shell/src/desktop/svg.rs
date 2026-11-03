@@ -152,6 +152,22 @@ const GLYPHS: &[(&str, &str)] = &[
         r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 9 H8 L13 5 V19 L8 15 H4 Z M16.5 9 a4 4 0 0 1 0 6" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
     ),
     (
+        "cc-mute",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 9 H8 L13 5 V19 L8 15 H4 Z M16.5 9.5 L21 14 M21 9.5 L16.5 14" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "cc-mic",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9 6 a3 3 0 0 1 6 0 V12 a3 3 0 0 1 -6 0 Z M5.5 11.5 a6.5 6.5 0 0 0 13 0 M12 18 V21" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "cc-mic-off",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9 6 a3 3 0 0 1 6 0 V12 a3 3 0 0 1 -6 0 Z M5.5 11.5 a6.5 6.5 0 0 0 13 0 M12 18 V21 M4 4 L20 20" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "cc-airplane",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 3 a1.5 1.5 0 0 1 1.5 1.5 V9.5 L21 14 V16 L13.5 13.5 V18 L16 20 V21.5 L12 20.5 L8 21.5 V20 L10.5 18 V13.5 L3 16 V14 L10.5 9.5 V4.5 A1.5 1.5 0 0 1 12 3 Z" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
         "cc-brightness",
         r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8 a4 4 0 1 0 0.01 0 M12 2.5 V4.5 M12 19.5 V21.5 M2.5 12 H4.5 M19.5 12 H21.5 M5.3 5.3 L6.7 6.7 M17.3 17.3 L18.7 18.7 M5.3 18.7 L6.7 17.3 M17.3 6.7 L18.7 5.3" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
     ),

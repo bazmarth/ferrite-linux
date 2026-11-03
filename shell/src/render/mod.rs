@@ -1053,6 +1053,7 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
             .pointer_location()
             .filter(|_| matches!(state.popover, Some(Popover::DockMenu | Popover::DesktopMenu)))
             .map(|location| (location.x as i32, location.y as i32)),
+        osd: state.osd_view(),
         overview: overview_view(state),
         switcher: switcher_view(state),
         lock: state.lock.as_ref().map(|lock| {

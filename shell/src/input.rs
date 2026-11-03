@@ -128,6 +128,8 @@ enum Action {
     ScreenshotFull,
     /// Maj+Impr. écran : zone choisie à la souris.
     ScreenshotRegion,
+    /// Touche de fonction : son, micro, luminosité, mode avion, calculatrice…
+    Function(crate::desktop::function_keys::FunctionKey),
 }
 
 /// Codes de touche XKB (indépendants de la disposition) : rangée 1 à 9, et la touche à gauche
@@ -216,6 +218,13 @@ impl Ferrite {
             |state, modifiers, keysym| {
                 let sym = keysym.modified_sym();
                 let code = keysym.raw_code().raw();
+                // Touches de fonction : réglages même verrouillé, applications sinon.
+                if pressed
+                    && let Some(key) = crate::desktop::function_keys::FunctionKey::from_keysym(sym)
+                    && (state.lock.is_none() || key.works_locked())
+                {
+                    return FilterResult::Intercept(Action::Function(key));
+                }
                 // Verrouillé : tout reste ici, sauf le changement de terminal virtuel.
                 if state.lock.is_some() {
                     let raw = sym.raw();
@@ -292,6 +301,10 @@ impl Ferrite {
                         Keysym::Tab => return FilterResult::Intercept(Action::SwitcherStep(1)),
                         _ => {}
                     }
+                }
+                // Touche de capture d'une zone (Lenovo) : comme Maj+Impr. écran.
+                if pressed && sym == Keysym::XF86_SelectiveScreenshot {
+                    return FilterResult::Intercept(Action::ScreenshotRegion);
                 }
                 if pressed && sym == Keysym::Print {
                     return FilterResult::Intercept(if modifiers.shift {
@@ -645,6 +658,7 @@ impl Ferrite {
                 self.popover = None;
                 self.region_select = Some(crate::render::capture::RegionSelect::default());
             }
+            Some(Action::Function(key)) => self.on_function_key(key),
             None => {}
         }
         // Le sélecteur se referme au relâchement d'Alt, que le client voit aussi.
@@ -1088,7 +1102,7 @@ impl Ferrite {
         self.launcher_scroll = 0;
     }
 
-    fn handle_desktop_action(&mut self, action: DesktopAction) {
+    pub(crate) fn handle_desktop_action(&mut self, action: DesktopAction) {
         match action {
             DesktopAction::TogglePopover(popover) => {
                 let opening_clipboard =

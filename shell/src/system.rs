@@ -44,7 +44,11 @@ pub enum Change {
     Wifi(bool),
     Bluetooth(bool),
     Volume(u8),
+    Muted(bool),
+    MicMuted(bool),
     Brightness(u8),
+    /// Toutes les radios bloquées (`true`) ou débloquées.
+    Airplane(bool),
     /// Profil d'énergie du système.
     PowerSaver(bool),
     Power(PowerAction),
@@ -313,7 +317,10 @@ fn apply(change: Change) -> Result<(), String> {
         Change::Wifi(enabled) => network::set_wifi(enabled),
         Change::Bluetooth(enabled) => bluetooth::set_powered(enabled),
         Change::Volume(level) => audio::set_volume(level),
+        Change::Muted(muted) => audio::set_muted(muted),
+        Change::MicMuted(muted) => audio::set_input_muted(muted),
         Change::Brightness(level) => display::set_brightness(level),
+        Change::Airplane(on) => ferrite_system::rfkill::set_airplane(on),
         Change::PowerSaver(enabled) => command::run(
             "powerprofilesctl",
             &["set", if enabled { "power-saver" } else { "balanced" }],
@@ -397,6 +404,14 @@ impl Ferrite {
                     volume.muted = level == 0;
                 }
             }
+            Change::Muted(muted) => {
+                self.volume_held_until = Some(Instant::now() + HOLD);
+                if let Some(volume) = self.system.volume.as_mut() {
+                    volume.muted = muted;
+                }
+            }
+            Change::MicMuted(muted) => self.system.mic_muted = Some(muted),
+            Change::Airplane(on) => self.system.airplane = Some(on),
             Change::PowerSaver(enabled) => self.power_saver = enabled,
             Change::Brightness(level) => {
                 self.brightness_held_until = Some(Instant::now() + HOLD);

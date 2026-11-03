@@ -556,6 +556,15 @@ pub struct DashboardApp {
     pub running: bool,
 }
 
+/// Bulle affichée un instant après une touche de fonction (son, luminosité, micro, mode
+/// avion) : pictogramme, texte et, pour un niveau, une jauge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Osd {
+    pub icon: &'static str,
+    pub label: &'static str,
+    pub level: Option<u8>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DesktopView {
     pub dark_theme: bool,
@@ -598,6 +607,7 @@ pub struct DesktopView {
     pub desktop_menu: Option<(i32, i32)>,
     /// Pointeur, connu seulement quand un menu est ouvert : il en surligne la ligne.
     pub menu_pointer: Option<(i32, i32)>,
+    pub osd: Option<Osd>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1305,6 +1315,9 @@ impl Panels {
         }
         if let Some(region) = view.region {
             self.draw_region(&mut canvas, &layout, region);
+        }
+        if let Some(osd) = view.osd {
+            self.draw_osd(&mut canvas, &layout, osd, view.dock_height);
         }
 
         // Confirmation explicite, pour éviter un arrêt accidentel.
@@ -2758,6 +2771,55 @@ impl Panels {
     }
 
     /// Voile sur l'écran, sauf sur la zone choisie, pendant la sélection d'une capture.
+    /// Bulle d'une touche de fonction : centrée, au-dessus du Dock.
+    fn draw_osd(&self, canvas: &mut Canvas, layout: &Layout, osd: Osd, dock_height: i32) {
+        let (w, h) = (300.0, 60.0);
+        let bubble = Rect::new(
+            ((layout.w - w) / 2.0).round(),
+            (layout.h - f64::from(dock_height.max(0)) - 32.0 - h).round(),
+            w,
+            h,
+        );
+        canvas.glass(bubble, 16.0);
+        canvas.icon(
+            osd.icon,
+            (bubble.x + 34.0, bubble.y + h / 2.0),
+            24.0,
+            Style::Symbolic(primary_text()),
+        );
+        let text_x = bubble.x + 62.0;
+        let Some(level) = osd.level else {
+            canvas.label(
+                &self.bold,
+                osd.label,
+                text_x,
+                bubble.y + 21.0,
+                px(14.0),
+                primary_text(),
+            );
+            return;
+        };
+        canvas.label(
+            &self.bold,
+            osd.label,
+            text_x,
+            bubble.y + 11.0,
+            px(13.0),
+            primary_text(),
+        );
+        let track = Rect::new(text_x, bubble.y + 37.0, bubble.right() - 22.0 - text_x, 6.0);
+        canvas.fill(track, 3.0, control_fill());
+        let filled = Rect::new(
+            track.x,
+            track.y,
+            track.w * f64::from(level.min(100)) / 100.0,
+            track.h,
+        );
+        if filled.w > 0.0 {
+            canvas.fill(filled, 3.0, accent());
+        }
+    }
+
     fn draw_region(&self, canvas: &mut Canvas, layout: &Layout, region: RegionView) {
         let veil = Color::BLACK.with_alpha(90);
         let Some((x, y, w, h)) = region.rect else {

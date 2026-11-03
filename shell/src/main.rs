@@ -100,6 +100,17 @@ fn run(options: Options) -> Result<u8, Box<dyn std::error::Error>> {
     if options.demo_power {
         state.pending_power = Some(crate::state::PowerAction::PowerOff);
     }
+    if options.demo_osd {
+        let osd = desktop::panels::Osd {
+            icon: "cc-volume",
+            label: "Volume",
+            level: Some(60),
+        };
+        state.osd = Some((
+            osd,
+            std::time::Instant::now() + std::time::Duration::from_secs(3600),
+        ));
+    }
     if options.demo_lock {
         state.lock_session();
         state.lock_reveal();

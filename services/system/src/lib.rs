@@ -17,6 +17,7 @@ pub mod config;
 pub mod display;
 pub mod drag;
 pub mod network;
+pub mod rfkill;
 pub mod time;
 pub mod weather;
 
@@ -28,6 +29,9 @@ pub struct Snapshot {
     pub bluetooth: Option<bool>,
     pub volume: Option<audio::Volume>,
     pub brightness: Option<u8>,
+    /// Micro par défaut coupé.
+    pub mic_muted: Option<bool>,
+    pub airplane: Option<bool>,
 }
 
 impl Snapshot {
@@ -38,6 +42,8 @@ impl Snapshot {
             bluetooth: bluetooth::powered(),
             volume: audio::volume(),
             brightness: display::brightness(),
+            mic_muted: audio::input_muted(),
+            airplane: rfkill::airplane(),
         }
     }
 }

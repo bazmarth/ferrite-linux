@@ -112,6 +112,8 @@ pub struct Ferrite {
     pub dock_pinned: Option<Vec<String>>,
     pub multi_window: Vec<String>,
     pub dock_order: std::cell::RefCell<Vec<crate::desktop::apps::AppKey>>,
+    /// Icône épinglée tenue au clic gauche (clic ou déplacement dans le Dock).
+    pub dock_drag: Option<crate::desktop::launch::DockDrag>,
     pub dock_bounces: std::cell::RefCell<
         std::collections::HashMap<crate::desktop::apps::AppKey, crate::desktop::dock::Bounce>,
     >,
@@ -322,6 +324,7 @@ impl Ferrite {
             dock_pinned: settings.dock_pinned(),
             multi_window: settings.multi_window_apps(),
             dock_order: Default::default(),
+            dock_drag: None,
             dock_bounces: Default::default(),
             dock_motion: Default::default(),
             dock_pointer_motion_at: Default::default(),

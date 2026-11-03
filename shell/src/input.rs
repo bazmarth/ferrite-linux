@@ -816,6 +816,7 @@ impl Ferrite {
             self.drag_clipboard(location);
         }
         self.drag_widget(location);
+        self.dock_drag_motion(location);
         self.file_drag_motion(location);
         let under = if self.slider_drag.is_some() {
             None
@@ -902,6 +903,10 @@ impl Ferrite {
         if button.state == ButtonState::Released && self.slider_drag.take().is_some() {
             return;
         }
+        if button.state == ButtonState::Released && self.dock_drag.is_some() {
+            self.dock_drag_release();
+            return;
+        }
         if button.state == ButtonState::Released && self.clipboard_drag_offset.take().is_some() {
             return;
         }
@@ -967,7 +972,19 @@ impl Ferrite {
                     BTN_LEFT => {
                         self.popover = None;
                         self.dock_menu = None;
-                        self.activate_app(&item.key);
+                        // Une icône épinglée se clique ou se déplace : décidé au relâchement.
+                        if item.pinned
+                            && item.key
+                                != crate::desktop::apps::AppKey::Builtin(crate::desktop::apps::App::Trash)
+                        {
+                            self.dock_drag = Some(crate::desktop::launch::DockDrag {
+                                key: item.key,
+                                start: location,
+                                target: None,
+                            });
+                        } else {
+                            self.activate_app(&item.key);
+                        }
                     }
                     BTN_RIGHT => {
                         let entries = self.dock_menu_entries(&item);

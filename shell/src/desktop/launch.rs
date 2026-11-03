@@ -38,6 +38,38 @@ impl DockMenuAction {
     }
 }
 
+/// Distance (px) au-delà de laquelle une icône tenue est déplacée au lieu d'être cliquée.
+const DOCK_DRAG_THRESHOLD: f64 = 6.0;
+
+/// Icône épinglée tenue au clic gauche : relâchée sur place, c'est un clic ; déplacée,
+/// elle change de place parmi les épinglées, en direct, et l'ordre est enregistré au
+/// relâchement.
+#[derive(Debug, Clone)]
+pub struct DockDrag {
+    pub key: AppKey,
+    pub start: Point<f64, Logical>,
+    /// Place visée parmi les épinglées, une fois le seuil dépassé.
+    pub target: Option<usize>,
+}
+
+/// Place d'une icône déplacée : le nombre des autres icônes épinglées dont le centre est
+/// à gauche du pointeur.
+fn drop_index(centers: &[f64], dragged: usize, x: f64) -> usize {
+    centers
+        .iter()
+        .enumerate()
+        .filter(|&(index, center)| index != dragged && *center < x)
+        .count()
+}
+
+/// Déplace `key` à la place `target` (bornée à la fin de la liste).
+fn move_to<T: PartialEq>(list: &mut Vec<T>, key: &T, target: usize) {
+    if let Some(from) = list.iter().position(|item| item == key) {
+        let item = list.remove(from);
+        list.insert(target.min(list.len()), item);
+    }
+}
+
 impl Ferrite {
     /// Application d'une fenêtre ; `None` pour les menus et bulles X11.
     pub fn window_app(&self, window: &Window) -> Option<AppKey> {
@@ -47,15 +79,75 @@ impl Ferrite {
         crate::render::app_id(window).map(|id| AppKey::for_window(&id, &self.applications))
     }
 
-    /// Applications épinglées (le Dock par défaut si rien n'est réglé).
+    /// Applications épinglées (le Dock par défaut si rien n'est réglé), avec l'icône en
+    /// cours de déplacement à sa place visée.
     pub fn pinned_apps(&self) -> Vec<AppKey> {
-        match &self.dock_pinned {
+        let mut pinned: Vec<AppKey> = match &self.dock_pinned {
             Some(tokens) => tokens
                 .iter()
                 .map(|token| AppKey::from_token(token, &self.applications))
                 .collect(),
             None => App::DOCK.into_iter().map(AppKey::Builtin).collect(),
+        };
+        if let Some(drag) = &self.dock_drag
+            && let Some(target) = drag.target
+        {
+            move_to(&mut pinned, &drag.key, target);
         }
+        pinned
+    }
+
+    /// Pointeur déplacé pendant qu'une icône épinglée est tenue.
+    pub fn dock_drag_motion(&mut self, location: Point<f64, Logical>) {
+        let Some(drag) = &self.dock_drag else {
+            return;
+        };
+        let moved = (location.x - drag.start.x).hypot(location.y - drag.start.y);
+        if drag.target.is_none() && moved < DOCK_DRAG_THRESHOLD {
+            return;
+        }
+        let pinned = self.pinned_apps();
+        let Some(dragged) = pinned.iter().position(|key| *key == drag.key) else {
+            self.dock_drag = None;
+            return;
+        };
+        let Some((_, _, geometry)) = self.dock_geometry() else {
+            return;
+        };
+        // Les épinglées occupent les premières cases du Dock.
+        let centers: Vec<f64> = geometry
+            .icons
+            .iter()
+            .take(pinned.len())
+            .map(|icon| icon.loc.x + icon.size.w / 2.0)
+            .collect();
+        let target = drop_index(&centers, dragged, location.x);
+        if let Some(drag) = &mut self.dock_drag {
+            drag.target = Some(target);
+        }
+    }
+
+    /// Relâchement d'une icône tenue : enregistre le nouvel ordre, ou ouvre l'application
+    /// si l'icône n'a pas bougé.
+    pub fn dock_drag_release(&mut self) {
+        let order = self.pinned_apps();
+        let Some(drag) = self.dock_drag.take() else {
+            return;
+        };
+        if drag.target.is_some() {
+            self.save_dock_pinned(order.iter().map(AppKey::token).collect());
+        } else {
+            self.activate_app(&drag.key);
+        }
+    }
+
+    fn save_dock_pinned(&mut self, pinned: Vec<String>) {
+        let mut settings = Settings::load();
+        settings.set_dock_pinned(&pinned);
+        if let Err(err) = settings.save() {
+            warn!(%err, "Dock non enregistré");
+        }
+        self.dock_pinned = Some(pinned);
     }
 
     /// Cases du Dock : épinglées, puis ouvertes non épinglées dans l'ordre d'ouverture.
@@ -335,12 +427,7 @@ impl Ferrite {
                 } else {
                     pinned.retain(|known| *known != token);
                 }
-                let mut settings = Settings::load();
-                settings.set_dock_pinned(&pinned);
-                if let Err(err) = settings.save() {
-                    warn!(%err, "Dock non enregistré");
-                }
-                self.dock_pinned = Some(pinned);
+                self.save_dock_pinned(pinned);
             }
             DockMenuAction::Quit => {
                 let (mapped, minimized) = self.app_windows(key);
@@ -433,5 +520,31 @@ impl Ferrite {
     pub fn app_running(&self, key: &AppKey) -> bool {
         let (mapped, minimized) = self.app_windows(key);
         !mapped.is_empty() || !minimized.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn une_icone_deplacee_prend_la_place_sous_le_pointeur() {
+        // Cinq icônes de 60 px, centres à 30, 90, 150, 210, 270 ; la deuxième est tenue.
+        let centers = [30.0, 90.0, 150.0, 210.0, 270.0];
+        assert_eq!(drop_index(&centers, 1, 10.0), 0);
+        assert_eq!(drop_index(&centers, 1, 95.0), 1);
+        assert_eq!(drop_index(&centers, 1, 160.0), 2);
+        assert_eq!(drop_index(&centers, 1, 400.0), 4);
+
+        let mut list = vec!['a', 'b', 'c', 'd', 'e'];
+        move_to(&mut list, &'b', drop_index(&centers, 1, 160.0));
+        assert_eq!(list, ['a', 'c', 'b', 'd', 'e']);
+        move_to(&mut list, &'e', 0);
+        assert_eq!(list, ['e', 'a', 'c', 'b', 'd']);
+        // Place hors de la liste : à la fin ; clé absente : rien ne change.
+        move_to(&mut list, &'e', 99);
+        assert_eq!(list, ['a', 'c', 'b', 'd', 'e']);
+        move_to(&mut list, &'z', 0);
+        assert_eq!(list, ['a', 'c', 'b', 'd', 'e']);
     }
 }

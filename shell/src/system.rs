@@ -88,6 +88,8 @@ pub enum Event {
     PowerAccepted,
     /// Photo de l'écran de verrouillage, décodée (ou retirée).
     LockPicture(Option<crate::desktop::panels::LockPicture>),
+    /// Délais de verrouillage et de mise en veille automatiques.
+    Idle(ferrite_system::idle::IdleSettings),
     /// Réglages du mode nuit et ville (pour le lever et le coucher du soleil).
     Night(
         ferrite_system::night::NightSettings,
@@ -280,6 +282,12 @@ fn worker(receiver: mpsc::Receiver<Change>, events: channel::Sender<Event>, nest
                     return;
                 }
             }
+            if events
+                .send(Event::Idle(ferrite_system::idle::IdleSettings::load(&settings)))
+                .is_err()
+            {
+                return;
+            }
             let night = ferrite_system::night::NightSettings::load(&settings);
             let place = ferrite_system::weather::Place::from_settings(&settings);
             if events.send(Event::Night(night, place)).is_err() {
@@ -439,6 +447,7 @@ impl Ferrite {
                     lock.wall = crate::desktop::panels::LOCK_WALLS.len();
                 }
             }
+            Event::Idle(settings) => self.idle.settings = settings,
             Event::Night(night, place) => {
                 if self.night.settings != night || self.night.place.as_ref() != Some(&place) {
                     self.night.settings = night;

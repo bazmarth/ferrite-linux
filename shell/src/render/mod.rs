@@ -1018,7 +1018,7 @@ impl Ferrite {
             && pointer
                 .is_some_and(|pointer| pointer.x >= dock.loc.x && pointer.x <= dock.loc.x + dock.size.w);
         // Sorti, il reste tant que la souris est dessus (ou dessous, dans la marge du bas),
-        // puis encore `REVEAL_HOLD`.
+        // et se cache dès qu'elle en part.
         let on_dock = self.dock_was_shown.get()
             && pointer.is_some_and(|pointer| {
                 pointer.y >= dock.loc.y && pointer.x >= dock.loc.x && pointer.x <= dock.loc.x + dock.size.w
@@ -1026,10 +1026,6 @@ impl Ferrite {
         // Fichiers glissés vers le bas de l'écran : le Dock vient les recevoir.
         let dragging = self.file_drag.as_ref().is_some_and(|file| !file.dropped)
             && pointer.is_some_and(|pointer| pointer.y >= dock.loc.y - crate::desktop::file_drag::DOCK_REACH);
-        if approached || on_dock || dragging {
-            self.dock_held_until
-                .set(Some(now + crate::desktop::dock::REVEAL_HOLD));
-        }
         // Une fenêtre qui file vers son icône, ou en ressort, la garde affichée.
         let genie = self.window_animations.try_borrow().is_ok_and(|animations| {
             animations.iter().any(|animation| {
@@ -1039,7 +1035,7 @@ impl Ferrite {
                 )
             })
         });
-        let called = genie || self.dock_held_until.get().is_some_and(|until| now < until);
+        let called = genie || approached || on_dock || dragging;
         let shown = crate::desktop::dock::should_show(crate::desktop::dock::Visibility {
             config: self.dock_config,
             dock,

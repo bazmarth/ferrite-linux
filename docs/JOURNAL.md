@@ -1063,3 +1063,12 @@ paquets. Sur le système live de l'ISO (`boot=live`), le bureau ne démarre pas 
 son utilisateur n'a pas de mot de passe connu. Les fichiers de includes.chroot étaient déjà
 plus récents que ceux du système installé (commentaires, associations Visionneuse et
 Musique, vérification Wi-Fi de ferrite-check).
+
+Verrouillage et mise en veille automatiques (`ferrite_system::idle`, `desktop/idle.rs`) :
+réglages `verrouillage_auto`, `veille_batterie`, `veille_secteur` en minutes (5, 15 et 30
+d'origine, 0 : jamais), page Énergie de Paramètres. Le bureau compte depuis la dernière
+entrée, vérifie toutes les 5 s par une minuterie ; une vidéo (`zwp_idle_inhibit_v1`) vaut
+une présence, du son en cours (flux actif dans `wpctl status`, casques Bluetooth compris ;
+ALSA en secours) reporte la veille. Essayé en bureau imbriqué : verrouillé après 60 s.
+
+Dock masqué automatiquement : il se cache dès que la souris le quitte (plus de délai de 1,5 s, `REVEAL_HOLD` retiré).

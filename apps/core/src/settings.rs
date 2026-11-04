@@ -30,6 +30,7 @@ use ferrite_system::{
         ScrollBars, Settings,
     },
     display,
+    idle::{self, IdleSettings},
     network::{self, KnownWifi, WifiNetwork, WifiOptions},
     time,
 };
@@ -72,6 +73,7 @@ impl Page {
             "dock" => Page::Dock,
             "fenetres" => Page::Windows,
             "son" => Page::Sound,
+            "energie" => Page::Energy,
             "ecrans" => Page::Displays,
             "clavier" => Page::Keyboard,
             "souris" => Page::Mouse,
@@ -582,8 +584,8 @@ impl SettingsState {
                         Page::Keyboard => self.keyboard_page(ui),
                         Page::DateTime => self.datetime_page(ui, &ctx),
                         Page::Accounts => self.accounts_page(ui),
+                        Page::Energy => self.energy_page(ui),
                         Page::Notifications
-                        | Page::Energy
                         | Page::Printers
                         | Page::Privacy
                         | Page::Accessibility
@@ -1807,6 +1809,61 @@ impl SettingsState {
     }
 
     // ---- Fenêtres ---------------------------------------------------------------------
+
+    /// Verrouillage et mise en veille après une période sans rien toucher.
+    fn energy_page(&mut self, ui: &mut egui::Ui) {
+        let mut settings = Settings::load();
+        let before = settings.clone();
+        let mut idle = IdleSettings::load(&settings);
+        let icons = &mut self.icons;
+        let choices = |minutes: &[u32]| -> Vec<(u32, String)> {
+            minutes
+                .iter()
+                .map(|&minutes| (minutes, idle::minutes_label(minutes)))
+                .collect()
+        };
+        let pick = |rows: &mut rows::Group<'_>, row: Row<'_>, id: &str, value: &mut u32, minutes: &[u32]| {
+            // Une valeur écrite à la main dans le fichier de réglages reste proposée.
+            let mut options = choices(minutes);
+            if !minutes.contains(value) {
+                options.push((*value, idle::minutes_label(*value)));
+            }
+            let options: Vec<(u32, &str)> = options
+                .iter()
+                .map(|(minutes, label)| (*minutes, label.as_str()))
+                .collect();
+            rows.row(row, |ui| rows::pick(ui, id, value, &options)).0
+        };
+        group(ui, icons, "Inactivité", |rows| {
+            pick(
+                rows,
+                Row::new("Verrouiller l’écran après").hint("Sans toucher au clavier, à la souris ni au pavé"),
+                "verrouillage-auto",
+                &mut idle.lock_after,
+                &idle::LOCK_CHOICES,
+            );
+            pick(
+                rows,
+                Row::new("Mettre en veille sur batterie après"),
+                "veille-batterie",
+                &mut idle.sleep_battery,
+                &idle::SLEEP_CHOICES,
+            );
+            pick(
+                rows,
+                Row::new("Mettre en veille sur secteur après")
+                    .hint("Jamais pendant une vidéo ou quand du son est en cours"),
+                "veille-secteur",
+                &mut idle.sleep_ac,
+                &idle::SLEEP_CHOICES,
+            );
+        });
+        idle.save(&mut settings);
+        // Rien n'est écrit tant qu'on garde les valeurs d'origine.
+        if settings != before && IdleSettings::load(&before) != idle {
+            self.save(&settings);
+        }
+    }
 
     fn windows_page(&mut self, ui: &mut egui::Ui) {
         let mut settings = Settings::load();

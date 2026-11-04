@@ -188,6 +188,7 @@ impl Ferrite {
     pub fn process_input_event<I: InputBackend>(&mut self, event: InputEvent<I>) {
         // Toute entrée est une activité (voir `protocols::idle`).
         self.idle_notifier_state.notify_activity(&self.seat);
+        self.idle.activity();
         match event {
             InputEvent::Keyboard { event } => self.on_key::<I>(event),
             InputEvent::PointerMotionAbsolute { event } => {

@@ -16,6 +16,7 @@ pub mod command;
 pub mod config;
 pub mod display;
 pub mod drag;
+pub mod idle;
 pub mod network;
 pub mod night;
 pub mod rfkill;

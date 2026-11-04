@@ -5,6 +5,7 @@ pub mod controls;
 pub mod dock;
 pub mod file_drag;
 pub mod function_keys;
+pub mod idle;
 pub mod launch;
 pub mod lock;
 pub mod night;

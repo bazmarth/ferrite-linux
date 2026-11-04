@@ -113,6 +113,9 @@ fn run(options: Options) -> Result<u8, Box<dyn std::error::Error>> {
         state.lock_session();
         state.lock_reveal();
     }
+    if let Err(err) = desktop::idle::start(&event_loop.handle()) {
+        warn!(%err, "verrouillage et veille automatiques indisponibles");
+    }
     if let Err(err) = desktop::widgets::start_weather(&event_loop.handle()) {
         warn!(%err, "météo du tableau de bord indisponible");
     }

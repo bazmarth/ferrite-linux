@@ -132,8 +132,7 @@ pub struct Ferrite {
     pub dock_fast_approach_until: std::cell::Cell<Option<Instant>>,
     /// Vitesse de descente lissée de la souris (pixels logiques par seconde).
     pub dock_descent_speed: std::cell::Cell<f64>,
-    /// Dock sorti gardé jusqu'à cet instant, et s'il était affiché à la dernière image.
-    pub dock_held_until: std::cell::Cell<Option<Instant>>,
+    /// Le Dock était-il affiché à la dernière image.
     pub dock_was_shown: std::cell::Cell<bool>,
     /// Menu d'une icône du Dock (clic droit) : application, choix, et position.
     pub dock_menu: Option<(
@@ -161,6 +160,8 @@ pub struct Ferrite {
     pub lock_picture: Option<crate::desktop::panels::LockPicture>,
     /// Mode nuit : réglages, forçage depuis le centre de contrôle et teinte de l'écran.
     pub night: crate::desktop::night::Night,
+    /// Inactivité : verrouillage et mise en veille automatiques.
+    pub idle: crate::desktop::idle::Idle,
     pub appearance: Appearance,
     pub accent: Accent,
     pub scroll_inverted: bool,
@@ -380,7 +381,6 @@ impl Ferrite {
             dock_pointer_motion_at: Default::default(),
             dock_fast_approach_until: Default::default(),
             dock_descent_speed: Default::default(),
-            dock_held_until: Default::default(),
             dock_was_shown: Default::default(),
             dock_menu: None,
             window_animations: Default::default(),
@@ -394,6 +394,7 @@ impl Ferrite {
             power_deadline: None,
             lock_picture: None,
             night: Default::default(),
+            idle: Default::default(),
             appearance: settings.appearance(),
             accent: settings.accent(),
             scroll_inverted: settings.scroll_inverted(),

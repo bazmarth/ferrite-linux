@@ -68,8 +68,6 @@ const DESCENT_SMOOTHING: f64 = 0.04;
 const DESCENT_PAUSE: Duration = Duration::from_millis(100);
 /// Temps laissé pour rejoindre le Dock après une approche rapide.
 pub(crate) const REVEAL_APPROACH_GRACE: Duration = Duration::from_millis(600);
-/// Un Dock sorti reste ce temps après que la souris l'a quitté.
-pub(crate) const REVEAL_HOLD: Duration = Duration::from_millis(1500);
 /// Plus grand pas d'une image à la suivante pour les glissements et fondus (30 images
 /// par seconde).
 const MAX_STEP: Duration = Duration::from_millis(33);
@@ -435,8 +433,8 @@ pub struct Visibility<'a> {
     pub config: DockConfig,
     /// Fond du Dock sorti, sans agrandissement.
     pub dock: Rectangle<f64, Logical>,
-    /// Le Dock est appelé : approche rapide vers son emplacement, ou souris dessus (puis
-    /// pendant `REVEAL_HOLD`) depuis qu'il est sorti.
+    /// Le Dock est appelé : approche rapide vers son emplacement, ou souris dessus depuis
+    /// qu'il est sorti.
     pub called: bool,
     /// Cadres des fenêtres affichées (barre de titre comprise).
     pub windows: &'a [Rectangle<i32, Logical>],

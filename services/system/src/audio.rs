@@ -102,6 +102,31 @@ pub fn set_default_sink(id: u32) -> Result<(), Error> {
     command::run("wpctl", &["set-default", &id.to_string()]).map(drop)
 }
 
+/// Sortie `bluez_output.AA_BB_…` d'un appareil Bluetooth, dans `pactl list short sinks`.
+pub fn parse_bluetooth_sink(sinks: &str, address: &str) -> Option<String> {
+    let wanted = format!("bluez_output.{}", address.replace(':', "_"));
+    sinks
+        .lines()
+        .filter_map(|line| line.split('\t').nth(1))
+        .find(|name| name.eq_ignore_ascii_case(&wanted) || name.starts_with(&format!("{wanted}.")))
+        .map(str::to_owned)
+}
+
+/// Un casque ou une enceinte qui vient de se connecter devient la sortie du son : sa
+/// sortie apparaît dans PipeWire une ou deux secondes après la connexion. Sans sortie
+/// audio (souris, clavier…), rien ne change.
+pub fn follow_bluetooth(address: &str) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(8);
+    while std::time::Instant::now() < deadline {
+        let sinks = command::run("pactl", &["list", "short", "sinks"]).unwrap_or_default();
+        if let Some(sink) = parse_bluetooth_sink(&sinks, address) {
+            let _ = command::run("pactl", &["set-default-sink", &sink]);
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(400));
+    }
+}
+
 /// Volume de l'entrée par défaut, de 0 à 100.
 pub fn input_volume() -> Option<u8> {
     let output = command::run("wpctl", &["get-volume", "@DEFAULT_AUDIO_SOURCE@"]).ok()?;
@@ -278,6 +303,17 @@ Video
             }
         );
         assert_eq!(sinks[1].name, "HDMI / DisplayPort");
+    }
+
+    #[test]
+    fn sortie_d_un_casque_bluetooth() {
+        let sinks = "51\talsa_output.pci-0000_00_1f.3.analog-stereo\tPipeWire\ts32le 2ch 48000Hz\tRUNNING\n\
+                     88\tbluez_output.B0_38_E2_60_C8_E4.1\tPipeWire\ts16le 2ch 48000Hz\tSUSPENDED\n";
+        assert_eq!(
+            parse_bluetooth_sink(sinks, "B0:38:E2:60:C8:E4").as_deref(),
+            Some("bluez_output.B0_38_E2_60_C8_E4.1")
+        );
+        assert_eq!(parse_bluetooth_sink(sinks, "AA:BB:CC:DD:EE:FF"), None);
     }
 
     #[test]

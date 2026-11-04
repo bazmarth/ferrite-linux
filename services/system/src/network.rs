@@ -187,6 +187,42 @@ pub fn parse_known_wifi(output: &str) -> Vec<KnownWifi> {
         .collect()
 }
 
+/// Mot de passe enregistré d'un réseau (clé WPA, ou clé WEP), lu par `nmcli -s`.
+/// NetworkManager ne le donne qu'à l'utilisateur de la session active.
+pub fn saved_password(name: &str) -> Result<String, Error> {
+    let output = command::run(
+        "nmcli",
+        &[
+            "-s",
+            "-g",
+            "802-11-wireless-security.psk,802-11-wireless-security.wep-key0",
+            "connection",
+            "show",
+            "id",
+            name,
+        ],
+    )?;
+    parse_saved_password(&output).ok_or_else(|| format!("Aucun mot de passe enregistré pour « {name} »"))
+}
+
+/// Première ligne non vide de `nmcli -g psk,wep-key0` (les `\:` sont des deux-points).
+pub fn parse_saved_password(output: &str) -> Option<String> {
+    output
+        .lines()
+        .map(|line| {
+            let mut text = String::with_capacity(line.len());
+            let mut characters = line.chars();
+            while let Some(character) = characters.next() {
+                match character {
+                    '\\' => text.extend(characters.next()),
+                    character => text.push(character),
+                }
+            }
+            text
+        })
+        .find(|line| !line.is_empty())
+}
+
 pub fn forget_wifi(name: &str) -> Result<(), Error> {
     command::run("nmcli", &["connection", "delete", "id", name]).map(drop)
 }
@@ -441,6 +477,16 @@ pub fn split_terse(line: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mot_de_passe_enregistre() {
+        assert_eq!(
+            parse_saved_password("ab\\:c\\\\d\n\n").as_deref(),
+            Some("ab:c\\d")
+        );
+        assert_eq!(parse_saved_password("\nclefwep\n").as_deref(), Some("clefwep"));
+        assert_eq!(parse_saved_password("\n\n"), None);
+    }
 
     #[test]
     fn options_d_une_connexion() {

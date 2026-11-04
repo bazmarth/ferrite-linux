@@ -114,19 +114,6 @@ fn set_device(dir: &std::path::Path, value: u64) -> Result<(), Error> {
     .map_err(|error| format!("Luminosité refusée ({name}) : {error}"))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn valeurs_brutes_et_ordre_des_retroeclairages() {
-        assert_eq!(raw_value(50, 96000), 48000);
-        assert_eq!(raw_value(5, 10), 1);
-        assert_eq!(raw_value(0, 255), 1);
-        assert!(type_rank("raw") < type_rank("firmware"));
-    }
-}
-
 /// Rétroéclairage du clavier (`/sys/class/leds/*kbd_backlight`) : niveau et maximum.
 /// `None` sans clavier rétroéclairé.
 pub fn keyboard_light() -> Option<(u8, u8)> {
@@ -174,4 +161,17 @@ pub fn set_keyboard_light(level: u8) -> Result<(), Error> {
         ],
     )
     .map(drop)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn valeurs_brutes_et_ordre_des_retroeclairages() {
+        assert_eq!(raw_value(50, 96000), 48000);
+        assert_eq!(raw_value(5, 10), 1);
+        assert_eq!(raw_value(0, 255), 1);
+        assert!(type_rank("raw") < type_rank("firmware"));
+    }
 }

@@ -74,6 +74,10 @@ pub enum Event {
     WifiList(Vec<network::WifiNetwork>, Vec<String>),
     BluetoothList(Vec<bluetooth::Device>),
     BluetoothScanDone,
+    /// Fin d'une connexion ou d'une déconnexion demandée depuis le panneau.
+    BluetoothDone,
+    /// Mot de passe enregistré d'un réseau, demandé par l'œil de sa ligne.
+    WifiPassword(String, Result<String, String>),
     Dock(DockConfig),
     Theme(Appearance, Accent),
     ScrollInverted(bool),
@@ -82,6 +86,11 @@ pub enum Event {
     DockApps(Option<Vec<String>>, Vec<String>),
     Applications(Vec<DesktopEntry>),
     PowerAccepted,
+    /// Réglages du mode nuit et ville (pour le lever et le coucher du soleil).
+    Night(
+        ferrite_system::night::NightSettings,
+        ferrite_system::weather::Place,
+    ),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -173,6 +182,8 @@ pub fn start(handle: &LoopHandle<'static, Ferrite>) -> Result<SystemLink, String
         .insert_source(channel, |event, _, state| {
             if let channel::Event::Msg(event) = event {
                 state.on_system_event(event);
+                // Les essais de rendu s'espacent au repos : on prévient tout de suite.
+                state.request_redraw();
             }
         })
         .map_err(|err| format!("canal système : {err}"))?;
@@ -253,6 +264,11 @@ fn worker(receiver: mpsc::Receiver<Change>, events: channel::Sender<Event>, nest
                     publish_color_scheme(dark);
                 }
             }
+            let night = ferrite_system::night::NightSettings::load(&settings);
+            let place = ferrite_system::weather::Place::from_settings(&settings);
+            if events.send(Event::Night(night, place)).is_err() {
+                return;
+            }
             let scroll_inverted = settings.scroll_inverted();
             if known_scroll_inverted != Some(scroll_inverted) {
                 known_scroll_inverted = Some(scroll_inverted);
@@ -301,7 +317,8 @@ fn worker(receiver: mpsc::Receiver<Change>, events: channel::Sender<Event>, nest
         for change in changes {
             let result = apply(change);
             let event = match (change, result) {
-                (Change::Power(_), Ok(())) => Event::PowerAccepted,
+                // La veille laisse le bureau ouvert ; l'arrêt et le redémarrage le ferment.
+                (Change::Power(PowerAction::PowerOff | PowerAction::Restart), Ok(())) => Event::PowerAccepted,
                 (_, Ok(())) => continue,
                 (_, Err(message)) => {
                     warn!(?change, %message, "réglage système refusé");
@@ -346,6 +363,7 @@ fn apply(change: Change) -> Result<(), String> {
             &[match power {
                 PowerAction::PowerOff => "poweroff",
                 PowerAction::Restart => "reboot",
+                PowerAction::Sleep => "suspend",
                 // Gérées par le bureau lui-même (voir `PowerAction::exit_code`).
                 PowerAction::LogOut | PowerAction::RelaunchDesktop => return Ok(()),
             }],
@@ -377,6 +395,11 @@ impl Ferrite {
             }
             Event::BluetoothList(devices) => self.controls.devices = devices,
             Event::BluetoothScanDone => self.controls.scanning = false,
+            Event::BluetoothDone => self.controls.busy = None,
+            Event::WifiPassword(ssid, result) => match result {
+                Ok(password) => self.controls.saved_password = Some((ssid, password)),
+                Err(message) => self.system_error = Some(message),
+            },
             Event::Dock(config) => {
                 self.dock_config = config;
                 if config.tiling != self.tiling {
@@ -388,6 +411,13 @@ impl Ferrite {
                 self.accent = accent;
             }
             Event::ScrollInverted(inverted) => self.scroll_inverted = inverted,
+            Event::Night(night, place) => {
+                if self.night.settings != night || self.night.place.as_ref() != Some(&place) {
+                    self.night.settings = night;
+                    self.night.place = Some(place);
+                    self.night.checked = None;
+                }
+            }
             Event::Wallpaper(wallpaper) => self.wallpaper = wallpaper,
             Event::DockApps(pinned, multi) => {
                 self.dock_pinned = pinned;

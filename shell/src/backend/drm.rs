@@ -56,6 +56,10 @@ type Compositor =
 
 /// Délai entre deux essais de rendu quand rien n'a changé à l'écran (environ 60 Hz).
 const IDLE_REDRAW: Duration = Duration::from_millis(16);
+/// Après une demi-seconde sans changement, les essais au repos s'espacent : commits des
+/// clients, entrées et événements du bureau déclenchent de toute façon un rendu immédiat.
+const IDLE_STREAK: u32 = 30;
+const IDLE_SLOW: Duration = Duration::from_millis(100);
 /// Formats des tampons d'affichage, par ordre de préférence.
 const COLOR_FORMATS: [Fourcc; 2] = [Fourcc::Argb8888, Fourcc::Abgr8888];
 
@@ -72,6 +76,13 @@ struct Drm {
     /// Rendu déjà programmé, et s'il s'agit d'un essai au repos (`IDLE_REDRAW`), qu'un
     /// changement à l'écran peut avancer.
     render_scheduled: Option<(RegistrationToken, bool)>,
+    /// Contrôleur de l'écran, taille de sa table de gamma et gains déjà appliqués (mode nuit).
+    crtc: crtc::Handle,
+    gamma_size: usize,
+    gamma_applied: Option<(f64, f64, f64)>,
+    /// Essais au repos de suite sans rien à redessiner : au-delà de [`IDLE_STREAK`], ils
+    /// s'espacent à [`IDLE_SLOW`].
+    idle_streak: u32,
 }
 
 pub fn init(
@@ -170,7 +181,13 @@ pub fn init(
     state.publish_dmabuf(&display, dmabuf_formats);
     let assets = RenderAssets::new(&mut renderer)?;
 
+    let gamma_size = device
+        .get_crtc(crtc)
+        .map_or(0, |info| info.gamma_length() as usize);
     let drm = Rc::new(RefCell::new(Drm {
+        crtc,
+        gamma_size,
+        gamma_applied: None,
         device,
         renderer,
         compositor,
@@ -179,6 +196,7 @@ pub fn init(
         active: true,
         frame_pending: false,
         render_scheduled: None,
+        idle_streak: 0,
     }));
     let handle = event_loop.handle();
 
@@ -225,6 +243,14 @@ pub fn init(
             if let InputEvent::DeviceAdded { device } = &mut event {
                 configure_input_device(device);
             }
+            // Gestes : les déplacements bruts, pour que la page suive les doigts de façon
+            // régulière (l'accélération de libinput dépend de la vitesse).
+            if let InputEvent::GestureSwipeUpdate { event } = &event {
+                use smithay::reexports::input::event::gesture::GestureEventCoordinates;
+                state.swipe_update(event.dx_unaccelerated(), event.dy_unaccelerated());
+                state.request_redraw();
+                return;
+            }
             state.process_input_event(event);
             state.request_redraw();
         },
@@ -257,6 +283,8 @@ pub fn init(
                     }
                     drm.active = true;
                     drm.frame_pending = false;
+                    // Un autre terminal a pu changer la table de gamma : on la réapplique.
+                    drm.gamma_applied = None;
                 }
                 schedule_render(&drm, &loop_handle, Duration::ZERO);
             }
@@ -348,15 +376,23 @@ fn schedule_render(drm: &Rc<RefCell<Drm>>, handle: &LoopHandle<'static, Ferrite>
         let idle = {
             let mut drm = drm.borrow_mut();
             drm.render_scheduled = None;
-            if !drm.active || drm.frame_pending {
-                false
+            let idle = drm.active && !drm.frame_pending && !render(&mut drm, state);
+            drm.idle_streak = if idle {
+                drm.idle_streak.saturating_add(1)
             } else {
-                !render(&mut drm, state)
-            }
+                0
+            };
+            idle.then_some(drm.idle_streak)
         };
-        // Rien n'a changé : on réessaie un peu plus tard. Sinon le VBlank relancera.
-        if idle {
-            schedule_render(drm, &loop_handle, IDLE_REDRAW);
+        // Rien n'a changé : on réessaie un peu plus tard (de moins en moins souvent). Sinon
+        // le VBlank relancera.
+        if let Some(streak) = idle {
+            let delay = if streak > IDLE_STREAK {
+                IDLE_SLOW
+            } else {
+                IDLE_REDRAW
+            };
+            schedule_render(drm, &loop_handle, delay);
         }
         TimeoutAction::Drop
     });
@@ -366,8 +402,32 @@ fn schedule_render(drm: &Rc<RefCell<Drm>>, handle: &LoopHandle<'static, Ferrite>
     }
 }
 
+/// Mode nuit : table de gamma de l'écran multipliée par les gains (rouge, vert, bleu).
+fn apply_night(drm: &mut Drm, gains: (f64, f64, f64)) {
+    // Gains pas encore calculés (premier tour) : écran neutre.
+    let gains = if gains == (0.0, 0.0, 0.0) {
+        (1.0, 1.0, 1.0)
+    } else {
+        gains
+    };
+    if drm.gamma_size == 0 || drm.gamma_applied == Some(gains) {
+        return;
+    }
+    let ramp = |gain| crate::desktop::night::gamma_ramp(drm.gamma_size, gain);
+    let (red, green, blue) = (ramp(gains.0), ramp(gains.1), ramp(gains.2));
+    match drm.device.set_gamma(drm.crtc, &red, &green, &blue) {
+        Ok(()) => drm.gamma_applied = Some(gains),
+        Err(err) => {
+            warn!("mode nuit : table de gamma refusée ({err})");
+            // Inutile de réessayer à chaque image.
+            drm.gamma_size = 0;
+        }
+    }
+}
+
 /// Dessine l'écran ; renvoie vrai si une nouvelle image a été envoyée.
 fn render(drm: &mut Drm, state: &mut Ferrite) -> bool {
+    apply_night(drm, state.night.gains);
     let Drm {
         renderer,
         compositor,
@@ -378,11 +438,13 @@ fn render(drm: &mut Drm, state: &mut Ferrite) -> bool {
     } = drm;
     state.run_genie_demo();
     render::take_screenshot(renderer, state, assets, output);
+    render::serve_screencopy(renderer, state, assets, output);
     let elements = render::output_elements(renderer, state, assets, output, true);
     let sent = match compositor.render_frame(renderer, &elements, [0.0, 0.0, 0.0, 1.0], FrameFlags::DEFAULT) {
         Ok(result) if !result.is_empty => match compositor.queue_frame(()) {
             Ok(()) => {
                 *frame_pending = true;
+                render::profile::sent();
                 true
             }
             Err(err) => {

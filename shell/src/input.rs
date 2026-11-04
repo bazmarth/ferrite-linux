@@ -12,6 +12,9 @@ use smithay::{
     },
     utils::{Logical, Point, SERIAL_COUNTER, Serial},
 };
+use std::time::Duration;
+
+use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use tracing::info;
 
 use crate::{
@@ -30,12 +33,15 @@ pub struct WidgetDrag {
     pub start: crate::desktop::widgets::WidgetSlot,
 }
 
+/// Dialogue d'arrêt : l'action choisie se fait seule au bout de ce délai (maquette).
+const POWER_COUNTDOWN: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// Molette à accumuler pour changer de mois ou faire défiler les tâches d'une ligne.
 const WIDGET_SCROLL_STEP: f64 = 12.0;
 
 /// Raccourcis gérés par le compositeur lui-même (non transmis aux applications).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Action {
+pub(crate) enum Action {
     /// Ctrl+Alt+Retour arrière : quitte ferrite-shell.
     Quit,
     /// Ctrl+Alt+M : remet à l'écran la dernière fenêtre réduite (en attendant le Dock).
@@ -128,8 +134,31 @@ enum Action {
     ScreenshotFull,
     /// Maj+Impr. écran : zone choisie à la souris.
     ScreenshotRegion,
+    /// Super+Échap : dialogue d'arrêt ; dans le dialogue, Entrée et ← →.
+    PowerDialog,
+    PowerConfirm,
+    PowerStep(i32),
     /// Touche de fonction : son, micro, luminosité, mode avion, calculatrice…
     Function(crate::desktop::function_keys::FunctionKey),
+}
+
+impl Action {
+    /// Saisie et effacement dans les champs du bureau : maintenue, la touche se répète.
+    fn repeats(self) -> bool {
+        matches!(
+            self,
+            Action::LauncherType(_)
+                | Action::LauncherErase
+                | Action::DashboardType(_)
+                | Action::DashboardErase
+                | Action::PasswordType(_)
+                | Action::PasswordErase
+                | Action::LockType(_)
+                | Action::LockErase
+                | Action::ClipboardType(_)
+                | Action::ClipboardMove(_)
+        ) || matches!(self, Action::Function(key) if key.repeats())
+    }
 }
 
 /// Codes de touche XKB (indépendants de la disposition) : rangée 1 à 9, et la touche à gauche
@@ -152,6 +181,8 @@ fn scroll_direction(source: AxisSource, inverted: bool) -> i32 {
 
 impl Ferrite {
     pub fn process_input_event<I: InputBackend>(&mut self, event: InputEvent<I>) {
+        // Toute entrée est une activité (voir `protocols::idle`).
+        self.idle_notifier_state.notify_activity(&self.seat);
         match event {
             InputEvent::Keyboard { event } => self.on_key::<I>(event),
             InputEvent::PointerMotionAbsolute { event } => {
@@ -218,12 +249,36 @@ impl Ferrite {
             |state, modifiers, keysym| {
                 let sym = keysym.modified_sym();
                 let code = keysym.raw_code().raw();
+                // Verrouillé par un client : tout va à lui, sauf le changement de terminal.
+                if state.session_lock.is_some() {
+                    let raw = sym.raw();
+                    if pressed
+                        && modifiers.ctrl
+                        && modifiers.alt
+                        && (SWITCH_VT_FIRST..=SWITCH_VT_LAST).contains(&raw)
+                    {
+                        return FilterResult::Intercept(Action::SwitchVt((raw - SWITCH_VT_FIRST + 1) as i32));
+                    }
+                    return FilterResult::Forward;
+                }
                 // Touches de fonction : réglages même verrouillé, applications sinon.
                 if pressed
                     && let Some(key) = crate::desktop::function_keys::FunctionKey::from_keysym(sym)
                     && (state.lock.is_none() || key.works_locked())
                 {
                     return FilterResult::Intercept(Action::Function(key));
+                }
+                // Dialogue d'arrêt : Entrée confirme, Échap annule, ← et → changent d'action.
+                if pressed && state.pending_power.is_some() {
+                    match sym {
+                        Keysym::Return | Keysym::KP_Enter => {
+                            return FilterResult::Intercept(Action::PowerConfirm);
+                        }
+                        Keysym::Left => return FilterResult::Intercept(Action::PowerStep(-1)),
+                        Keysym::Right => return FilterResult::Intercept(Action::PowerStep(1)),
+                        Keysym::Escape => return FilterResult::Intercept(Action::CloseOverlay),
+                        _ => {}
+                    }
                 }
                 // Verrouillé : tout reste ici, sauf le changement de terminal virtuel.
                 if state.lock.is_some() {
@@ -341,6 +396,7 @@ impl Ferrite {
                         Keysym::m | Keysym::M => return FilterResult::Intercept(Action::MinimizeWindow),
                         Keysym::h | Keysym::H => return FilterResult::Intercept(Action::HideApp),
                         Keysym::space => return FilterResult::Intercept(Action::ToggleLauncher),
+                        Keysym::Escape => return FilterResult::Intercept(Action::PowerDialog),
                         Keysym::n | Keysym::N => return FilterResult::Intercept(Action::ToggleNotifications),
                         Keysym::a | Keysym::A => return FilterResult::Intercept(Action::ToggleControls),
                         Keysym::s | Keysym::S => return FilterResult::Intercept(Action::ToggleOverview),
@@ -474,6 +530,52 @@ impl Ferrite {
                 }
             },
         );
+        self.update_key_repeat(event.key_code().raw(), pressed, action);
+        self.run_key_action(action);
+        // Le sélecteur se referme au relâchement d'Alt, que le client voit aussi.
+        if !pressed && self.switcher.is_some() && !keyboard.modifier_state().alt {
+            self.switcher_commit();
+        }
+    }
+
+    /// Une touche maintenue dans un champ du bureau (recherche, note, tâche, mot de passe)
+    /// se répète comme dans les applications : après un délai, puis à cadence régulière.
+    /// Les applications répètent elles-mêmes ; ces champs-là sont dessinés par le shell.
+    fn update_key_repeat(&mut self, code: u32, pressed: bool, action: Option<Action>) {
+        if !pressed {
+            if self.key_repeat.is_some_and(|(held, _, _)| held == code) {
+                self.key_repeat = None;
+            }
+            return;
+        }
+        self.key_repeat = None;
+        let Some(action) = action.filter(|action| action.repeats()) else {
+            return;
+        };
+        self.key_repeat_generation = self.key_repeat_generation.wrapping_add(1);
+        let generation = self.key_repeat_generation;
+        self.key_repeat = Some((code, action, generation));
+        // Mêmes délai et cadence que ceux annoncés aux applications.
+        let rate = u64::try_from(crate::state::KEY_REPEAT_RATE).unwrap_or(25).max(1);
+        let delay = u64::try_from(crate::state::KEY_REPEAT_DELAY).unwrap_or(600);
+        let interval = Duration::from_millis(1000 / rate);
+        let timer = Timer::from_duration(Duration::from_millis(delay));
+        let inserted = self
+            .loop_handle
+            .insert_source(timer, move |_, _, state| match state.key_repeat {
+                Some((_, action, current)) if current == generation => {
+                    state.run_key_action(Some(action));
+                    state.request_redraw();
+                    TimeoutAction::ToDuration(interval)
+                }
+                _ => TimeoutAction::Drop,
+            });
+        if let Err(error) = inserted {
+            tracing::warn!(%error, "répétition des touches indisponible");
+        }
+    }
+
+    fn run_key_action(&mut self, action: Option<Action>) {
         match action {
             Some(Action::Quit) => {
                 info!("Ctrl+Alt+Retour arrière : arrêt de ferrite-shell");
@@ -540,6 +642,9 @@ impl Ferrite {
                     {
                         tracing::warn!(%error, "tâches du tableau de bord non enregistrées");
                     }
+                }
+                Some(crate::desktop::widgets::DashboardEdit::ListName(_)) => {
+                    self.stop_dashboard_editing();
                 }
                 None => {}
             },
@@ -659,11 +764,23 @@ impl Ferrite {
                 self.region_select = Some(crate::render::capture::RegionSelect::default());
             }
             Some(Action::Function(key)) => self.on_function_key(key),
+            Some(Action::PowerDialog) => self.open_power_dialog(crate::state::PowerAction::PowerOff),
+            Some(Action::PowerConfirm) => {
+                if let Some(power) = self.pending_power {
+                    self.handle_desktop_action(DesktopAction::ConfirmPower(power));
+                }
+            }
+            Some(Action::PowerStep(step)) => {
+                use crate::state::PowerAction;
+                let choices = [PowerAction::PowerOff, PowerAction::Restart, PowerAction::Sleep];
+                let current = self
+                    .pending_power
+                    .and_then(|power| choices.iter().position(|choice| *choice == power))
+                    .unwrap_or(0) as i32;
+                let next = (current + step).rem_euclid(choices.len() as i32) as usize;
+                self.open_power_dialog(choices[next]);
+            }
             None => {}
-        }
-        // Le sélecteur se referme au relâchement d'Alt, que le client voit aussi.
-        if !pressed && self.switcher.is_some() && !keyboard.modifier_state().alt {
-            self.switcher_commit();
         }
     }
 
@@ -788,6 +905,18 @@ impl Ferrite {
         let Some(pointer) = self.seat.get_pointer() else {
             return;
         };
+        // Verrouillé par un client : seul son écran suit le pointeur.
+        if self.session_lock.is_some() {
+            let under = self.lock_surface_under(location);
+            let motion = MotionEvent {
+                location,
+                serial: SERIAL_COUNTER.next_serial(),
+                time,
+            };
+            pointer.motion(self, under, &motion);
+            pointer.frame(self);
+            return;
+        }
         let previous = pointer.current_location();
         let now = std::time::Instant::now();
         let elapsed = self
@@ -866,6 +995,23 @@ impl Ferrite {
         }
         let location = pointer.current_location();
 
+        // Verrouilleur externe, ou calque au-dessus du bureau (lanceur, barre d'un autre
+        // bureau) : le clic lui revient directement.
+        let layer = self.layer_surface_under(
+            location,
+            &[
+                smithay::wayland::shell::wlr_layer::Layer::Overlay,
+                smithay::wayland::shell::wlr_layer::Layer::Top,
+            ],
+        );
+        if self.session_lock.is_some() || (self.lock.is_none() && layer.is_some()) {
+            if let Some((surface, _)) = layer.filter(|_| button.state == ButtonState::Pressed) {
+                self.focus_layer_on_click(&surface);
+            }
+            pointer.button(self, &button);
+            pointer.frame(self);
+            return;
+        }
         if self.lock.is_some() {
             if button.state == ButtonState::Pressed && button.button == BTN_LEFT {
                 self.on_lock_click(location);
@@ -1035,6 +1181,15 @@ impl Ferrite {
                         | DesktopAction::DashboardDeleteTask(_)
                         | DesktopAction::DashboardMonth(_)
                         | DesktopAction::DashboardNoteStep(_)
+                        | DesktopAction::DashboardApp(_)
+                        | DesktopAction::DashboardMedia(_)
+                        | DesktopAction::DashboardOpenMusic
+                        | DesktopAction::DashboardShowNote(_)
+                        | DesktopAction::DashboardToggleCheck(_, _)
+                        | DesktopAction::DashboardDeleteNote(_)
+                        | DesktopAction::DashboardList(_)
+                        | DesktopAction::DashboardAddList
+                        | DesktopAction::DashboardDeleteList(_)
                         | DesktopAction::DashboardConsume
                 ) || widgets_ahead
                     || self.hit_test(location).is_none()
@@ -1148,7 +1303,7 @@ impl Ferrite {
                 self.dashboard_editing = Some(crate::desktop::widgets::DashboardEdit::NewTask);
             }
             DesktopAction::DashboardToggleTask(index) => {
-                if let Some(task) = self.dashboard.tasks.get_mut(index) {
+                if let Some(task) = self.dashboard.tasks_mut().get_mut(index) {
                     task.done = !task.done;
                     if let Err(error) = self.dashboard.save() {
                         tracing::warn!(%error, "tâches du tableau de bord non enregistrées");
@@ -1156,7 +1311,7 @@ impl Ferrite {
                 }
             }
             DesktopAction::DashboardCyclePriority(index) => {
-                if let Some(task) = self.dashboard.tasks.get_mut(index) {
+                if let Some(task) = self.dashboard.tasks_mut().get_mut(index) {
                     task.priority = task.priority.next();
                     if let Err(error) = self.dashboard.save() {
                         tracing::warn!(%error, "tâches du tableau de bord non enregistrées");
@@ -1164,12 +1319,42 @@ impl Ferrite {
                 }
             }
             DesktopAction::DashboardDeleteTask(index) => {
-                if index < self.dashboard.tasks.len() {
-                    self.dashboard.tasks.remove(index);
-                    if let Err(error) = self.dashboard.save() {
-                        tracing::warn!(%error, "tâche du tableau de bord non supprimée");
-                    }
+                self.stop_dashboard_editing();
+                if self.dashboard.remove_task(index) {
+                    self.save_dashboard();
                 }
+            }
+            DesktopAction::DashboardShowNote(index) => {
+                self.stop_dashboard_editing();
+                self.dashboard.note_shown = index.min(self.dashboard.notes.len().saturating_sub(1));
+                self.save_dashboard();
+            }
+            DesktopAction::DashboardToggleCheck(note, line) => {
+                self.stop_dashboard_editing();
+                let now = crate::desktop::widgets::now_seconds();
+                if self.dashboard.toggle_check(note, line, now) {
+                    self.save_dashboard();
+                }
+            }
+            DesktopAction::DashboardDeleteNote(index) => {
+                self.dashboard_editing = None;
+                self.dashboard.remove_note(index);
+                self.save_dashboard();
+            }
+            DesktopAction::DashboardList(index) => {
+                self.stop_dashboard_editing();
+                self.dashboard.show_list(index);
+                self.save_dashboard();
+            }
+            DesktopAction::DashboardAddList => {
+                self.stop_dashboard_editing();
+                self.dashboard_editing = self.dashboard.add_list();
+                self.save_dashboard();
+            }
+            DesktopAction::DashboardDeleteList(index) => {
+                self.dashboard_editing = None;
+                self.dashboard.remove_list(index);
+                self.save_dashboard();
             }
             DesktopAction::DashboardMonth(delta) => {
                 self.dashboard.month_offset = (self.dashboard.month_offset + delta).clamp(-120, 120);
@@ -1185,10 +1370,12 @@ impl Ferrite {
             DesktopAction::WidgetsDone => self.stop_widgets_overlay(),
             DesktopAction::WidgetAdd(kind) => {
                 self.dashboard.add_widget(kind);
+                self.refresh_media_watching();
                 self.save_dashboard();
             }
             DesktopAction::WidgetRemove(index) => {
                 self.dashboard.remove_widget(index);
+                self.refresh_media_watching();
                 self.save_dashboard();
             }
             DesktopAction::WidgetsReset => {
@@ -1225,6 +1412,16 @@ impl Ferrite {
                 self.stop_dashboard_editing();
                 self.open_recent_app(index);
             }
+            DesktopAction::DashboardMedia(command) => {
+                self.stop_dashboard_editing();
+                self.lock_media(command);
+            }
+            DesktopAction::DashboardOpenMusic => {
+                self.stop_dashboard_editing();
+                self.activate_app(&crate::desktop::apps::AppKey::Builtin(
+                    crate::desktop::apps::App::Music,
+                ));
+            }
             DesktopAction::GoToPage(page) => self.go_to_page(page),
             DesktopAction::LaunchTile(index) => {
                 let key = self
@@ -1257,10 +1454,8 @@ impl Ferrite {
             }
             DesktopAction::SetVolume(value) => self.request_system_change(Change::Volume(value)),
             DesktopAction::SetBrightness(value) => self.request_system_change(Change::Brightness(value)),
-            DesktopAction::RequestPower(power) => {
-                self.popover = None;
-                self.pending_power = Some(power);
-            }
+            DesktopAction::RequestPower(power) => self.open_power_dialog(power),
+            DesktopAction::PowerChoose(power) => self.open_power_dialog(power),
             DesktopAction::CancelPower => self.pending_power = None,
             DesktopAction::ConfirmPower(power) => {
                 self.pending_power = None;
@@ -1300,6 +1495,11 @@ impl Ferrite {
                 ));
             }
             DesktopAction::ToggleKeyboardLayout => self.toggle_keyboard_layout(),
+            DesktopAction::ToggleNight => self.toggle_night(),
+            DesktopAction::OpenNightSettings => {
+                self.popover = None;
+                crate::desktop::apps::App::open_settings_page("ecrans", &self.client_environment());
+            }
             DesktopAction::ToggleAirplane => {
                 let on = self.system.airplane != Some(true);
                 self.request_system_change(Change::Airplane(on));
@@ -1312,6 +1512,8 @@ impl Ferrite {
             }
             DesktopAction::ControlsPage(page) => self.show_controls_page(page),
             DesktopAction::NetworkJoin(index) => self.join_network(index),
+            DesktopAction::NetworkPassword(index) => self.show_network_password(index),
+            DesktopAction::PasswordReveal => self.password_reveal(),
             DesktopAction::PasswordCancel => self.password_cancel(),
             DesktopAction::PasswordSubmit => self.password_submit(),
             DesktopAction::DeviceAction(index) => self.device_action(index),
@@ -1331,14 +1533,53 @@ impl Ferrite {
     }
 
     /// Super+W : les widgets passent devant les fenêtres, ou y retournent.
+    /// Ouvre (ou garde ouvert) le dialogue d'arrêt sur `power`, compte à rebours relancé.
+    pub(crate) fn open_power_dialog(&mut self, power: crate::state::PowerAction) {
+        self.popover = None;
+        self.pending_power = Some(power);
+        self.power_deadline = Some(std::time::Instant::now() + POWER_COUNTDOWN);
+    }
+
+    /// Compte à rebours écoulé : l'action choisie se fait seule.
+    pub(crate) fn power_tick(&mut self) {
+        if let (Some(power), Some(deadline)) = (self.pending_power, self.power_deadline)
+            && std::time::Instant::now() >= deadline
+        {
+            self.power_deadline = None;
+            self.handle_desktop_action(DesktopAction::ConfirmPower(power));
+        }
+    }
+
+    /// Applications ouvertes (fenêtres affichées, réduites ou sur un autre bureau).
+    pub(crate) fn open_app_count(&self) -> usize {
+        let mut apps: Vec<crate::desktop::apps::AppKey> = self
+            .space
+            .elements()
+            .chain(self.minimized.iter().map(|minimized| &minimized.window))
+            .chain(self.workspaces.all_parked().map(|parked| &parked.window))
+            .filter_map(|window| self.window_app(window))
+            .collect();
+        apps.sort_by_key(crate::desktop::apps::AppKey::token);
+        apps.dedup();
+        apps.len()
+    }
+
+    /// Super+W : va au bureau des widgets (le 0), puis revient au bureau quitté.
     fn toggle_widgets_front(&mut self) {
         if self.widgets_edit {
             return;
         }
-        self.widgets_front = !self.widgets_front;
         self.popover = None;
-        if !self.widgets_front {
+        let current = self.workspaces.current();
+        if current == 0 {
             self.stop_dashboard_editing();
+            let back = self.page_before_widgets.take().unwrap_or(1);
+            if self.workspaces.page_count() > back {
+                self.go_to_page(back);
+            }
+        } else {
+            self.page_before_widgets = Some(current);
+            self.go_to_page(0);
         }
     }
 
@@ -1404,7 +1645,7 @@ impl Ferrite {
             LockAction::ToggleTheme => self.lock_toggle_theme(),
             LockAction::Wall(wall) => self.lock_set_wall(wall),
             LockAction::Keyboard => self.toggle_keyboard_layout(),
-            LockAction::Power => self.pending_power = Some(crate::state::PowerAction::PowerOff),
+            LockAction::Power => self.open_power_dialog(crate::state::PowerAction::PowerOff),
             LockAction::Media(command) => self.lock_media(command),
             LockAction::Consume => {}
         }
@@ -1441,7 +1682,7 @@ impl Ferrite {
                 self.handle_desktop_action(DesktopAction::DashboardMonth(step));
             }
             Some(crate::desktop::widgets::WidgetKind::Tasks) => {
-                let limit = panels::tasks_scroll_limit(self.dashboard.tasks.len()) as i32;
+                let limit = panels::tasks_scroll_limit(self.dashboard.tasks().len()) as i32;
                 let scroll = self.dashboard.tasks_scroll as i32 + step;
                 self.dashboard.tasks_scroll = scroll.clamp(0, limit) as usize;
             }
@@ -1451,9 +1692,13 @@ impl Ferrite {
     }
 
     pub fn stop_dashboard_editing(&mut self) -> Option<usize> {
+        let naming = matches!(
+            self.dashboard_editing,
+            Some(crate::desktop::widgets::DashboardEdit::ListName(_))
+        );
         let removed = self.dashboard.finish_editing(self.dashboard_editing);
         self.dashboard_editing = None;
-        if removed.is_some()
+        if (removed.is_some() || naming)
             && let Err(error) = self.dashboard.save()
         {
             tracing::warn!(%error, "note du tableau de bord non supprimée");

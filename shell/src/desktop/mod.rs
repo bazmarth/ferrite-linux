@@ -7,6 +7,7 @@ pub mod file_drag;
 pub mod function_keys;
 pub mod launch;
 pub mod lock;
+pub mod night;
 pub mod notifications;
 pub mod panels;
 pub mod svg;

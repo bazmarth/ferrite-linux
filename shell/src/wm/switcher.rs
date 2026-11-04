@@ -197,9 +197,11 @@ impl Ferrite {
     }
 
     /// Super+Maj+N : envoie la fenêtre active sur la page `space` (l'espace N est la page N-1).
+    /// Super+Maj+1…9 : le bureau 0 étant celui des widgets, Super+Maj+1 vise le bureau 1.
     pub fn send_active_to_space(&mut self, space: usize) {
         if let Some(window) = self.active_window() {
-            self.move_window_to_page(&window, space);
+            self.workspaces.ensure_page(space + 1);
+            self.move_window_to_page(&window, space + 1);
         }
     }
 
@@ -257,6 +259,52 @@ impl Ferrite {
         if order != self.tile_order {
             self.tile_order = order;
             self.apply_tiling();
+        }
+    }
+
+    /// À chaque tour de boucle : si la zone utile a changé, les fenêtres en plein écran,
+    /// agrandies ou rangées par le tuilage reprennent toute la place.
+    pub fn refit_to_area(&mut self) {
+        let area = self.usable_area();
+        if area == self.last_usable_area {
+            return;
+        }
+        let first = self.last_usable_area.is_none();
+        self.last_usable_area = area;
+        let (Some(area), Some(screen)) = (area, self.screen_area()) else {
+            return;
+        };
+        if first {
+            return;
+        }
+        // Replacer une fenêtre la remonte : l'ordre d'empilement est rétabli à la fin.
+        let windows: Vec<Window> = self.space.elements().cloned().collect();
+        if self.tiling && !self.tile_order.is_empty() {
+            self.apply_tiling();
+        }
+        for window in windows.iter().cloned() {
+            if self.tiling && self.tile_order.contains(&window) {
+                continue;
+            }
+            let fullscreen = crate::wm::is_fullscreen(&window);
+            if !fullscreen && !crate::wm::is_maximized(&window) {
+                continue;
+            }
+            let content = if fullscreen {
+                screen
+            } else {
+                crate::wm::maximized_content(area, crate::wm::is_server_decorated(&window))
+            };
+            if window.x11_surface().is_some() {
+                self.place_x11(&window, content);
+            } else if let Some(toplevel) = window.toplevel() {
+                toplevel.with_pending_state(|state| state.size = Some(content.size));
+                toplevel.send_pending_configure();
+            }
+            self.space.map_element(window, content.loc, false);
+        }
+        for window in &windows {
+            self.space.raise_element(window, false);
         }
     }
 

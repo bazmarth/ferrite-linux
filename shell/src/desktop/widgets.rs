@@ -40,10 +40,16 @@ pub enum WidgetKind {
     Quote,
     /// Mini-Dock des applications récemment utilisées.
     Apps,
+    /// Lecture en cours (tout lecteur MPRIS : Musique, navigateur…).
+    Music,
+    /// Widgets Notes de la maquette : écrire une note, dernières notes, liste à cocher.
+    NoteQuick,
+    NotesRecent,
+    NotePinned,
 }
 
 impl WidgetKind {
-    pub const ALL: [WidgetKind; 7] = [
+    pub const ALL: [WidgetKind; 11] = [
         WidgetKind::Clock,
         WidgetKind::Calendar,
         WidgetKind::System,
@@ -51,6 +57,10 @@ impl WidgetKind {
         WidgetKind::Notes,
         WidgetKind::Quote,
         WidgetKind::Apps,
+        WidgetKind::Music,
+        WidgetKind::NoteQuick,
+        WidgetKind::NotesRecent,
+        WidgetKind::NotePinned,
     ];
 
     pub fn label(self) -> &'static str {
@@ -62,6 +72,10 @@ impl WidgetKind {
             WidgetKind::Notes => "Notes",
             WidgetKind::Quote => "Citation",
             WidgetKind::Apps => "Applications",
+            WidgetKind::Music => "Musique",
+            WidgetKind::NoteQuick => "Note rapide",
+            WidgetKind::NotesRecent => "Notes récentes",
+            WidgetKind::NotePinned => "Note épinglée",
         }
     }
 
@@ -74,6 +88,10 @@ impl WidgetKind {
             WidgetKind::Notes => "notes",
             WidgetKind::Quote => "citation",
             WidgetKind::Apps => "applications",
+            WidgetKind::Music => "musique",
+            WidgetKind::NoteQuick => "note-rapide",
+            WidgetKind::NotesRecent => "notes-recentes",
+            WidgetKind::NotePinned => "note-epinglee",
         }
     }
 
@@ -87,6 +105,10 @@ impl WidgetKind {
             WidgetKind::Notes => (160, 100),
             WidgetKind::Quote => (200, 80),
             WidgetKind::Apps => (170, 110),
+            WidgetKind::Music => (300, 150),
+            WidgetKind::NoteQuick => (170, 150),
+            WidgetKind::NotesRecent => (300, 150),
+            WidgetKind::NotePinned => (300, 300),
         }
     }
 
@@ -102,6 +124,10 @@ impl WidgetKind {
             WidgetKind::Notes => (LEFT + wide + GAP, second_row, wide, CELL),
             WidgetKind::Quote => (LEFT, second_row + CELL + GAP, 2 * wide + GAP, CELL),
             WidgetKind::Apps => (LEFT + 2 * (wide + GAP), second_row + CELL + GAP, wide, CELL),
+            WidgetKind::Music => (LEFT, second_row + 2 * (CELL + GAP), wide, CELL),
+            WidgetKind::NoteQuick => (LEFT + wide + GAP, second_row + 2 * (CELL + GAP), CELL, CELL),
+            WidgetKind::NotesRecent => (LEFT + 2 * (wide + GAP), TOP, wide, CELL),
+            WidgetKind::NotePinned => (LEFT + 2 * (wide + GAP), TOP + CELL + GAP, wide, wide),
         };
         WidgetSlot {
             kind: self,
@@ -257,10 +283,17 @@ pub fn place_on_grid(
     Some(candidates.first().copied().unwrap_or(wanted))
 }
 
-/// Disposition d'origine : celle de la maquette.
+/// Disposition d'origine : celle de la maquette. Les widgets venus après (Musique) s'ajoutent
+/// par « Modifier les widgets ».
 pub fn default_layout() -> Vec<WidgetSlot> {
     WidgetKind::ALL
         .into_iter()
+        .filter(|kind| {
+            !matches!(
+                kind,
+                WidgetKind::Music | WidgetKind::NoteQuick | WidgetKind::NotesRecent | WidgetKind::NotePinned
+            )
+        })
         .map(WidgetKind::default_slot)
         .collect()
 }
@@ -313,7 +346,14 @@ fn layout_text(layout: &[WidgetSlot]) -> String {
 pub enum DashboardEdit {
     Note(usize),
     NewTask,
+    /// Nom d'une liste de tâches, juste créée.
+    ListName(usize),
 }
+
+/// Plus long nom de liste de tâches.
+const LIST_NAME_MAX: usize = 32;
+/// Listes de tâches au plus.
+const LISTS_MAX: usize = 20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Priority {
@@ -375,6 +415,31 @@ impl Note {
     }
 }
 
+/// Ligne à cocher d'une note (`- [ ] texte`, `- [x] texte`, `[ ] texte`) : numéro de la
+/// ligne dans la note, cochée ou non, texte.
+pub fn checklist(lines: &[String]) -> Vec<(usize, bool, String)> {
+    lines
+        .iter()
+        .enumerate()
+        .skip(1)
+        .filter_map(|(index, line)| {
+            let rest = line.trim_start();
+            let rest = rest
+                .strip_prefix("- ")
+                .or_else(|| rest.strip_prefix("* "))
+                .unwrap_or(rest);
+            let (done, text) = match rest.strip_prefix("[ ]") {
+                Some(text) => (false, text),
+                None => (
+                    true,
+                    rest.strip_prefix("[x]").or_else(|| rest.strip_prefix("[X]"))?,
+                ),
+            };
+            Some((index, done, text.trim().to_owned()))
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Task {
     pub text: String,
@@ -382,10 +447,19 @@ pub struct Task {
     pub priority: Priority,
 }
 
+/// Une feuille du widget Tâches : son nom et ses tâches.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TaskList {
+    pub name: String,
+    pub tasks: Vec<Task>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Dashboard {
     pub notes: Vec<Note>,
-    pub tasks: Vec<Task>,
+    /// Feuilles du widget Tâches ; `list_shown` est celle affichée.
+    pub lists: Vec<TaskList>,
+    pub list_shown: usize,
     pub draft: String,
     pub month_offset: i32,
     /// Widgets posés, du dessous vers le dessus.
@@ -410,25 +484,7 @@ impl Dashboard {
     pub fn load() -> Self {
         let settings = Settings::load();
         let notes = load_notes(&settings);
-        let tasks = if let Some(count) = settings
-            .get("tableau_taches")
-            .and_then(|value| value.parse::<usize>().ok())
-        {
-            (0..count.min(100))
-                .filter_map(|index| {
-                    let text = settings.get(&format!("tableau_tache_{index}"))?;
-                    Some(Task {
-                        text: decode(text),
-                        done: settings.get(&format!("tableau_tache_{index}_faite")) == Some("oui"),
-                        priority: Priority::from_token(
-                            settings.get(&format!("tableau_tache_{index}_priorite")),
-                        ),
-                    })
-                })
-                .collect()
-        } else {
-            sample_tasks()
-        };
+        let lists = load_lists(&settings);
         let mut layout = settings
             .get("widgets_disposition")
             .map_or_else(default_layout, parse_layout);
@@ -446,7 +502,11 @@ impl Dashboard {
         }
         Self {
             notes,
-            tasks,
+            lists,
+            list_shown: settings
+                .get("tableau_liste_affichee")
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0),
             layout,
             place: Place::from_settings(&settings).name,
             ..Self::default()
@@ -462,14 +522,20 @@ impl Dashboard {
             settings.set(&format!("tableau_note_{index}"), &encode(&note.text));
             settings.set(&format!("tableau_note_{index}_date"), &note.updated.to_string());
         }
-        settings.set("tableau_taches", &self.tasks.len().to_string());
-        for (index, task) in self.tasks.iter().enumerate() {
-            settings.set(&format!("tableau_tache_{index}"), &encode(&task.text));
-            settings.set(
-                &format!("tableau_tache_{index}_faite"),
-                if task.done { "oui" } else { "non" },
-            );
-            settings.set(&format!("tableau_tache_{index}_priorite"), task.priority.token());
+        settings.set("tableau_listes", &self.lists.len().to_string());
+        settings.set("tableau_liste_affichee", &self.list_shown.to_string());
+        for (list_index, list) in self.lists.iter().enumerate() {
+            let key = format!("tableau_liste_{list_index}");
+            settings.set(&format!("{key}_nom"), &encode(&list.name));
+            settings.set(&format!("{key}_taches"), &list.tasks.len().to_string());
+            for (index, task) in list.tasks.iter().enumerate() {
+                settings.set(&format!("{key}_tache_{index}"), &encode(&task.text));
+                settings.set(
+                    &format!("{key}_tache_{index}_faite"),
+                    if task.done { "oui" } else { "non" },
+                );
+                settings.set(&format!("{key}_tache_{index}_priorite"), task.priority.token());
+            }
         }
         settings.save()
     }
@@ -519,8 +585,113 @@ impl Dashboard {
         Some(DashboardEdit::Note(0))
     }
 
-    /// Fin de la saisie : une note restée vide disparaît. Renvoie sa place.
+    /// Tâches de la feuille affichée.
+    pub fn tasks(&self) -> &[Task] {
+        self.lists
+            .get(self.list_shown.min(self.lists.len().saturating_sub(1)))
+            .map_or(&[], |list| list.tasks.as_slice())
+    }
+
+    /// Tâches de la feuille affichée, une feuille étant créée s'il n'y en a aucune.
+    pub fn tasks_mut(&mut self) -> &mut Vec<Task> {
+        if self.lists.is_empty() {
+            self.lists.push(TaskList {
+                name: "Tâches".to_owned(),
+                tasks: Vec::new(),
+            });
+        }
+        self.list_shown = self.list_shown.min(self.lists.len() - 1);
+        &mut self.lists[self.list_shown].tasks
+    }
+
+    /// Affiche la feuille `index`.
+    pub fn show_list(&mut self, index: usize) {
+        if index < self.lists.len() {
+            self.list_shown = index;
+            self.tasks_scroll = 0;
+        }
+    }
+
+    /// Nouvelle feuille de tâches, affichée, son nom à saisir.
+    pub fn add_list(&mut self) -> Option<DashboardEdit> {
+        if self.lists.len() >= LISTS_MAX {
+            return None;
+        }
+        self.lists.push(TaskList::default());
+        self.show_list(self.lists.len() - 1);
+        Some(DashboardEdit::ListName(self.list_shown))
+    }
+
+    /// Supprime une feuille ; la dernière restante est seulement vidée.
+    pub fn remove_list(&mut self, index: usize) {
+        if index >= self.lists.len() {
+            return;
+        }
+        if self.lists.len() == 1 {
+            self.lists[0].tasks.clear();
+        } else {
+            self.lists.remove(index);
+            if self.list_shown > index {
+                self.list_shown -= 1;
+            }
+        }
+        self.list_shown = self.list_shown.min(self.lists.len() - 1);
+        self.tasks_scroll = 0;
+    }
+
+    /// Supprime une note ; la suivante s'affiche.
+    /// Coche ou décoche la ligne `line` de la note `note` (widget Note épinglée).
+    pub fn toggle_check(&mut self, note: usize, line: usize, now: u64) -> bool {
+        let Some(note) = self.notes.get_mut(note) else {
+            return false;
+        };
+        let mut lines: Vec<String> = note.text.lines().map(str::to_owned).collect();
+        let Some(text) = lines.get_mut(line) else {
+            return false;
+        };
+        let toggled = if let Some(at) = text.find("[ ]") {
+            text.replace_range(at..at + 3, "[x]");
+            true
+        } else if let Some(at) = text.find("[x]").or_else(|| text.find("[X]")) {
+            text.replace_range(at..at + 3, "[ ]");
+            true
+        } else {
+            false
+        };
+        if toggled {
+            note.text = lines.join("\n");
+            note.updated = now;
+        }
+        toggled
+    }
+
+    pub fn remove_note(&mut self, index: usize) {
+        if index < self.notes.len() {
+            self.notes.remove(index);
+            self.note_shown = self.note_shown.min(self.notes.len().saturating_sub(1));
+        }
+    }
+
+    pub fn remove_task(&mut self, index: usize) -> bool {
+        let tasks = self.tasks_mut();
+        if index < tasks.len() {
+            tasks.remove(index);
+            return true;
+        }
+        false
+    }
+
+    /// Fin de la saisie : une note restée vide disparaît (renvoie sa place) ; une feuille
+    /// restée sans nom en reçoit un.
     pub fn finish_editing(&mut self, editing: Option<DashboardEdit>) -> Option<usize> {
+        if let Some(DashboardEdit::ListName(index)) = editing {
+            if let Some(list) = self.lists.get_mut(index)
+                && list.name.trim().is_empty()
+            {
+                list.name = format!("Liste {}", index + 1);
+            }
+            return None;
+        }
         let Some(DashboardEdit::Note(index)) = editing else {
             return None;
         };
@@ -543,6 +714,12 @@ impl Dashboard {
                 self.draft.push(character);
                 false
             }
+            Some(DashboardEdit::ListName(index)) => self.lists.get_mut(index).is_some_and(|list| {
+                if list.name.chars().count() < LIST_NAME_MAX {
+                    list.name.push(character);
+                }
+                true
+            }),
             None => false,
         }
     }
@@ -559,12 +736,16 @@ impl Dashboard {
                 self.draft.pop();
                 false
             }
+            Some(DashboardEdit::ListName(index)) => self.lists.get_mut(index).is_some_and(|list| {
+                list.name.pop();
+                true
+            }),
             None => false,
         }
     }
 
     pub fn commit_draft(&mut self) -> bool {
-        if self.tasks.len() >= 100 {
+        if self.tasks().len() >= 100 {
             return false;
         }
         let text = self.draft.trim();
@@ -572,14 +753,60 @@ impl Dashboard {
             self.draft.clear();
             return false;
         }
-        self.tasks.push(Task {
+        let task = Task {
             text: text.to_owned(),
             done: false,
             priority: Priority::default(),
-        });
+        };
+        self.tasks_mut().push(task);
         self.draft.clear();
         true
     }
+}
+
+/// Feuilles de tâches enregistrées ; avant les feuilles, une seule liste « Tâches ».
+fn load_lists(settings: &Settings) -> Vec<TaskList> {
+    let task = |key: &str| {
+        Some(Task {
+            text: decode(settings.get(key)?),
+            done: settings.get(&format!("{key}_faite")) == Some("oui"),
+            priority: Priority::from_token(settings.get(&format!("{key}_priorite"))),
+        })
+    };
+    let count = |key: &str| {
+        settings
+            .get(key)
+            .and_then(|value| value.parse::<usize>().ok())
+            .map(|count| count.min(100))
+    };
+    if let Some(lists) = count("tableau_listes") {
+        let lists: Vec<TaskList> = (0..lists.min(LISTS_MAX))
+            .map(|list| {
+                let key = format!("tableau_liste_{list}");
+                TaskList {
+                    name: settings
+                        .get(&format!("{key}_nom"))
+                        .map_or_else(|| format!("Liste {}", list + 1), decode),
+                    tasks: (0..count(&format!("{key}_taches")).unwrap_or(0))
+                        .filter_map(|index| task(&format!("{key}_tache_{index}")))
+                        .collect(),
+                }
+            })
+            .collect();
+        if !lists.is_empty() {
+            return lists;
+        }
+    }
+    let tasks = match count("tableau_taches") {
+        Some(tasks) => (0..tasks)
+            .filter_map(|index| task(&format!("tableau_tache_{index}")))
+            .collect(),
+        None => sample_tasks(),
+    };
+    vec![TaskList {
+        name: "Tâches".to_owned(),
+        tasks,
+    }]
 }
 
 /// Notes enregistrées, ou anciennes notes en un seul texte reprises comme une note.
@@ -653,6 +880,7 @@ pub fn start_weather(handle: &LoopHandle<'static, Ferrite>) -> Result<(), String
         .insert_source(receiver, |event, _, state| {
             if let channel::Event::Msg(weather) = event {
                 state.dashboard.weather = Some(weather);
+                state.request_redraw();
             }
         })
         .map_err(|err| err.to_string())?;
@@ -864,7 +1092,13 @@ mod tests {
         dashboard.remove_widget(6);
         assert_eq!(
             Dashboard::absent_widgets(&dashboard.layout),
-            vec![WidgetKind::Calendar]
+            vec![
+                WidgetKind::Calendar,
+                WidgetKind::Music,
+                WidgetKind::NoteQuick,
+                WidgetKind::NotesRecent,
+                WidgetKind::NotePinned,
+            ]
         );
         dashboard.add_widget(WidgetKind::Calendar);
         dashboard.add_widget(WidgetKind::Calendar);
@@ -917,6 +1151,82 @@ mod tests {
             ..Dashboard::default()
         };
         assert!(!dashboard.commit_draft());
-        assert!(dashboard.tasks.is_empty());
+        assert!(dashboard.tasks().is_empty());
+    }
+
+    #[test]
+    fn feuilles_de_taches_et_notes_s_ajoutent_et_se_suppriment() {
+        let mut dashboard = Dashboard {
+            draft: "Pain".to_owned(),
+            ..Dashboard::default()
+        };
+        assert!(dashboard.commit_draft());
+        assert_eq!(dashboard.lists.len(), 1);
+        assert_eq!(dashboard.tasks()[0].text, "Pain");
+
+        // Nouvelle feuille, nommée à la saisie ; sans nom, elle en reçoit un.
+        let editing = dashboard.add_list();
+        assert_eq!(editing, Some(DashboardEdit::ListName(1)));
+        assert!(dashboard.tasks().is_empty());
+        for character in "Courses".chars() {
+            assert!(dashboard.type_char(editing, character, 0));
+        }
+        assert!(dashboard.erase_char(editing, 0));
+        dashboard.finish_editing(editing);
+        assert_eq!(dashboard.lists[1].name, "Course");
+        let unnamed = dashboard.add_list();
+        dashboard.finish_editing(unnamed);
+        assert_eq!(dashboard.lists[2].name, "Liste 3");
+
+        // Chaque feuille garde ses tâches.
+        dashboard.show_list(1);
+        dashboard.draft = "Lait".to_owned();
+        dashboard.commit_draft();
+        dashboard.show_list(0);
+        assert_eq!(dashboard.tasks()[0].text, "Pain");
+        assert!(dashboard.remove_task(0));
+        assert!(dashboard.tasks().is_empty());
+
+        // Supprimer une feuille avant celle affichée garde l'affichage sur la même.
+        dashboard.show_list(1);
+        dashboard.remove_list(0);
+        assert_eq!(dashboard.lists[dashboard.list_shown].name, "Course");
+        dashboard.remove_list(1);
+        dashboard.remove_list(0);
+        assert_eq!(dashboard.lists.len(), 1);
+        assert!(dashboard.tasks().is_empty());
+
+        dashboard.add_note(1);
+        dashboard.add_note(2);
+        dashboard.note_shown = 1;
+        dashboard.remove_note(1);
+        assert_eq!((dashboard.notes.len(), dashboard.note_shown), (1, 0));
+    }
+
+    #[test]
+    fn une_note_se_coche_depuis_le_widget() {
+        let lines: Vec<String> = ["Idées", "- [x] Chevrons", "texte", "[ ] Scanout"]
+            .iter()
+            .map(|line| (*line).to_owned())
+            .collect();
+        assert_eq!(
+            checklist(&lines),
+            [(1, true, "Chevrons".to_owned()), (3, false, "Scanout".to_owned())]
+        );
+        let mut dashboard = Dashboard {
+            notes: vec![Note {
+                text: lines.join("\n"),
+                updated: 0,
+            }],
+            ..Dashboard::default()
+        };
+        assert!(dashboard.toggle_check(0, 3, 42));
+        assert!(dashboard.toggle_check(0, 1, 42));
+        assert!(!dashboard.toggle_check(0, 2, 42));
+        assert_eq!(
+            dashboard.notes[0].text,
+            "Idées\n- [ ] Chevrons\ntexte\n[x] Scanout"
+        );
+        assert_eq!(dashboard.notes[0].updated, 42);
     }
 }

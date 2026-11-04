@@ -45,6 +45,12 @@ impl CompositorHandler for Ferrite {
             while let Some(parent) = get_parent(&root) {
                 root = parent;
             }
+            crate::render::profile::commit(|| {
+                self.window_for_surface(&root)
+                    .or_else(|| self.hidden_window(&root))
+                    .and_then(|window| crate::render::app_id(&window))
+                    .unwrap_or_else(|| "autre surface".to_owned())
+            });
             if let Some(window) = self.window_for_surface(&root) {
                 window.on_commit();
                 self.place_new_window(&root);
@@ -52,6 +58,7 @@ impl CompositorHandler for Ferrite {
                 window.on_commit();
             }
         }
+        self.handle_layer_commit(surface);
         xdg_shell::handle_commit(&mut self.popups, &self.space, surface);
         wm::handle_resize_commit(&mut self.space, surface);
         self.request_redraw();

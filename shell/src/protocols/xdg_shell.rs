@@ -39,6 +39,14 @@ struct PendingPlacement {
     titlebar_height: i32,
 }
 
+/// La fenêtre attend encore sa première configuration (et sa place).
+pub(crate) fn awaiting_placement(window: &Window) -> bool {
+    window
+        .user_data()
+        .get::<PendingPlacement>()
+        .is_some_and(|pending| pending.waiting.get())
+}
+
 /// Posée au premier tampon d'une fenêtre : son apparition n'est animée qu'une fois.
 #[derive(Default)]
 struct Opened(Cell<bool>);
@@ -73,6 +81,7 @@ impl XdgShellHandler for Ferrite {
             titlebar_height,
         });
         let content = frame + Point::from((0, titlebar_height));
+        self.leave_widgets_page();
         self.space.map_element(window.clone(), content, true);
         self.focus_window(Some(window));
     }
@@ -340,11 +349,22 @@ impl Ferrite {
     pub fn usable_area(&self) -> Option<Rectangle<i32, Logical>> {
         let output = self.space.outputs().next()?;
         self.space.output_geometry(output).map(|geometry| {
-            wm::usable_area(
+            let area = wm::usable_area(
                 geometry,
                 self.dock_config.bar_reserved_height(),
                 self.dock_config.reserved_height(),
-            )
+            );
+            // Une barre d'un autre bureau (calque à zone exclusive) prend aussi sa place. La
+            // zone n'est recalculée que par `arrange` : sans cela, elle garde la taille de
+            // l'écran au démarrage, et les fenêtres agrandies s'arrêtent avant le bord quand
+            // l'écran (ou la fenêtre hôte) grandit ensuite.
+            let zone = {
+                let mut map = smithay::desktop::layer_map_for_output(output);
+                map.arrange();
+                map.non_exclusive_zone()
+            };
+            let zone = smithay::utils::Rectangle::new(zone.loc + geometry.loc, zone.size);
+            area.intersection(zone).unwrap_or(area)
         })
     }
 

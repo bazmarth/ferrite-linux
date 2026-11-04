@@ -1,6 +1,7 @@
 //! Curseur Ferrite : formes vectorielles noires bordées de blanc, dessinées à l'échelle de
-//! l'écran (nettes en échelle 2 comme en 1) — la flèche, et les doubles flèches du
-//! redimensionnement. Utilisé quand ferrite-shell affiche lui-même le pointeur (backend
+//! l'écran (nettes en échelle 2 comme en 1) — la flèche, les doubles flèches du
+//! redimensionnement, et les formes que les applications demandent par leur nom (texte,
+//! main, déplacement, viseur). Utilisé quand ferrite-shell affiche lui-même le pointeur (backend
 //! DRM) ; en fenêtre, c'est le curseur du système hôte qui sert.
 
 use std::{cell::RefCell, collections::HashMap};
@@ -31,6 +32,87 @@ const DOUBLE_ARROW: [(f64, f64); 10] = [
     (-5.5, 1.6),
     (-5.5, 5.0),
 ];
+/// Barre de texte, centrée sur le point actif.
+const TEXT_BEAM: [(f64, f64); 12] = [
+    (-4.5, -10.0),
+    (4.5, -10.0),
+    (4.5, -7.2),
+    (1.5, -7.2),
+    (1.5, 7.2),
+    (4.5, 7.2),
+    (4.5, 10.0),
+    (-4.5, 10.0),
+    (-4.5, 7.2),
+    (-1.5, 7.2),
+    (-1.5, -7.2),
+    (-4.5, -7.2),
+];
+/// Main qui montre un lien, le bout de l'index sur le point actif.
+const HAND: [(f64, f64); 21] = [
+    (-2.3, 1.6),
+    (-1.6, 0.3),
+    (0.0, -0.2),
+    (1.6, 0.3),
+    (2.3, 1.6),
+    (2.3, 7.0),
+    (4.6, 6.6),
+    (6.6, 7.2),
+    (8.6, 8.0),
+    (9.7, 9.6),
+    (9.7, 15.0),
+    (8.2, 19.0),
+    (-0.6, 19.0),
+    (-3.6, 15.6),
+    (-7.1, 11.6),
+    (-7.3, 10.2),
+    (-6.1, 9.4),
+    (-4.4, 10.0),
+    (-2.3, 12.0),
+    (-2.3, 6.0),
+    (-2.3, 3.0),
+];
+/// Quatre flèches : déplacer ; centrées sur le point actif.
+const MOVE: [(f64, f64); 24] = [
+    (1.6, -1.6),
+    (5.5, -1.6),
+    (5.5, -5.0),
+    (10.5, 0.0),
+    (5.5, 5.0),
+    (5.5, 1.6),
+    (1.6, 1.6),
+    (1.6, 5.5),
+    (5.0, 5.5),
+    (0.0, 10.5),
+    (-5.0, 5.5),
+    (-1.6, 5.5),
+    (-1.6, 1.6),
+    (-5.5, 1.6),
+    (-5.5, 5.0),
+    (-10.5, 0.0),
+    (-5.5, -5.0),
+    (-5.5, -1.6),
+    (-1.6, -1.6),
+    (-1.6, -5.5),
+    (-5.0, -5.5),
+    (0.0, -10.5),
+    (5.0, -5.5),
+    (1.6, -5.5),
+];
+/// Croix de visée fine.
+const CROSS: [(f64, f64); 12] = [
+    (1.5, -1.5),
+    (9.0, -1.5),
+    (9.0, 1.5),
+    (1.5, 1.5),
+    (1.5, 9.0),
+    (-1.5, 9.0),
+    (-1.5, 1.5),
+    (-9.0, 1.5),
+    (-9.0, -1.5),
+    (-1.5, -1.5),
+    (-1.5, -9.0),
+    (1.5, -9.0),
+];
 /// Épaisseur de la bordure blanche (vers l'intérieur) et débord vers l'extérieur.
 const BORDER_INSIDE: f64 = 1.1;
 const BORDER_OUTSIDE: f64 = 0.5;
@@ -52,6 +134,14 @@ pub enum CursorShape {
     DiagonalDown,
     /// Coin haut-droite ou bas-gauche.
     DiagonalUp,
+    /// Texte à sélectionner.
+    Text,
+    /// Lien ou bouton.
+    Pointer,
+    /// Déplacer.
+    Move,
+    /// Viser un point précis.
+    Crosshair,
 }
 
 impl CursorShape {
@@ -63,6 +153,10 @@ impl CursorShape {
             CursorShape::Vertical => (&DOUBLE_ARROW, 90.0),
             CursorShape::DiagonalDown => (&DOUBLE_ARROW, 45.0),
             CursorShape::DiagonalUp => (&DOUBLE_ARROW, -45.0),
+            CursorShape::Text => (&TEXT_BEAM, 0.0),
+            CursorShape::Pointer => (&HAND, 0.0),
+            CursorShape::Move => (&MOVE, 0.0),
+            CursorShape::Crosshair => (&CROSS, 0.0),
         }
     }
 }
@@ -235,6 +329,26 @@ mod tests {
         assert!(edge[0] > 200 && edge[3] > 200, "bord {edge:?}");
         // Loin de la flèche : transparent.
         assert_eq!(pixel(&pixels, width, 12, 2), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn formes_nommees_dessinees_autour_du_point_actif() {
+        for shape in [
+            CursorShape::Text,
+            CursorShape::Pointer,
+            CursorShape::Move,
+            CursorShape::Crosshair,
+        ] {
+            let image = Cursor::default().image(shape, 2.0);
+            let outline = Outline::new(shape);
+            let (width, height, pixels) = outline.rasterize(2.0);
+            assert!(pixels.chunks(4).any(|pixel| pixel[3] == 255), "{shape:?} vide");
+            let (x, y) = image.hotspot;
+            assert!(
+                x >= 0 && y >= 0 && (x as u32) < width && (y as u32) < height,
+                "{shape:?}"
+            );
+        }
     }
 
     #[test]

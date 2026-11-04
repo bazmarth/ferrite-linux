@@ -6,6 +6,7 @@ mod cursor;
 mod decorations;
 mod genie;
 mod ghost;
+pub mod profile;
 mod rounded;
 mod shaders;
 mod title;
@@ -13,6 +14,8 @@ mod wallpaper;
 
 use ferrite_system::config::DockHiding;
 use ferrite_ui::theme::WINDOW_RADIUS;
+use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
+use smithay::wayland::shell::wlr_layer::Layer;
 use smithay::wayland::{compositor::with_states, seat::WaylandFocus, shell::xdg::XdgToplevelSurfaceData};
 use smithay::{
     backend::allocator::Fourcc,
@@ -116,6 +119,19 @@ pub fn output_elements(
     output: &Output,
     draw_cursor: bool,
 ) -> Vec<OutputElement> {
+    let start = std::time::Instant::now();
+    let elements = build_output_elements(renderer, state, assets, output, draw_cursor);
+    profile::frame(start.elapsed());
+    elements
+}
+
+fn build_output_elements(
+    renderer: &mut GlesRenderer,
+    state: &Ferrite,
+    assets: &RenderAssets,
+    output: &Output,
+    draw_cursor: bool,
+) -> Vec<OutputElement> {
     let mut elements = Vec::new();
     let Some(output_geo) = state.space.output_geometry(output) else {
         return elements;
@@ -147,7 +163,35 @@ pub fn output_elements(
         );
     }
 
+    // Verrouillé par un client : ses surfaces seules, sur le fond noir de l'écran.
+    if let Some(lock) = &state.session_lock {
+        for (lock_output, surface) in &lock.surfaces {
+            if lock_output == output {
+                push_surface_tree(
+                    renderer,
+                    surface.wl_surface(),
+                    Point::from((0, 0)),
+                    scale,
+                    &mut elements,
+                );
+            }
+        }
+        return elements;
+    }
+
     let locked = state.lock.is_some();
+    // Fenêtres de candidats des méthodes de saisie, puis calques « superposition ».
+    if !locked {
+        for popup in &state.input_popups {
+            let parent = popup
+                .get_parent()
+                .map(|parent| state.input_popup_parent(&parent.surface))
+                .unwrap_or_default();
+            let location = (parent.loc + popup.location() - output_geo.loc).to_physical_precise_round(scale);
+            push_surface_tree(renderer, popup.wl_surface(), location, scale, &mut elements);
+        }
+        push_layers(renderer, output, Layer::Overlay, scale, &mut elements);
+    }
     let items = state.dock_items();
     let dock_shown = state.dock_shown(output_geo);
     let dark_theme = state.appearance.is_dark();
@@ -184,11 +228,23 @@ pub fn output_elements(
     let visible_pages = state.workspaces.visible_pages(now);
     // Super+W ou édition : les widgets passent devant les fenêtres.
     let widgets_ahead = state.widgets_front || state.widgets_edit;
-    let widgets_visible = !locked && overview_shown == 0.0;
+    // Les widgets vivent sur le bureau 0 : ils s'effacent à mesure qu'on le quitte.
+    let widgets_page = visible_pages
+        .iter()
+        .find(|(page, _)| *page == 0)
+        .map(|(_, offset)| (1.0 - offset.abs()).clamp(0.0, 1.0) as f32);
+    let widgets_visible = !locked && overview_shown == 0.0 && widgets_page.is_some();
+    let widgets_page = widgets_page.unwrap_or(0.0);
     if widgets_visible && widgets_ahead {
-        assets
-            .panels
-            .push_dashboard(renderer, output, output_geo, scale, &view, 1.0, &mut elements);
+        assets.panels.push_dashboard(
+            renderer,
+            output,
+            output_geo,
+            scale,
+            &view,
+            widgets_page,
+            &mut elements,
+        );
     }
 
     // Le survol des feux n'est montré que si aucun déplacement n'est en cours.
@@ -210,6 +266,9 @@ pub fn output_elements(
         )
     });
     let mut snap_preview = snap_preview.map(OutputElement::Shader);
+    if !locked {
+        push_layers(renderer, output, Layer::Top, scale, &mut elements);
+    }
 
     if locked {
         // Aucune fenêtre sous l'écran de verrouillage.
@@ -364,10 +423,16 @@ pub fn output_elements(
             if covered { 1.0 } else { 0.0 },
             duration,
         );
-        let alpha = 1.0 - (1.0 - WIDGETS_FADED_ALPHA) * crate::desktop::dock::ease(faded) as f32;
+        let alpha =
+            (1.0 - (1.0 - WIDGETS_FADED_ALPHA) * crate::desktop::dock::ease(faded) as f32) * widgets_page;
         assets
             .panels
             .push_dashboard(renderer, output, output_geo, scale, &view, alpha, &mut elements);
+    }
+
+    if !locked {
+        push_layers(renderer, output, Layer::Bottom, scale, &mut elements);
+        push_layers(renderer, output, Layer::Background, scale, &mut elements);
     }
 
     // Fond à la résolution physique de l'écran : net à toute échelle.
@@ -392,6 +457,51 @@ pub fn output_elements(
         Err(err) => warn!("fond d'écran non importé : {err:?}"),
     }
     elements
+}
+
+/// Arbre de surfaces de `surface`, son origine en `location` (pixels de l'écran).
+fn push_surface_tree(
+    renderer: &mut GlesRenderer,
+    surface: &WlSurface,
+    location: Point<i32, smithay::utils::Physical>,
+    scale: f64,
+    out: &mut Vec<OutputElement>,
+) {
+    out.extend(
+        render_elements_from_surface_tree::<_, WaylandSurfaceRenderElement<GlesRenderer>>(
+            renderer,
+            surface,
+            location,
+            scale,
+            1.0,
+            Kind::Unspecified,
+        )
+        .into_iter()
+        .map(OutputElement::Surface),
+    );
+}
+
+/// Calques de la couche `layer` sur `output` (voir `protocols::layer_shell`), du dessus vers
+/// le dessous, avec leurs menus.
+fn push_layers(
+    renderer: &mut GlesRenderer,
+    output: &Output,
+    layer: Layer,
+    scale: f64,
+    out: &mut Vec<OutputElement>,
+) {
+    let map = smithay::desktop::layer_map_for_output(output);
+    for surface in map.layers_on(layer).rev() {
+        let Some(geometry) = map.layer_geometry(surface) else {
+            continue;
+        };
+        for (popup, offset) in PopupManager::popups_for_surface(surface.wl_surface()) {
+            let location = (geometry.loc + offset - popup.geometry().loc).to_physical_precise_round(scale);
+            push_surface_tree(renderer, popup.wl_surface(), location, scale, out);
+        }
+        let location = geometry.loc.to_physical_precise_round(scale);
+        push_surface_tree(renderer, surface.wl_surface(), location, scale, out);
+    }
 }
 
 fn push_animation_fallback(
@@ -802,8 +912,13 @@ impl Ferrite {
         let Some(pointer) = self.seat.get_pointer().filter(|pointer| !pointer.is_grabbed()) else {
             return CursorShape::Arrow;
         };
+        if self.over_shell_chrome(pointer.current_location()) {
+            return CursorShape::Arrow;
+        }
         match self.hit_test(pointer.current_location()) {
             Some(wm::Hit::Decoration(_, wm::decoration::Part::Border(edges))) => resize_shape(edges),
+            // Sur une application : la forme qu'elle a demandée par son nom.
+            Some(wm::Hit::Surface(..)) => named_shape(&self.cursor_status),
             _ => CursorShape::Arrow,
         }
     }
@@ -826,6 +941,14 @@ impl Ferrite {
             Some(edges) if edges.top || edges.bottom => CursorShape::Vertical,
             _ => CursorShape::Arrow,
         }
+    }
+
+    /// Cadre de la fenêtre qui tape du texte, pour placer les candidats d'une méthode de
+    /// saisie (voir `protocols::input_method`).
+    pub fn input_popup_parent(&self, parent: &WlSurface) -> Rectangle<i32, Logical> {
+        self.window_for_surface(parent)
+            .and_then(|window| self.space.element_geometry(&window))
+            .unwrap_or_default()
     }
 
     /// La fenêtre du dessus est-elle en plein écran ?
@@ -857,6 +980,27 @@ impl Ferrite {
     }
 
     /// Le Dock doit-il être affiché sur l'écran `output` ?
+    /// Le pointeur est-il sur le Dock ou la barre du haut, dessinés au-dessus des fenêtres ?
+    /// L'application dessous ne reçoit alors pas le pointeur et ne choisit pas sa forme
+    /// (sans cela, un champ de texte derrière le Dock y imposait le curseur texte).
+    pub fn over_shell_chrome(&self, pos: Point<f64, Logical>) -> bool {
+        if self.lock.is_some() {
+            return false;
+        }
+        let Some(output) = self.screen_area() else {
+            return false;
+        };
+        let bar_bottom = f64::from(output.loc.y) + f64::from(self.dock_config.bar_height);
+        if pos.y < bar_bottom && self.bar_visible() {
+            return true;
+        }
+        if !self.dock_shown(output) {
+            return false;
+        }
+        self.dock_geometry()
+            .is_some_and(|(_, _, geometry)| geometry.plate.contains(pos) || geometry.item_at(pos).is_some())
+    }
+
     pub fn dock_shown(&self, output: Rectangle<i32, Logical>) -> bool {
         if self.overview {
             return true;
@@ -960,7 +1104,15 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
         brightness: system.brightness,
         airplane: system.airplane,
         keyboard_light: system.keyboard_light,
+        night: night_view(state),
         power: state.pending_power,
+        power_left: state.power_deadline.map_or(0, |deadline| {
+            deadline
+                .saturating_duration_since(std::time::Instant::now())
+                .as_secs_f64()
+                .ceil() as u32
+        }),
+        power_apps: state.open_app_count(),
         error: state.system_error.clone(),
         bar_visible: state.bar_visible(),
         bar_opaque: !state.dock_config.bar_translucent || state.space.elements().any(wm::is_maximized),
@@ -1005,11 +1157,19 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
                     title: note.title().to_owned(),
                     preview: note.preview(),
                     updated: note.updated,
+                    lines: note.text.lines().map(str::to_owned).collect(),
                 })
                 .collect(),
+            lists: state
+                .dashboard
+                .lists
+                .iter()
+                .map(|list| list.name.clone())
+                .collect(),
+            list_shown: state.dashboard.list_shown,
             tasks: state
                 .dashboard
-                .tasks
+                .tasks()
                 .iter()
                 .map(|task| DashboardTaskView {
                     text: task.text.clone(),
@@ -1026,7 +1186,7 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
             layout: state.dashboard.layout.clone(),
             note_shown: state.dashboard.note_shown,
             tasks_scroll: state.dashboard.tasks_scroll,
-            shown: !state.overview && state.lock.is_none(),
+            shown: !state.overview && state.lock.is_none() && state.workspaces.current() == 0,
             front: state.widgets_front,
             edit: state.widgets_edit,
             drag: state.widget_drag.map(|drag| drag.index),
@@ -1040,6 +1200,7 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
                     state.dock_config.bar_height as i32,
                 )
             }),
+            media: state.media.clone(),
             apps: state
                 .recent_app_keys()
                 .into_iter()
@@ -1186,6 +1347,30 @@ fn switcher_view(state: &Ferrite) -> Option<SwitcherView> {
     })
 }
 
+/// Forme Ferrite pour le curseur nommé qu'une application demande (`cursor-shape-v1`,
+/// ou thème de curseur) ; la flèche pour une image propre au client.
+fn named_shape(status: &CursorImageStatus) -> CursorShape {
+    use smithay::input::pointer::CursorIcon;
+    let CursorImageStatus::Named(icon) = status else {
+        return CursorShape::Arrow;
+    };
+    match icon {
+        CursorIcon::Text | CursorIcon::VerticalText => CursorShape::Text,
+        CursorIcon::Pointer | CursorIcon::Grab | CursorIcon::Grabbing => CursorShape::Pointer,
+        CursorIcon::Move | CursorIcon::AllScroll | CursorIcon::AllResize => CursorShape::Move,
+        CursorIcon::Crosshair | CursorIcon::Cell => CursorShape::Crosshair,
+        CursorIcon::EwResize | CursorIcon::EResize | CursorIcon::WResize | CursorIcon::ColResize => {
+            CursorShape::Horizontal
+        }
+        CursorIcon::NsResize | CursorIcon::NResize | CursorIcon::SResize | CursorIcon::RowResize => {
+            CursorShape::Vertical
+        }
+        CursorIcon::NwseResize | CursorIcon::NwResize | CursorIcon::SeResize => CursorShape::DiagonalDown,
+        CursorIcon::NeswResize | CursorIcon::NeResize | CursorIcon::SwResize => CursorShape::DiagonalUp,
+        _ => CursorShape::Arrow,
+    }
+}
+
 /// Fait la capture demandée, s'il y en a une : l'écran est redessiné à part, sans le curseur
 /// ni le sélecteur de zone, puis enregistré en arrière-plan.
 pub fn take_screenshot(
@@ -1200,6 +1385,111 @@ pub fn take_screenshot(
     if let Err(err) = render_screenshot(renderer, state, assets, output, request) {
         warn!("capture d'écran impossible : {err}");
     }
+}
+
+/// Copies d'écran demandées par les clients pour `output` (voir `protocols::screencopy`) :
+/// l'écran est redessiné à part, avec le curseur si on le veut, puis copié dans leur tampon.
+pub fn serve_screencopy(
+    renderer: &mut GlesRenderer,
+    state: &mut Ferrite,
+    assets: &RenderAssets,
+    output: &Output,
+) {
+    let (copies, others): (Vec<_>, Vec<_>) = std::mem::take(&mut state.screencopy)
+        .into_iter()
+        .partition(|copy| copy.info.output == *output);
+    state.screencopy = others;
+    if copies.is_empty() {
+        return;
+    }
+    // Une image sans curseur, une avec : chacune dessinée au plus une fois.
+    let mut images: [Option<Result<Pixels, String>>; 2] = [None, None];
+    let time = std::time::Duration::from(smithay::utils::Clock::<smithay::utils::Monotonic>::new().now());
+    for copy in copies {
+        let slot = usize::from(copy.info.cursor);
+        let image = images[slot]
+            .get_or_insert_with(|| render_pixels(renderer, state, assets, output, copy.info.cursor));
+        let written = match image {
+            Ok((pixels, width, _)) => write_screencopy(&copy, pixels, *width),
+            Err(err) => Err(err.clone()),
+        };
+        match written {
+            Ok(()) => {
+                copy.frame.flags(smithay::reexports::wayland_protocols_wlr::screencopy::v1::server::zwlr_screencopy_frame_v1::Flags::empty());
+                if copy.with_damage {
+                    let size = copy.info.region.size;
+                    copy.frame.damage(0, 0, size.w as u32, size.h as u32);
+                }
+                let seconds = time.as_secs();
+                copy.frame
+                    .ready((seconds >> 32) as u32, seconds as u32, time.subsec_nanos());
+            }
+            Err(err) => {
+                warn!("copie d'écran impossible : {err}");
+                copy.frame.failed();
+            }
+        }
+    }
+}
+
+/// Image `RGBA`, sa largeur et sa hauteur.
+type Pixels = (Vec<u8>, u32, u32);
+
+/// L'écran entier en pixels `RGBA`, dans le bon sens (l'écran en fenêtre est retourné).
+fn render_pixels(
+    renderer: &mut GlesRenderer,
+    state: &Ferrite,
+    assets: &RenderAssets,
+    output: &Output,
+    cursor: bool,
+) -> Result<Pixels, String> {
+    let size = output.current_mode().ok_or("écran sans mode")?.size;
+    let buffer_size = size.to_logical(1).to_buffer(1, smithay::utils::Transform::Normal);
+    let mut texture: GlesTexture = renderer
+        .create_buffer(Fourcc::Abgr8888, buffer_size)
+        .map_err(|err| format!("{err:?}"))?;
+    let mut framebuffer = renderer.bind(&mut texture).map_err(|err| format!("{err:?}"))?;
+    let elements = output_elements(renderer, state, assets, output, cursor);
+    OutputDamageTracker::from_output(output)
+        .render_output(renderer, &mut framebuffer, 0, &elements, [0.0, 0.0, 0.0, 1.0])
+        .map_err(|err| format!("{err:?}"))?;
+    let mapping = renderer
+        .copy_framebuffer(&framebuffer, Rectangle::from_size(buffer_size), Fourcc::Abgr8888)
+        .map_err(|err| format!("{err:?}"))?;
+    let pixels = renderer.map_texture(&mapping).map_err(|err| format!("{err:?}"))?;
+    let (width, height) = (size.w as u32, size.h as u32);
+    let flip = output.current_transform() == smithay::utils::Transform::Flipped180;
+    let (image, width, height) = capture::crop(pixels, width, height, flip, (0, 0, width, height));
+    Ok((image, width, height))
+}
+
+/// Zone demandée de l'image `RGBA` (large de `width`) vers le tampon `XRGB8888` du client.
+fn write_screencopy(
+    copy: &crate::protocols::screencopy::PendingCopy,
+    rgba: &[u8],
+    width: u32,
+) -> Result<(), String> {
+    let region = copy.info.region;
+    smithay::wayland::shm::with_buffer_contents_mut(&copy.buffer, |pointer, length, data| {
+        // SAFETY : Smithay donne l'adresse et la longueur du bassin partagé du client, en
+        // vie pendant l'appel ; on n'écrit que dans le tampon décrit par `data`.
+        #[allow(unsafe_code)]
+        let pool = unsafe { std::slice::from_raw_parts_mut(pointer, length) };
+        let stride = data.stride as usize;
+        for row in 0..region.size.h as usize {
+            let line = (region.loc.y as usize + row) * width as usize + region.loc.x as usize;
+            let start = data.offset as usize + row * stride;
+            let Some(target) = pool.get_mut(start..start + region.size.w as usize * 4) else {
+                return Err("tampon trop petit".to_owned());
+            };
+            for (column, pixel) in target.chunks_exact_mut(4).enumerate() {
+                let source = &rgba[(line + column) * 4..(line + column) * 4 + 4];
+                pixel.copy_from_slice(&[source[2], source[1], source[0], 255]);
+            }
+        }
+        Ok(())
+    })
+    .map_err(|err| format!("{err:?}"))?
 }
 
 fn render_screenshot(
@@ -1409,4 +1699,23 @@ pub fn app_id(window: &Window) -> Option<String> {
             .get::<XdgToplevelSurfaceData>()
             .and_then(|data| data.lock().ok().and_then(|data| data.app_id.clone()))
     })
+}
+
+/// Tuile du mode nuit : active ou non, et son état (« Activé · jusqu'à 06:05 »…).
+fn night_view(state: &Ferrite) -> (bool, String) {
+    use ferrite_system::night::{Schedule, format_time};
+    let night = &state.night;
+    let active = night.active();
+    let text = match (night.settings.schedule, active, night.window()) {
+        (Schedule::Always, true, _) => "Activé · toujours".to_owned(),
+        (Schedule::Sun | Schedule::Hours, true, Some((_, end))) if night.forced.is_none() => {
+            format!("Activé · jusqu’à {}", format_time(end))
+        }
+        (Schedule::Sun | Schedule::Hours, false, Some((start, _))) if night.forced.is_none() => {
+            format!("Auto · dès {}", format_time(start))
+        }
+        (_, true, _) => "Activé".to_owned(),
+        (_, false, _) => "Désactivé".to_owned(),
+    };
+    (active, text)
 }

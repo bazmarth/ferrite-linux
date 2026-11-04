@@ -84,6 +84,7 @@ pub fn listen(handle: &LoopHandle<'static, Ferrite>, display: &str) {
     let inserted = handle.insert_source(channel, |event, _, state| {
         if let channel::Event::Msg(drag) = event {
             state.offer_file_drag(drag);
+            state.request_redraw();
         }
     });
     if let Err(err) = inserted {

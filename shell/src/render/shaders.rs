@@ -145,8 +145,9 @@ void main() {
 }
 "#;
 
-/// Fond du Dock : blanc à 16 %, filet blanc à 28 %, rayon 24, ombre 0 12 32 noir 25 %. La
-/// zone dessinée déborde du fond de `MARGIN` de chaque côté, pour l'ombre.
+/// Fond du Dock : gris moyen à 20 % puis blanc à 12 % (lisible sur un fond clair comme
+/// sombre), filet blanc à 28 % bordé d'un filet noir à 14 %, rayon 24, ombre 0 12 32 noir
+/// 25 %. La zone dessinée déborde du fond de `MARGIN` de chaque côté, pour l'ombre.
 const DOCK: &str = r#"
 uniform float scale;
 
@@ -162,7 +163,9 @@ void main() {
     float shadow = rounded_box(p - size * 0.5 - vec2(0.0, 12.0), half_plate, 24.0);
     float outside = 1.0 - coverage(d, scale);
     vec4 color = vec4(0.0, 0.0, 0.0, 0.25 * (1.0 - smoothstep(-16.0, 16.0, shadow)) * outside);
-    color = over(color, vec3(1.0), 0.16 * coverage(d, scale));
+    color = over(color, vec3(0.5), 0.20 * coverage(d, scale));
+    color = over(color, vec3(1.0), 0.12 * coverage(d, scale));
+    color = over(color, vec3(0.0), 0.14 * coverage(abs(d - 0.5) - 0.5, scale));
     color = over(color, vec3(1.0), 0.28 * coverage(abs(d + 0.5) - 0.5, scale));
     gl_FragColor = finish(color);
 }

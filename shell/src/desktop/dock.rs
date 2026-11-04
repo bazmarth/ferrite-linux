@@ -51,6 +51,8 @@ const PAD_Y: f64 = 14.0;
 const DOT_BOTTOM: f64 = 4.0;
 const BOTTOM_MARGIN: i32 = 18;
 const RUNNING_DOT: f64 = 5.0;
+/// Contour sombre du point, qui le garde lisible sur un fond d'écran clair.
+const DOT_HALO: f64 = 1.0;
 /// Place ajoutée pour le trait qui sépare la corbeille des applications.
 const SEPARATOR: f64 = 9.0;
 const SEPARATOR_HEIGHT: f64 = 54.0;
@@ -533,6 +535,9 @@ impl DockMotion {
 }
 
 /// Textures du Dock, liées au moteur de rendu.
+/// Fond du Dock gardé : place, échelle et élément.
+type Plate = (Rectangle<i32, Logical>, f64, PixelShaderElement);
+
 #[derive(Debug)]
 pub struct Dock {
     icons: IconCache,
@@ -540,7 +545,9 @@ pub struct Dock {
     textures: RefCell<HashMap<(AppIcon, u32), MemoryRenderBuffer>>,
     /// Point des applications ouvertes et trait de séparation, par échelle.
     marks: RefCell<HashMap<u32, (MemoryRenderBuffer, MemoryRenderBuffer)>>,
-    plate: RefCell<Option<(Rectangle<i32, Logical>, PixelShaderElement)>>,
+    /// Fond du Dock : place, échelle et élément. Ses paramètres ne sont réécrits que s'ils
+    /// changent : chaque réécriture compte comme un changement et fait redessiner le Dock.
+    plate: RefCell<Option<Plate>>,
 }
 
 impl Dock {
@@ -595,16 +602,19 @@ impl Dock {
         let (dot, line) = self.marks(scale);
         for (index, (item, rect)) in items.iter().zip(&geometry.icons).enumerate() {
             if item.running && config.dots {
-                let size = RUNNING_DOT;
+                let size = RUNNING_DOT + 2.0 * DOT_HALO;
                 let center = rect.loc.x + rect.size.w / 2.0;
                 let bottom = geometry.plate.loc.y + geometry.plate.size.h;
                 let offsets: &[f64] = if item.several { &[-4.5, 4.5] } else { &[0.0] };
                 for offset in offsets {
                     let mark = Rectangle::new(
-                        Point::from((center + offset - size / 2.0, bottom - DOT_BOTTOM - size)),
+                        Point::from((
+                            center + offset - size / 2.0,
+                            bottom - DOT_BOTTOM - RUNNING_DOT - DOT_HALO,
+                        )),
                         Size::from((size, size)),
                     );
-                    let physical = (RUNNING_DOT * scale).round().max(1.0);
+                    let physical = (size * scale).round().max(1.0);
                     push(&dot, mark, (physical, physical));
                 }
             }
@@ -631,12 +641,15 @@ impl Dock {
         );
         let mut cached = self.plate.borrow_mut();
         match cached.as_mut() {
-            Some((area, element)) => {
+            Some((area, known_scale, element)) => {
                 if *area != plate {
                     element.resize(plate, None);
                     *area = plate;
                 }
-                element.update_uniforms(vec![Uniform::new("scale", scale as f32)]);
+                if *known_scale != scale {
+                    element.update_uniforms(vec![Uniform::new("scale", scale as f32)]);
+                    *known_scale = scale;
+                }
             }
             None => {
                 let element = PixelShaderElement::new(
@@ -647,10 +660,10 @@ impl Dock {
                     vec![Uniform::new("scale", scale as f32)],
                     Kind::Unspecified,
                 );
-                *cached = Some((plate, element));
+                *cached = Some((plate, scale, element));
             }
         }
-        if let Some((_, element)) = cached.as_ref() {
+        if let Some((_, _, element)) = cached.as_ref() {
             out.push(super::super::render::OutputElement::Shader(element.clone()));
         }
     }
@@ -706,9 +719,11 @@ impl Dock {
             .borrow_mut()
             .entry(key)
             .or_insert_with(|| {
-                let side = (RUNNING_DOT * scale).round().max(1.0) as u32;
+                // Point blanc cerclé de noir : visible sur un fond clair comme sombre.
+                let side = ((RUNNING_DOT + 2.0 * DOT_HALO) * scale).round().max(1.0) as u32;
                 let mut pixels = vec![0u8; side as usize * side as usize * 4];
                 let s = side as f32;
+                let halo = (DOT_HALO * scale) as f32;
                 fill_rounded(
                     &mut pixels,
                     side,
@@ -718,7 +733,19 @@ impl Dock {
                     s,
                     s,
                     s / 2.0,
-                    Color::WHITE.with_alpha(217),
+                    Color::BLACK.with_alpha(115),
+                );
+                let inner = s - 2.0 * halo;
+                fill_rounded(
+                    &mut pixels,
+                    side,
+                    side,
+                    halo,
+                    halo,
+                    inner,
+                    inner,
+                    inner / 2.0,
+                    Color::WHITE.with_alpha(240),
                 );
                 let dot = MemoryRenderBuffer::from_slice(
                     &pixels,

@@ -160,7 +160,12 @@ impl Ferrite {
             .chain(self.workspaces.all_parked().map(|parked| &parked.window));
         let mut running: Vec<AppKey> = Vec::new();
         let mut several: Vec<AppKey> = Vec::new();
-        for key in windows.filter_map(|window| self.window_app(window)) {
+        // La corbeille a sa case fixe en bout de Dock : jamais une deuxième, ni de point.
+        let trash = AppKey::Builtin(App::Trash);
+        for key in windows
+            .filter_map(|window| self.window_app(window))
+            .filter(|key| *key != trash)
+        {
             if running.contains(&key) {
                 several.push(key);
             } else {
@@ -176,7 +181,7 @@ impl Ferrite {
                 bounce.settle(now);
             }
         }
-        bounces.retain(|_, bounce| !bounce.over(now));
+        bounces.retain(|key, bounce| !bounce.over(now) && *key != trash);
         for key in bounces.keys() {
             if !running.contains(key) {
                 running.push(key.clone());
@@ -297,6 +302,11 @@ impl Ferrite {
     pub fn launch_app(&mut self, key: &AppKey) {
         let env = self.client_environment();
         if key.launch(&self.applications, &env) {
+            // La corbeille s'ouvre dans Fichiers : c'est la fenêtre de Fichiers qu'on attend.
+            if *key == AppKey::Builtin(App::Trash) {
+                self.start_bounce(&AppKey::Builtin(App::Files));
+                return;
+            }
             self.start_bounce(key);
             self.note_recent_app(key);
         } else {

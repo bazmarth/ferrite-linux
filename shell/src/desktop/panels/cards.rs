@@ -17,7 +17,13 @@ const NOTE_ARROWS: f64 = 230.0;
 const RADIUS: f32 = 26.0;
 /// Hauteur et pas d'une ligne de tâche.
 const TASK_ROW: f64 = 30.0;
-const TASK_STEP: f64 = 38.0;
+const TASK_STEP: f64 = 36.0;
+/// Haut de la première tâche, sous les onglets des feuilles.
+const TASKS_TOP: f64 = 84.0;
+/// Onglets des feuilles de tâches : hauteur, écart, largeurs extrêmes.
+const TAB_H: f64 = 28.0;
+const TAB_GAP: f64 = 6.0;
+const TAB_W: (f64, f64) = (64.0, 124.0);
 
 const INK: Color = Color::rgb(0xF3F6F9);
 const SOFT: Color = Color::rgb(0xC8D1DC);
@@ -114,13 +120,127 @@ fn add_button(card: Rect) -> Rect {
     Rect::new(card.right() - 44.0, card.y + 16.0, 26.0, 26.0)
 }
 
-/// Note précédente et suivante, à gauche du bouton d'ajout.
-fn note_arrows(card: Rect) -> [Rect; 2] {
-    let add = add_button(card);
+/// Widget Musique : pochette carrée à gauche (si la carte est assez large).
+fn music_art(card: Rect) -> Option<Rect> {
+    let side = card.h - 36.0;
+    (card.w >= side + 200.0).then(|| Rect::new(card.x + 18.0, card.y + 18.0, side, side))
+}
+
+/// Boutons précédent, lecture/pause et suivant, en bas de la colonne de texte.
+pub(super) fn music_buttons(card: Rect) -> [Rect; 3] {
+    let left = music_art(card).map_or(card.x + 18.0, |art| art.right() + 16.0);
+    let y = card.bottom() - 18.0 - 36.0;
     [
-        Rect::new(add.x - 60.0, add.y, 26.0, 26.0),
-        Rect::new(add.x - 30.0, add.y, 26.0, 26.0),
+        Rect::new(left - 6.0, y, 36.0, 36.0),
+        Rect::new(left + 36.0, y, 36.0, 36.0),
+        Rect::new(left + 78.0, y, 36.0, 36.0),
     ]
+}
+
+/// Note rapide : grand bouton « Écrire » au milieu de la carte.
+fn quick_button(card: Rect) -> Rect {
+    Rect::new(
+        card.x + 16.0,
+        card.y + 48.0,
+        card.w - 32.0,
+        (card.h - 96.0).clamp(44.0, 64.0),
+    )
+}
+
+/// Notes récentes : indices des notes, la plus récemment modifiée d'abord.
+pub(super) fn recent_notes(view: &DashboardView) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..view.notes.len()).collect();
+    order.sort_by_key(|&index| std::cmp::Reverse(view.notes[index].updated));
+    order
+}
+
+/// Lignes des notes récentes qui tiennent dans la carte.
+pub(super) fn recent_rows(card: Rect, count: usize) -> Vec<Rect> {
+    let fit = ((card.bottom() - 12.0 - (card.y + 44.0)) / 36.0).floor().max(0.0) as usize;
+    (0..count.min(fit))
+        .map(|row| {
+            Rect::new(
+                card.x + 18.0,
+                card.y + 44.0 + row as f64 * 36.0,
+                card.w - 36.0,
+                36.0,
+            )
+        })
+        .collect()
+}
+
+/// Note épinglée : la plus récente qui a une liste à cocher, sinon la plus récente.
+pub(super) fn pinned_note(view: &DashboardView) -> Option<usize> {
+    let recent = recent_notes(view);
+    recent
+        .iter()
+        .copied()
+        .find(|&index| !crate::desktop::widgets::checklist(&view.notes[index].lines).is_empty())
+        .or_else(|| recent.first().copied())
+}
+
+/// Lignes à cocher de la note épinglée qui tiennent dans la carte.
+pub(super) fn pinned_rows(card: Rect, count: usize) -> Vec<Rect> {
+    let fit = ((card.bottom() - 40.0 - (card.y + 94.0)) / 34.0).floor().max(0.0) as usize;
+    (0..count.min(fit))
+        .map(|row| {
+            Rect::new(
+                card.x + 18.0,
+                card.y + 94.0 + row as f64 * 34.0,
+                card.w - 36.0,
+                34.0,
+            )
+        })
+        .collect()
+}
+
+/// Corbeille de la note affichée, à gauche du bouton d'ajout.
+fn note_trash(card: Rect) -> Rect {
+    let add = add_button(card);
+    Rect::new(add.x - 30.0, add.y, 26.0, 26.0)
+}
+
+/// Note précédente et suivante, à gauche de la corbeille.
+fn note_arrows(card: Rect) -> [Rect; 2] {
+    let trash = note_trash(card);
+    [
+        Rect::new(trash.x - 64.0, trash.y, 26.0, 26.0),
+        Rect::new(trash.x - 34.0, trash.y, 26.0, 26.0),
+    ]
+}
+
+/// Onglets des feuilles de tâches visibles (place dans la liste et cadre), puis l'onglet
+/// « + » qui en crée une. La feuille affichée reste toujours visible.
+fn list_tabs(card: Rect, count: usize, shown: usize) -> (Vec<(usize, Rect)>, Rect) {
+    let y = card.y + 44.0;
+    let room = (card.w - 36.0 - TAB_H - TAB_GAP).max(TAB_W.0);
+    let count = count.max(1);
+    let width = ((room - (count - 1) as f64 * TAB_GAP) / count as f64).clamp(TAB_W.0, TAB_W.1);
+    let visible = (((room + TAB_GAP) / (width + TAB_GAP)).floor() as usize).clamp(1, count);
+    let first = (shown + 1).saturating_sub(visible).min(count - visible);
+    let tabs = (first..first + visible)
+        .enumerate()
+        .map(|(slot, index)| {
+            let x = card.x + 18.0 + slot as f64 * (width + TAB_GAP);
+            (index, Rect::new(x, y, width, TAB_H))
+        })
+        .collect::<Vec<_>>();
+    let plus_x = card.x + 18.0 + visible as f64 * (width + TAB_GAP);
+    (tabs, Rect::new(plus_x, y, TAB_H, TAB_H))
+}
+
+/// Croix qui supprime la feuille, dans son onglet.
+fn tab_close(tab: Rect) -> Rect {
+    Rect::new(tab.right() - 24.0, tab.y + 4.0, 20.0, 20.0)
+}
+
+/// Croix qui supprime une tâche, au bout de sa ligne ; la priorité est juste avant.
+fn task_delete(row: Rect) -> Rect {
+    Rect::new(row.right() - 20.0, row.y + 5.0, 20.0, 20.0)
+}
+
+fn task_priority(row: Rect) -> Rect {
+    Rect::new(row.right() - 46.0, row.y, 24.0, row.h)
 }
 
 fn month_arrows(card: Rect) -> [Rect; 2] {
@@ -133,7 +253,7 @@ fn month_arrows(card: Rect) -> [Rect; 2] {
 fn task_row(card: Rect, row: usize) -> Rect {
     Rect::new(
         card.x + 18.0,
-        card.y + 50.0 + row as f64 * TASK_STEP,
+        card.y + TASKS_TOP + row as f64 * TASK_STEP,
         card.w - 36.0,
         TASK_ROW,
     )
@@ -166,7 +286,7 @@ fn app_cells(card: Rect, count: usize) -> Vec<Rect> {
 
 /// Lignes de tâches qui tiennent dans la carte.
 fn task_rows(card: Rect) -> usize {
-    (((card.h - 50.0 - 8.0 + TASK_STEP - TASK_ROW) / TASK_STEP).floor() as usize).max(1)
+    (((card.h - TASKS_TOP - 8.0 + TASK_STEP - TASK_ROW) / TASK_STEP).floor() as usize).max(1)
 }
 
 /// Tâches à afficher : celles à faire d'abord. La saisie en cours prend une ligne.
@@ -284,8 +404,14 @@ pub(super) fn dashboard_action_at(
         WidgetKind::Notes => {
             let [previous, next] = note_arrows(*card);
             let several = view.dashboard.notes.len() > 1 && card.w >= NOTE_ARROWS;
+            let shown = view
+                .dashboard
+                .note_shown
+                .min(view.dashboard.notes.len().saturating_sub(1));
             if add_button(*card).contains(pos) {
                 DesktopAction::DashboardAddNote
+            } else if !view.dashboard.notes.is_empty() && note_trash(*card).contains(pos) {
+                DesktopAction::DashboardDeleteNote(shown)
             } else if several && previous.contains(pos) {
                 DesktopAction::DashboardNoteStep(-1)
             } else if several && next.contains(pos) {
@@ -298,6 +424,50 @@ pub(super) fn dashboard_action_at(
                 )
             }
         }
+        WidgetKind::Music => {
+            use crate::desktop::lock::MediaCommand;
+            let commands = [
+                MediaCommand::Previous,
+                MediaCommand::PlayPause,
+                MediaCommand::Next,
+            ];
+            let pressed = view.dashboard.media.as_ref().and_then(|_| {
+                music_buttons(*card)
+                    .iter()
+                    .position(|button| button.contains(pos))
+            });
+            pressed.map_or(DesktopAction::DashboardOpenMusic, |index| {
+                DesktopAction::DashboardMedia(commands[index])
+            })
+        }
+        WidgetKind::NoteQuick => {
+            if quick_button(*card).contains(pos) {
+                DesktopAction::DashboardAddNote
+            } else {
+                DesktopAction::DashboardConsume
+            }
+        }
+        WidgetKind::NotesRecent => {
+            let order = recent_notes(&view.dashboard);
+            recent_rows(*card, order.len())
+                .iter()
+                .position(|row| row.contains(pos))
+                .map_or(DesktopAction::DashboardConsume, |row| {
+                    DesktopAction::DashboardShowNote(order[row])
+                })
+        }
+        WidgetKind::NotePinned => match pinned_note(&view.dashboard) {
+            Some(note) => {
+                let checks = crate::desktop::widgets::checklist(&view.dashboard.notes[note].lines);
+                pinned_rows(*card, checks.len())
+                    .iter()
+                    .position(|row| row.contains(pos))
+                    .map_or(DesktopAction::DashboardShowNote(note), |row| {
+                        DesktopAction::DashboardToggleCheck(note, checks[row].0)
+                    })
+            }
+            None => DesktopAction::DashboardAddNote,
+        },
         WidgetKind::Apps => app_cells(*card, view.dashboard.apps.len())
             .iter()
             .position(|cell| cell.contains(pos))
@@ -306,11 +476,28 @@ pub(super) fn dashboard_action_at(
             if add_button(*card).contains(pos) {
                 return Some(DesktopAction::DashboardAddTask);
             }
+            let lists = view.dashboard.lists.len();
+            let (tabs, plus) = list_tabs(*card, lists, view.dashboard.list_shown);
+            for (index, tab) in tabs {
+                if tab.contains(pos) {
+                    let current = index == view.dashboard.list_shown;
+                    return Some(if current && lists > 1 && tab_close(tab).contains(pos) {
+                        DesktopAction::DashboardDeleteList(index)
+                    } else {
+                        DesktopAction::DashboardList(index)
+                    });
+                }
+            }
+            if plus.contains(pos) {
+                return Some(DesktopAction::DashboardAddList);
+            }
             let first = usize::from(view.dashboard.editing == Some(DashboardEdit::NewTask));
             for (row, task) in shown_tasks(&view.dashboard, *card).into_iter().enumerate() {
                 let rect = task_row(*card, row + first);
                 if rect.contains(pos) {
-                    return Some(if pos.x >= rect.right() - 28.0 {
+                    return Some(if task_delete(rect).contains(pos) {
+                        DesktopAction::DashboardDeleteTask(task)
+                    } else if task_priority(rect).contains(pos) {
                         DesktopAction::DashboardCyclePriority(task)
                     } else {
                         DesktopAction::DashboardToggleTask(task)
@@ -374,6 +561,36 @@ impl Canvas<'_> {
             }
         }
     }
+}
+
+/// Données d'une carte qui changent toutes seules (heure, mesures, lecture) : quand seules
+/// elles changent, la carte est redessinée seule (voir `DashboardCache`).
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct CardLive {
+    clock: Option<ClockSnapshot>,
+    system: Option<SystemMetrics>,
+    media: Option<Option<crate::desktop::lock::Media>>,
+}
+
+pub(super) fn card_live(kind: WidgetKind, state: &VisualState) -> CardLive {
+    let uses_clock = matches!(
+        kind,
+        WidgetKind::Clock | WidgetKind::Calendar | WidgetKind::Notes | WidgetKind::NotesRecent
+    );
+    CardLive {
+        clock: uses_clock.then_some(state.clock),
+        system: (kind == WidgetKind::System).then(|| state.system.clone()),
+        media: (kind == WidgetKind::Music).then(|| state.view.dashboard.media.clone()),
+    }
+}
+
+/// L'état sans ses parties vivantes : ce qui, en changeant, oblige à tout redessiner.
+pub(super) fn base_key(state: &VisualState) -> VisualState {
+    let mut base = state.clone();
+    base.clock = ClockSnapshot::default();
+    base.system = SystemMetrics::default();
+    base.view.dashboard.media = None;
+    base
 }
 
 /// Ce dont dépend le verre des cartes (fond dépoli, papier des notes) : calculé pixel par
@@ -495,6 +712,10 @@ impl Panels {
             WidgetKind::Notes => self.notes_card(canvas, card, state),
             WidgetKind::Quote => self.quote_card(canvas, card),
             WidgetKind::Apps => self.apps_card(canvas, card, view),
+            WidgetKind::Music => self.music_card(canvas, card, view),
+            WidgetKind::NoteQuick => self.quick_note_card(canvas, card, view),
+            WidgetKind::NotesRecent => self.recent_notes_card(canvas, card, state),
+            WidgetKind::NotePinned => self.pinned_note_card(canvas, card, view),
         }
         if view.edit {
             self.draw_handles(canvas, card, kind, view.drag == Some(index));
@@ -523,6 +744,13 @@ impl Panels {
                 canvas.line((cx + 2.5, cy), (cx - 2.0, cy + 4.5), 1.8, ink);
             }
             Glyph::Minus => canvas.line((cx - 4.5, cy), (cx + 4.5, cy), 2.0, ink),
+            Glyph::Trash => {
+                canvas.line((cx - 5.0, cy - 3.5), (cx + 5.0, cy - 3.5), 1.6, ink);
+                canvas.line((cx - 1.8, cy - 5.5), (cx + 1.8, cy - 5.5), 1.6, ink);
+                canvas.line((cx - 3.6, cy - 3.0), (cx - 2.8, cy + 5.0), 1.6, ink);
+                canvas.line((cx + 3.6, cy - 3.0), (cx + 2.8, cy + 5.0), 1.6, ink);
+                canvas.line((cx - 2.8, cy + 5.0), (cx + 2.8, cy + 5.0), 1.6, ink);
+            }
         }
     }
 
@@ -760,6 +988,44 @@ impl Panels {
             Color::WHITE,
             Glyph::Plus,
         );
+        let (tabs, plus) = list_tabs(card, view.lists.len(), view.list_shown);
+        for (index, tab) in tabs {
+            let current = index == view.list_shown;
+            let fill = if current {
+                TEAL.with_alpha(210)
+            } else {
+                Color::WHITE.with_alpha(22)
+            };
+            canvas.fill(tab, (TAB_H / 2.0) as f32, fill);
+            let naming = view.editing == Some(DashboardEdit::ListName(index));
+            let name = view.lists.get(index).map_or("", String::as_str);
+            let name = if naming {
+                format!("{name}|")
+            } else {
+                name.to_owned()
+            };
+            let closable = current && view.lists.len() > 1;
+            let room = tab.w - 20.0 - if closable { 20.0 } else { 0.0 };
+            let name = canvas.fit_text(&self.bold, &name, px(12.5), room);
+            let ink = if current { Color::WHITE } else { SOFT };
+            canvas.text(&self.bold, &name, tab.x + 11.0, tab.y + 6.0, 12.5, ink);
+            if closable {
+                let (cx, cy) = tab_close(tab).center();
+                canvas.line(
+                    (cx - 3.5, cy - 3.5),
+                    (cx + 3.5, cy + 3.5),
+                    1.6,
+                    Color::WHITE.with_alpha(220),
+                );
+                canvas.line(
+                    (cx - 3.5, cy + 3.5),
+                    (cx + 3.5, cy - 3.5),
+                    1.6,
+                    Color::WHITE.with_alpha(220),
+                );
+            }
+        }
+        self.round_button(canvas, plus, Color::WHITE.with_alpha(22), SOFT, Glyph::Plus);
         let editing = view.editing == Some(DashboardEdit::NewTask);
         if editing {
             let row = task_row(card, 0);
@@ -780,7 +1046,14 @@ impl Panels {
                 px(13.0),
                 card.w - 36.0,
             );
-            canvas.text(&self.regular, &hint, card.x + 18.0, card.y + 56.0, 13.0, FAINT);
+            canvas.text(
+                &self.regular,
+                &hint,
+                card.x + 18.0,
+                card.y + TASKS_TOP + 6.0,
+                13.0,
+                FAINT,
+            );
         }
         for (row, index) in shown_tasks(view, card).into_iter().enumerate() {
             let task = &view.tasks[index];
@@ -794,7 +1067,7 @@ impl Panels {
             } else {
                 canvas.stroke(ring, 9.0, Color::WHITE.with_alpha(115), 1.6);
             }
-            let label = canvas.fit_text(&self.regular, &task.text, px(14.0), rect.w - 46.0);
+            let label = canvas.fit_text(&self.regular, &task.text, px(14.0), rect.w - 28.0 - 52.0);
             let ink = if task.done { Color::rgb(0x7D8896) } else { INK };
             canvas.text(&self.regular, &label, rect.x + 28.0, rect.y + 6.0, 14.0, ink);
             if task.done {
@@ -810,7 +1083,12 @@ impl Panels {
                     Priority::Low => Color::rgb(0x3CC7D1),
                 }
             };
-            canvas.fill(Rect::new(rect.right() - 8.0, rect.y + 11.0, 8.0, 8.0), 4.0, dot);
+            let (px_, py_) = task_priority(rect).center();
+            canvas.fill(Rect::new(px_ - 4.0, py_ - 4.0, 8.0, 8.0), 4.0, dot);
+            let (cx, cy) = task_delete(rect).center();
+            let cross = Color::WHITE.with_alpha(110);
+            canvas.line((cx - 3.5, cy - 3.5), (cx + 3.5, cy + 3.5), 1.5, cross);
+            canvas.line((cx - 3.5, cy + 3.5), (cx + 3.5, cy - 3.5), 1.5, cross);
         }
     }
 
@@ -836,9 +1114,16 @@ impl Panels {
         };
         let stamp = note_timestamp(note.updated, state.clock);
         let several = view.notes.len() > 1 && card.w >= NOTE_ARROWS;
+        self.round_button(canvas, note_trash(card), fill, NOTE_INK, Glyph::Trash);
         // Trop étroit : le titre seul, avant les boutons.
-        let room = card.w - 36.0 - 34.0 - if several { 60.0 } else { 0.0 };
-        let caption = canvas.fit_text(&self.bold, &format!("Notes · {stamp}"), px(12.5), room);
+        let room = card.w - 36.0 - 64.0 - if several { 64.0 } else { 0.0 };
+        let caption = if view.notes.len() > 1 {
+            let shown = view.note_shown.min(view.notes.len() - 1) + 1;
+            format!("Notes {shown}/{} · {stamp}", view.notes.len())
+        } else {
+            format!("Notes · {stamp}")
+        };
+        let caption = canvas.fit_text(&self.bold, &caption, px(12.5), room);
         self.caption(canvas, &caption, x, card.y + 22.0, NOTE_LABEL);
         if several {
             let [previous, next] = note_arrows(card);
@@ -909,6 +1194,266 @@ impl Panels {
                 canvas.fill(Rect::new(center.0 - 2.0, cell.y + 68.0, 4.0, 4.0), 2.0, INK);
             }
         }
+    }
+
+    /// Lecture en cours : pochette, titre, artiste, progression et boutons ; sans lecteur,
+    /// une invitation à ouvrir Musique.
+    fn music_card(&self, canvas: &mut Canvas, card: Rect, view: &DashboardView) {
+        let media = view.media.as_ref();
+        let art = music_art(card);
+        if let Some(art) = art {
+            match media.and_then(|media| media.cover.as_ref()) {
+                Some(cover) => canvas.image_cover(art, cover, 16.0),
+                None => {
+                    // Note de musique sur un dégradé, comme sur l'écran de verrouillage.
+                    canvas.gradient(art, 16.0, &[(0.0, 0xFF7E9D), (1.0, 0x7C4DE8)]);
+                    let (ax, ay) = art.center();
+                    let k = art.w / 48.0;
+                    canvas.line(
+                        (ax - 3.0 * k, ay + 7.0 * k),
+                        (ax - 3.0 * k, ay - 6.0 * k),
+                        2.0 * k,
+                        Color::WHITE,
+                    );
+                    canvas.line(
+                        (ax - 3.0 * k, ay - 6.0 * k),
+                        (ax + 7.0 * k, ay - 8.0 * k),
+                        2.0 * k,
+                        Color::WHITE,
+                    );
+                    canvas.line(
+                        (ax + 7.0 * k, ay - 8.0 * k),
+                        (ax + 7.0 * k, ay + 5.0 * k),
+                        2.0 * k,
+                        Color::WHITE,
+                    );
+                    canvas.fill(
+                        Rect::new(ax - 8.0 * k, ay + 4.5 * k, 5.2 * k, 5.2 * k),
+                        (2.6 * k) as f32,
+                        Color::WHITE,
+                    );
+                    canvas.fill(
+                        Rect::new(ax + 2.0 * k, ay + 2.5 * k, 5.2 * k, 5.2 * k),
+                        (2.6 * k) as f32,
+                        Color::WHITE,
+                    );
+                }
+            }
+        }
+        let x = art.map_or(card.x + 18.0, |art| art.right() + 16.0);
+        let room = card.right() - 18.0 - x;
+        let Some(media) = media else {
+            self.caption(canvas, "Musique", x, card.y + 20.0, DIM);
+            canvas.text(&self.bold, "Rien en lecture", x, card.y + 46.0, 17.0, INK);
+            let hint = canvas.fit_text(&self.regular, "Cliquer pour ouvrir Musique", px(13.0), room);
+            canvas.text(&self.regular, &hint, x, card.y + 70.0, 13.0, DIM);
+            return;
+        };
+        let caption = if media.playing { "En lecture" } else { "En pause" };
+        self.caption(canvas, caption, x, card.y + 20.0, DIM);
+        let title = canvas.fit_text(&self.bold, &media.title, px(17.0), room);
+        canvas.text(&self.bold, &title, x, card.y + 42.0, 17.0, INK);
+        let artist = canvas.fit_text(&self.regular, &media.artist, px(13.0), room);
+        canvas.text(&self.regular, &artist, x, card.y + 66.0, 13.0, DIM);
+        let track = Rect::new(x, card.y + 92.0, room, 4.0);
+        canvas.fill(track, 2.0, Color::WHITE.with_alpha(26));
+        let filled = room * f64::from(media.progress.min(100)) / 100.0;
+        canvas.fill(
+            Rect::new(x, track.y, filled.max(4.0), 4.0),
+            2.0,
+            Color::rgb(0x6CB8FF),
+        );
+        let [previous, play, next] = music_buttons(card);
+        let (px_, py_) = previous.center();
+        canvas.polygon(
+            &[(px_ + 5.0, py_ - 6.0), (px_ - 3.0, py_), (px_ + 5.0, py_ + 6.0)],
+            INK,
+        );
+        canvas.line((px_ - 5.0, py_ - 6.0), (px_ - 5.0, py_ + 6.0), 1.8, INK);
+        canvas.fill(play, 18.0, Color::WHITE.with_alpha(36));
+        let (cx, cy) = play.center();
+        if media.playing {
+            canvas.fill(Rect::new(cx - 5.0, cy - 6.0, 3.5, 12.0), 1.0, INK);
+            canvas.fill(Rect::new(cx + 1.5, cy - 6.0, 3.5, 12.0), 1.0, INK);
+        } else {
+            canvas.polygon(&[(cx - 3.5, cy - 6.5), (cx + 6.0, cy), (cx - 3.5, cy + 6.5)], INK);
+        }
+        let (nx, ny) = next.center();
+        canvas.polygon(&[(nx - 5.0, ny - 6.0), (nx + 3.0, ny), (nx - 5.0, ny + 6.0)], INK);
+        canvas.line((nx + 5.0, ny - 6.0), (nx + 5.0, ny + 6.0), 1.8, INK);
+    }
+
+    /// Note rapide : un grand bouton pour écrire une note tout de suite.
+    fn quick_note_card(&self, canvas: &mut Canvas, card: Rect, view: &DashboardView) {
+        let x = card.x + 18.0;
+        self.caption(canvas, "Note rapide", x, card.y + 20.0, DIM);
+        let button = quick_button(card);
+        canvas.stroke(button, 16.0, Color::WHITE.with_alpha(90), 1.5);
+        let label = "Écrire";
+        let width = canvas.css_width(&self.bold, label, 13.0) + 22.0;
+        let (cx, cy) = button.center();
+        let left = cx - width / 2.0;
+        canvas.line((left + 2.0, cy), (left + 12.0, cy), 2.0, INK);
+        canvas.line((left + 7.0, cy - 5.0), (left + 7.0, cy + 5.0), 2.0, INK);
+        canvas.text(&self.bold, label, left + 22.0, cy - 9.0, 13.0, INK);
+        let count = view.notes.len();
+        let plural = if count > 1 { "s" } else { "" };
+        canvas.text(
+            &self.regular,
+            &format!("{count} note{plural}"),
+            x,
+            card.bottom() - 30.0,
+            12.0,
+            DIM,
+        );
+    }
+
+    /// Notes récentes : titre et date des dernières notes ; un clic l'affiche dans Notes.
+    fn recent_notes_card(&self, canvas: &mut Canvas, card: Rect, state: &VisualState) {
+        let view = &state.view.dashboard;
+        let x = card.x + 18.0;
+        self.caption(canvas, "Notes récentes", x, card.y + 20.0, DIM);
+        let order = recent_notes(view);
+        if order.is_empty() {
+            canvas.text(
+                &self.regular,
+                "Aucune note pour l’instant",
+                x,
+                card.y + 52.0,
+                13.0,
+                DIM,
+            );
+            return;
+        }
+        for (row, (rect, &index)) in recent_rows(card, order.len()).iter().zip(&order).enumerate() {
+            let note = &view.notes[index];
+            if row > 0 {
+                canvas.fill(
+                    Rect::new(rect.x, rect.y, rect.w, 1.0),
+                    0.0,
+                    Color::WHITE.with_alpha(26),
+                );
+            }
+            let stamp = note_timestamp(note.updated, state.clock);
+            let stamp_width = canvas.css_width(&self.regular, &stamp, 12.0);
+            canvas.text(
+                &self.regular,
+                &stamp,
+                rect.right() - stamp_width,
+                rect.y + 10.0,
+                12.0,
+                DIM,
+            );
+            let title = if note.title.is_empty() {
+                "Sans titre"
+            } else {
+                note.title.as_str()
+            };
+            let title = canvas.fit_text(&self.bold, title, px(14.0), rect.w - stamp_width - 12.0);
+            canvas.text(&self.bold, &title, rect.x, rect.y + 9.0, 14.0, INK);
+        }
+    }
+
+    /// Note épinglée : la liste à cocher d'une note, avec son avancement.
+    fn pinned_note_card(&self, canvas: &mut Canvas, card: Rect, view: &DashboardView) {
+        let x = card.x + 18.0;
+        let width = card.w - 36.0;
+        self.caption(canvas, "Note épinglée", x, card.y + 20.0, DIM);
+        let Some(index) = pinned_note(view) else {
+            canvas.text(
+                &self.regular,
+                "Cliquez pour créer une note",
+                x,
+                card.y + 52.0,
+                13.0,
+                DIM,
+            );
+            return;
+        };
+        let note = &view.notes[index];
+        let checks = crate::desktop::widgets::checklist(&note.lines);
+        let done = checks.iter().filter(|(_, done, _)| *done).count();
+        if !checks.is_empty() {
+            let text = format!("{done}/{} faites", checks.len());
+            let text_width = canvas.css_width(&self.regular, &text, 12.0);
+            canvas.text(
+                &self.regular,
+                &text,
+                card.right() - 18.0 - text_width,
+                card.y + 19.0,
+                12.0,
+                DIM,
+            );
+        }
+        let title = if note.title.is_empty() {
+            "Sans titre"
+        } else {
+            note.title.as_str()
+        };
+        let title = canvas.fit_text(&self.bold, title, px(18.0), width);
+        canvas.text(&self.bold, &title, x, card.y + 44.0, 18.0, INK);
+        if checks.is_empty() {
+            // Pas de liste : le texte de la note.
+            let lines = wrap_dashboard_text(&self.regular, &note.preview, px(13.0), width);
+            let room = ((card.bottom() - 40.0 - (card.y + 76.0)) / 19.5).floor().max(0.0) as usize;
+            for (row, line) in lines.iter().take(room).enumerate() {
+                canvas.text(
+                    &self.regular,
+                    line,
+                    x,
+                    card.y + 76.0 + row as f64 * 19.5,
+                    13.0,
+                    DIM,
+                );
+            }
+            canvas.text(
+                &self.regular,
+                "Lignes « - [ ] » : une liste à cocher",
+                x,
+                card.bottom() - 28.0,
+                11.0,
+                DIM,
+            );
+            return;
+        }
+        let track = Rect::new(x, card.y + 76.0, width, 4.0);
+        canvas.fill(track, 2.0, Color::WHITE.with_alpha(31));
+        let filled = width * done as f64 / checks.len() as f64;
+        if filled > 0.0 {
+            canvas.fill(Rect::new(x, track.y, filled, 4.0), 2.0, Color::rgb(0x6CB8FF));
+        }
+        let accent = Color::rgb(0x2779E0);
+        for (rect, (_, done, text)) in pinned_rows(card, checks.len()).iter().zip(&checks) {
+            let (cx, cy) = (rect.x + 9.0, rect.y + 17.0);
+            let ring = Rect::new(cx - 9.0, cy - 9.0, 18.0, 18.0);
+            if *done {
+                canvas.fill(ring, 9.0, accent);
+                canvas.line((cx - 4.0, cy + 0.2), (cx - 1.2, cy + 3.0), 1.8, Color::WHITE);
+                canvas.line((cx - 1.2, cy + 3.0), (cx + 4.0, cy - 2.6), 1.8, Color::WHITE);
+            } else {
+                canvas.stroke(ring, 9.0, Color::WHITE.with_alpha(115), 1.6);
+            }
+            let ink = if *done { Color::rgb(0x7D8896) } else { INK };
+            let label = canvas.fit_text(&self.regular, text, px(14.0), rect.w - 30.0);
+            canvas.text(&self.regular, &label, rect.x + 28.0, cy - 9.5, 14.0, ink);
+            if *done {
+                let strike = canvas.css_width(&self.regular, &label, 14.0);
+                canvas.line(
+                    (rect.x + 28.0, cy + 0.5),
+                    (rect.x + 28.0 + strike, cy + 0.5),
+                    1.2,
+                    ink,
+                );
+            }
+        }
+        canvas.text(
+            &self.regular,
+            "Un clic coche ou décoche la ligne",
+            x,
+            card.bottom() - 28.0,
+            11.0,
+            DIM,
+        );
     }
 
     fn quote_card(&self, canvas: &mut Canvas, card: Rect) {
@@ -1019,6 +1564,7 @@ enum Glyph {
     Minus,
     Previous,
     Next,
+    Trash,
 }
 
 /// Fond d'une carte : papier pour les notes, verre dépoli pour les autres.

@@ -180,7 +180,10 @@ impl AppKey {
     pub fn icon(&self, installed: &[DesktopEntry]) -> AppIcon {
         match self {
             AppKey::Builtin(app) => AppIcon::Builtin(app.icon()),
-            _ => self
+            // Fenêtre sans `.desktop` affiché (foot, caché du menu ; programme lancé à la
+            // main) : l'icône du thème qui porte le nom de son identifiant, s'il y en a une.
+            AppKey::Other(app_id) => other_icon(app_id).map_or(AppIcon::Missing, AppIcon::File),
+            AppKey::Installed(_) => self
                 .entry(installed)
                 .and_then(|entry| entry.icon.clone())
                 .map_or(AppIcon::Missing, AppIcon::File),
@@ -266,13 +269,14 @@ pub enum App {
     Settings,
     Monitor,
     Viewer,
+    Music,
     /// Corbeille, toujours en dernière case du Dock : la vue Corbeille de Fichiers.
     Trash,
 }
 
 impl App {
     /// Applications Ferrite du menu Applications.
-    pub const ALL: [App; 7] = [
+    pub const ALL: [App; 8] = [
         App::Files,
         App::TextEdit,
         App::Terminal,
@@ -280,6 +284,7 @@ impl App {
         App::Settings,
         App::Monitor,
         App::Viewer,
+        App::Music,
     ];
 
     /// Applications épinglées dans le Dock.
@@ -300,6 +305,7 @@ impl App {
             App::Settings => "Paramètres",
             App::Monitor => "Moniteur d'activité",
             App::Viewer => "Visionneuse",
+            App::Music => "Musique",
             App::Trash => "Corbeille",
         }
     }
@@ -314,6 +320,7 @@ impl App {
             App::Settings => "app-settings",
             App::Monitor => "app-monitor",
             App::Viewer => "app-photos",
+            App::Music => "app-music",
             App::Trash => "places-trash",
         }
     }
@@ -328,6 +335,7 @@ impl App {
             App::Settings => "ferrite-settings",
             App::Monitor => "ferrite-monitor",
             App::Viewer => "ferrite-viewer",
+            App::Music => "ferrite-music",
             App::Trash => "ferrite-trash",
         }
     }
@@ -341,6 +349,7 @@ impl App {
             App::Settings => ("ferrite-apps", Some("settings")),
             App::Monitor => ("ferrite-apps", Some("monitor")),
             App::Viewer => ("ferrite-apps", Some("viewer")),
+            App::Music => ("ferrite-apps", Some("music")),
             App::Trash => ("ferrite-apps", Some("files")),
         }
     }
@@ -391,6 +400,26 @@ impl App {
             Err(err) => tracing::warn!(app = self.name(), %err, "application indisponible"),
         }
     }
+}
+
+/// Icône du thème au nom de l'identifiant d'une fenêtre ; cherchée une fois par
+/// identifiant (le Dock la demande à chaque image).
+fn other_icon(app_id: &str) -> Option<std::path::PathBuf> {
+    use std::{
+        collections::HashMap,
+        sync::{Mutex, OnceLock},
+    };
+    static CACHE: OnceLock<Mutex<HashMap<String, Option<std::path::PathBuf>>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(Mutex::default);
+    let mut cache = cache.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    cache
+        .entry(app_id.to_owned())
+        .or_insert_with(|| {
+            let lower = app_id.to_lowercase();
+            ferrite_system::applications::resolve_icon(app_id)
+                .or_else(|| ferrite_system::applications::resolve_icon(&lower))
+        })
+        .clone()
 }
 
 #[cfg(test)]

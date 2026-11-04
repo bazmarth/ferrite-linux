@@ -60,6 +60,17 @@ impl FunctionKey {
         })
     }
 
+    /// Maintenue, la touche se répète (volume et luminosité).
+    pub fn repeats(self) -> bool {
+        matches!(
+            self,
+            FunctionKey::VolumeUp
+                | FunctionKey::VolumeDown
+                | FunctionKey::BrightnessUp
+                | FunctionKey::BrightnessDown
+        )
+    }
+
     /// Utilisable sur l'écran de verrouillage : les réglages, pas les applications.
     pub fn works_locked(self) -> bool {
         !matches!(self, FunctionKey::Calculator | FunctionKey::Search)
@@ -219,6 +230,7 @@ mod tests {
             Some(FunctionKey::Calculator)
         );
         assert_eq!(FunctionKey::from_keysym(Keysym::a), None);
+        assert!(FunctionKey::VolumeUp.repeats() && !FunctionKey::Mute.repeats());
         assert!(FunctionKey::Airplane.works_locked() && !FunctionKey::Calculator.works_locked());
     }
 

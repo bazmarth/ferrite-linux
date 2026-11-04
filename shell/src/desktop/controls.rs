@@ -24,6 +24,8 @@ const MAX_ROWS: usize = 8;
 pub struct PasswordEntry {
     pub ssid: String,
     pub text: String,
+    /// L'œil du champ : le texte tapé s'affiche en clair.
+    pub revealed: bool,
 }
 
 /// État des listes du centre de contrôle.
@@ -35,6 +37,10 @@ pub struct Controls {
     pub known: Vec<String>,
     pub devices: Vec<Device>,
     pub password: Option<PasswordEntry>,
+    /// Mot de passe enregistré affiché en clair : réseau et mot de passe.
+    pub saved_password: Option<(String, String)>,
+    /// Appareil en cours de connexion ou de déconnexion.
+    pub busy: Option<(String, bool)>,
     pub scanning: bool,
     scanned: Option<Instant>,
 }
@@ -52,12 +58,24 @@ impl Controls {
                 level: network.level(),
                 secured: network.secured,
                 connected: network.connected,
+                known: network.connected || self.known.contains(&network.ssid),
                 hint: self.network_hint(network),
+                revealed: self
+                    .saved_password
+                    .as_ref()
+                    .is_some_and(|(ssid, _)| *ssid == network.ssid),
             })
             .collect()
     }
 
     fn network_hint(&self, network: &WifiNetwork) -> String {
+        if let Some((_, password)) = self
+            .saved_password
+            .as_ref()
+            .filter(|(ssid, _)| *ssid == network.ssid)
+        {
+            return format!("Mot de passe : {password}");
+        }
         if network.connected {
             let summary = network.summary();
             // « Connecté · 5 GHz » : la sécurité se voit au cadenas, le débit dans Paramètres.
@@ -77,6 +95,7 @@ impl Controls {
         self.password.as_ref().map(|entry| PasswordRow {
             ssid: entry.ssid.clone(),
             length: entry.text.chars().count(),
+            shown: entry.revealed.then(|| entry.text.clone()),
         })
     }
 
@@ -90,7 +109,16 @@ impl Controls {
                 name: device.name.clone(),
                 paired: device.paired,
                 connected: device.connected,
-                hint: device_hint(device),
+                hint: match &self.busy {
+                    Some((address, connecting)) if *address == device.address => if *connecting {
+                        "Connexion…"
+                    } else {
+                        "Déconnexion…"
+                    }
+                    .to_owned(),
+                    _ => device_hint(device),
+                },
+                busy: self.busy.is_some(),
                 glyph: device_glyph(device),
             })
             .collect()
@@ -161,6 +189,7 @@ impl Ferrite {
     pub fn controls_opened(&mut self) {
         self.controls.page = ControlsPage::Main;
         self.controls.password = None;
+        self.controls.saved_password = None;
         self.controls.scanned = None;
     }
 
@@ -199,6 +228,7 @@ impl Ferrite {
     pub fn show_controls_page(&mut self, page: ControlsPage) {
         self.controls.page = page;
         self.controls.password = None;
+        self.controls.saved_password = None;
         self.controls.scanned = None;
     }
 
@@ -215,6 +245,7 @@ impl Ferrite {
             self.controls.password = Some(PasswordEntry {
                 ssid: network.ssid,
                 text: String::new(),
+                revealed: false,
             });
             return;
         }
@@ -251,6 +282,33 @@ impl Ferrite {
         self.controls.password = None;
     }
 
+    /// L'œil du champ de mot de passe.
+    pub fn password_reveal(&mut self) {
+        if let Some(entry) = self.controls.password.as_mut() {
+            entry.revealed = !entry.revealed;
+        }
+    }
+
+    /// L'œil d'un réseau enregistré : son mot de passe s'affiche en clair, ou se cache.
+    pub fn show_network_password(&mut self, index: usize) {
+        let Some(network) = self.controls.networks.get(index) else {
+            return;
+        };
+        let ssid = network.ssid.clone();
+        if self
+            .controls
+            .saved_password
+            .take()
+            .is_some_and(|(shown, _)| shown == ssid)
+        {
+            return;
+        }
+        self.system_error = None;
+        if let Some(link) = &self.system_link {
+            link.run(move || vec![Event::WifiPassword(ssid.clone(), network::saved_password(&ssid))]);
+        }
+    }
+
     pub fn password_submit(&mut self) {
         if let Some(entry) = self.controls.password.take() {
             self.connect_network(entry.ssid, Some(entry.text));
@@ -262,15 +320,19 @@ impl Ferrite {
         let Some(device) = self.controls.devices.get(index).cloned() else {
             return;
         };
+        if self.controls.busy.is_some() {
+            return;
+        }
         self.system_error = None;
         if let Some(link) = &self.system_link {
+            self.controls.busy = Some((device.address.clone(), !device.connected));
             link.run(move || {
                 let result = if device.connected {
                     bluetooth::disconnect(&device.address)
                 } else {
                     bluetooth::connect(&device.address)
                 };
-                let mut events = vec![bluetooth_list()];
+                let mut events = vec![bluetooth_list(), Event::BluetoothDone];
                 if let Err(error) = result {
                     events.push(Event::Failed(error));
                 }

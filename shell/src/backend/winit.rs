@@ -92,6 +92,8 @@ pub fn init(
                     None,
                     None,
                 );
+                // Calques et zone utile suivent la nouvelle taille.
+                smithay::desktop::layer_map_for_output(&output).arrange();
             }
             WinitEvent::Input(event) => state.process_input_event(event),
             WinitEvent::Redraw => {
@@ -121,6 +123,10 @@ fn host_cursor_icon(shape: render::CursorShape) -> CursorIcon {
         render::CursorShape::DiagonalDown => CursorIcon::NwseResize,
         render::CursorShape::DiagonalUp => CursorIcon::NeswResize,
         render::CursorShape::Arrow => CursorIcon::Default,
+        render::CursorShape::Text => CursorIcon::Text,
+        render::CursorShape::Pointer => CursorIcon::Pointer,
+        render::CursorShape::Move => CursorIcon::Move,
+        render::CursorShape::Crosshair => CursorIcon::Crosshair,
     }
 }
 
@@ -137,6 +143,7 @@ fn redraw(
         .set_cursor(host_cursor_icon(state.cursor_shape()));
     state.run_genie_demo();
     render::take_screenshot(backend.renderer(), state, assets, output);
+    render::serve_screencopy(backend.renderer(), state, assets, output);
     let size = backend.window_size();
     let capture_now = pending_capture
         .as_ref()

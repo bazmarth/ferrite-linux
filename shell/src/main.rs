@@ -86,10 +86,8 @@ fn run(options: Options) -> Result<u8, Box<dyn std::error::Error>> {
         Ok((events, media)) => {
             state.lock_events = Some(events);
             state.media_link = Some(media);
-            // Verrouillé avant que le lien existe (`--demo-lock`) : le lecteur est suivi quand même.
-            if state.lock.is_some() {
-                state.set_media_watching(true);
-            }
+            // Verrouillé avant que le lien existe (`--demo-lock`), ou widget Musique posé.
+            state.refresh_media_watching();
         }
         Err(err) => warn!("verrouillage indisponible : {err}"),
     }
@@ -98,7 +96,7 @@ fn run(options: Options) -> Result<u8, Box<dyn std::error::Error>> {
         state.controls.page = page;
     }
     if options.demo_power {
-        state.pending_power = Some(crate::state::PowerAction::PowerOff);
+        state.open_power_dialog(crate::state::PowerAction::PowerOff);
     }
     if options.demo_osd {
         let osd = desktop::panels::Osd {
@@ -150,8 +148,11 @@ fn run(options: Options) -> Result<u8, Box<dyn std::error::Error>> {
         state.space.refresh();
         state.sync_desktops();
         state.lock_tick();
+        state.power_tick();
+        state.night_tick();
         state.expire_notifications();
         state.retile();
+        state.refit_to_area();
         state.refresh_controls();
         state.popups.cleanup();
         let _ = state.display_handle.flush_clients();

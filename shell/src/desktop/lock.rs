@@ -139,6 +139,62 @@ pub struct Media {
     pub detail: String,
     pub progress: u8,
     pub playing: bool,
+    /// Pour le widget Musique : titre, artiste et pochette (`mpris:artUrl` local).
+    pub title: String,
+    pub artist: String,
+    pub cover: Option<crate::clipboard::Thumbnail>,
+}
+
+/// Côté de la pochette réduite pour le widget Musique.
+const COVER_SIDE: u32 = 160;
+
+/// Chemin d'une adresse `file://` (les `%20` et autres décodés).
+fn file_url_path(url: &str) -> Option<std::path::PathBuf> {
+    let encoded = url.strip_prefix("file://")?;
+    let bytes = encoded.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        let hex = bytes
+            .get(index + 1..index + 3)
+            .and_then(|pair| std::str::from_utf8(pair).ok());
+        match (
+            bytes[index],
+            hex.and_then(|pair| u8::from_str_radix(pair, 16).ok()),
+        ) {
+            (b'%', Some(value)) => {
+                decoded.push(value);
+                index += 3;
+            }
+            (byte, _) => {
+                decoded.push(byte);
+                index += 1;
+            }
+        }
+    }
+    Some(std::path::PathBuf::from(
+        String::from_utf8_lossy(&decoded).into_owned(),
+    ))
+}
+
+/// Pochette réduite, en BGRA prémultiplié comme les vignettes du presse-papiers.
+fn load_cover(path: &std::path::Path) -> Option<crate::clipboard::Thumbnail> {
+    let image = ferrite_ui::wallpaper::decode(path).ok()?;
+    let small = ferrite_ui::wallpaper::cover(&image, COVER_SIDE, COVER_SIDE);
+    let pixels = small
+        .rgba
+        .chunks_exact(4)
+        .flat_map(|p| {
+            let alpha = u32::from(p[3]);
+            let premultiply = |value: u8| (u32::from(value) * alpha / 255) as u8;
+            [premultiply(p[2]), premultiply(p[1]), premultiply(p[0]), p[3]]
+        })
+        .collect();
+    Some(crate::clipboard::Thumbnail {
+        width: small.width,
+        height: small.height,
+        pixels: Arc::new(pixels),
+    })
 }
 
 /// Bouton du lecteur.
@@ -208,7 +264,10 @@ fn mpris_proxy<'a>(
 }
 
 /// Lecteur à montrer : celui qui joue, sinon le premier en pause. Rien s'il est à l'arrêt.
-fn read_media(connection: &zbus::blocking::Connection) -> zbus::Result<Option<(String, Media)>> {
+/// Lecteur trouvé : son nom de bus, ce qu'il joue et sa pochette.
+type Found = (String, Media, Option<std::path::PathBuf>);
+
+fn read_media(connection: &zbus::blocking::Connection) -> zbus::Result<Option<Found>> {
     let mut paused = None;
     for player in mpris_players(connection)? {
         let proxy = mpris_proxy(connection, &player)?;
@@ -232,17 +291,25 @@ fn read_media(connection: &zbus::blocking::Connection) -> zbus::Result<Option<(S
             .and_then(|value| value.downcast_ref::<i64>().ok())
             .unwrap_or(0);
         let position = proxy.get_property::<i64>("Position").unwrap_or(0);
+        let art = metadata
+            .get("mpris:artUrl")
+            .and_then(|value| value.downcast_ref::<&str>().ok())
+            .and_then(file_url_path);
         let short_name = player.trim_start_matches(MPRIS_PREFIX);
         let media = Media {
             detail: media_detail(artist, title, short_name),
             progress: media_progress(position, length),
             playing: status == "Playing",
+            title: title.unwrap_or(short_name).to_owned(),
+            artist: artist.unwrap_or_default().to_owned(),
+            // Remplie par `watch_media`, qui garde la dernière pochette décodée.
+            cover: None,
         };
         drop(proxy);
         if media.playing {
-            return Ok(Some((player.clone(), media)));
+            return Ok(Some((player.clone(), media, art)));
         }
-        paused.get_or_insert((player.clone(), media));
+        paused.get_or_insert((player.clone(), media, art));
     }
     Ok(paused)
 }
@@ -255,6 +322,8 @@ fn watch_media(
     let connection = zbus::blocking::Connection::session()?;
     let mut last = None;
     let mut current: Option<String> = None;
+    // Dernière pochette décodée, gardée tant que le morceau ne change pas.
+    let mut cover: Option<(std::path::PathBuf, Option<crate::clipboard::Thumbnail>)> = None;
     loop {
         // Une commande réveille le fil : le lecteur est relu aussitôt.
         match commands.recv_timeout(MEDIA_REFRESH) {
@@ -276,8 +345,16 @@ fn watch_media(
             continue;
         }
         let found = read_media(&connection)?;
-        current = found.as_ref().map(|(player, _)| player.clone());
-        let media = found.map(|(_, media)| media);
+        current = found.as_ref().map(|(player, _, _)| player.clone());
+        let media = found.map(|(_, mut media, art)| {
+            if let Some(art) = art {
+                if cover.as_ref().is_none_or(|(path, _)| *path != art) {
+                    cover = Some((art.clone(), load_cover(&art)));
+                }
+                media.cover = cover.as_ref().and_then(|(_, thumbnail)| thumbnail.clone());
+            }
+            media
+        });
         if media != last {
             last.clone_from(&media);
             if events.send(Event::Media(media)).is_err() {
@@ -343,6 +420,7 @@ pub fn start(handle: &LoopHandle<'static, Ferrite>) -> Result<(channel::Sender<E
         .insert_source(receiver, |event, _, state| {
             if let channel::Event::Msg(event) = event {
                 state.on_lock_event(event);
+                state.request_redraw();
             }
         })
         .map_err(|err| err.to_string())?;
@@ -443,8 +521,9 @@ impl Ferrite {
             }
             Event::Media(media) => {
                 if let Some(lock) = self.lock.as_mut() {
-                    lock.media = media;
+                    lock.media = media.clone();
                 }
+                self.media = media;
             }
         }
     }
@@ -515,6 +594,16 @@ impl Ferrite {
         }
     }
 
+    /// Le lecteur est suivi pendant le verrouillage, et tant que le widget Musique est posé.
+    pub fn refresh_media_watching(&self) {
+        let widget = self
+            .dashboard
+            .layout
+            .iter()
+            .any(|slot| slot.kind == crate::desktop::widgets::WidgetKind::Music);
+        self.set_media_watching(self.lock.is_some() || widget);
+    }
+
     pub fn set_media_watching(&self, watching: bool) {
         if let Some(link) = &self.media_link {
             link.watching.store(watching, Ordering::Relaxed);
@@ -530,7 +619,7 @@ impl Ferrite {
             .is_some_and(|until| Instant::now() >= until);
         if ready {
             self.lock = None;
-            self.set_media_watching(false);
+            self.refresh_media_watching();
             let top = self.top_window();
             self.focus_window(top);
             self.refresh_pointer_focus();

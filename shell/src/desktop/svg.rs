@@ -88,6 +88,7 @@ icons![
     "app-calculator" => "apps/accessories-calculator",
     "app-monitor" => "apps/utilities-system-monitor",
     "app-photos" => "apps/image-viewer",
+    "app-music" => "apps/multimedia-audio-player",
     "app-calendar" => "apps/x-office-calendar",
     "app-clock" => "apps/preferences-system-time",
     "file-generic" => "mimetypes/text-x-generic",
@@ -183,6 +184,26 @@ const GLYPHS: &[(&str, &str)] = &[
     (
         "cc-lock",
         r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M6 11 H18 V20 H6 Z M8.5 11 V8 a3.5 3.5 0 0 1 7 0 V11" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "cc-eye",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M2.5 12 C5 7 8.5 5 12 5 C15.5 5 19 7 21.5 12 C19 17 15.5 19 12 19 C8.5 19 5 17 2.5 12 Z M12 9 a3 3 0 1 0 0.01 0" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "cc-eye-off",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M2.5 12 C5 7 8.5 5 12 5 C15.5 5 19 7 21.5 12 C19 17 15.5 19 12 19 C8.5 19 5 17 2.5 12 Z M12 9 a3 3 0 1 0 0.01 0 M4 4 L20 20" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "cc-night",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M18 14.5 A7.5 7.5 0 1 1 9.5 6 A6 6 0 0 0 18 14.5 Z M17 3 V6 M15.5 4.5 H18.5 M20.5 8.5 V10.5 M19.5 9.5 H21.5" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "cc-restart",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 12 a8 8 0 1 1 -2.3 -5.7 M20 4 V9 H15" fill="none" stroke="#000" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "cc-logout",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 4 H5 V20 H10 M15 8 L19 12 L15 16 M19 12 H9" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
     ),
     (
         "cc-power",

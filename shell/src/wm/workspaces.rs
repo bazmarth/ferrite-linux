@@ -18,18 +18,23 @@ use crate::state::Ferrite;
 
 /// Durée du glissement jusqu'à la page d'arrivée.
 const GLIDE: Duration = Duration::from_millis(320);
-/// Course des doigts pour une page entière, en unités de libinput (environ 1/1000 de pouce
-/// accéléré) : la largeur de l'écran n'y change rien.
-const SWIPE_PAGE: f64 = 420.0;
-/// Course à partir de laquelle on sait si le geste est horizontal.
-const SWIPE_LOCK: f64 = 8.0;
+/// Course des doigts pour une page entière, en unités de libinput non accélérées : la page
+/// suit les doigts quelle que soit leur vitesse. Réglé sur le pavé du ThinkBook, où un geste
+/// franc fait 200 à 380 unités (mesuré avec `ferrite-profil`) : 300 font une demi-page.
+const SWIPE_PAGE: f64 = 600.0;
+/// Course (environ 0,8 mm) à partir de laquelle on décide du sens du geste : plus tôt, le
+/// tremblement des doigts qui se posent en faisait souvent un geste vertical sans effet.
+const SWIPE_LOCK: f64 = 30.0;
+/// Un geste n'est vertical que s'il l'est nettement : changer de bureau est le plus courant.
+const SWIPE_VERTICAL_RATIO: f64 = 1.6;
 /// Part de l'élan ajoutée à la position au lever des doigts (ms) : un geste vif et court
 /// suffit à changer de page.
 const SWIPE_MOMENTUM: f64 = 180.0;
 /// Sans mouvement depuis ce délai, les doigts levés n'ont plus d'élan.
 const SWIPE_STILL: Duration = Duration::from_millis(100);
-/// Course minimale d'un balayage vertical à trois doigts pour ouvrir la vue d'ensemble.
-const OVERVIEW_SWIPE: f64 = 150.0;
+/// Course minimale d'un balayage vertical à trois doigts pour ouvrir ou fermer la vue
+/// d'ensemble (les gestes francs mesurés font 76 à 380, les frôlements moins de 10).
+const OVERVIEW_SWIPE: f64 = 70.0;
 /// Marge totale d'un aperçu dans sa case, et côté de son bouton de fermeture.
 const OVERVIEW_PADDING: i32 = 24;
 pub const OVERVIEW_CLOSE: f64 = 28.0;
@@ -353,7 +358,12 @@ impl<T> Workspaces<T> {
         let mut index = 0;
         while index < self.desktops.len() {
             let page = index;
-            if page == self.current || index + 1 == self.desktops.len() || !self.desktops[index].is_empty() {
+            // Le bureau 0, celui des widgets, ne disparaît jamais.
+            if page == 0
+                || page == self.current
+                || index + 1 == self.desktops.len()
+                || !self.desktops[index].is_empty()
+            {
                 index += 1;
                 continue;
             }
@@ -366,6 +376,13 @@ impl<T> Workspaces<T> {
         let last_is_free =
             self.desktops.last().is_some_and(Vec::is_empty) && !(self.current + 1 == count && occupied);
         if !last_is_free {
+            self.desktops.push(Vec::new());
+        }
+    }
+
+    /// Crée les bureaux vides qui manquent jusqu'à `page`.
+    pub fn ensure_page(&mut self, page: usize) {
+        while self.desktops.len() <= page {
             self.desktops.push(Vec::new());
         }
     }
@@ -397,7 +414,7 @@ impl Swipe {
             Some(false) => None,
             None if self.total.0.hypot(self.total.1) < SWIPE_LOCK => None,
             None => {
-                let horizontal = self.total.0.abs() >= self.total.1.abs();
+                let horizontal = self.total.1.abs() < self.total.0.abs() * SWIPE_VERTICAL_RATIO;
                 self.horizontal = Some(horizontal);
                 Some(if horizontal {
                     (self.total.0, 0.0)
@@ -514,6 +531,9 @@ impl Ferrite {
     }
 
     pub fn swipe_end(&mut self, cancelled: bool) {
+        if let Some(swipe) = self.swipe.as_ref() {
+            crate::render::profile::gesture(swipe.total, swipe.horizontal, cancelled);
+        }
         if let Some(swipe) = self.swipe.take() {
             if swipe.is_horizontal() {
                 if self.overview {
@@ -650,11 +670,52 @@ impl Ferrite {
 
     /// À chaque tour de boucle : met à jour la liste des bureaux.
     pub fn sync_desktops(&mut self) {
+        self.keep_widgets_page_free();
         let occupied = self
             .space
             .elements()
             .any(|window| !window.x11_surface().is_some_and(|x11| x11.is_override_redirect()));
         self.workspaces.sync(occupied, Instant::now());
+    }
+
+    /// Une fenêtre va s'ouvrir alors qu'on est sur le bureau des widgets : on passe d'abord
+    /// au bureau 1, où elle s'ouvrira normalement.
+    pub fn leave_widgets_page(&mut self) {
+        if self.workspaces.current() == 0 && !self.overview {
+            self.workspaces.ensure_page(1);
+            self.go_to_page(1);
+        }
+    }
+
+    /// Le bureau 0 est réservé aux widgets : une fenêtre qui s'y ouvre (ou y revient) part sur
+    /// le bureau 1, et l'affichage la suit. Rien ne bouge pendant un déplacement à la souris.
+    fn keep_widgets_page_free(&mut self) {
+        if self.workspaces.current() != 0 || self.overview || self.workspaces.is_dragging() {
+            return;
+        }
+        let grabbed = self
+            .seat
+            .get_pointer()
+            .is_some_and(|pointer| pointer.is_grabbed());
+        let windows: Vec<Window> = self
+            .space
+            .elements()
+            .filter(|window| !window.x11_surface().is_some_and(|x11| x11.is_override_redirect()))
+            // Une fenêtre pas encore configurée ne se montrerait jamais : elle attend son tour.
+            .filter(|window| !crate::protocols::xdg_shell::awaiting_placement(window))
+            .cloned()
+            .collect();
+        if windows.is_empty() || grabbed {
+            return;
+        }
+        self.workspaces.ensure_page(1);
+        for window in &windows {
+            self.move_window_to_page(window, 1);
+        }
+        self.go_to_page(1);
+        if let Some(window) = windows.last() {
+            self.focus_window(Some(window.clone()));
+        }
     }
 }
 
@@ -703,6 +764,22 @@ mod tests {
         let incoming = pages.exchange(1, vec![7, 8]);
         assert_eq!(incoming, vec![5]);
         assert_eq!(pages.parked(2), &[7, 8]);
+    }
+
+    #[test]
+    fn le_bureau_des_widgets_ne_disparait_jamais() {
+        let now = at(0);
+        // Bureau 0 vide, quitté pour le bureau 1 qui a une fenêtre.
+        let mut pages = Workspaces::<u32> {
+            desktops: vec![Vec::new(), Vec::new(), Vec::new()],
+            current: 1,
+            ..Workspaces::default()
+        };
+        pages.sync(true, now);
+        assert_eq!(pages.page_count(), 3);
+        assert_eq!(pages.current(), 1);
+        pages.ensure_page(4);
+        assert_eq!(pages.page_count(), 5);
     }
 
     #[test]
@@ -826,19 +903,25 @@ mod tests {
     #[test]
     fn seul_un_geste_horizontal_compte() {
         let mut swipe = Swipe::default();
-        assert_eq!(swipe.update(3.0, 1.0), None);
+        assert_eq!(swipe.update(10.0, 4.0), None);
         // Le seuil franchi, toute la course déjà faite est appliquée.
-        assert_eq!(swipe.update(7.0, 1.0), Some((10.0, 0.0)));
+        assert_eq!(swipe.update(20.0, 4.0), Some((30.0, 0.0)));
         assert_eq!(swipe.update(-2.0, 50.0), Some((-2.0, 0.0)));
         assert!(swipe.is_horizontal());
         assert!(!swipe.is_vertical());
 
+        // Un peu plus vertical qu'horizontal : encore un changement de bureau.
         let mut swipe = Swipe::default();
-        assert_eq!(swipe.update(1.0, 9.0), Some((0.0, 9.0)));
+        assert_eq!(swipe.update(20.0, 25.0), Some((20.0, 0.0)));
+        assert!(swipe.is_horizontal());
+
+        // Nettement vertical : la vue d'ensemble.
+        let mut swipe = Swipe::default();
+        assert_eq!(swipe.update(3.0, 30.0), Some((0.0, 30.0)));
         assert_eq!(swipe.update(100.0, 0.0), None);
         assert!(!swipe.is_horizontal());
         assert!(swipe.is_vertical());
-        assert_eq!(swipe.vertical_distance(), 9.0);
+        assert_eq!(swipe.vertical_distance(), 30.0);
     }
 
     #[test]

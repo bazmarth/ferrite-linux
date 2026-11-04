@@ -21,8 +21,12 @@ use smithay::{
     utils::{Logical, Point},
     wayland::{
         compositor::{CompositorClientState, CompositorState},
+        cursor_shape::CursorShapeManagerState,
         dmabuf::{DmabufGlobal, DmabufState},
         fractional_scale::FractionalScaleManagerState,
+        idle_inhibit::IdleInhibitManagerState,
+        idle_notify::IdleNotifierState,
+        input_method::InputMethodManagerState,
         output::OutputManagerState,
         relative_pointer::RelativePointerManagerState,
         seat::WaylandFocus,
@@ -30,6 +34,7 @@ use smithay::{
         shell::xdg::{XdgShellState, decoration::XdgDecorationState},
         shm::ShmState,
         socket::ListeningSocketSource,
+        text_input::TextInputManagerState,
         viewporter::ViewporterState,
         xdg_activation::XdgActivationState,
         xwayland_shell::XWaylandShellState,
@@ -61,8 +66,8 @@ fn keyboard_label(layout: &str) -> String {
 }
 
 /// Répétition des touches : délai (ms) et fréquence (par seconde).
-const KEY_REPEAT_DELAY: i32 = 300;
-const KEY_REPEAT_RATE: i32 = 30;
+pub const KEY_REPEAT_DELAY: i32 = 300;
+pub const KEY_REPEAT_RATE: i32 = 30;
 
 pub struct Ferrite {
     pub start_time: Instant,
@@ -114,6 +119,8 @@ pub struct Ferrite {
     pub dock_order: std::cell::RefCell<Vec<crate::desktop::apps::AppKey>>,
     /// Icône épinglée tenue au clic gauche (clic ou déplacement dans le Dock).
     pub dock_drag: Option<crate::desktop::launch::DockDrag>,
+    /// Bureau quitté par Super+W pour celui des widgets, où Super+W ramène.
+    pub page_before_widgets: Option<usize>,
     /// Bulle d'une touche de fonction et son échéance.
     pub osd: Option<(crate::desktop::panels::Osd, std::time::Instant)>,
     pub dock_bounces: std::cell::RefCell<
@@ -148,6 +155,10 @@ pub struct Ferrite {
     pub system_error: Option<String>,
     pub system_link: Option<SystemLink>,
     pub pending_power: Option<PowerAction>,
+    /// Fin du compte à rebours du dialogue d'arrêt : l'action choisie se fait seule.
+    pub power_deadline: Option<std::time::Instant>,
+    /// Mode nuit : réglages, forçage depuis le centre de contrôle et teinte de l'écran.
+    pub night: crate::desktop::night::Night,
     pub appearance: Appearance,
     pub accent: Accent,
     pub scroll_inverted: bool,
@@ -164,10 +175,19 @@ pub struct Ferrite {
     pub lock: Option<crate::desktop::lock::Lock>,
     pub lock_events: Option<smithay::reexports::calloop::channel::Sender<crate::desktop::lock::Event>>,
     pub media_link: Option<crate::desktop::lock::MediaLink>,
+    /// Lecteur multimédia suivi (écran verrouillé, widget Musique).
+    pub media: Option<crate::desktop::lock::Media>,
     /// Tuilage automatique (Super+T), fenêtres dans leur ordre de tuilage, et fenêtres
     /// réduites par « afficher le bureau » (Super+D) à remettre.
     pub tiling: bool,
     pub tile_order: Vec<Window>,
+    /// Touche maintenue dans un champ du bureau : son code, son action et sa génération
+    /// (un nouvel appui rend caduque la minuterie de l'ancien).
+    pub key_repeat: Option<(u32, crate::input::Action, u64)>,
+    pub key_repeat_generation: u64,
+    /// Zone utile au dernier tour de boucle : quand elle change (écran ou fenêtre hôte
+    /// redimensionnés, Dock ou barre réglés), les fenêtres agrandies et le tuilage suivent.
+    pub last_usable_area: Option<smithay::utils::Rectangle<i32, smithay::utils::Logical>>,
     pub desktop_shown: Vec<Window>,
     /// Dernier accrochage au clavier : Super+← répété passe de la moitié aux deux tiers, puis au tiers.
     pub last_snap: Option<(Window, crate::wm::Snap)>,
@@ -247,7 +267,22 @@ pub struct Ferrite {
         ViewporterState,
         FractionalScaleManagerState,
         RelativePointerManagerState,
+        CursorShapeManagerState,
+        TextInputManagerState,
+        InputMethodManagerState,
+        IdleInhibitManagerState,
     ),
+    /// Inactivité annoncée aux clients (`ext-idle-notify`), et surfaces qui l'empêchent.
+    pub idle_notifier_state: IdleNotifierState<Ferrite>,
+    pub idle_inhibitors: Vec<WlSurface>,
+    /// Fenêtres de candidats des méthodes de saisie.
+    pub input_popups: Vec<smithay::wayland::input_method::PopupSurface>,
+    pub layer_shell_state: smithay::wayland::shell::wlr_layer::WlrLayerShellState,
+    /// Verrouillage par un client (`ext-session-lock`), et son gestionnaire.
+    pub session_lock_state: smithay::wayland::session_lock::SessionLockManagerState,
+    pub session_lock: Option<crate::protocols::session_lock::ClientLock>,
+    /// Copies d'écran demandées par les clients (`wlr-screencopy`), faites à l'image suivante.
+    pub screencopy: Vec<crate::protocols::screencopy::PendingCopy>,
     /// Gestionnaire des fenêtres X11, une fois XWayland prêt.
     pub xwm: Option<X11Wm>,
     /// Numéro d'affichage X11 (`DISPLAY=:N`) d'XWayland.
@@ -275,7 +310,16 @@ impl Ferrite {
             ViewporterState::new::<Self>(&dh),
             FractionalScaleManagerState::new::<Self>(&dh),
             RelativePointerManagerState::new::<Self>(&dh),
+            CursorShapeManagerState::new::<Self>(&dh),
+            TextInputManagerState::new::<Self>(&dh),
+            InputMethodManagerState::new::<Self, _>(&dh, |_client| true),
+            IdleInhibitManagerState::new::<Self>(&dh),
         );
+        let idle_notifier_state = IdleNotifierState::new(&dh, event_loop.handle());
+        crate::protocols::screencopy::init(&dh);
+        let layer_shell_state = smithay::wayland::shell::wlr_layer::WlrLayerShellState::new::<Self>(&dh);
+        let session_lock_state =
+            smithay::wayland::session_lock::SessionLockManagerState::new::<Self, _>(&dh, |_client| true);
         let settings = Settings::load();
 
         let mut seat_state = SeatState::new();
@@ -327,6 +371,7 @@ impl Ferrite {
             multi_window: settings.multi_window_apps(),
             dock_order: Default::default(),
             dock_drag: None,
+            page_before_widgets: None,
             osd: None,
             dock_bounces: Default::default(),
             dock_motion: Default::default(),
@@ -344,6 +389,8 @@ impl Ferrite {
             system_error: None,
             system_link: None,
             pending_power: None,
+            power_deadline: None,
+            night: Default::default(),
             appearance: settings.appearance(),
             accent: settings.accent(),
             scroll_inverted: settings.scroll_inverted(),
@@ -356,8 +403,12 @@ impl Ferrite {
             lock: None,
             lock_events: None,
             media_link: None,
+            media: None,
             tiling: false,
             tile_order: Vec::new(),
+            key_repeat: None,
+            key_repeat_generation: 0,
+            last_usable_area: None,
             desktop_shown: Vec::new(),
             last_snap: None,
             power_saver: false,
@@ -400,6 +451,13 @@ impl Ferrite {
             activation_state,
             xwayland_shell_state,
             passive_globals,
+            idle_notifier_state,
+            idle_inhibitors: Vec::new(),
+            input_popups: Vec::new(),
+            layer_shell_state,
+            session_lock_state,
+            session_lock: None,
+            screencopy: Vec::new(),
             xwm: None,
             x_display: None,
             seat,
@@ -411,10 +469,39 @@ impl Ferrite {
 
     /// Surface sous un point de l'espace, avec la position de son origine (aucune si le
     /// point est sur une décoration).
+    /// Surface sous `pos` : celle d'un verrouilleur externe s'il y en a un ; sinon les
+    /// calques du haut, les fenêtres, puis les calques du bas.
     pub fn surface_under(&self, pos: Point<f64, Logical>) -> Option<(WlSurface, Point<f64, Logical>)> {
-        match self.hit_test(pos)? {
-            Hit::Surface(_, surface, location) => Some((surface, location)),
-            Hit::Decoration(..) => None,
+        use smithay::wayland::shell::wlr_layer::Layer;
+        if self.session_lock.is_some() {
+            return self.lock_surface_under(pos);
+        }
+        if self.lock.is_some() {
+            return None;
+        }
+        if let Some(found) = self.layer_surface_under(pos, &[Layer::Overlay, Layer::Top]) {
+            return Some(found);
+        }
+        if self.over_shell_chrome(pos) {
+            return None;
+        }
+        match self.hit_test(pos) {
+            Some(Hit::Surface(_, surface, location)) => Some((surface, location)),
+            Some(Hit::Decoration(..)) => None,
+            None if self.overview || self.region_select.is_some() => None,
+            None => self.layer_surface_under(pos, &[Layer::Bottom, Layer::Background]),
+        }
+    }
+
+    /// Surface qui a le clavier.
+    pub fn keyboard_focus(&self) -> Option<WlSurface> {
+        self.seat.get_keyboard()?.current_focus()
+    }
+
+    /// Donne le clavier à `surface` (un calque, un verrouilleur).
+    pub fn set_keyboard_focus(&mut self, surface: Option<WlSurface>) {
+        if let Some(keyboard) = self.seat.get_keyboard() {
+            keyboard.set_focus(self, surface, smithay::utils::SERIAL_COUNTER.next_serial());
         }
     }
 
@@ -609,6 +696,8 @@ impl Ferrite {
 pub enum PowerAction {
     PowerOff,
     Restart,
+    /// Mise en veille (`systemctl suspend`) : le bureau reste ouvert.
+    Sleep,
     /// Ferme le bureau et revient à la console de `ferrite-session`.
     LogOut,
     /// Ferme le bureau ; `ferrite-session` le relance aussitôt.
@@ -620,7 +709,7 @@ impl PowerAction {
     /// touchent que la session (0 reste Ctrl+Alt+Retour arrière, 1 un plantage).
     pub fn exit_code(self) -> Option<u8> {
         match self {
-            PowerAction::PowerOff | PowerAction::Restart => None,
+            PowerAction::PowerOff | PowerAction::Restart | PowerAction::Sleep => None,
             PowerAction::RelaunchDesktop => Some(3),
             PowerAction::LogOut => Some(4),
         }

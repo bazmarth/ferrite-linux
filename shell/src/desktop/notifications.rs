@@ -286,6 +286,7 @@ pub fn start(handle: &LoopHandle<'static, Ferrite>) -> Result<Link, String> {
         .insert_source(receiver, |event, _, state| {
             if let channel::Event::Msg(event) = event {
                 state.on_notification_event(event);
+                state.request_redraw();
             }
         })
         .map_err(|err| err.to_string())?;

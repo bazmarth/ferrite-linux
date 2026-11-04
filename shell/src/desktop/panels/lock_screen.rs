@@ -419,7 +419,7 @@ pub(super) fn paint_lock_wall(width: u32, height: u32, dark: bool, wall: usize) 
 
 impl Canvas<'_> {
     /// Dégradé à 135° (du coin haut gauche au coin bas droit).
-    fn gradient(&mut self, rect: Rect, radius: f32, stops: &[(f32, u32)]) {
+    pub(super) fn gradient(&mut self, rect: Rect, radius: f32, stops: &[(f32, u32)]) {
         let s = self.scale;
         let (x, y, w, h) = (
             rect.x as f32 * s,

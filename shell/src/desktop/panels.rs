@@ -80,7 +80,7 @@ const CONTROLS_GAP: f64 = 14.0;
 const CONTROLS_PAD: f64 = 16.0;
 const CONTROLS_TILE: f64 = 64.0;
 /// Rangées de tuiles du centre de contrôle, deux par rangée.
-const CONTROLS_TILE_ROWS: f64 = 4.0;
+const CONTROLS_TILE_ROWS: f64 = 5.0;
 const CONTROLS_ROW: f64 = 36.0;
 /// Listes Wi-Fi et Bluetooth : haut (retour, titre), bas (état, lien), ligne, titre de groupe,
 /// et place du mot de passe demandé sur une ligne.
@@ -110,7 +110,7 @@ pub fn clipboard_height(screen_h: f64) -> f64 {
 pub fn clipboard_list_height(screen_h: f64) -> f64 {
     clipboard_height(screen_h) - CLIPBOARD_HEAD - CLIPBOARD_FOOT - CLIPBOARD_LIST_PAD.0 - CLIPBOARD_LIST_PAD.1
 }
-const DIALOG: (f64, f64) = (420.0, 210.0);
+const DIALOG: (f64, f64) = (480.0, 344.0);
 /// Fréquence de relecture de l'état de la batterie.
 const BATTERY_REFRESH: Duration = Duration::from_secs(20);
 
@@ -217,11 +217,18 @@ pub enum DesktopAction {
     ToggleAirplane,
     /// Rétroéclairage du clavier : niveau suivant, puis éteint.
     CycleKeyboardLight,
+    /// Mode nuit : allumer ou éteindre tout de suite, ou ouvrir ses réglages.
+    ToggleNight,
+    OpenNightSettings,
     /// Tuile Clavier : passe à l'autre disposition.
     ToggleKeyboardLayout,
     /// Chevron d'une tuile, ou retour aux tuiles.
     ControlsPage(ControlsPage),
     NetworkJoin(usize),
+    /// L'œil d'un réseau enregistré : afficher ou cacher son mot de passe.
+    NetworkPassword(usize),
+    /// L'œil du champ de mot de passe.
+    PasswordReveal,
     PasswordCancel,
     PasswordSubmit,
     DeviceAction(usize),
@@ -230,6 +237,8 @@ pub enum DesktopAction {
     OpenSettingsPage(&'static str),
     Lock,
     RequestPower(PowerAction),
+    /// Dialogue d'arrêt : tuile choisie (Éteindre, Redémarrer, Veille).
+    PowerChoose(PowerAction),
     ConfirmPower(PowerAction),
     CancelPower,
     /// Historique du presse-papiers : indices dans la liste complète.
@@ -249,8 +258,20 @@ pub enum DesktopAction {
     DashboardDeleteTask(usize),
     DashboardMonth(i32),
     DashboardConsume,
+    /// Corbeille de la note affichée.
+    DashboardDeleteNote(usize),
+    /// Onglet d'une feuille de tâches, son « + », et la croix de la feuille affichée.
+    DashboardList(usize),
+    DashboardAddList,
+    DashboardDeleteList(usize),
     /// Application du mini-Dock (indice dans `DashboardView::apps`).
     DashboardApp(usize),
+    /// Widget Musique : bouton du lecteur, ou ouvrir Musique.
+    DashboardMedia(crate::desktop::lock::MediaCommand),
+    DashboardOpenMusic,
+    /// Widgets Notes : montrer une note dans le widget Notes, cocher une ligne.
+    DashboardShowNote(usize),
+    DashboardToggleCheck(usize, usize),
     /// Note précédente ou suivante du widget Notes.
     DashboardNoteStep(i32),
     /// Mode d'édition des widgets.
@@ -374,6 +395,8 @@ pub struct DashboardNoteView {
     pub title: String,
     pub preview: String,
     pub updated: u64,
+    /// Toutes les lignes (titre compris), pour la liste à cocher de la Note épinglée.
+    pub lines: Vec<String>,
 }
 
 /// Habillage d'un aperçu de la vue d'ensemble ; `frame` : x, y, largeur, hauteur logiques.
@@ -409,14 +432,20 @@ pub struct NetworkRow {
     pub level: u8,
     pub secured: bool,
     pub connected: bool,
+    /// Enregistré : son mot de passe peut s'afficher.
+    pub known: bool,
     pub hint: String,
+    /// Son mot de passe est affiché en clair à la place de l'indication.
+    pub revealed: bool,
 }
 
-/// Mot de passe demandé sur la ligne d'un réseau : seule sa longueur arrive au dessin.
+/// Mot de passe demandé sur la ligne d'un réseau : seule sa longueur arrive au dessin, sauf
+/// si l'œil le montre.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PasswordRow {
     pub ssid: String,
     pub length: usize,
+    pub shown: Option<String>,
 }
 
 /// Appareil de la liste Bluetooth.
@@ -428,6 +457,8 @@ pub struct DeviceRow {
     pub connected: bool,
     pub hint: String,
     pub glyph: &'static str,
+    /// Une connexion est en cours : les boutons attendent.
+    pub busy: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -529,7 +560,11 @@ pub struct RegionView {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DashboardView {
     pub notes: Vec<DashboardNoteView>,
+    /// Tâches de la feuille affichée.
     pub tasks: Vec<DashboardTaskView>,
+    /// Noms des feuilles de tâches, et celle affichée.
+    pub lists: Vec<String>,
+    pub list_shown: usize,
     pub draft: String,
     pub editing: Option<crate::desktop::widgets::DashboardEdit>,
     pub month_offset: i32,
@@ -551,6 +586,8 @@ pub struct DashboardView {
     pub target: Option<crate::desktop::widgets::WidgetSlot>,
     /// Mini-Dock : applications récemment utilisées.
     pub apps: Vec<DashboardApp>,
+    /// Lecture en cours, pour le widget Musique.
+    pub media: Option<crate::desktop::lock::Media>,
 }
 
 /// Application du mini-Dock des widgets.
@@ -586,7 +623,12 @@ pub struct DesktopView {
     pub airplane: Option<bool>,
     /// Rétroéclairage du clavier : niveau et maximum.
     pub keyboard_light: Option<(u8, u8)>,
+    /// Mode nuit : teinte active, et l'état écrit sur sa tuile.
+    pub night: (bool, String),
     pub power: Option<PowerAction>,
+    /// Dialogue d'arrêt : secondes avant l'action automatique, applications ouvertes.
+    pub power_left: u32,
+    pub power_apps: usize,
     /// Dernier réglage refusé par le système.
     pub error: Option<String>,
     /// Barre du haut affichée (masquée quand une application est en plein écran).
@@ -628,6 +670,27 @@ struct VisualState {
     battery: Option<Battery>,
     clock: ClockSnapshot,
     system: SystemMetrics,
+}
+
+/// Taille en pixels physiques de l'écran décrit par `state`.
+fn physical_size(state: &VisualState, scale: f64) -> (u32, u32) {
+    (
+        (state.width as f64 * scale).round().max(1.0) as u32,
+        (state.height as f64 * scale).round().max(1.0) as u32,
+    )
+}
+
+/// Widgets gardés d'une image à l'autre. Hors édition, seules les cartes dont les données
+/// vivantes changent (heure, mesures du système, lecture en cours) sont redessinées, sur
+/// leur verre, et seule leur zone est renvoyée à la carte graphique : redessiner tout
+/// l'écran au processeur pour un pourcentage du processeur faisait sauter une image.
+#[derive(Debug)]
+struct DashboardCache {
+    /// État sans ses parties vivantes : s'il change, tout est redessiné.
+    base: VisualState,
+    live: Vec<cards::CardLive>,
+    pixels: Vec<u8>,
+    buffer: MemoryRenderBuffer,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -691,7 +754,7 @@ pub struct Panels {
     /// Invitation de l'écran de verrouillage, qui pulse par son opacité.
     invitation: RefCell<Option<InvitationImage>>,
     /// Widgets, dessinés à part : ils passent sous les fenêtres.
-    dashboard: RefCell<Option<(VisualState, MemoryRenderBuffer)>>,
+    dashboard: RefCell<Option<DashboardCache>>,
     /// Verre des widgets, gardé d'un dessin à l'autre (voir `cards::GlassKey`).
     glass: RefCell<Option<(cards::GlassKey, Vec<u8>)>>,
     /// Images du glisser d'un widget (voir `push_dragged_dashboard`).
@@ -835,7 +898,8 @@ impl Panels {
         });
         let mut bar_cache = self.bar.borrow_mut();
         if state.view.bar_visible && !bar_cache.as_ref().is_some_and(|(key, _, _)| key == &state) {
-            let (buffer, size) = self.rasterize_bar(&state, scale);
+            let (buffer, size) =
+                crate::render::profile::raster("barre", || self.rasterize_bar(&state, scale));
             *bar_cache = Some((state, buffer, size));
         }
         let bar = bar_cache
@@ -846,8 +910,11 @@ impl Panels {
         let state = rest;
         let mut cache = self.cached.borrow_mut();
         if !cache.as_ref().is_some_and(|(key, _, _)| key == &state) {
-            let buffer = self.rasterize(&state, scale);
-            let layer = self.rasterize_layer(&state, scale);
+            if let Some((known, _, _)) = cache.as_ref() {
+                crate::render::profile::changed("panneaux", known, &state);
+            }
+            let buffer = crate::render::profile::raster("panneaux", || self.rasterize(&state, scale));
+            let layer = crate::render::profile::raster("calque", || self.rasterize_layer(&state, scale));
             *cache = Some((state, buffer, layer));
         }
         let Some((_, buffer, open)) = cache.as_ref() else {
@@ -976,11 +1043,53 @@ impl Panels {
         }
         *self.drag_layers.borrow_mut() = DragLayers::default();
         let mut cache = self.dashboard.borrow_mut();
-        if !cache.as_ref().is_some_and(|(key, _)| key == &state) {
-            let buffer = self.rasterize_dashboard(&state, scale, None);
-            *cache = Some((state, buffer));
+        let base = cards::base_key(&state);
+        let live: Vec<cards::CardLive> = state
+            .view
+            .dashboard
+            .layout
+            .iter()
+            .map(|slot| cards::card_live(slot.kind, &state))
+            .collect();
+        let incremental = cache.as_ref().is_some_and(|known| known.base == base);
+        let redrawn = match cache.as_mut().filter(|_| incremental) {
+            // En édition, les cartes peuvent se chevaucher et leur verre n'est pas en cache :
+            // l'image est gardée telle quelle (heure et mesures figées, comme pendant un
+            // glisser) au lieu d'être redessinée en entier à chaque mouvement de la souris.
+            Some(_) if state.view.dashboard.edit => true,
+            Some(known) => {
+                let changed: Vec<usize> = (0..live.len())
+                    .filter(|&index| known.live.get(index) != Some(&live[index]))
+                    .collect();
+                let done = changed.is_empty()
+                    || crate::render::profile::raster("widgets:cartes-vivantes", || {
+                        self.redraw_cards(known, &state, scale, &changed)
+                    });
+                known.live = live.clone();
+                done
+            }
+            None => false,
+        };
+        if !redrawn {
+            let pixels =
+                crate::render::profile::raster("widgets", || self.dashboard_pixels(&state, scale, None));
+            let (width, height) = physical_size(&state, scale);
+            let buffer = MemoryRenderBuffer::from_slice(
+                &pixels,
+                Fourcc::Argb8888,
+                (width as i32, height as i32),
+                1,
+                smithay::utils::Transform::Normal,
+                None,
+            );
+            *cache = Some(DashboardCache {
+                base,
+                live,
+                pixels,
+                buffer,
+            });
         }
-        let Some((_, buffer)) = cache.as_ref() else {
+        let Some(DashboardCache { buffer, .. }) = cache.as_ref() else {
             return;
         };
         let physical_size = (output_geo.size.w as f64 * scale, output_geo.size.h as f64 * scale);
@@ -1038,14 +1147,22 @@ impl Panels {
         if !layers.rest.as_ref().is_some_and(|(known, _)| *known == key) {
             let mut rest = state.clone();
             rest.view.dashboard.target = None;
-            layers.rest = Some((key.clone(), self.rasterize_dashboard(&rest, scale, Some(index))));
+            layers.rest = Some((
+                key.clone(),
+                crate::render::profile::raster("widgets-dessous", || {
+                    self.rasterize_dashboard(&rest, scale, Some(index))
+                }),
+            ));
         }
         if !layers
             .card
             .as_ref()
             .is_some_and(|(known, known_size, ..)| *known == key && *known_size == size)
         {
-            layers.card = Some((key, size, self.rasterize_lifted(state, index, card, scale)));
+            let lifted = crate::render::profile::raster("widget-saisi", || {
+                self.rasterize_lifted(state, index, card, scale)
+            });
+            layers.card = Some((key, size, lifted));
         }
         if let Some(target) = target {
             let target_key = (target.w as i32, target.h as i32, state.scale_milli);
@@ -1125,8 +1242,21 @@ impl Panels {
         scale: f64,
         skip: Option<usize>,
     ) -> MemoryRenderBuffer {
-        let width = (state.width as f64 * scale).round().max(1.0) as u32;
-        let height = (state.height as f64 * scale).round().max(1.0) as u32;
+        let pixels = self.dashboard_pixels(state, scale, skip);
+        let (width, height) = physical_size(state, scale);
+        MemoryRenderBuffer::from_slice(
+            &pixels,
+            Fourcc::Argb8888,
+            (width as i32, height as i32),
+            1,
+            smithay::utils::Transform::Normal,
+            None,
+        )
+    }
+
+    /// Pixels de tous les widgets (verre compris), sauf la carte `skip`.
+    fn dashboard_pixels(&self, state: &VisualState, scale: f64, skip: Option<usize>) -> Vec<u8> {
+        let (width, height) = physical_size(state, scale);
         let layout = Layout::new(state.width as f64, state.height as f64, &state.view);
         // Hors édition, les cartes ne se chevauchent pas : leur verre peut être posé
         // d'abord, d'un bloc, depuis le cache.
@@ -1142,14 +1272,73 @@ impl Panels {
             icons: &self.icons,
         };
         self.draw_dashboard(&mut canvas, &layout, state, glass_drawn, skip);
-        MemoryRenderBuffer::from_slice(
-            &canvas.pixels,
-            Fourcc::Argb8888,
-            (width as i32, height as i32),
-            1,
-            smithay::utils::Transform::Normal,
-            None,
-        )
+        canvas.pixels
+    }
+
+    /// Redessine les cartes `changed` sur leur verre et ne renvoie que leur zone. Faux si le
+    /// verre n'est plus en cache (tout sera alors redessiné).
+    fn redraw_cards(
+        &self,
+        known: &mut DashboardCache,
+        state: &VisualState,
+        scale: f64,
+        changed: &[usize],
+    ) -> bool {
+        let glass = self.glass.borrow();
+        let Some((_, glass)) = glass.as_ref() else {
+            return false;
+        };
+        let (width, height) = physical_size(state, scale);
+        if glass.len() != known.pixels.len() || known.pixels.len() != width as usize * height as usize * 4 {
+            return false;
+        }
+        let layout = Layout::new(state.width as f64, state.height as f64, &state.view);
+        let cards = layout.dashboard_cards(&state.view.dashboard.layout);
+        let mut canvas = Canvas {
+            pixels: std::mem::take(&mut known.pixels),
+            width,
+            height,
+            scale: scale as f32,
+            bold: &self.bold,
+            icons: &self.icons,
+        };
+        let mut damage: Vec<Rectangle<i32, smithay::utils::Buffer>> = Vec::new();
+        for &index in changed {
+            let Some(card) = cards.get(index).copied() else {
+                continue;
+            };
+            // La carte, un peu élargie pour les bords adoucis.
+            let x0 = ((card.x * scale).floor() as i64 - 2).clamp(0, i64::from(width)) as usize;
+            let y0 = ((card.y * scale).floor() as i64 - 2).clamp(0, i64::from(height)) as usize;
+            let x1 = ((card.right() * scale).ceil() as i64 + 2).clamp(0, i64::from(width)) as usize;
+            let y1 = ((card.bottom() * scale).ceil() as i64 + 2).clamp(0, i64::from(height)) as usize;
+            if x0 >= x1 || y0 >= y1 {
+                continue;
+            }
+            for y in y0..y1 {
+                let row = (y * width as usize + x0) * 4..(y * width as usize + x1) * 4;
+                canvas.pixels[row.clone()].copy_from_slice(&glass[row]);
+            }
+            self.draw_card(&mut canvas, state, index, card, false, None);
+            damage.push(Rectangle::new(
+                (x0 as i32, y0 as i32).into(),
+                ((x1 - x0) as i32, (y1 - y0) as i32).into(),
+            ));
+        }
+        known.pixels = canvas.pixels;
+        let pixels = &known.pixels;
+        let row_bytes = width as usize * 4;
+        let copied: Result<(), std::convert::Infallible> = known.buffer.render().draw(|memory| {
+            for rect in &damage {
+                for y in rect.loc.y..rect.loc.y + rect.size.h {
+                    let start = y as usize * row_bytes + rect.loc.x as usize * 4;
+                    let end = start + rect.size.w as usize * 4;
+                    memory[start..end].copy_from_slice(&pixels[start..end]);
+                }
+            }
+            Ok(damage.clone())
+        });
+        copied.is_ok()
     }
 
     /// État de la batterie, relu au plus toutes les [`BATTERY_REFRESH`].
@@ -1261,7 +1450,7 @@ impl Panels {
             canvas.scale = scale as f32;
             // Arrêt demandé depuis l'écran verrouillé : la confirmation passe devant.
             if let Some(power) = view.power {
-                self.draw_dialog(&mut canvas, &layout, power);
+                self.draw_dialog(&mut canvas, &layout, power, view);
             }
             return MemoryRenderBuffer::from_slice(
                 &canvas.pixels,
@@ -1330,7 +1519,7 @@ impl Panels {
 
         // Confirmation explicite, pour éviter un arrêt accidentel.
         if let Some(power) = view.power {
-            self.draw_dialog(&mut canvas, &layout, power);
+            self.draw_dialog(&mut canvas, &layout, power, view);
         }
 
         MemoryRenderBuffer::from_slice(
@@ -1787,7 +1976,14 @@ impl Panels {
             Some((level, max)) if level >= max => "Fort",
             Some(_) => "Faible",
         };
-        let tiles: [(Control, &str, &str, &str, bool); 8] = [
+        let tiles: [(Control, &str, &str, &str, bool); 9] = [
+            (
+                Control::Night,
+                "cc-night",
+                "Mode nuit",
+                view.night.1.as_str(),
+                view.night.0,
+            ),
             (
                 Control::Wifi,
                 "cc-wifi",
@@ -1859,6 +2055,7 @@ impl Panels {
             let chevron = match control {
                 Control::Wifi => Some(layout.control_row(Control::WifiMore)),
                 Control::Bluetooth => Some(layout.control_row(Control::BluetoothMore)),
+                Control::Night => Some(layout.control_row(Control::NightMore)),
                 _ => None,
             };
             let mut room = tile.w - 56.0 - 8.0;
@@ -2094,6 +2291,20 @@ impl Panels {
                     Style::Symbolic(text_secondary()),
                 );
             }
+            if network.known && network.secured {
+                let eye = layout.wifi_eye(slot, network.connected);
+                let (name, ink) = if network.revealed {
+                    ("cc-eye-off", accent())
+                } else {
+                    ("cc-eye", text_secondary())
+                };
+                canvas.icon(
+                    name,
+                    (eye.x + eye.w / 2.0, eye.y + eye.h / 2.0),
+                    16.0,
+                    Style::Symbolic(ink),
+                );
+            }
             if controls
                 .password
                 .as_ref()
@@ -2128,7 +2339,29 @@ impl Panels {
         );
         canvas.fill(field, 10.0, palette().window_background);
         canvas.stroke(field, 10.0, accent(), 2.0);
-        if entry.length == 0 {
+        let eye = layout.password_eye();
+        let (name, ink) = if entry.shown.is_some() {
+            ("cc-eye-off", accent())
+        } else {
+            ("cc-eye", text_secondary())
+        };
+        canvas.icon(
+            name,
+            (eye.x + eye.w / 2.0, eye.y + eye.h / 2.0),
+            18.0,
+            Style::Symbolic(ink),
+        );
+        if let Some(text) = entry.shown.as_deref().filter(|text| !text.is_empty()) {
+            let text = canvas.fit_text(&self.regular, text, px(14.0), field.w - 24.0 - eye.w);
+            canvas.label(
+                &self.regular,
+                &text,
+                field.x + 14.0,
+                field.y + 11.0,
+                px(14.0),
+                primary_text(),
+            );
+        } else if entry.length == 0 {
             canvas.fill(
                 Rect::new(field.x + 12.0, field.y + 10.0, 2.0, 20.0),
                 1.0,
@@ -2143,7 +2376,8 @@ impl Panels {
                 text_secondary(),
             );
         } else {
-            for index in 0..entry.length.min(32) {
+            let room = ((field.w - 28.0 - eye.w) / 9.0).max(1.0) as usize;
+            for index in 0..entry.length.min(room) {
                 let dot = Rect::new(field.x + 14.0 + index as f64 * 9.0, field.y + 17.0, 6.0, 6.0);
                 canvas.fill(dot, 3.0, primary_text());
             }
@@ -2219,6 +2453,11 @@ impl Panels {
                 (true, _) => ("Déconnecter", control_fill(), primary_text()),
                 (false, true) => ("Connecter", accent(), Color::WHITE),
                 (false, false) => ("Associer", accent(), Color::WHITE),
+            };
+            let (fill, text_ink) = if device.busy {
+                (control_fill(), text_secondary())
+            } else {
+                (fill, text_ink)
             };
             canvas.button(button, text, fill, text_ink);
         }
@@ -2895,65 +3134,170 @@ impl Panels {
     }
 
     /// Dialogue système : 420 px, centré, voile de 40 % sur tout l'écran.
-    fn draw_dialog(&self, canvas: &mut Canvas, layout: &Layout, power: PowerAction) {
-        canvas.fill(
-            Rect::new(0.0, 0.0, layout.w, layout.h),
-            0.0,
-            Color::BLACK.with_alpha(102),
+    /// Dialogue d'arrêt (planches « Dialogue d’arrêt ») : trois tuiles (Éteindre,
+    /// Redémarrer, Veille), compte à rebours, Annuler et l'action choisie, puis la session
+    /// (Se déconnecter, Verrouiller, Relancer le bureau).
+    fn draw_dialog(&self, canvas: &mut Canvas, layout: &Layout, power: PowerAction, view: &DesktopView) {
+        let dark = palette().text.r > 128;
+        let pick = |light: u32, dark_value: u32| Color::rgb(if dark { dark_value } else { light });
+        let (fg, fg2, fg3) = (
+            pick(0x111827, 0xE5E7EB),
+            pick(0x4B5563, 0x9CA3AF),
+            pick(0x6B7280, 0x8B93A0),
         );
-        let dialog = layout.dialog();
-        canvas.panel_shadow(dialog, 14.0);
-        canvas.fill(dialog, 14.0, palette().window_background);
-        let badge = Rect::new(dialog.x + 20.0, dialog.y + 20.0, 40.0, 40.0);
-        canvas.fill(badge, 20.0, themed(Color::rgb(0xE4EEFB), Color::rgb(0x23395B)));
-        canvas.icon("cc-power", badge.center(), 20.0, Style::Symbolic(accent()));
-        let (title, text) = match power {
-            PowerAction::Restart => (
-                "Redémarrer l’ordinateur ?",
-                "Les applications ouvertes seront fermées.",
-            ),
-            _ => (
-                "Éteindre l’ordinateur ?",
-                "Les applications ouvertes seront fermées.",
-            ),
+        let (panel, line, chip) = (
+            pick(0xFFFFFF, 0x22262D),
+            pick(0xE3E6EB, 0x353A42),
+            pick(0xEEF0F4, 0x2A2E35),
+        );
+        let (tile, dot) = (pick(0xF5F6F8, 0x2A2E35), pick(0xFFFFFF, 0x353A42));
+        let tile_on = if dark {
+            Color::rgb(0x6CB8FF).with_alpha(31)
+        } else {
+            Color::rgb(0xEAF2FD)
         };
-        canvas.label(
+        let red = pick(0xD92D20, 0xE5372B);
+        let red_soft = if dark {
+            Color::rgb(0xE5372B).with_alpha(46)
+        } else {
+            Color::rgb(0xFDE7E5)
+        };
+        let red_icon = pick(0xD92D20, 0xFF8A80);
+        let blue = Color::rgb(0x2779E0);
+        let scrim = if dark {
+            Color::BLACK.with_alpha(128)
+        } else {
+            Color::rgb(0x0F172A).with_alpha(82)
+        };
+        canvas.fill(Rect::new(0.0, 0.0, layout.w, layout.h), 0.0, scrim);
+
+        let dialog = layout.dialog();
+        canvas.panel_shadow(dialog, 20.0);
+        canvas.fill(dialog, 20.0, panel);
+        let chosen = match power {
+            PowerAction::Restart | PowerAction::Sleep => power,
+            _ => PowerAction::PowerOff,
+        };
+        let (title, verb, noun) = match chosen {
+            PowerAction::Restart => ("Redémarrer l’ordinateur ?", "Redémarrer", "Redémarrage"),
+            PowerAction::Sleep => ("Mettre en veille ?", "Mettre en veille", "Mise en veille"),
+            _ => ("Éteindre l’ordinateur ?", "Éteindre", "Arrêt"),
+        };
+        let x = dialog.x + 24.0;
+        canvas.text(&self.bold, title, x, dialog.y + 24.0, 20.0, fg);
+        let opened = match (chosen, view.power_apps) {
+            (PowerAction::Sleep, _) => "Vos applications restent ouvertes.".to_owned(),
+            (_, 0) => "Aucune application ouverte.".to_owned(),
+            (_, 1) => "1 application ouverte sera fermée.".to_owned(),
+            (_, count) => format!("{count} applications ouvertes seront fermées."),
+        };
+        let description = format!("{opened} {noun} automatique dans {} s.", view.power_left);
+        let lines = wrap_dashboard_text(&self.regular, &description, px(14.0), dialog.w - 48.0);
+        for (index, text) in lines.iter().take(2).enumerate() {
+            canvas.text(
+                &self.regular,
+                text,
+                x,
+                dialog.y + 58.0 + index as f64 * 21.0,
+                14.0,
+                fg2,
+            );
+        }
+
+        // Tuiles : l'action choisie est entourée (rouge pour Éteindre, bleu sinon).
+        let tiles = [
+            (PowerAction::PowerOff, "Éteindre", "cc-power"),
+            (PowerAction::Restart, "Redémarrer", "cc-restart"),
+            (PowerAction::Sleep, "Veille", "cc-dark"),
+        ];
+        for (index, (action, label, glyph)) in tiles.into_iter().enumerate() {
+            let rect = layout.dialog_choice(index);
+            let on = action == chosen;
+            let danger = action == PowerAction::PowerOff;
+            let (fill, ring, disc, ink) = match (on, danger) {
+                (true, true) => (red_soft, red, red, Color::WHITE),
+                (true, false) => (tile_on, blue, blue, Color::WHITE),
+                (false, true) => (tile, line, dot, red_icon),
+                (false, false) => (tile, line, dot, fg2),
+            };
+            canvas.fill(rect, 14.0, fill);
+            let inset = if on { 1.0 } else { 0.5 };
+            let edge = Rect::new(
+                rect.x + inset,
+                rect.y + inset,
+                rect.w - 2.0 * inset,
+                rect.h - 2.0 * inset,
+            );
+            canvas.stroke(edge, 13.0, ring, if on { 2.0 } else { 1.0 });
+            let center = (rect.x + rect.w / 2.0, rect.y + 32.0);
+            canvas.fill(
+                Rect::new(center.0 - 20.0, center.1 - 20.0, 40.0, 40.0),
+                20.0,
+                disc,
+            );
+            canvas.icon(glyph, center, 20.0, Style::Symbolic(ink));
+            let width = canvas.css_width(&self.bold, label, 13.0);
+            canvas.text(
+                &self.bold,
+                label,
+                rect.x + (rect.w - width) / 2.0,
+                rect.y + 60.0,
+                13.0,
+                fg,
+            );
+        }
+
+        let separator = layout.dialog_cancel().y - 14.0;
+        canvas.fill(Rect::new(dialog.x, separator, dialog.w, 1.0), 0.0, line);
+        let cancel = layout.dialog_cancel();
+        canvas.fill(cancel, 11.0, chip);
+        let width = canvas.css_width(&self.bold, "Annuler", 14.0);
+        canvas.text(
             &self.bold,
-            title,
-            dialog.x + 72.0,
-            dialog.y + 30.0,
-            px(16.0),
-            primary_text(),
+            "Annuler",
+            cancel.x + (cancel.w - width) / 2.0,
+            cancel.y + 11.0,
+            14.0,
+            fg,
         );
-        canvas.label(
-            &self.regular,
-            text,
-            dialog.x + 20.0,
-            dialog.y + 76.0,
-            px(13.0),
-            themed(Color::rgb(0x374151), Color::rgb(0xD1D5DB)),
+        let confirm = layout.dialog_confirm();
+        canvas.fill(
+            confirm,
+            11.0,
+            if chosen == PowerAction::PowerOff {
+                red
+            } else {
+                blue
+            },
         );
-        // Fin de session seule, sans toucher à l'ordinateur.
-        canvas.button(
-            layout.dialog_logout(),
-            "Se déconnecter",
-            control_fill(),
-            primary_text(),
+        let width = canvas.css_width(&self.bold, verb, 14.0);
+        canvas.text(
+            &self.bold,
+            verb,
+            confirm.x + (confirm.w - width) / 2.0,
+            confirm.y + 11.0,
+            14.0,
+            Color::WHITE,
         );
-        canvas.button(
-            layout.dialog_relaunch(),
-            "Relancer le bureau",
-            control_fill(),
-            primary_text(),
-        );
-        canvas.button(layout.dialog_cancel(), "Annuler", control_fill(), primary_text());
-        canvas.button(
-            layout.dialog_restart(),
-            "Redémarrer",
-            control_fill(),
-            primary_text(),
-        );
-        canvas.button(layout.dialog_confirm(), "Éteindre", destructive(), Color::WHITE);
+
+        // Session : petits boutons discrets.
+        for (rect, label, glyph, ink) in [
+            (layout.dialog_logout(), "Se déconnecter", Some("cc-logout"), fg2),
+            (layout.dialog_lock(), "Verrouiller", Some("cc-lock"), fg2),
+            (layout.dialog_relaunch(), "Relancer le bureau", None, fg3),
+        ] {
+            let mut text_x = rect.x + 10.0;
+            if let Some(glyph) = glyph {
+                canvas.icon(
+                    glyph,
+                    (rect.x + 17.0, rect.y + rect.h / 2.0),
+                    14.0,
+                    Style::Symbolic(ink),
+                );
+                text_x += 20.0;
+            }
+            canvas.text(&self.regular, label, text_x, rect.y + 7.0, 13.0, ink);
+        }
     }
 }
 
@@ -2996,15 +3340,22 @@ pub fn action_at(
     }
 
     if let Some(power) = pending_power {
-        let _ = power;
+        let choices = [PowerAction::PowerOff, PowerAction::Restart, PowerAction::Sleep];
+        let chosen = match power {
+            PowerAction::Restart | PowerAction::Sleep => power,
+            _ => PowerAction::PowerOff,
+        };
+        if let Some(index) = (0..3).find(|&index| layout.dialog_choice(index).contains(pos)) {
+            return Some(DesktopAction::PowerChoose(choices[index]));
+        }
         return Some(if layout.dialog_cancel().contains(pos) {
             DesktopAction::CancelPower
-        } else if layout.dialog_restart().contains(pos) {
-            DesktopAction::ConfirmPower(PowerAction::Restart)
         } else if layout.dialog_confirm().contains(pos) {
-            DesktopAction::ConfirmPower(PowerAction::PowerOff)
+            DesktopAction::ConfirmPower(chosen)
         } else if layout.dialog_logout().contains(pos) {
             DesktopAction::ConfirmPower(PowerAction::LogOut)
+        } else if layout.dialog_lock().contains(pos) {
+            DesktopAction::Lock
         } else if layout.dialog_relaunch().contains(pos) {
             DesktopAction::ConfirmPower(PowerAction::RelaunchDesktop)
         } else if layout.dialog().contains(pos) {
@@ -3069,7 +3420,11 @@ pub fn action_at(
             ControlsPage::Main => {
                 let on = |control| layout.control_row(control).contains(pos);
                 let percent = |control| slider_percent(layout.slider_track(control), pos.x);
-                if on(Control::WifiMore) && view.wifi.is_some() {
+                if on(Control::NightMore) {
+                    DesktopAction::OpenNightSettings
+                } else if on(Control::Night) {
+                    DesktopAction::ToggleNight
+                } else if on(Control::WifiMore) && view.wifi.is_some() {
                     DesktopAction::ControlsPage(ControlsPage::Wifi)
                 } else if on(Control::BluetoothMore) && view.bluetooth.is_some() {
                     DesktopAction::ControlsPage(ControlsPage::Bluetooth)
@@ -3109,12 +3464,25 @@ pub fn action_at(
                     DesktopAction::ControlsPage(ControlsPage::Main)
                 } else if layout.controls_switch().contains(pos) && view.wifi.is_some() {
                     DesktopAction::ToggleWifi
+                } else if view.controls.password.is_some() && layout.password_eye().contains(pos) {
+                    DesktopAction::PasswordReveal
                 } else if view.controls.password.is_some() && layout.password_cancel().contains(pos) {
                     DesktopAction::PasswordCancel
                 } else if view.controls.password.is_some() && layout.password_submit().contains(pos) {
                     DesktopAction::PasswordSubmit
                 } else if layout.controls_bottom().contains(pos) {
                     DesktopAction::OpenSettingsPage("wifi")
+                } else if let Some(network) = networks
+                    .iter()
+                    .enumerate()
+                    .find(|(slot, network)| {
+                        network.known
+                            && network.secured
+                            && layout.wifi_eye(*slot, network.connected).contains(pos)
+                    })
+                    .map(|(_, network)| network)
+                {
+                    DesktopAction::NetworkPassword(network.index)
                 } else if let Some(network) = networks
                     .iter()
                     .enumerate()
@@ -3140,7 +3508,11 @@ pub fn action_at(
                     .find(|(slot, _)| layout.bluetooth_button(*slot).contains(pos))
                     .map(|(_, device)| device)
                 {
-                    DesktopAction::DeviceAction(device.index)
+                    if device.busy {
+                        DesktopAction::Consume
+                    } else {
+                        DesktopAction::DeviceAction(device.index)
+                    }
                 } else {
                     DesktopAction::Consume
                 }
@@ -3433,6 +3805,9 @@ enum Control {
     Keyboard,
     Airplane,
     KeyboardLight,
+    /// Tuile large du mode nuit, et son chevron (réglages).
+    Night,
+    NightMore,
     Volume,
     Brightness,
     /// Chevrons des tuiles Wi-Fi et Bluetooth.
@@ -3706,6 +4081,20 @@ impl Layout {
         Rect::new(row.x + 48.0, row.bottom() + 24.0, row.w - 48.0 - 14.0, 40.0)
     }
 
+    /// L'œil, au bout du champ de mot de passe.
+    fn password_eye(&self) -> Rect {
+        let field = self.password_field();
+        Rect::new(field.right() - 40.0, field.y, 40.0, field.h)
+    }
+
+    /// L'œil d'un réseau enregistré, à gauche de son cadenas (et de sa coche).
+    fn wifi_eye(&self, slot: usize, connected: bool) -> Rect {
+        let row = self.wifi_row(slot);
+        let lock = row.right() - 26.0 - if connected { 28.0 } else { 0.0 };
+        let center = (lock - 28.0, row.y + CONTROLS_LIST_ROW / 2.0);
+        Rect::new(center.0 - 14.0, center.1 - 14.0, 28.0, 28.0)
+    }
+
     fn password_submit(&self) -> Rect {
         let field = self.password_field();
         Rect::new(field.right() - 108.0, field.bottom() + 10.0, 108.0, 32.0)
@@ -3818,6 +4207,15 @@ impl Layout {
             Control::Keyboard => tile(1.0, 2.0),
             Control::Airplane => tile(0.0, 3.0),
             Control::KeyboardLight => tile(1.0, 3.0),
+            // Une rangée entière : le mode nuit a besoin de place pour son horaire.
+            Control::Night => {
+                let left = tile(0.0, 4.0);
+                Rect::new(left.x, left.y, inner, left.h)
+            }
+            Control::NightMore => {
+                let left = tile(0.0, 4.0);
+                chevron(Rect::new(left.x, left.y, inner, left.h))
+            }
             Control::Volume if self.volume => row(0.0),
             Control::Brightness if self.brightness => row(if self.volume { 1.0 } else { 0.0 }),
             Control::Volume | Control::Brightness => Rect::new(card.x, card.y, 0.0, 0.0),
@@ -3864,7 +4262,7 @@ impl Layout {
         )
     }
 
-    /// Dialogue système : 420 px, centré.
+    /// Dialogue d'arrêt : 480 px, centré.
     fn dialog(&self) -> Rect {
         Rect::new(
             ((self.w - DIALOG.0) / 2.0).max(8.0),
@@ -3874,36 +4272,43 @@ impl Layout {
         )
     }
 
-    fn dialog_confirm(&self) -> Rect {
+    /// Tuile `index` (0 : Éteindre, 1 : Redémarrer, 2 : Veille).
+    fn dialog_choice(&self, index: usize) -> Rect {
         let dialog = self.dialog();
+        let width = (dialog.w - 48.0 - 20.0) / 3.0;
         Rect::new(
-            dialog.right() - 20.0 - 92.0,
-            dialog.bottom() - 20.0 - 34.0,
+            dialog.x + 24.0 + index as f64 * (width + 10.0),
+            dialog.y + 116.0,
+            width,
             92.0,
-            34.0,
         )
     }
 
-    fn dialog_restart(&self) -> Rect {
-        let confirm = self.dialog_confirm();
-        Rect::new(confirm.x - 8.0 - 104.0, confirm.y, 104.0, confirm.h)
+    fn dialog_confirm(&self) -> Rect {
+        let dialog = self.dialog();
+        Rect::new(dialog.right() - 24.0 - 170.0, dialog.y + 242.0, 170.0, 40.0)
     }
 
     fn dialog_cancel(&self) -> Rect {
-        let restart = self.dialog_restart();
-        Rect::new(restart.x - 8.0 - 84.0, restart.y, 84.0, restart.h)
+        let confirm = self.dialog_confirm();
+        Rect::new(confirm.x - 10.0 - 104.0, confirm.y, 104.0, confirm.h)
     }
 
-    /// Rangée de la session, au-dessus des boutons de l'ordinateur, alignée à gauche.
+    /// Rangée de la session, sous les boutons de l'ordinateur.
     fn dialog_logout(&self) -> Rect {
         let dialog = self.dialog();
-        let confirm = self.dialog_confirm();
-        Rect::new(dialog.x + 20.0, confirm.y - 8.0 - confirm.h, 136.0, confirm.h)
+        Rect::new(dialog.x + 24.0, dialog.y + 296.0, 136.0, 30.0)
+    }
+
+    fn dialog_lock(&self) -> Rect {
+        let logout = self.dialog_logout();
+        Rect::new(logout.right() + 4.0, logout.y, 112.0, logout.h)
     }
 
     fn dialog_relaunch(&self) -> Rect {
+        let dialog = self.dialog();
         let logout = self.dialog_logout();
-        Rect::new(logout.right() + 8.0, logout.y, 156.0, logout.h)
+        Rect::new(dialog.right() - 24.0 - 140.0, logout.y, 140.0, logout.h)
     }
 
     fn new(w: f64, h: f64, view: &DesktopView) -> Self {
@@ -5175,6 +5580,7 @@ mod tests {
             title: "Projet web".to_owned(),
             preview: "Finir l'interface".to_owned(),
             updated: 0,
+            lines: Vec::new(),
         }];
         let layout = Layout::new(output.size.w as f64, output.size.h as f64, &desktop);
         let cards = layout.dashboard_cards(&desktop.dashboard.layout);
@@ -5189,12 +5595,29 @@ mod tests {
             Some(DesktopAction::DashboardAddNote)
         );
         assert_eq!(
-            click(tasks.x + 25.0, tasks.y + 65.0),
+            click(notes.right() - 60.0, notes.y + 28.0),
+            Some(DesktopAction::DashboardDeleteNote(0))
+        );
+        // Les onglets des feuilles, puis les tâches de la feuille affichée.
+        assert_eq!(
+            click(tasks.x + 30.0, tasks.y + 58.0),
+            Some(DesktopAction::DashboardList(0))
+        );
+        assert_eq!(
+            click(tasks.x + 18.0 + 124.0 + 6.0 + 14.0, tasks.y + 58.0),
+            Some(DesktopAction::DashboardAddList)
+        );
+        assert_eq!(
+            click(tasks.x + 25.0, tasks.y + 99.0),
             Some(DesktopAction::DashboardToggleTask(0))
         );
         assert_eq!(
-            click(tasks.right() - 22.0, tasks.y + 65.0),
+            click(tasks.right() - 52.0, tasks.y + 99.0),
             Some(DesktopAction::DashboardCyclePriority(0))
+        );
+        assert_eq!(
+            click(tasks.right() - 28.0, tasks.y + 99.0),
+            Some(DesktopAction::DashboardDeleteTask(0))
         );
         assert_eq!(
             click(tasks.right() - 30.0, tasks.y + 28.0),
@@ -5226,8 +5649,89 @@ mod tests {
             .collect();
         let short = Rect::new(0.0, 0.0, 356.0, 170.0);
         let tall = Rect::new(0.0, 0.0, 356.0, 360.0);
-        assert_eq!(cards::shown_tasks(&desktop.dashboard, short).len(), 3);
-        assert_eq!(cards::shown_tasks(&desktop.dashboard, tall).len(), 8);
+        assert_eq!(cards::shown_tasks(&desktop.dashboard, short).len(), 2);
+        assert_eq!(cards::shown_tasks(&desktop.dashboard, tall).len(), 7);
+    }
+
+    #[test]
+    fn une_mesure_du_processeur_ne_redessine_que_la_carte_systeme() {
+        use crate::desktop::widgets::WidgetKind;
+        let state = VisualState {
+            width: 1280,
+            height: 720,
+            scale_milli: 1000,
+            accent: Color::WHITE,
+            view: view(None),
+            battery: None,
+            clock: ClockSnapshot::default(),
+            system: SystemMetrics::default(),
+        };
+        let mut busier = state.clone();
+        busier.system.cpu = 42;
+        busier.clock.minute = 7;
+        // Le reste de l'état n'a pas bougé : pas de redessin complet.
+        assert_eq!(cards::base_key(&state), cards::base_key(&busier));
+        assert_ne!(
+            cards::card_live(WidgetKind::System, &state),
+            cards::card_live(WidgetKind::System, &busier)
+        );
+        assert_eq!(
+            cards::card_live(WidgetKind::Tasks, &state),
+            cards::card_live(WidgetKind::Tasks, &busier)
+        );
+        // L'horloge suit la minute.
+        assert_ne!(
+            cards::card_live(WidgetKind::Clock, &state),
+            cards::card_live(WidgetKind::Clock, &busier)
+        );
+    }
+
+    #[test]
+    fn le_widget_musique_pilote_le_lecteur() {
+        use crate::desktop::{
+            lock::{Media, MediaCommand},
+            widgets::{WidgetKind, WidgetSlot},
+        };
+        let mut desktop = view(None);
+        desktop.dashboard.shown = true;
+        desktop.dashboard.layout = vec![WidgetSlot {
+            kind: WidgetKind::Music,
+            x: 32,
+            y: 244,
+            w: 356,
+            h: 170,
+        }];
+        let layout = Layout::new(1280.0, 720.0, &desktop);
+        let card = layout.dashboard_cards(&desktop.dashboard.layout)[0];
+        let [previous, play, next] = cards::music_buttons(card);
+        let at = |rect: Rect, desktop: &DesktopView| {
+            let (x, y) = rect.center();
+            action_at(output(), point(x, y), desktop)
+        };
+        // Sans lecteur : la carte ouvre Musique, même sur la place des boutons.
+        assert_eq!(at(play, &desktop), Some(DesktopAction::DashboardOpenMusic));
+        desktop.dashboard.media = Some(Media {
+            detail: "Nuit Claire · Ciel étoilé".into(),
+            progress: 30,
+            playing: true,
+            title: "Ciel étoilé".into(),
+            artist: "Nuit Claire".into(),
+            cover: None,
+        });
+        assert_eq!(
+            at(previous, &desktop),
+            Some(DesktopAction::DashboardMedia(MediaCommand::Previous))
+        );
+        assert_eq!(
+            at(play, &desktop),
+            Some(DesktopAction::DashboardMedia(MediaCommand::PlayPause))
+        );
+        assert_eq!(
+            at(next, &desktop),
+            Some(DesktopAction::DashboardMedia(MediaCommand::Next))
+        );
+        let title = Rect::new(card.x + 180.0, card.y + 40.0, 10.0, 10.0);
+        assert_eq!(at(title, &desktop), Some(DesktopAction::DashboardOpenMusic));
     }
 
     fn point(x: f64, y: f64) -> Point<f64, Logical> {
@@ -5641,6 +6145,52 @@ mod tests {
     }
 
     #[test]
+    fn les_yeux_du_wifi_montrent_les_mots_de_passe() {
+        let row = |index: usize, ssid: &str, connected: bool, known: bool| NetworkRow {
+            index,
+            ssid: ssid.to_owned(),
+            level: 3,
+            secured: true,
+            connected,
+            known,
+            hint: String::new(),
+            revealed: false,
+        };
+        let mut desktop = view(Some(Popover::Controls));
+        desktop.controls.page = ControlsPage::Wifi;
+        desktop.controls.networks = vec![
+            row(0, "Maison", true, true),
+            row(1, "Atelier", false, true),
+            row(2, "Voisin", false, false),
+        ];
+        desktop.controls.password = Some(PasswordRow {
+            ssid: "Voisin".to_owned(),
+            length: 4,
+            shown: None,
+        });
+        let layout = Layout::new(1280.0, 720.0, &desktop);
+        let at = |rect: Rect| {
+            action_at(
+                output(),
+                point(rect.x + rect.w / 2.0, rect.y + rect.h / 2.0),
+                &desktop,
+            )
+        };
+        assert_eq!(
+            at(layout.wifi_eye(0, true)),
+            Some(DesktopAction::NetworkPassword(0))
+        );
+        assert_eq!(
+            at(layout.wifi_eye(1, false)),
+            Some(DesktopAction::NetworkPassword(1))
+        );
+        // Réseau inconnu : pas d'œil, la ligne demande le mot de passe.
+        assert_eq!(at(layout.wifi_eye(2, false)), Some(DesktopAction::NetworkJoin(2)));
+        assert_eq!(at(layout.password_eye()), Some(DesktopAction::PasswordReveal));
+        assert_eq!(at(layout.password_submit()), Some(DesktopAction::PasswordSubmit));
+    }
+
+    #[test]
     fn sans_retroeclairage_le_module_moniteur_disparait() {
         let desktop = DesktopView {
             brightness: None,
@@ -5655,36 +6205,56 @@ mod tests {
     #[test]
     fn l_arret_demande_toujours_une_confirmation() {
         let layout = layout();
-
-        let pending = DesktopView {
+        let mut pending = DesktopView {
             power: Some(PowerAction::PowerOff),
+            power_left: 60,
+            power_apps: 3,
             ..view(None)
         };
-        let at = |x: f64, y: f64| action_at(output(), point(x, y), &pending);
-        let confirm = layout.dialog_confirm().center();
+        let at = |x: f64, y: f64, view: &DesktopView| action_at(output(), point(x, y), view);
+        let click = |rect: Rect, view: &DesktopView| {
+            let (x, y) = rect.center();
+            at(x, y, view)
+        };
         assert_eq!(
-            at(confirm.0, confirm.1),
+            click(layout.dialog_confirm(), &pending),
             Some(DesktopAction::ConfirmPower(PowerAction::PowerOff))
         );
-        let cancel = layout.dialog_cancel().center();
-        assert_eq!(at(cancel.0, cancel.1), Some(DesktopAction::CancelPower));
-        let logout = layout.dialog_logout().center();
         assert_eq!(
-            at(logout.0, logout.1),
+            click(layout.dialog_cancel(), &pending),
+            Some(DesktopAction::CancelPower)
+        );
+        assert_eq!(
+            click(layout.dialog_choice(2), &pending),
+            Some(DesktopAction::PowerChoose(PowerAction::Sleep))
+        );
+        // La tuile choisie décide de ce que fait le bouton principal.
+        pending.power = Some(PowerAction::Restart);
+        assert_eq!(
+            click(layout.dialog_confirm(), &pending),
+            Some(DesktopAction::ConfirmPower(PowerAction::Restart))
+        );
+        assert_eq!(
+            click(layout.dialog_logout(), &pending),
             Some(DesktopAction::ConfirmPower(PowerAction::LogOut))
         );
-        let relaunch = layout.dialog_relaunch().center();
+        assert_eq!(click(layout.dialog_lock(), &pending), Some(DesktopAction::Lock));
         assert_eq!(
-            at(relaunch.0, relaunch.1),
+            click(layout.dialog_relaunch(), &pending),
             Some(DesktopAction::ConfirmPower(PowerAction::RelaunchDesktop))
         );
-        // Les deux rangées ne se chevauchent pas et restent dans le dialogue.
-        assert!(layout.dialog_logout().bottom() < layout.dialog_cancel().y);
-        assert!(layout.dialog_relaunch().right() <= layout.dialog().right() - 20.0);
-        assert!(layout.dialog_logout().y > layout.dialog().y + 76.0 + 20.0);
-        let inside = layout.dialog();
-        assert_eq!(at(inside.x + 10.0, inside.y + 10.0), Some(DesktopAction::Consume));
-        assert_eq!(at(5.0, 700.0), Some(DesktopAction::CancelPower));
+        // Tout tient dans le dialogue, sans chevauchement.
+        let dialog = layout.dialog();
+        assert!(layout.dialog_choice(2).right() <= dialog.right() - 24.0 + 0.01);
+        assert!(layout.dialog_choice(0).bottom() < layout.dialog_cancel().y);
+        assert!(layout.dialog_cancel().bottom() < layout.dialog_logout().y);
+        assert!(layout.dialog_lock().right() < layout.dialog_relaunch().x);
+        assert!(layout.dialog_logout().bottom() <= dialog.bottom());
+        assert_eq!(
+            at(dialog.x + 10.0, dialog.y + 10.0, &pending),
+            Some(DesktopAction::Consume)
+        );
+        assert_eq!(at(5.0, 700.0, &pending), Some(DesktopAction::CancelPower));
     }
 
     #[test]

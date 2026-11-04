@@ -111,6 +111,9 @@ impl Ferrite {
                 warn!(?err, "fenêtre X11 non reconfigurée");
             }
         }
+        if !self.space.elements().any(|mapped| mapped == window) {
+            self.leave_widgets_page();
+        }
         self.space.map_element(window.clone(), content.loc, true);
     }
 

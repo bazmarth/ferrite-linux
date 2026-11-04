@@ -42,7 +42,7 @@ mod cards;
 mod lock_screen;
 
 pub use cards::{tasks_scroll_limit, widget_at, widget_edges_at, widgets_areas};
-pub use lock_screen::{LOCK_WALLS, LockAction, lock_action_at};
+pub use lock_screen::{LOCK_BLUR_MAX, LOCK_WALLS, LockAction, LockPicture, lock_action_at};
 
 use cards::dashboard_action_at;
 
@@ -498,8 +498,12 @@ pub struct NotificationsView {
 pub struct LockView {
     pub user: String,
     pub initial: char,
-    /// Nombre de caractères tapés : le mot de passe n'arrive jamais jusqu'au dessin.
+    /// Nombre de caractères tapés : le mot de passe n'arrive jusqu'au dessin que tant
+    /// que l'œil est tenu (`shown`).
     pub length: usize,
+    /// Place du curseur, en caractères.
+    pub cursor: usize,
+    pub shown: Option<String>,
     pub field: bool,
     /// Part du passage à la saisie, de 0 à 1000.
     pub progress: u16,
@@ -511,7 +515,11 @@ pub struct LockView {
     pub pulse: u8,
     pub spin: u8,
     pub dark: bool,
+    /// Fond choisi : un des fonds dessinés, ou `LOCK_WALLS.len()` pour la photo.
     pub wall: usize,
+    pub picture: Option<lock_screen::LockPicture>,
+    /// Flou de la photo (0 : nette).
+    pub blur: u8,
     pub weather: Option<ferrite_system::weather::Weather>,
     pub place: String,
     pub notice: Option<LockNotice>,
@@ -768,7 +776,9 @@ pub struct Panels {
     /// Fond du menu Applications (voile, ombre et verre), gardé d'un dessin à l'autre.
     launcher_backdrop: RefCell<Option<(LauncherBackdropKey, Vec<u8>)>>,
     /// Fond de l'écran de verrouillage.
-    lock_wall: RefCell<Option<(LockWallKey, Vec<u8>)>>,
+    lock_wall: RefCell<Option<(LockWallKey, MemoryRenderBuffer)>>,
+    /// Autres couches de l'écran de verrouillage (voir `lock_elements`).
+    lock_layers: RefCell<lock_screen::LockLayers>,
 }
 
 /// Durées de l'apparition et de la disparition d'un panneau, et sa taille de départ.
@@ -796,8 +806,9 @@ fn animated(popover: Option<Popover>) -> bool {
     matches!(popover, Some(Popover::Controls))
 }
 
-/// Taille (pixels physiques), thème et choix du fond de l'écran de verrouillage.
-type LockWallKey = (u32, u32, bool, usize);
+/// Taille (pixels physiques), thème et choix du fond de l'écran de verrouillage, la
+/// photo affichée (par son adresse) et son flou.
+type LockWallKey = (u32, u32, bool, usize, Option<usize>, u8);
 /// Place (pixels physiques), échelle et fond d'écran d'un verre calculé.
 type FrostKey = ([u32; 4], u32, Option<usize>);
 
@@ -842,6 +853,7 @@ impl Panels {
             frost: RefCell::new(None),
             launcher_backdrop: RefCell::new(None),
             lock_wall: RefCell::new(None),
+            lock_layers: RefCell::new(lock_screen::LockLayers::default()),
         })
     }
 
@@ -874,12 +886,16 @@ impl Panels {
         let bar_visible = state.view.bar_visible;
         // L'invitation de l'écran de verrouillage pulse par l'opacité de sa propre image.
         let pulse = state.view.lock.as_ref().map(|lock| lock.pulse);
+        // Le passage du repos à la saisie ne redessine rien : le contenu est celui de l'état
+        // visé, ses couches bougent à la carte graphique.
+        let lock_now = state.view.lock.clone();
         let rest = VisualState {
             view: DesktopView {
                 bar_opaque: false,
                 bar_visible: true,
                 lock: state.view.lock.clone().map(|lock| LockView {
                     pulse: lock_screen::PULSE_APART,
+                    progress: if lock.field { 1000 } else { 0 },
                     ..lock
                 }),
                 ..state.view.clone()
@@ -887,7 +903,12 @@ impl Panels {
             ..state.clone()
         };
         let invitation = state.view.lock.as_ref().map(|lock| {
-            let key = (state.width, state.height, state.scale_milli, lock.dark);
+            let key = (
+                state.width,
+                state.height,
+                state.scale_milli,
+                lock_screen::invitation_ink(lock),
+            );
             let mut cache = self.invitation.borrow_mut();
             if !cache.as_ref().is_some_and(|(known, _, _)| *known == key) {
                 let (buffer, place) = self.rasterize_invitation(&state, lock, scale);
@@ -917,7 +938,7 @@ impl Panels {
             let layer = crate::render::profile::raster("calque", || self.rasterize_layer(&state, scale));
             *cache = Some((state, buffer, layer));
         }
-        let Some((_, buffer, open)) = cache.as_ref() else {
+        let Some((state, buffer, open)) = cache.as_ref() else {
             return;
         };
 
@@ -953,13 +974,19 @@ impl Panels {
             }
         }
 
-        if let (Some((image, (top, height))), Some(pulse)) = (invitation, pulse) {
+        // L'invitation s'efface pendant la saisie.
+        let entry = lock_now
+            .as_ref()
+            .map_or(0.0, |lock| f64::from(lock.progress) / 1000.0);
+        if let (Some((image, (top, height))), Some(pulse)) = (invitation, pulse)
+            && entry < 1.0
+        {
             let size = (output_geo.size.w as f64 * scale, (height * scale).round());
             match MemoryRenderBufferRenderElement::from_buffer(
                 renderer,
                 Point::<f64, Logical>::from((0.0, top)).to_physical(scale),
                 &image,
-                Some(lock_screen::pulse_level(pulse) as f32),
+                Some((lock_screen::pulse_level(pulse) * (1.0 - entry)) as f32),
                 Some(Rectangle::<f64, Logical>::from_size(size.into())),
                 Some(Size::from((output_geo.size.w, height.round() as i32))),
                 Kind::Unspecified,
@@ -969,18 +996,44 @@ impl Panels {
             }
         }
 
-        let physical_size = (output_geo.size.w as f64 * scale, output_geo.size.h as f64 * scale);
-        match MemoryRenderBufferRenderElement::from_buffer(
-            renderer,
-            Point::from((0.0, 0.0)),
-            buffer,
-            None,
-            Some(Rectangle::<f64, Logical>::from_size(physical_size.into())),
-            Some(output_geo.size),
-            Kind::Unspecified,
-        ) {
-            Ok(element) => out.push(super::super::render::OutputElement::Memory(element)),
-            Err(err) => tracing::warn!(?err, output = output.name(), "panneau du bureau non importé"),
+        if let Some(lock) = &lock_now {
+            for layer in self.lock_elements(state, lock, scale, buffer) {
+                let rect = layer.rect;
+                let source = (f64::from(layer.pixels.0), f64::from(layer.pixels.1));
+                match MemoryRenderBufferRenderElement::from_buffer(
+                    renderer,
+                    Point::<f64, Logical>::from((rect.x, rect.y)).to_physical(scale),
+                    &layer.buffer,
+                    (layer.alpha < 1.0).then_some(layer.alpha),
+                    Some(Rectangle::<f64, Logical>::from_size(source.into())),
+                    Some(Size::from((
+                        rect.w.round().max(1.0) as i32,
+                        rect.h.round().max(1.0) as i32,
+                    ))),
+                    Kind::Unspecified,
+                ) {
+                    Ok(element) => out.push(super::super::render::OutputElement::Memory(element)),
+                    Err(err) => tracing::warn!(
+                        ?err,
+                        output = output.name(),
+                        "couche de verrouillage non importée"
+                    ),
+                }
+            }
+        } else {
+            let physical_size = (output_geo.size.w as f64 * scale, output_geo.size.h as f64 * scale);
+            match MemoryRenderBufferRenderElement::from_buffer(
+                renderer,
+                Point::from((0.0, 0.0)),
+                buffer,
+                None,
+                Some(Rectangle::<f64, Logical>::from_size(physical_size.into())),
+                Some(output_geo.size),
+                Kind::Unspecified,
+            ) {
+                Ok(element) => out.push(super::super::render::OutputElement::Memory(element)),
+                Err(err) => tracing::warn!(?err, output = output.name(), "panneau du bureau non importé"),
+            }
         }
 
         // Barre du haut, sous les menus.
@@ -1442,11 +1495,18 @@ impl Panels {
         let view = &state.view;
         let layout = Layout::new(state.width as f64, state.height as f64, view);
 
-        // L'écran de verrouillage ne laisse rien voir d'autre.
+        // L'écran de verrouillage ne laisse rien voir d'autre ; ici, son contenu seul (le
+        // reste est dans ses autres couches, voir `lock_elements`).
         if let Some(lock) = &view.lock {
-            canvas.pixels = self.lock_wall(width, height, lock);
             canvas.scale = (scale * lock_screen::lock_scale(state.width as f64, state.height as f64)) as f32;
-            self.draw_lock(&mut canvas, state.width as f64, state.height as f64, state, lock);
+            self.draw_lock(
+                &mut canvas,
+                state.width as f64,
+                state.height as f64,
+                state,
+                lock,
+                lock_screen::LockLayer::Content,
+            );
             canvas.scale = scale as f32;
             // Arrêt demandé depuis l'écran verrouillé : la confirmation passe devant.
             if let Some(power) = view.power {
@@ -5891,6 +5951,8 @@ mod tests {
             user: "Utilisateur".to_owned(),
             initial: 'U',
             length: 0,
+            cursor: 0,
+            shown: None,
             field: false,
             progress: 0,
             checking: false,
@@ -5901,12 +5963,41 @@ mod tests {
             spin: 0,
             dark: true,
             wall: 0,
+            picture: None,
+            blur: 0,
             weather: None,
             place: String::new(),
             notice: None,
             media: None,
         });
         desktop
+    }
+
+    #[test]
+    fn la_photo_de_verrouillage_a_sa_pastille() {
+        let mut desktop = lock_view();
+        let area = Rectangle::from_size((1600, 1000).into());
+        // Pastilles tous les 40 points depuis 115 : la cinquième (la photo) est à 275.
+        let fifth = point(275.0, 944.0);
+        assert_ne!(lock_action_at(area, &desktop, fifth), LockAction::Wall(4));
+        if let Some(lock) = desktop.lock.as_mut() {
+            lock.picture = Some(LockPicture {
+                path: "/home/a/photo.png".into(),
+                image: Arc::new(Image {
+                    width: 1,
+                    height: 1,
+                    rgba: vec![0; 4],
+                }),
+                thumb: crate::clipboard::Thumbnail {
+                    width: 1,
+                    height: 1,
+                    pixels: Arc::new(vec![0; 4]),
+                },
+                clock_luma: 0.0,
+                invitation_luma: 0.0,
+            });
+        }
+        assert_eq!(lock_action_at(area, &desktop, fifth), LockAction::Wall(4));
     }
 
     #[test]

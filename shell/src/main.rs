@@ -118,6 +118,12 @@ fn run(options: Options) -> Result<u8, Box<dyn std::error::Error>> {
     }
 
     let has_display = std::env::var_os("WAYLAND_DISPLAY").is_some() || std::env::var_os("DISPLAY").is_some();
+    // Ouverture de session (ferrite-session, connexion automatique) : le bureau démarre
+    // verrouillé. Un bureau imbriqué, lancé depuis un terminal, hérite de la variable : il
+    // ne se verrouille pas.
+    if !has_display && std::env::var_os("FERRITE_LOCK").is_some_and(|value| value == "1") {
+        state.lock_session();
+    }
     match options.backend.resolve(has_display) {
         BackendChoice::Drm => backend::drm::init(&mut event_loop, &mut state, &options)?,
         _ => backend::winit::init(&mut event_loop, &mut state, &options)?,

@@ -467,6 +467,22 @@ impl ViewerState {
         }
     }
 
+    /// Fond de l'écran de verrouillage : le bureau décode l'image et la propose en pastille.
+    fn set_lock_wallpaper(&mut self) {
+        let Some(path) = self.current().cloned() else {
+            return;
+        };
+        let mut settings = ferrite_system::config::Settings::load();
+        settings.set("verrouillage_fond", &path.to_string_lossy());
+        match settings.save() {
+            Ok(()) => self.say(
+                format!("Fond de verrouillage défini : {}", file_name(&path)),
+                None,
+            ),
+            Err(error) => self.say(format!("Fond de verrouillage non enregistré : {error}"), None),
+        }
+    }
+
     fn toggle_slideshow(&mut self, ctx: &egui::Context) {
         match &mut self.slideshow {
             Some(show) => show.paused = !show.paused,
@@ -801,6 +817,28 @@ impl ViewerState {
         );
         if response.clicked() {
             self.set_wallpaper();
+        }
+        // Au-dessus, plus discret : le fond de l'écran de verrouillage.
+        let lock = Rect::from_min_max(
+            pos2(full.left(), button.top() - 8.0 - 38.0),
+            pos2(full.right(), button.top() - 8.0),
+        );
+        let response = ui.interact(lock, ui.scope_id().with("verrouillage"), Sense::click());
+        let fill = if response.hovered() {
+            style::control_hover()
+        } else {
+            style::control_background()
+        };
+        ui.painter().rect_filled(lock, 10.0, fill);
+        ui.painter().text(
+            lock.center(),
+            Align2::CENTER_CENTER,
+            "Définir comme fond de verrouillage",
+            FontId::new(14.0, style::strong_family()),
+            style::primary_text(),
+        );
+        if response.clicked() {
+            self.set_lock_wallpaper();
         }
     }
 

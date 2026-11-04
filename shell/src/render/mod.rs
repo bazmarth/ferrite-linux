@@ -1257,6 +1257,8 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
                 initial: display.chars().next().unwrap_or('U'),
                 user: display,
                 length: lock.password_length(),
+                cursor: lock.cursor(),
+                shown: lock.peeked(),
                 field: lock.field_visible,
                 progress: lock.progress(reduce),
                 checking: lock.checking,
@@ -1266,7 +1268,15 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
                 pulse: if reduce { 8 } else { lock.pulse() },
                 spin: lock.spin(),
                 dark: lock.dark,
-                wall: lock.wall,
+                // La photo choisie mais pas encore décodée : le premier fond en attendant.
+                wall: if lock.wall >= crate::desktop::panels::LOCK_WALLS.len() && state.lock_picture.is_none()
+                {
+                    0
+                } else {
+                    lock.wall
+                },
+                picture: state.lock_picture.clone(),
+                blur: lock.blur,
                 weather: state.dashboard.weather.clone(),
                 place: state.dashboard.place.clone(),
                 notice,

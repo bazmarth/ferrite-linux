@@ -2151,6 +2151,43 @@ impl SettingsState {
                 false,
             );
         });
+        group(ui, icons, "Écran de verrouillage", |rows| {
+            // Clair par défaut ; le fond se choisit sur l'écran lui-même ou dans la Visionneuse.
+            let mut dark = settings.get("verrouillage_theme") == Some("sombre");
+            if rows
+                .row(Row::new("Thème"), |ui| {
+                    rows::pick(
+                        ui,
+                        "verrouillage-theme",
+                        &mut dark,
+                        &[(false, "Clair"), (true, "Sombre")],
+                    )
+                })
+                .0
+            {
+                settings.set("verrouillage_theme", if dark { "sombre" } else { "clair" });
+            }
+            let mut blur: u8 = settings
+                .get("verrouillage_flou")
+                .and_then(|level| level.parse().ok())
+                .unwrap_or(0);
+            if rows
+                .row(
+                    Row::new("Flou de la photo").hint("Pour une photo choisie comme fond"),
+                    |ui| {
+                        rows::pick(
+                            ui,
+                            "verrouillage-flou",
+                            &mut blur,
+                            &[(0, "Aucun"), (1, "Léger"), (2, "Moyen"), (3, "Fort")],
+                        )
+                    },
+                )
+                .0
+            {
+                settings.set("verrouillage_flou", &blur.to_string());
+            }
+        });
         group(ui, icons, "Plus de réglages", |rows| {
             let mut highlight = settings.highlight();
             let mut choices: Vec<(Option<Accent>, &str)> = vec![(None, "Couleur d’accent")];

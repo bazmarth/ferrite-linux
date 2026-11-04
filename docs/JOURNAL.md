@@ -1011,3 +1011,55 @@ faisait redessiner sans cesse : réécrits seulement si l'échelle change. Aprè
 au repos : préparation 0,3 ms, plus aucun panneau redessiné ; les images restantes (60 à
 73/s) suivent l'application Claude, qui en soumet 37 à 58/s même en attente. Écran :
 2880 × 1800 à 90 Hz, échelle 200 %.
+
+Écran de verrouillage : une photo peut lui servir de fond (Visionneuse, « Définir comme
+fond de verrouillage » ; réglage `verrouillage_fond` en chemin), cinquième pastille
+« Photo » dans la personnalisation. Le bureau démarre désormais verrouillé :
+`ferrite-session` passe `FERRITE_LOCK=1` à l'ouverture, après une déconnexion et après un
+plantage, mais pas pour « Relancer le bureau » (la connexion sur tty1 étant automatique,
+c'est le mot de passe de l'écran de verrouillage qui protège la session).
+
+L'écran de verrouillage est clair par défaut (réglage `verrouillage_theme`, plus le thème
+du bureau) et la photo s'affiche nette, sans voile. Paramètres > Bureau, groupe « Écran de
+verrouillage » : thème, et flou de la photo (`verrouillage_flou`, Aucun à Fort ; calculé à
+mi-taille, avec un voile proportionnel pour la lisibilité).
+
+Super restait « tenue » après Super+L : son relâcher arrivait sur l'écran verrouillé, qui
+garde les touches, et `super_held` ne retombait jamais ; au retour, chaque touche devenait
+un raccourci (L reverrouillait). Il retombe désormais au relâcher même verrouillé, et dès
+qu'une touche est frappée sans Super enfoncée. Sur une photo, la date et l'heure prennent
+l'encre claire ou foncée selon la luminosité de la zone derrière elles (voile compris),
+comme l'invitation du bas (« Appuyez sur une touche… »).
+
+Mot de passe de l'écran de verrouillage : curseur (←, →, Début, Fin), Suppr et Retour
+arrière autour de lui, et un œil qui affiche le mot de passe en clair tant qu'il est tenu
+(il ne rejoint le dessin que pendant ce temps). Passage du repos à la saisie fluide :
+chaque image redessinait tout l'écran (21 ms, dont 10 ms pour le seul voile plein écran,
+plus l'envoi de 20 Mo). L'écran est maintenant fait de couches dessinées une fois (fond,
+voile d'un pixel étiré, boutons, contenu du repos ou de la saisie, date, heure) que la
+carte graphique fond, déplace et réduit ; l'invitation du bas s'efface en saisie.
+
+Au repos, la touche qui fait apparaître le champ du mot de passe n'y est plus écrite.
+
+La session ne lance plus Fichiers au démarrage : le bureau s'ouvre sur l'espace des widgets.
+
+Navigateur lent après le démarrage : Brave (et Claude) demandaient le coffre à mots de
+passe `org.freedesktop.secrets` sur le bus privé de `dbus-run-session`. Le gnome-keyring
+démarré par systemd vit sur le bus de systemd ; celui que lance le bus privé le trouve, s'efface
+sans prendre le nom, et l'activation échoue au bout de 120 s. La session utilise désormais
+le bus de systemd (`dbus-run-session` en secours), et l'environnement est aussi transmis à
+systemd (`--systemd`). Une résolution DNS de 51 s vue une fois n'a pas été reproduite
+(serveurs testés : réponses en 30 à 40 ms, aucune perte sur 60 requêtes).
+
+Trousseau demandé au démarrage : la connexion automatique sur tty1 ne donne jamais le mot de
+passe à PAM, et le « Default Keyring » restait fermé jusqu'à ce que Brave le réclame. L'écran
+de verrouillage, qui vérifie déjà le mot de passe, ouvre maintenant le trousseau par défaut
+avec (interface interne de gnome-keyring `UnlockWithMasterPassword`). Il faut que le
+trousseau ait le même mot de passe que la session ; sinon rien ne change.
+
+Image à distribuer alignée sur le système installé : coffre à mots de passe (gnome-keyring,
+libpam-gnome-keyring, gcr pour la fenêtre de déverrouillage) et ntfs-3g ajoutés aux
+paquets. Sur le système live de l'ISO (`boot=live`), le bureau ne démarre pas verrouillé :
+son utilisateur n'a pas de mot de passe connu. Les fichiers de includes.chroot étaient déjà
+plus récents que ceux du système installé (commentaires, associations Visionneuse et
+Musique, vérification Wi-Fi de ferrite-check).

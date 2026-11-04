@@ -86,6 +86,8 @@ pub enum Event {
     DockApps(Option<Vec<String>>, Vec<String>),
     Applications(Vec<DesktopEntry>),
     PowerAccepted,
+    /// Photo de l'écran de verrouillage, décodée (ou retirée).
+    LockPicture(Option<crate::desktop::panels::LockPicture>),
     /// Réglages du mode nuit et ville (pour le lever et le coucher du soleil).
     Night(
         ferrite_system::night::NightSettings,
@@ -216,6 +218,7 @@ fn worker(receiver: mpsc::Receiver<Change>, events: channel::Sender<Event>, nest
     let mut known_dark = None;
     let mut known_scroll_inverted = None;
     let mut known_wallpaper = None;
+    let mut known_lock_picture: Option<String> = None;
     let mut wallpaper_generation = 0u64;
     let mut last_snapshot: Option<Instant> = None;
     let mut layout = String::new();
@@ -262,6 +265,19 @@ fn worker(receiver: mpsc::Receiver<Change>, events: channel::Sender<Event>, nest
                 known_dark = Some(dark);
                 if !nested {
                     publish_color_scheme(dark);
+                }
+            }
+            // Photo de l'écran de verrouillage : décodée ici, une fois par choix.
+            let lock_path = settings
+                .get("verrouillage_fond")
+                .filter(|value| value.starts_with('/'))
+                .map(str::to_owned);
+            if lock_path != known_lock_picture {
+                known_lock_picture.clone_from(&lock_path);
+                let picture = lock_path
+                    .and_then(|path| crate::desktop::panels::LockPicture::load(std::path::Path::new(&path)));
+                if events.send(Event::LockPicture(picture)).is_err() {
+                    return;
                 }
             }
             let night = ferrite_system::night::NightSettings::load(&settings);
@@ -411,6 +427,18 @@ impl Ferrite {
                 self.accent = accent;
             }
             Event::ScrollInverted(inverted) => self.scroll_inverted = inverted,
+            Event::LockPicture(picture) => {
+                self.lock_picture = picture;
+                // Choisie pendant que l'écran est verrouillé : elle s'affiche tout de suite.
+                if let Some(lock) = self.lock.as_mut()
+                    && self.lock_picture.is_some()
+                    && ferrite_system::config::Settings::load()
+                        .get("verrouillage_fond")
+                        .is_some_and(|value| value.starts_with('/'))
+                {
+                    lock.wall = crate::desktop::panels::LOCK_WALLS.len();
+                }
+            }
             Event::Night(night, place) => {
                 if self.night.settings != night || self.night.place.as_ref() != Some(&place) {
                     self.night.settings = night;

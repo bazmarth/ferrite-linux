@@ -6,6 +6,142 @@ use super::*;
 
 /// Fonds proposés : nom, puis fond et trois taches de couleur, en sombre et en clair.
 type WallColors = [u32; 4];
+/// Photo choisie comme fond de l'écran de verrouillage (Visionneuse) : image décodée et
+/// vignette de sa pastille. Comparée par adresse : l'image entière ne l'est jamais.
+#[derive(Clone)]
+pub struct LockPicture {
+    pub path: std::path::PathBuf,
+    pub image: std::sync::Arc<ferrite_ui::wallpaper::Image>,
+    pub thumb: crate::clipboard::Thumbnail,
+    /// Luminosité moyenne (0 à 1) de la photo derrière la date et l'heure, et derrière
+    /// l'invitation du bas.
+    pub clock_luma: f32,
+    pub invitation_luma: f32,
+}
+
+impl PartialEq for LockPicture {
+    fn eq(&self, other: &Self) -> bool {
+        self.path == other.path && std::sync::Arc::ptr_eq(&self.image, &other.image)
+    }
+}
+
+impl Eq for LockPicture {}
+
+impl std::fmt::Debug for LockPicture {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "LockPicture({})", self.path.display())
+    }
+}
+
+impl LockPicture {
+    /// Décode `path` (dans le fil système : jamais pendant le rendu).
+    pub fn load(path: &std::path::Path) -> Option<Self> {
+        let image = ferrite_ui::wallpaper::decode(path).ok()?;
+        let small = ferrite_ui::wallpaper::cover(&image, 60, 60);
+        // Photo couvrant un écran 16:10 (la toile de 1600 × 1000, réduite au dixième).
+        let screen = ferrite_ui::wallpaper::cover(&image, 160, 100);
+        let clock_luma = zone_luma(&screen, 15..40, 50..110);
+        let invitation_luma = zone_luma(&screen, 89..97, 58..102);
+        let pixels = small
+            .rgba
+            .chunks_exact(4)
+            .flat_map(|p| {
+                let alpha = u32::from(p[3]);
+                let premultiply = |value: u8| (u32::from(value) * alpha / 255) as u8;
+                [premultiply(p[2]), premultiply(p[1]), premultiply(p[0]), p[3]]
+            })
+            .collect();
+        Some(Self {
+            path: path.to_path_buf(),
+            image: std::sync::Arc::new(image),
+            thumb: crate::clipboard::Thumbnail {
+                width: small.width,
+                height: small.height,
+                pixels: std::sync::Arc::new(pixels),
+            },
+            clock_luma,
+            invitation_luma,
+        })
+    }
+}
+
+/// Luminosité moyenne d'une zone (lignes, colonnes) de `screen`.
+fn zone_luma(
+    screen: &ferrite_ui::wallpaper::Image,
+    rows: std::ops::Range<usize>,
+    cols: std::ops::Range<usize>,
+) -> f32 {
+    let width = screen.width as usize;
+    let (mut sum, mut count) = (0.0_f32, 0.0_f32);
+    for y in rows {
+        for x in cols.clone() {
+            let p = &screen.rgba[(y * width + x) * 4..][..3];
+            sum += (0.2126 * f32::from(p[0]) + 0.7152 * f32::from(p[1]) + 0.0722 * f32::from(p[2])) / 255.0;
+            count += 1.0;
+        }
+    }
+    sum / count
+}
+
+/// Encres claires (celles du thème sombre) pour un texte posé sur la zone `zone` ? Celles
+/// du thème, sauf sur une photo dont la zone est trop claire ou trop sombre pour elles.
+pub(super) fn light_ink(lock: &LockView, zone: fn(&LockPicture) -> f32) -> bool {
+    let Some(picture) = lock.picture.as_ref().filter(|_| lock.wall == LOCK_WALLS.len()) else {
+        return lock.dark;
+    };
+    // Même voile que `paint_lock_picture`.
+    let veil = f32::from(lock.blur) / f32::from(LOCK_BLUR_MAX);
+    let luma = zone(picture);
+    let luma = if lock.dark {
+        luma * (1.0 - 0.38 * veil)
+    } else {
+        luma * (1.0 - 0.2 * veil) + 0.2 * veil
+    };
+    luma <= 0.55
+}
+
+pub(super) fn invitation_ink(lock: &LockView) -> bool {
+    light_ink(lock, |picture| picture.invitation_luma)
+}
+
+/// Pastilles proposées : les fonds dessinés, puis la photo s'il y en a une.
+pub(super) fn wall_count(lock: &LockView) -> usize {
+    LOCK_WALLS.len() + usize::from(lock.picture.is_some())
+}
+
+/// Niveaux de flou de la photo (réglage `verrouillage_flou`, de 0 à ce maximum).
+pub const LOCK_BLUR_MAX: u8 = 3;
+
+/// Photo couvrant l'écran, en BGRA comme les autres fonds. Nette par défaut, telle quelle ;
+/// avec du flou, elle est aussi d'autant assombrie (thème sombre) ou éclaircie (thème
+/// clair) pour que l'heure et le texte se détachent.
+fn paint_lock_picture(width: u32, height: u32, dark: bool, blur: u8, picture: &LockPicture) -> Vec<u8> {
+    let image = if blur == 0 {
+        ferrite_ui::wallpaper::cover(&picture.image, width, height)
+    } else {
+        // Flou calculé à mi-taille, puis agrandi : il ne s'y voit pas.
+        let small = ferrite_ui::wallpaper::cover(&picture.image, (width / 2).max(1), (height / 2).max(1));
+        let blurred = ferrite_ui::wallpaper::blur(&small, u32::from(blur) * 6);
+        ferrite_ui::wallpaper::cover(&blurred, width, height)
+    };
+    let veil = f32::from(blur) / f32::from(LOCK_BLUR_MAX);
+    image
+        .rgba
+        .chunks_exact(4)
+        .flat_map(|p| {
+            let tone = |value: u8| {
+                let value = f32::from(value);
+                (if dark {
+                    value * (1.0 - 0.38 * veil)
+                } else {
+                    value * (1.0 - 0.2 * veil) + 255.0 * 0.2 * veil
+                }) as u8
+            };
+            [tone(p[2]), tone(p[1]), tone(p[0]), 255]
+        })
+        .collect()
+}
+
 pub const LOCK_WALLS: [(&str, WallColors, WallColors); 4] = [
     (
         "Ferrite",
@@ -146,6 +282,113 @@ pub(super) fn pulse_level(pulse: u8) -> f64 {
     0.5 + 0.5 * f64::from(pulse.min(8)) / 8.0
 }
 
+/// Marge au-dessus et au-dessous du texte, dans les images de la date et de l'heure.
+const CLOCK_PAD: f64 = 6.0;
+
+/// Place de la date et de l'heure (haut de leur texte et taille), en points de la toile, à
+/// la part `part` du passage à la saisie ; `bottom` : le bas de l'heure.
+pub(super) struct ClockPlaces {
+    date_top: f64,
+    date_size: f64,
+    time_top: f64,
+    time_size: f64,
+    bottom: f64,
+}
+
+/// Grandes au repos, petites et en haut pendant la saisie.
+pub(super) fn clock_places(part: f64) -> ClockPlaces {
+    let date_top = mix(CLOCK_TOP.0, CLOCK_TOP.1, part);
+    let date_size = mix(DATE_SIZE.0, DATE_SIZE.1, part);
+    let time_size = mix(TIME_SIZE.0, TIME_SIZE.1, part);
+    let time_line = date_top + date_size * 1.21 + 6.0;
+    ClockPlaces {
+        date_top,
+        date_size,
+        time_top: time_line - time_size * 0.13,
+        time_size,
+        bottom: time_line + time_size * 0.95,
+    }
+}
+
+/// Partie de l'écran de verrouillage que dessine `draw_lock` : ce qui ne bouge pas (état,
+/// boutons du bas) ou le contenu du repos ou de la saisie.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum LockLayer {
+    Chrome,
+    Content,
+}
+
+/// Une couche de l'écran de verrouillage : son image, sa place en points logiques et son
+/// opacité.
+pub(super) struct LockElement {
+    pub buffer: MemoryRenderBuffer,
+    /// Taille de l'image, en pixels.
+    pub pixels: (u32, u32),
+    pub rect: Rect,
+    pub alpha: f32,
+}
+
+/// Ce qui fait redessiner une image de la date ou de l'heure.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ClockKey {
+    width: u32,
+    height: u32,
+    scale_milli: u32,
+    text: String,
+    light: bool,
+    time: bool,
+    small: bool,
+}
+
+/// Images gardées des couches de l'écran de verrouillage.
+#[derive(Default)]
+pub(super) struct LockLayers {
+    chrome: Option<(VisualState, MemoryRenderBuffer)>,
+    veil: Option<(Color, MemoryRenderBuffer)>,
+    /// Image, sa taille en pixels et la hauteur de sa bande en points de la toile.
+    clocks: Vec<(ClockKey, MemoryRenderBuffer, (u32, u32), f64)>,
+}
+
+impl std::fmt::Debug for LockLayers {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "LockLayers({} images de l'heure)", self.clocks.len())
+    }
+}
+
+/// L'état dont dépendent les boutons et l'état du haut : tout, sauf ce que la saisie fait
+/// changer.
+fn lock_chrome_state(state: &VisualState) -> VisualState {
+    let mut chrome = state.clone();
+    if let Some(lock) = chrome.view.lock.as_mut() {
+        lock.length = 0;
+        lock.cursor = 0;
+        lock.shown = None;
+        lock.field = false;
+        lock.progress = 0;
+        lock.checking = false;
+        lock.welcome = false;
+        lock.message = LockMessage::Hint;
+        lock.shake = 0;
+        lock.pulse = 0;
+        lock.spin = 0;
+        lock.notice = None;
+        lock.media = None;
+    }
+    chrome
+}
+
+/// Image ARGB prête pour la carte graphique.
+fn memory_buffer(pixels: &[u8], width: u32, height: u32) -> MemoryRenderBuffer {
+    MemoryRenderBuffer::from_slice(
+        pixels,
+        Fourcc::Argb8888,
+        (width as i32, height as i32),
+        1,
+        smithay::utils::Transform::Normal,
+        None,
+    )
+}
+
 /// Bande de l'écran (en points de la toile) qui contient l'invitation : haut et hauteur.
 fn invitation_band(places_h: f64) -> (f64, f64) {
     (places_h - 46.0 - 33.0 - 6.0, 40.0)
@@ -220,6 +463,12 @@ impl Places {
         Rect::new(field.right() - 42.0, field.y + 6.0, 36.0, 36.0)
     }
 
+    /// L'œil, juste avant le bouton de validation.
+    fn eye(self) -> Rect {
+        let submit = self.submit();
+        Rect::new(submit.x - 38.0, submit.y, 34.0, 36.0)
+    }
+
     fn media(self, lock: &LockView) -> Rect {
         let top = if lock.notice.is_some() {
             CARDS_TOP + NOTICE_HEIGHT + 24.0
@@ -246,6 +495,8 @@ impl Places {
 pub enum LockAction {
     Reveal,
     Submit,
+    /// L'œil du champ, enfoncé : le mot de passe en clair tant qu'il est tenu.
+    Peek,
     Cancel,
     ToggleTheme,
     Wall(usize),
@@ -287,12 +538,15 @@ pub fn lock_action_at(
         if places.submit().contains(pos) {
             return LockAction::Submit;
         }
+        if lock.length > 0 && places.eye().contains(pos) {
+            return LockAction::Peek;
+        }
         return LockAction::Consume;
     }
     if places.theme().contains(pos) {
         return LockAction::ToggleTheme;
     }
-    if let Some(index) = (0..LOCK_WALLS.len()).find(|index| places.swatch(*index).contains(pos)) {
+    if let Some(index) = (0..wall_count(lock)).find(|index| places.swatch(*index).contains(pos)) {
         return LockAction::Wall(index);
     }
     if places.customize().contains(pos) {
@@ -479,17 +733,225 @@ impl Canvas<'_> {
 
 impl Panels {
     /// Fond de l'écran, gardé tant que l'écran, le thème et le choix ne changent pas.
-    pub(super) fn lock_wall(&self, width: u32, height: u32, lock: &LockView) -> Vec<u8> {
-        let key = (width, height, lock.dark, lock.wall);
+    pub(super) fn lock_wall(&self, width: u32, height: u32, lock: &LockView) -> MemoryRenderBuffer {
+        let picture = lock.picture.as_ref().filter(|_| lock.wall == LOCK_WALLS.len());
+        let key = (
+            width,
+            height,
+            lock.dark,
+            lock.wall,
+            picture.map(|picture| std::sync::Arc::as_ptr(&picture.image) as usize),
+            lock.blur,
+        );
         let mut cache = self.lock_wall.borrow_mut();
-        if let Some((known, pixels)) = cache.as_ref()
+        if let Some((known, buffer)) = cache.as_ref()
             && *known == key
         {
-            return pixels.clone();
+            return buffer.clone();
         }
-        let pixels = paint_lock_wall(width, height, lock.dark, lock.wall);
-        *cache = Some((key, pixels.clone()));
-        pixels
+        let pixels = match picture {
+            Some(picture) => paint_lock_picture(width, height, lock.dark, lock.blur, picture),
+            None => paint_lock_wall(width, height, lock.dark, lock.wall.min(LOCK_WALLS.len() - 1)),
+        };
+        let buffer = memory_buffer(&pixels, width, height);
+        *cache = Some((key, buffer.clone()));
+        buffer
+    }
+
+    /// Couches de l'écran de verrouillage, de la plus haute à la plus basse : heure, date,
+    /// contenu (repos ou saisie), boutons, voile, fond. Chacune n'est dessinée qu'une fois ;
+    /// le passage du repos à la saisie ne fait que déplacer, agrandir et fondre ces images,
+    /// à la carte graphique (redessiner tout l'écran à chaque image prenait 20 ms).
+    /// `content` est l'image du contenu, déjà dessinée.
+    pub(super) fn lock_elements(
+        &self,
+        state: &VisualState,
+        lock: &LockView,
+        scale: f64,
+        content: &MemoryRenderBuffer,
+    ) -> Vec<LockElement> {
+        let (width, height) = (state.width as f64, state.height as f64);
+        let (pixels_w, pixels_h) = physical_size(state, scale);
+        let ratio = lock_scale(width, height);
+        let places = Places::new(width, height);
+        let part = f64::from(lock.progress) / 1000.0;
+        let full = Rect::new(0.0, 0.0, width, height);
+        let mut elements = Vec::with_capacity(6);
+
+        // Date et heure : l'image à la taille de repos, réduite pendant le passage ; la
+        // taille de saisie a la sienne, nette, une fois arrivée.
+        let clock = clock_places(part);
+        let settled = if part >= 1.0 {
+            Some(true)
+        } else if part <= 0.0 {
+            Some(false)
+        } else {
+            None
+        };
+        for (time, top, size) in [
+            (true, clock.time_top, clock.time_size),
+            (false, clock.date_top, clock.date_size),
+        ] {
+            let small = settled.unwrap_or(false);
+            let base = match (time, small) {
+                (true, false) => TIME_SIZE.0,
+                (true, true) => TIME_SIZE.1,
+                (false, false) => DATE_SIZE.0,
+                (false, true) => DATE_SIZE.1,
+            };
+            let (buffer, pixels, band) = self.lock_clock(state, lock, scale, time, small);
+            let grow = size / base;
+            let (w, h) = (places.w * grow, band * grow);
+            elements.push(LockElement {
+                buffer,
+                pixels,
+                rect: Rect::new(
+                    (places.w - w) / 2.0 * ratio,
+                    (top - CLOCK_PAD * grow) * ratio,
+                    w * ratio,
+                    h * ratio,
+                ),
+                alpha: 1.0,
+            });
+        }
+
+        // Le contenu de l'état visé apparaît en fondu.
+        elements.push(LockElement {
+            buffer: content.clone(),
+            pixels: (pixels_w, pixels_h),
+            rect: full,
+            alpha: if lock.field { part } else { 1.0 - part } as f32,
+        });
+
+        let mut layers = self.lock_layers.borrow_mut();
+        let key = lock_chrome_state(state);
+        if !layers.chrome.as_ref().is_some_and(|(known, _)| *known == key) {
+            let mut canvas = Canvas {
+                pixels: vec![0; pixels_w as usize * pixels_h as usize * 4],
+                width: pixels_w,
+                height: pixels_h,
+                scale: (scale * ratio) as f32,
+                bold: &self.bold,
+                icons: &self.icons,
+            };
+            self.draw_lock(&mut canvas, width, height, state, lock, LockLayer::Chrome);
+            layers.chrome = Some((key, memory_buffer(&canvas.pixels, pixels_w, pixels_h)));
+        }
+        if let Some((_, chrome)) = &layers.chrome {
+            elements.push(LockElement {
+                buffer: chrome.clone(),
+                pixels: (pixels_w, pixels_h),
+                rect: full,
+                alpha: 1.0,
+            });
+        }
+
+        // Le voile s'épaissit en saisie : un seul pixel, étiré sur l'écran.
+        let (rest, open) = tokens(lock.dark).veil;
+        if !layers.veil.as_ref().is_some_and(|(known, _)| *known == open) {
+            let pixel = [open.b, open.g, open.r, 255];
+            layers.veil = Some((open, memory_buffer(&pixel, 1, 1)));
+        }
+        if let Some((_, veil)) = &layers.veil {
+            elements.push(LockElement {
+                buffer: veil.clone(),
+                pixels: (1, 1),
+                rect: full,
+                alpha: (mix(f64::from(rest.a), f64::from(open.a), part) / 255.0) as f32,
+            });
+        }
+        drop(layers);
+
+        elements.push(LockElement {
+            buffer: self.lock_wall(pixels_w, pixels_h, lock),
+            pixels: (pixels_w, pixels_h),
+            rect: full,
+            alpha: 1.0,
+        });
+        elements
+    }
+
+    /// Image de la date ou de l'heure, de toute la largeur, à la taille de repos ou de
+    /// saisie ; et la hauteur de sa bande, en points de la toile.
+    fn lock_clock(
+        &self,
+        state: &VisualState,
+        lock: &LockView,
+        scale: f64,
+        time: bool,
+        small: bool,
+    ) -> (MemoryRenderBuffer, (u32, u32), f64) {
+        let clock = state.clock;
+        let text = if time {
+            format!("{:02}:{:02}", clock.hour, clock.minute)
+        } else {
+            format!(
+                "{} {} {}",
+                DAYS[clock.weekday],
+                clock.day,
+                MONTHS[clock.month as usize - 1]
+            )
+        };
+        let light = light_ink(lock, |picture| picture.clock_luma);
+        let key = ClockKey {
+            width: state.width,
+            height: state.height,
+            scale_milli: state.scale_milli,
+            text,
+            light,
+            time,
+            small,
+        };
+        let mut layers = self.lock_layers.borrow_mut();
+        if let Some((_, buffer, pixels, band)) = layers.clocks.iter().find(|(known, ..)| *known == key) {
+            return (buffer.clone(), *pixels, *band);
+        }
+        let (width, height) = (state.width as f64, state.height as f64);
+        let ratio = lock_scale(width, height);
+        let places = Places::new(width, height);
+        let size = match (time, small) {
+            (true, false) => TIME_SIZE.0,
+            (true, true) => TIME_SIZE.1,
+            (false, false) => DATE_SIZE.0,
+            (false, true) => DATE_SIZE.1,
+        };
+        let band = size * 1.3 + 2.0 * CLOCK_PAD;
+        let pixels_w = (width * scale).round().max(1.0) as u32;
+        let pixels_h = (band * ratio * scale).ceil().max(1.0) as u32;
+        let mut canvas = Canvas {
+            pixels: vec![0; pixels_w as usize * pixels_h as usize * 4],
+            width: pixels_w,
+            height: pixels_h,
+            scale: (scale * ratio) as f32,
+            bold: &self.bold,
+            icons: &self.icons,
+        };
+        let inks = tokens(light);
+        let center = places.w / 2.0;
+        if time {
+            let width_time = canvas.tracked_width(&self.light, &key.text, size, -0.04);
+            canvas.tracked(
+                &self.light,
+                &key.text,
+                center - width_time / 2.0,
+                CLOCK_PAD,
+                size,
+                -0.04,
+                inks.fg,
+            );
+        } else {
+            canvas.centered(&self.regular, &key.text, center, CLOCK_PAD, size, inks.fg2);
+        }
+        let buffer = memory_buffer(&canvas.pixels, pixels_w, pixels_h);
+        // Les quatre images en usage (date et heure, aux deux tailles) ; une minute
+        // nouvelle remplace les plus anciennes.
+        if layers.clocks.len() >= 4 {
+            layers.clocks.remove(0);
+        }
+        layers
+            .clocks
+            .push((key, buffer.clone(), (pixels_w, pixels_h), band));
+        (buffer, (pixels_w, pixels_h), band)
     }
 
     /// Chevron et texte de l'invitation ; `baseline` est le bas de l'écran moins sa marge.
@@ -530,7 +992,7 @@ impl Panels {
             bold: &self.bold,
             icons: &self.icons,
         };
-        let tokens = tokens(lock.dark);
+        let tokens = tokens(invitation_ink(lock));
         self.draw_invitation(&mut canvas, places.w / 2.0, places.h - 46.0 - top, &tokens, 1.0);
         let buffer = MemoryRenderBuffer::from_slice(
             &canvas.pixels,
@@ -550,50 +1012,21 @@ impl Panels {
         height: f64,
         state: &VisualState,
         lock: &LockView,
+        layer: LockLayer,
     ) {
         let places = Places::new(width, height);
         let tokens = tokens(lock.dark);
-        let part = f64::from(lock.progress) / 1000.0;
-        let (w, h) = (places.w, places.h);
-        let center = w / 2.0;
 
-        // Le voile s'épaissit en saisie.
-        let (rest, open) = tokens.veil;
-        let alpha = mix(f64::from(rest.a), f64::from(open.a), part).round() as u8;
-        canvas.fill(Rect::new(0.0, 0.0, w, h), 0.0, open.with_alpha(alpha));
+        if layer == LockLayer::Content {
+            if lock.field {
+                self.lock_entry(canvas, &places, lock, &tokens);
+            } else {
+                self.lock_rest(canvas, &places, lock, &tokens, clock_places(0.0).bottom);
+            }
+            return;
+        }
 
         self.lock_status(canvas, &places, state, &tokens);
-
-        // Date et heure : grandes au repos, petites et en haut pendant la saisie.
-        let clock = state.clock;
-        let top = mix(CLOCK_TOP.0, CLOCK_TOP.1, part);
-        let date_size = mix(DATE_SIZE.0, DATE_SIZE.1, part);
-        let time_size = mix(TIME_SIZE.0, TIME_SIZE.1, part);
-        let date = format!(
-            "{} {} {}",
-            DAYS[clock.weekday],
-            clock.day,
-            MONTHS[clock.month as usize - 1]
-        );
-        canvas.centered(&self.regular, &date, center, top, date_size, tokens.fg2);
-        let time = format!("{:02}:{:02}", clock.hour, clock.minute);
-        let time_top = top + date_size * 1.21 + 6.0;
-        let width_time = canvas.tracked_width(&self.light, &time, time_size, -0.04);
-        canvas.tracked(
-            &self.light,
-            &time,
-            center - width_time / 2.0,
-            time_top - time_size * 0.13,
-            time_size,
-            -0.04,
-            tokens.fg,
-        );
-
-        if lock.field {
-            self.lock_entry(canvas, &places, lock, &tokens);
-        } else {
-            self.lock_rest(canvas, &places, lock, &tokens, time_top + time_size * 0.95);
-        }
 
         // Toujours là : accessibilité, clavier, arrêt.
         let access = places.accessibility();
@@ -792,13 +1225,18 @@ impl Panels {
         // Invitation, qui pulse doucement (d'ordinaire dessinée à part, voir
         // `PULSE_APART`).
         if lock.pulse != PULSE_APART {
-            self.draw_invitation(canvas, center, places.h - 46.0, tokens, pulse_level(lock.pulse));
+            let inks = self::tokens(invitation_ink(lock));
+            self.draw_invitation(canvas, center, places.h - 46.0, &inks, pulse_level(lock.pulse));
         }
 
         // Personnaliser : thème et fond de cet écran.
         let group = places.customize();
-        let name = LOCK_WALLS[lock.wall.min(LOCK_WALLS.len() - 1)].0;
-        let name_x = places.swatch(LOCK_WALLS.len() - 1).right() + 10.0;
+        let name = match LOCK_WALLS.get(lock.wall) {
+            Some(wall) => wall.0,
+            None if lock.picture.is_some() => "Photo",
+            None => LOCK_WALLS[0].0,
+        };
+        let name_x = places.swatch(wall_count(lock) - 1).right() + 10.0;
         let name_width = canvas.css_width(&self.regular, name, 12.0);
         let group = Rect::new(group.x, group.y, name_x + name_width + 12.0 - group.x, group.h);
         canvas.lock_glass(group, 26.0, tokens);
@@ -844,6 +1282,14 @@ impl Panels {
                 15.0,
                 &[(0.0, colors[1]), (0.55, colors[2]), (1.0, colors[3])],
             );
+        }
+        if let Some(picture) = &lock.picture {
+            let swatch = places.swatch(LOCK_WALLS.len());
+            if lock.wall == LOCK_WALLS.len() {
+                canvas.fill(swatch.expand(4.0), 19.0, Color::rgb(0x0E9AA7));
+                canvas.fill(swatch.expand(2.0), 17.0, tokens.swatch_gap);
+            }
+            canvas.image_cover(swatch, &picture.thumb, 15.0);
         }
         canvas.text(&self.regular, name, name_x, group.y + 18.0, 12.0, tokens.fg2);
     }
@@ -907,13 +1353,58 @@ impl Panels {
             let edge = if wrong { tokens.error.0 } else { tokens.field_edge };
             canvas.stroke(field, 24.0, edge, 1.5);
             let x = field.x + 16.0;
-            if lock.length == 0 {
-                canvas.text(&self.regular, "Mot de passe", x, field.y + 14.5, 15.0, tokens.fg3);
+            let eye = places.eye();
+            let eye = Rect::new(eye.x + shake, eye.y, eye.w, eye.h);
+            // Place du texte, jusqu'à l'œil ; au-delà, la partie qui garde le curseur visible.
+            let room = eye.x - 4.0 - x;
+            let caret = if lock.length == 0 {
+                canvas.text(
+                    &self.regular,
+                    "Mot de passe",
+                    x + 6.0,
+                    field.y + 14.5,
+                    15.0,
+                    tokens.fg3,
+                );
+                x
+            } else if let Some(text) = lock.shown.as_deref() {
+                let chars: Vec<char> = text.chars().collect();
+                let cursor = lock.cursor.min(chars.len());
+                let width = |from: usize, to: usize| {
+                    canvas.css_width(&self.regular, &chars[from..to].iter().collect::<String>(), 15.0)
+                };
+                let mut first = 0;
+                while first < cursor && width(first, cursor) > room {
+                    first += 1;
+                }
+                let mut last = chars.len();
+                while last > cursor && width(first, last) > room {
+                    last -= 1;
+                }
+                let caret = x + width(first, cursor);
+                let visible: String = chars[first..last].iter().collect();
+                canvas.text(&self.regular, &visible, x, field.y + 14.5, 15.0, tokens.fg);
+                caret
             } else {
-                for index in 0..lock.length.min(24) {
+                let visible = ((room / 10.0) as usize).max(1);
+                let cursor = lock.cursor.min(lock.length);
+                let first = cursor
+                    .saturating_sub(visible)
+                    .min(lock.length.saturating_sub(visible));
+                for index in 0..(lock.length - first).min(visible) {
                     let dot = Rect::new(x + index as f64 * 10.0, field.y + 20.0, 8.0, 8.0);
                     canvas.fill(dot, 4.0, tokens.fg);
                 }
+                x + (cursor - first) as f64 * 10.0 - 1.0
+            };
+            canvas.fill(Rect::new(caret, field.y + 14.0, 1.6, 20.0), 0.8, tokens.fg);
+            if lock.length > 0 {
+                let (name, ink) = if lock.shown.is_some() {
+                    ("cc-eye-off", Color::rgb(0x0E9AA7))
+                } else {
+                    ("cc-eye", tokens.fg3)
+                };
+                canvas.icon(name, eye.center(), 18.0, Style::Symbolic(ink));
             }
             let submit = places.submit();
             let submit = Rect::new(submit.x + shake, submit.y, submit.w, submit.h);

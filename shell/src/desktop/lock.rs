@@ -18,7 +18,7 @@ use std::{
 use smithay::reexports::calloop::{LoopHandle, channel};
 
 use crate::{
-    desktop::panels::{LOCK_WALLS, LockMessage},
+    desktop::panels::{LOCK_BLUR_MAX, LOCK_WALLS, LockMessage},
     state::Ferrite,
 };
 
@@ -38,6 +38,10 @@ const MEDIA_REFRESH: Duration = Duration::from_secs(2);
 #[derive(Debug)]
 pub struct Lock {
     password: String,
+    /// Place du curseur dans le mot de passe, en caractères.
+    cursor: usize,
+    /// L'œil est tenu enfoncé : le mot de passe s'affiche en clair.
+    peek: bool,
     /// Le champ n'apparaît qu'après une touche ou un clic.
     pub field_visible: bool,
     /// Dernier passage entre le repos et la saisie.
@@ -50,21 +54,38 @@ pub struct Lock {
     opened_at: Instant,
     pub dark: bool,
     pub wall: usize,
+    /// Flou de la photo, de 0 (aucun, par défaut) à [`LOCK_BLUR_MAX`].
+    pub blur: u8,
     pub media: Option<Media>,
 }
 
 impl Lock {
-    fn new(session_dark: bool) -> Self {
+    fn new() -> Self {
         let settings = ferrite_system::config::Settings::load();
+        // Clair par défaut, quel que soit le thème du bureau.
         let dark = settings
             .get("verrouillage_theme")
-            .map_or(session_dark, |theme| theme != "clair");
+            .is_some_and(|theme| theme == "sombre");
+        let blur = settings
+            .get("verrouillage_flou")
+            .and_then(|level| level.parse::<u8>().ok())
+            .unwrap_or(0)
+            .min(LOCK_BLUR_MAX);
+        // Un chemin : la photo choisie dans la Visionneuse (après les fonds dessinés).
         let wall = settings
             .get("verrouillage_fond")
-            .and_then(|name| LOCK_WALLS.iter().position(|wall| wall.0 == name))
+            .and_then(|name| {
+                if name.starts_with('/') {
+                    Some(LOCK_WALLS.len())
+                } else {
+                    LOCK_WALLS.iter().position(|wall| wall.0 == name)
+                }
+            })
             .unwrap_or(0);
         Self {
             password: String::new(),
+            cursor: 0,
+            peek: false,
             field_visible: false,
             field_changed: None,
             checking: false,
@@ -74,12 +95,36 @@ impl Lock {
             opened_at: Instant::now(),
             dark,
             wall,
+            blur,
             media: None,
         }
     }
 
     pub fn password_length(&self) -> usize {
         self.password.chars().count()
+    }
+
+    pub fn cursor(&self) -> usize {
+        self.cursor
+    }
+
+    /// Le mot de passe en clair, seulement tant que l'œil est tenu.
+    pub fn peeked(&self) -> Option<String> {
+        self.peek.then(|| self.password.clone())
+    }
+
+    /// Position en octets du caractère `index` (la fin s'il n'existe pas).
+    fn byte_at(&self, index: usize) -> usize {
+        self.password
+            .char_indices()
+            .nth(index)
+            .map_or(self.password.len(), |(at, _)| at)
+    }
+
+    fn forget_password(&mut self) {
+        wipe(&mut self.password);
+        self.cursor = 0;
+        self.peek = false;
     }
 
     pub fn is_welcoming(&self) -> bool {
@@ -408,6 +453,62 @@ fn check(user: &str, password: &str) -> Result<bool, String> {
     check_with(helper, user, password)
 }
 
+/// Ouvre le trousseau par défaut de gnome-keyring avec le mot de passe de la session.
+///
+/// La connexion sur tty1 est automatique : PAM n'a jamais le mot de passe, et Brave
+/// demandait le trousseau à chaque démarrage. Le mot de passe que l'écran de verrouillage
+/// vient d'accepter sert donc aussi ici, quand le trousseau a le même (sinon gnome-keyring
+/// le refuse et l'application le redemande, comme avant).
+fn unlock_keyring(password: &str) -> zbus::Result<()> {
+    use zbus::{
+        blocking::Proxy,
+        zvariant::{OwnedObjectPath, OwnedValue, Value},
+    };
+
+    const SERVICE: &str = "org.freedesktop.secrets";
+    const PATH: &str = "/org/freedesktop/secrets";
+    let connection = zbus::blocking::Connection::session()?;
+    let service = Proxy::new(&connection, SERVICE, PATH, "org.freedesktop.Secret.Service")?;
+    let collection: OwnedObjectPath = service.call("ReadAlias", &("default",))?;
+    if collection.as_str() == "/" {
+        return Ok(());
+    }
+    let locked: bool = Proxy::new(
+        &connection,
+        SERVICE,
+        collection.as_str(),
+        "org.freedesktop.Secret.Collection",
+    )?
+    .get_property("Locked")?;
+    if !locked {
+        return Ok(());
+    }
+    // Session « plain » : le secret ne passe que par le bus de l'utilisateur.
+    let (_, session): (OwnedValue, OwnedObjectPath) =
+        service.call("OpenSession", &("plain", Value::from("")))?;
+    let unlocked = Proxy::new(
+        &connection,
+        SERVICE,
+        PATH,
+        "org.gnome.keyring.InternalUnsupportedGuiltRiddenInterface",
+    )?
+    .call::<_, _, ()>(
+        "UnlockWithMasterPassword",
+        &(
+            &collection,
+            (&session, Vec::<u8>::new(), password.as_bytes(), "text/plain"),
+        ),
+    );
+    let _ = Proxy::new(
+        &connection,
+        SERVICE,
+        session.as_str(),
+        "org.freedesktop.Secret.Session",
+    )?
+    .call::<_, _, ()>("Close", &());
+    unlocked
+}
+
 /// Nom du compte courant.
 pub fn user_name() -> String {
     std::env::var("USER").unwrap_or_default()
@@ -490,7 +591,7 @@ impl Ferrite {
         self.region_select = None;
         self.close_overview();
         self.stop_widgets_overlay();
-        self.lock = Some(Lock::new(self.appearance.is_dark()));
+        self.lock = Some(Lock::new());
         self.set_media_watching(true);
         self.focus_window(None);
         self.refresh_pointer_focus();
@@ -510,7 +611,7 @@ impl Ferrite {
                 let Some(lock) = self.lock.as_mut() else {
                     return;
                 };
-                wipe(&mut lock.password);
+                lock.forget_password();
                 if accepted {
                     lock.welcome_until = Some(Instant::now() + WELCOME);
                 } else {
@@ -528,18 +629,57 @@ impl Ferrite {
         }
     }
 
+    /// Caractère tapé. Au repos, la touche ne fait qu'afficher le champ : elle n'est pas
+    /// écrite.
     pub fn lock_type(&mut self, character: char) {
         if let Some(lock) = self.lock.as_mut().filter(|lock| !lock.checking) {
-            lock.show_field();
+            if !lock.field_visible {
+                lock.show_field();
+                return;
+            }
             lock.message = LockMessage::Hint;
-            lock.password.push(character);
+            let at = lock.byte_at(lock.cursor);
+            lock.password.insert(at, character);
+            lock.cursor += 1;
         }
     }
 
+    /// Retour arrière : le caractère avant le curseur.
     pub fn lock_erase(&mut self) {
         if let Some(lock) = self.lock.as_mut().filter(|lock| !lock.checking) {
             lock.show_field();
-            lock.password.pop();
+            if lock.cursor > 0 {
+                lock.cursor -= 1;
+                let at = lock.byte_at(lock.cursor);
+                lock.password.remove(at);
+            }
+        }
+    }
+
+    /// Suppr : le caractère après le curseur.
+    pub fn lock_delete(&mut self) {
+        if let Some(lock) = self.lock.as_mut().filter(|lock| !lock.checking) {
+            lock.show_field();
+            if lock.cursor < lock.password_length() {
+                let at = lock.byte_at(lock.cursor);
+                lock.password.remove(at);
+            }
+        }
+    }
+
+    /// ← et → (`step` de -1 ou 1), Début et Fin (`step` de `isize::MIN` ou `isize::MAX`).
+    pub fn lock_move_cursor(&mut self, step: isize) {
+        if let Some(lock) = self.lock.as_mut().filter(|lock| !lock.checking) {
+            lock.show_field();
+            let length = lock.password_length();
+            lock.cursor = lock.cursor.saturating_add_signed(step).min(length);
+        }
+    }
+
+    /// L'œil du champ, tenu enfoncé (`true`) puis relâché.
+    pub fn lock_peek(&mut self, held: bool) {
+        if let Some(lock) = self.lock.as_mut() {
+            lock.peek = held && !lock.checking;
         }
     }
 
@@ -553,7 +693,7 @@ impl Ferrite {
     /// Échap ou Annuler : retour au repos, le mot de passe commencé est oublié.
     pub fn lock_cancel(&mut self) {
         if let Some(lock) = self.lock.as_mut().filter(|lock| !lock.checking) {
-            wipe(&mut lock.password);
+            lock.forget_password();
             lock.message = LockMessage::Hint;
             lock.refused_at = None;
             if lock.field_visible {
@@ -576,12 +716,20 @@ impl Ferrite {
     }
 
     pub fn lock_set_wall(&mut self, wall: usize) {
+        let name = match LOCK_WALLS.get(wall) {
+            Some((name, _, _)) => Some((*name).to_owned()),
+            None => self
+                .lock_picture
+                .as_ref()
+                .filter(|_| wall == LOCK_WALLS.len())
+                .map(|picture| picture.path.to_string_lossy().into_owned()),
+        };
         if let Some(lock) = self.lock.as_mut()
-            && let Some((name, _, _)) = LOCK_WALLS.get(wall)
+            && let Some(name) = name
         {
             lock.wall = wall;
             let mut settings = ferrite_system::config::Settings::load();
-            settings.set("verrouillage_fond", name);
+            settings.set("verrouillage_fond", &name);
             if let Err(error) = settings.save() {
                 tracing::warn!(%error, "fond de l'écran de verrouillage non enregistré");
             }
@@ -643,8 +791,15 @@ impl Ferrite {
         lock.message = LockMessage::Hint;
         lock.checking = true;
         let mut password = std::mem::take(&mut lock.password);
+        lock.cursor = 0;
+        lock.peek = false;
         std::thread::spawn(move || {
             let result = check(&user_name(), &password);
+            if result == Ok(true)
+                && let Err(err) = unlock_keyring(&password)
+            {
+                tracing::info!(%err, "trousseau non ouvert");
+            }
             wipe(&mut password);
             let _ = events.send(Event::Checked(result));
         });
@@ -654,6 +809,18 @@ impl Ferrite {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn le_curseur_compte_en_caracteres() {
+        let mut lock = Lock::new();
+        lock.password = "éa€".to_owned();
+        assert_eq!(lock.byte_at(0), 0);
+        assert_eq!(lock.byte_at(1), 2);
+        assert_eq!(lock.byte_at(2), 3);
+        assert_eq!(lock.byte_at(3), 6);
+        lock.forget_password();
+        assert!(lock.password.is_empty() && lock.cursor == 0 && lock.peeked().is_none());
+    }
 
     #[test]
     fn la_secousse_part_et_revient_au_centre() {

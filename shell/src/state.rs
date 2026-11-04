@@ -157,6 +157,8 @@ pub struct Ferrite {
     pub pending_power: Option<PowerAction>,
     /// Fin du compte à rebours du dialogue d'arrêt : l'action choisie se fait seule.
     pub power_deadline: Option<std::time::Instant>,
+    /// Photo de l'écran de verrouillage (réglage `verrouillage_fond` en chemin), décodée.
+    pub lock_picture: Option<crate::desktop::panels::LockPicture>,
     /// Mode nuit : réglages, forçage depuis le centre de contrôle et teinte de l'écran.
     pub night: crate::desktop::night::Night,
     pub appearance: Appearance,
@@ -390,6 +392,7 @@ impl Ferrite {
             system_link: None,
             pending_power: None,
             power_deadline: None,
+            lock_picture: None,
             night: Default::default(),
             appearance: settings.appearance(),
             accent: settings.accent(),
@@ -542,6 +545,9 @@ impl Ferrite {
     /// lancés à la demande (portails, dialogues de fichiers) trouvent l'affichage.
     pub fn publish_environment(&self) {
         let mut command = std::process::Command::new("dbus-update-activation-environment");
+        // Aussi pour systemd (--user) : les services du bus de session qu'il démarre
+        // (portails…) doivent trouver l'écran.
+        command.arg("--systemd");
         for (key, value) in self.client_environment() {
             command.arg(format!("{key}={value}"));
         }

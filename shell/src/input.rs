@@ -119,6 +119,9 @@ pub(crate) enum Action {
     /// Écran de verrouillage : caractère, effacer, valider, ou autre touche.
     LockType(char),
     LockErase,
+    /// Suppr, et déplacement du curseur (voir `lock_move_cursor`).
+    LockDelete,
+    LockMove(isize),
     LockSubmit,
     LockReveal,
     /// Touche relâchée pendant le verrouillage : rien à faire, rien ne passe aux clients.
@@ -155,6 +158,8 @@ impl Action {
                 | Action::PasswordErase
                 | Action::LockType(_)
                 | Action::LockErase
+                | Action::LockDelete
+                | Action::LockMove(_)
                 | Action::ClipboardType(_)
                 | Action::ClipboardMove(_)
         ) || matches!(self, Action::Function(key) if key.repeats())
@@ -249,6 +254,17 @@ impl Ferrite {
             |state, modifiers, keysym| {
                 let sym = keysym.modified_sym();
                 let code = keysym.raw_code().raw();
+                // Super doit retomber même quand l'écran verrouillé garde ses touches (Super+L,
+                // puis relâchée) : sinon, au retour, chaque touche compterait comme un
+                // raccourci Super (L reverrouille, Q ferme la fenêtre…). Et une touche frappée
+                // sans Super enfoncée prouve qu'elle n'est plus tenue (relâcher perdu).
+                if (!pressed
+                    && matches!(sym, Keysym::Super_L | Keysym::Super_R)
+                    && (state.lock.is_some() || state.session_lock.is_some()))
+                    || (pressed && !modifiers.logo && !matches!(sym, Keysym::Super_L | Keysym::Super_R))
+                {
+                    state.super_held = false;
+                }
                 // Verrouillé par un client : tout va à lui, sauf le changement de terminal.
                 if state.session_lock.is_some() {
                     let raw = sym.raw();
@@ -296,6 +312,11 @@ impl Ferrite {
                     return FilterResult::Intercept(match sym {
                         Keysym::Escape => Action::LockCancel,
                         Keysym::BackSpace => Action::LockErase,
+                        Keysym::Delete | Keysym::KP_Delete => Action::LockDelete,
+                        Keysym::Left | Keysym::KP_Left => Action::LockMove(-1),
+                        Keysym::Right | Keysym::KP_Right => Action::LockMove(1),
+                        Keysym::Home | Keysym::KP_Home => Action::LockMove(isize::MIN),
+                        Keysym::End | Keysym::KP_End => Action::LockMove(isize::MAX),
                         Keysym::Return | Keysym::KP_Enter => Action::LockSubmit,
                         sym => match sym.key_char().filter(|c| !c.is_control()) {
                             Some(character) if !modifiers.ctrl && !modifiers.alt => {
@@ -738,6 +759,8 @@ impl Ferrite {
             Some(Action::PasswordCancel) => self.password_cancel(),
             Some(Action::LockType(character)) => self.lock_type(character),
             Some(Action::LockErase) => self.lock_erase(),
+            Some(Action::LockDelete) => self.lock_delete(),
+            Some(Action::LockMove(step)) => self.lock_move_cursor(step),
             Some(Action::LockSubmit) => self.lock_submit(),
             Some(Action::LockReveal) => self.lock_reveal(),
             Some(Action::LockIgnore) => {}
@@ -1013,8 +1036,13 @@ impl Ferrite {
             return;
         }
         if self.lock.is_some() {
-            if button.state == ButtonState::Pressed && button.button == BTN_LEFT {
-                self.on_lock_click(location);
+            if button.button == BTN_LEFT {
+                if button.state == ButtonState::Pressed {
+                    self.on_lock_click(location);
+                } else {
+                    // L'œil se relâche où que soit le pointeur.
+                    self.lock_peek(false);
+                }
             }
             return;
         }
@@ -1641,6 +1669,7 @@ impl Ferrite {
         match panels::lock_action_at(area, &view, location) {
             LockAction::Reveal => self.lock_reveal(),
             LockAction::Submit => self.lock_submit(),
+            LockAction::Peek => self.lock_peek(true),
             LockAction::Cancel => self.lock_cancel(),
             LockAction::ToggleTheme => self.lock_toggle_theme(),
             LockAction::Wall(wall) => self.lock_set_wall(wall),

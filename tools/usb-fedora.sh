@@ -3,8 +3,10 @@
 # sont compilés dans Debian 13 (tools/vm-build.sh), puis tools/usb.sh tourne dans un
 # conteneur Debian 13 privilégié.
 #
-#   tools/usb-fedora.sh            construit l'image (demande sudo)
-#   tools/usb-fedora.sh --propre   idem, en effaçant aussi le cache des paquets
+#   tools/usb-fedora.sh            construit l'image (demande sudo), rapide si possible
+#   tools/usb-fedora.sh --complet  reconstruit aussi le système de l'image
+#   tools/usb-fedora.sh --final    image à distribuer (complète, compression xz)
+#   tools/usb-fedora.sh --propre   complète, en effaçant aussi le cache des paquets
 #
 # Le travail de live-build reste dans le volume Podman ferrite-image (système de fichiers
 # Linux, conservé d'une construction à l'autre) : le dépôt peut être sur un disque NTFS.
@@ -18,18 +20,20 @@ command -v podman >/dev/null 2>&1 || die "Podman absent (sudo dnf install podman
 info "Compilation de ferrite-shell et ferrite-apps pour Debian 13"
 "$REPO/tools/vm-build.sh"
 
-info "Construction de l'image dans un conteneur Debian 13 (demande sudo)"
+# Outils de live-build installés une fois dans une image locale (refaite seulement si
+# cette recette change), au lieu d'un apt-get à chaque construction.
+info "Image des outils live-build (demande sudo)"
+sudo podman build --quiet --tag localhost/ferrite-live-build:trixie \
+    -f "$REPO/tools/containers/live-build.Containerfile" "$REPO/tools/containers" >/dev/null
+
+info "Construction de l'image dans un conteneur Debian 13"
 sudo podman run --rm -it --privileged \
     --security-opt label=disable \
     -v "$REPO:/src" \
     -v ferrite-image:/var/tmp/ferrite-image:dev,suid,exec \
-    docker.io/library/debian:trixie \
+    -e FERRITE_SQUASHFS \
+    localhost/ferrite-live-build:trixie \
     sh -eu -c '
-        export DEBIAN_FRONTEND=noninteractive
-        apt-get update
-        apt-get install -y --no-install-recommends \
-            live-build debootstrap xorriso squashfs-tools mtools dosfstools \
-            grub-pc-bin grub-efi-amd64-bin ca-certificates
         FERRITE_SHELL_BIN=/src/target/release/ferrite-shell \
         FERRITE_APPS_BIN=/src/target/release/ferrite-apps \
         /src/tools/usb.sh "$@"

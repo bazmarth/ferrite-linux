@@ -2,7 +2,14 @@
 # Construit l'image live hybride BIOS/UEFI : build/ferrite-live.iso, avec ferrite-shell.
 #
 #   tools/usb.sh            compile le compositeur et les applications (release), puis construit l'image
-#   tools/usb.sh --propre   idem, en effaçant aussi le cache des paquets
+#   tools/usb.sh --complet  reconstruit aussi le système de l'image (paquets réinstallés)
+#   tools/usb.sh --final    image à distribuer : reconstruction complète, compression xz
+#   tools/usb.sh --propre   reconstruction complète, en effaçant aussi le cache des paquets
+#
+# Rapide par défaut : si ni la configuration live-build, ni les listes de paquets, ni les
+# hooks n'ont changé depuis la dernière image, le système déjà installé est gardé ; seuls
+# les fichiers de Ferrite (binaires, scripts de includes.chroot) y sont recopiés, puis
+# l'image est refaite (compression zstd). Compter quelques minutes au lieu d'une demi-heure.
 #
 # live-build travaille dans le système de fichiers Linux (FERRITE_WORK), pas sur /mnt/d :
 # il y crée des fichiers spéciaux et des liens que le disque Windows ne gère pas.
@@ -32,9 +39,35 @@ fi
 work=${FERRITE_WORK:-/var/tmp/ferrite-image}
 mkdir -p "$work"
 cd "$work"
-if [ "${1:-}" = "--propre" ]; then
-    info "Nettoyage complet de $work"
-    lb clean --purge
+full=0
+case "${1:-}" in
+    --propre)
+        info "Nettoyage complet de $work"
+        lb clean --purge
+        full=1
+        ;;
+    --complet) full=1 ;;
+    --final)
+        export FERRITE_SQUASHFS=xz
+        full=1
+        ;;
+    "") ;;
+    *) die "option inconnue : $1 (--complet, --final ou --propre)" ;;
+esac
+
+# Empreinte de ce qui façonne le système de l'image (tout sauf includes.chroot, recopié
+# à chaque fois) et de la compression choisie.
+stamp=$(
+    cd "$REPO/image"
+    {
+        find auto config -type f ! -path 'config/includes.chroot/*' | LC_ALL=C sort | xargs sha256sum
+        echo "squashfs=${FERRITE_SQUASHFS:-zstd}"
+    } | sha256sum | cut -d' ' -f1
+)
+if [ "$full" = 0 ] && [ -d chroot/usr ] && [ "$(cat .ferrite-stamp 2>/dev/null)" = "$stamp" ]; then
+    fast=1
+else
+    fast=0
 fi
 
 info "Copie de la configuration dans $work"
@@ -44,10 +77,20 @@ install -D -m 0755 "$bin" config/includes.chroot/usr/local/bin/ferrite-shell
 install -D -m 0755 "$apps_bin" config/includes.chroot/usr/local/bin/ferrite-apps
 chmod +x auto/config config/hooks/live/*.hook.chroot config/includes.chroot/usr/local/bin/*
 
-info "Construction (première fois : 15 à 30 minutes)"
-lb clean
-lb config
-lb build
+if [ "$fast" = 1 ]; then
+    info "Système de l'image inchangé : mise à jour des fichiers de Ferrite seulement"
+    lb config
+    cp -a config/includes.chroot/. chroot/
+    lb clean --binary
+    lb binary
+else
+    info "Construction complète (15 à 30 minutes)"
+    rm -f .ferrite-stamp
+    lb clean
+    lb config
+    lb build
+    echo "$stamp" >.ferrite-stamp
+fi
 
 mkdir -p "$BUILD"
 cp live-image-amd64.hybrid.iso "$BUILD/ferrite-live.iso"

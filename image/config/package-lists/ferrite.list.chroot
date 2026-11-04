@@ -54,6 +54,11 @@ pipewire-bin
 pulseaudio-utils
 curl
 wireplumber
+# Casques et enceintes Bluetooth (A2DP, HFP) : sans ce module, PipeWire ne crée aucune
+# sortie pour eux et BlueZ répond « br-connection-profile-unavailable »
+libspa-0.2-bluetooth
+# Priorité temps réel du son (évite les craquements)
+rtkit
 alsa-ucm-conf
 bluez
 upower
@@ -71,6 +76,8 @@ dbus-bin
 
 # Terminal de secours et d'essais (le Terminal du bureau est celui de ferrite-apps)
 foot
+# Shell des terminaux du bureau : complétion par Tab et suggestions (voir ferrite-session)
+fish
 
 # Polices
 fonts-noto-core

@@ -3,12 +3,19 @@
 # Appelé par « lb config » ; voir tools/usb.sh.
 set -eu
 
+# Compression du système de l'image : zstd (défaut) est plusieurs fois plus rapide que xz,
+# pour une image un peu plus grosse ; FERRITE_SQUASHFS=xz pour une image à distribuer
+# (tools/usb.sh --final).
+
 lb config noauto \
     --distribution trixie \
     --architectures amd64 \
     --archive-areas "main contrib non-free non-free-firmware" \
     --apt-recommends false \
+    --firmware-chroot false \
+    --firmware-binary false \
     --binary-images iso-hybrid \
+    --chroot-squashfs-compression-type "${FERRITE_SQUASHFS:-zstd}" \
     --bootloaders "grub-efi grub-pc" \
     --uefi-secure-boot auto \
     --debian-installer none \

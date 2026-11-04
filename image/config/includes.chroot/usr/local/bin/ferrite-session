@@ -7,6 +7,13 @@ export FERRITE_SESSION=1
 export XDG_CURRENT_DESKTOP=Ferrite
 export XDG_SESSION_TYPE=wayland
 export XDG_SESSION_DESKTOP=ferrite
+# Les terminaux du bureau ouvrent fish (complétion par Tab, suggestions au fil de la
+# frappe) ; la connexion sur tty1 reste en sh/bash, qui lit /etc/profile.d.
+case "${SHELL:-}" in
+    "" | */sh | */bash | */dash)
+        [ -x /usr/bin/fish ] && export SHELL=/usr/bin/fish
+        ;;
+esac
 
 log="${XDG_RUNTIME_DIR:-/tmp}/ferrite-shell.log"
 

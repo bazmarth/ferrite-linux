@@ -1,0 +1,7 @@
+#!/bin/sh
+# Son de la session : PipeWire, son serveur PulseAudio et WirePlumber démarrent avec la
+# session systemd de l'utilisateur (sans recommandations d'apt, rien ne garantit qu'ils
+# soient activés).
+set -eu
+systemctl --global enable pipewire.socket pipewire-pulse.socket wireplumber.service
+systemctl enable bluetooth.service

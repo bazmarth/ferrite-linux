@@ -150,6 +150,19 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
   que l'application et leur nombre. Le lecteur d'empreintes n'est pas proposé (aucune
   authentification par fprintd) ; « Changer d'utilisateur » et Accessibilité sont visibles mais
   atténués, sans action. Thème et fond de cet écran sont propres à lui et enregistrés.
+- **2026-11-03 — Micrologiciels de l'image choisis à la main.** `--firmware-chroot` et
+  `--firmware-binary` sont désactivés dans `image/auto/config` : sinon live-build installe tous
+  les paquets de micrologiciels des dépôts, dont `firmware-b43-installer` (contrib), qui
+  télécharge pendant son installation et fait échouer la construction. Ceux du ThinkBook sont
+  listés dans `ferrite.list.chroot`.
+- **2026-11-03 — Construction de l'ISO incrémentale.** Par défaut, `tools/usb.sh` garde le
+  système de l'image (chroot) tant que `image/auto`, les listes de paquets et les hooks n'ont
+  pas changé (empreinte `.ferrite-stamp`) : il y recopie `includes.chroot` (binaires, scripts)
+  et ne refait que l'étape `lb binary`. `--complet`, `--final` ou `--propre` reconstruisent
+  tout. Compression squashfs zstd en développement (plusieurs fois plus rapide que xz, image un
+  peu plus grosse) ; xz pour `--final`. Les conteneurs de compilation et de live-build sont des
+  images locales (`localhost/ferrite-build`, `localhost/ferrite-live-build`) ; registre Cargo
+  et produits de compilation dans des volumes Podman, pour compiler seulement ce qui change.
 - **2026-11-03 — Mode développement sur le disque, avec repli.** Depuis que Ferrite est installé
   sur le disque et qu'on y développe, `tools/dev-on.sh` copie la compilation release dans
   `~/.local/share/ferrite-dev`, que `ferrite-session` préfère à `/usr/local/bin` (après le
@@ -169,3 +182,10 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
   rouvre la session à l'appui sur Entrée (« console » pour rester sur la console). 0 reste
   Ctrl+Alt+Retour arrière et 1 un plantage. Pas de gestionnaire de connexion avant la phase 8 :
   la session tourne sur tty1 en connexion automatique, un code de sortie suffit.
+- **2026-11-03 — Bureau 0 réservé aux widgets.** À la demande, on revient sur « widgets sur
+  chaque bureau » : le bureau 0 ne porte que les widgets et ne disparaît jamais. Une fenêtre
+  qui s'ouvre pendant qu'on y est fait d'abord passer au bureau 1, où elle s'ouvre ; une
+  fenêtre qui y arriverait autrement (restaurée, X11) y est renvoyée, une fois configurée.
+  Les widgets s'effacent à mesure qu'on quitte le bureau 0 et ne reçoivent de clics que sur
+  lui. Super+W va au bureau des widgets puis revient au bureau quitté ; Super+Maj+1…9
+  visent les bureaux 1 à 9.

@@ -649,6 +649,142 @@ quatre fonds propres, notifications sans contenu, lecture en cours (MPRIS), seco
 Menus contextuels de 32 px et popover « Trier » (tri par type ajouté) dans Fichiers, survol
 accentué dans les menus du bureau et du Dock. `curl` manquait à l'ISO : la météo n'y arrivait pas.
 
+## 2026-11-03 — Protocoles Wayland manquants
+
+Fait :
+- `wlr-layer-shell` (v4) : calques par écran (fond et bas sous les fenêtres, haut au-dessus,
+  superposition au-dessus de tout), leurs menus, zone exclusive retirée de la place des
+  fenêtres agrandies ou accrochées, clavier exclusif (lanceurs) ou à la demande (au clic).
+- `ext-session-lock-v1` : un verrouilleur externe (swaylock…) remplace l'écran de
+  verrouillage ; seules ses surfaces sont dessinées et reçoivent clavier et pointeur, les
+  raccourcis du bureau sont coupés (sauf le changement de terminal virtuel).
+- `wlr-screencopy-v1` (v3), écrit à la main (Smithay ne l'a pas) : écran entier ou zone,
+  avec ou sans curseur, copiés dans un tampon `XRGB8888` du client à l'image suivante.
+- `text-input-v3` et `input-method-v2` (fenêtres de candidats posées près de la fenêtre),
+  `cursor-shape-v1` avec quatre nouvelles formes du curseur Ferrite (texte, main,
+  déplacement, viseur), `idle-inhibit-v1` et `ext-idle-notify-v1` (toute entrée est une
+  activité).
+
+Vérifié :
+- `cargo fmt`, clippy et les tests (134 pour le shell).
+- Dans le shell en fenêtre, avec un client de test écrit pour l'occasion : les six globaux
+  sont annoncés ; une capture par screencopy est juste (sens, couleurs, curseur) ; un calque
+  rouge en haut à droite est configuré puis dessiné à sa place ; un verrou est confirmé, sa
+  surface couvre l'écran seule, puis le déverrouillage rend la main.
+
+Reste :
+- Essayer de vrais clients : waybar, fuzzel, swaybg, swaylock, grim, fcitx5, swayidle.
+- Les applications qui envoient leur propre image de curseur (et non un nom) ont la flèche.
+- La barre de Ferrite reste dessinée au-dessus des calques « haut ».
+
+## 2026-11-03 — Terminal : Tab et fish ; clics à travers les fenêtres
+
+Fait :
+- Terminal : Tab servait aussi à la navigation d'egui, qui donnait le focus aux boutons des
+  onglets ; le clavier n'allait plus au shell, et Espace ou Entrée « cliquaient » le bouton
+  (jusqu'à fermer l'onglet, donc la fenêtre). La grille garde désormais le clavier (Tab,
+  flèches, Échap), sauf quand la recherche ou un menu est ouvert.
+- Image : `fish` installé ; `ferrite-session` en fait le `$SHELL` des terminaux du bureau
+  (la connexion sur tty1 reste en sh, qui lit `/etc/profile.d`).
+- Bureau : un clic sur une fenêtre posée sur le widget « Applications récentes » lançait
+  l'application dessous (`DashboardApp` manquait au filtre des clics sous une fenêtre).
+
+Vérifié :
+- Test de bout en bout du terminal : trois Tab puis Espace et Entrée, le shell reçoit la
+  ligne et l'onglet reste ouvert (le test échoue sans la correction).
+
+## 2026-11-03 — Bluetooth, son et mot de passe Wi-Fi
+
+Fait :
+- Bluetooth (`ferrite-system`, donc bureau et Paramètres) : la connexion passe par une
+  seule session `bluetoothctl` pilotée, avec un agent `NoInputNoOutput` enregistré pendant
+  tout l'échange (en ligne de commande, `bluetoothctl pair` n'en avait pas), `pairable on`,
+  et une recherche active jusqu'à voir l'appareil avant de l'appairer. Si l'appareil a
+  oublié l'appairage (`br-connection-key-missing`, cas du casque soundcore sur le PC), il
+  est oublié puis appairé de nouveau. Erreurs de BlueZ traduites en français au lieu de
+  « Connexion refusée ». Appareils sans nom masqués. Un casque connecté devient la sortie
+  par défaut (`pactl set-default-sink bluez_output.…`).
+- Panneau Bluetooth : « Connexion… » sur la ligne, boutons inactifs pendant l'opération.
+- Image : `libspa-0.2-bluetooth` (sans lui, PipeWire ne crée aucune sortie Bluetooth),
+  `rtkit`, et un hook qui active PipeWire, pipewire-pulse, WirePlumber et bluetooth.
+- Panneau Wi-Fi : un œil sur les réseaux enregistrés affiche leur mot de passe (`nmcli -s`),
+  et un œil dans le champ de saisie montre le texte tapé.
+
+Vérifié :
+- Tests unitaires (sortie de `bluetoothctl`, erreurs, sorties `bluez_output`, mots de passe
+  échappés par `nmcli`, clics sur les yeux) ; session réelle sur le PC : appairage détecté,
+  `key-missing` reconnu.
+
+Reste :
+- Ré-appairer réellement le casque (le mettre en mode appairage) et vérifier le son ;
+  essayer l'ISO reconstruite sur le ThinkBook.
+
+## 2026-11-03 — Écran entier, touches maintenues, feuilles de notes et de tâches
+
+Fait :
+- Quand la zone utile change (fenêtre hôte ou écran redimensionnés, Dock ou barre réglés),
+  le tuilage est recalculé et les fenêtres agrandies ou en plein écran reprennent toute la
+  place (`refit_to_area`, à chaque tour de boucle) ; l'ordre d'empilement est conservé.
+- Touche maintenue dans les champs dessinés par le shell (notes, tâches, recherche du
+  lanceur, mot de passe Wi-Fi, verrouillage, presse-papiers) : répétée avec le délai et la
+  cadence annoncés aux applications (300 ms, 30/s). Avant, Retour arrière maintenu
+  n'effaçait qu'un caractère.
+- Widget Tâches : plusieurs feuilles en onglets (« + » en crée une, nommée à la saisie ;
+  croix sur l'onglet affiché pour la supprimer), chaque feuille garde ses tâches ; une
+  croix au bout de chaque tâche la supprime. Anciennes tâches reprises dans « Tâches ».
+- Widget Notes : corbeille de la note affichée, et position « Notes 2/3 ».
+
+Vérifié :
+- Tests (136 pour le shell) : feuilles, notes, clics sur onglets, croix et corbeille.
+- Capture du bureau en fenêtre avec une configuration vide.
+- Correctif : la zone utile était croisée avec la zone libre des calques (`layer-shell`),
+  qui n'est recalculée que par `LayerMap::arrange`. Elle gardait la taille de l'écran au
+  moment du dernier calcul : fenêtre hôte agrandie (ou écran changé), les fenêtres agrandies
+  s'arrêtaient à ~88 % de la largeur. `usable_area` et le redimensionnement en fenêtre
+  appellent maintenant `arrange` avant de la lire.
+
+## 2026-11-03 — Dock : corbeille en double, icônes manquantes, curseur
+
+Fait :
+- Corbeille en double : un clic sur la corbeille ouvre Fichiers, mais le rebond attendait
+  une fenêtre « corbeille » qui n'arrive jamais ; la corbeille passait pour une application
+  ouverte et revenait une deuxième fois, en rebondissant 12 s. Le rebond attend maintenant
+  Fichiers, et la corbeille garde sa seule case, sans point.
+- Fenêtres sans `.desktop` visible (foot, caché du menu ; programmes lancés à la main) :
+  icône du thème au nom de leur identifiant, au lieu de la loupe (cherchée une fois).
+- Pointeur sur le Dock ou la barre du haut : l'application dessous ne le reçoit plus et le
+  curseur reste une flèche (un champ de texte derrière le Dock imposait le curseur texte).
+
+Vérifié :
+- Tests (136) et clippy ; capture en fenêtre avec foot : son icône apparaît dans le Dock.
+
+## 2026-11-03 — Construction de l'ISO plus rapide
+
+Fait : voir DECISIONS (construction incrémentale). `tools/vm-build.sh` : image locale
+`ferrite-build`, volumes `ferrite-cargo-registry` et `ferrite-vm-target`. `tools/usb.sh` :
+chemin rapide (`lb binary` seul) si la configuration de l'image n'a pas changé, options
+`--complet`, `--final` (xz) et `--propre`. `tools/usb-fedora.sh` : image locale
+`ferrite-live-build`.
+
+Vérifié : `tools/vm-build.sh` — première fois 5 min (image de compilation et tout le code),
+ensuite 0,6 s sans changement. Le chemin rapide de live-build demande sudo : pas encore
+essayé.
+
+## 2026-11-03 — Installation de développement sur disque
+
+Fait : `tools/install-dev.sh /dev/PARTITION`, lancé depuis Fedora. Garde-fous : refuse une
+partition montée, présente dans le fstab de Fedora, en swap, NTFS, EFI ou chiffrée ; montre
+le système qu'elle contient et demande de retaper son nom. Puis : ext4 « FERRITE »,
+debootstrap de Debian 13 et paquets de l'image (sans live-boot) dans le conteneur
+`localhost/ferrite-live-build` (`tools/install-dev/inside.sh`), outils de développement et
+rustup, utilisateur de Fedora (même nom et UID) en connexion automatique, disque FICHIERS
+monté dans `/media/FICHIERS`, entrée « Ferrite OS » dans le GRUB de Fedora
+(`/etc/grub.d/41_ferrite`, menu toujours affiché). Secure Boot est désactivé sur ce PC : le
+GRUB de Fedora peut lancer le noyau Debian.
+
+Vérifié : shellcheck ; la liste des paquets se résout dans Debian 13 (`apt-get install -s`).
+Pas encore lancé (demande sudo) ; partition prévue : `sda5` (elementary OS, accord donné).
+
 ## 2026-11-03 — Développer depuis Ferrite ; Wi-Fi stable
 
 Fait :
@@ -763,3 +899,115 @@ Vérifié :
   terminal) : il porte sur `terminal/mod.rs`, modifié avant cette session, pas sur la
   Visionneuse.
 - Sur le ThinkBook, ouverte depuis Fichiers : tout marche.
+
+## 2026-11-03 — Musique et widget Musique
+
+Fait :
+- `ferrite-apps music [dossier ou morceau]` (`apps/core/src/music/`), d'après les planches
+  « Musique » : bibliothèque de `~/Musique` (étiquettes et pochettes lues par symphonia),
+  Écouter maintenant, Albums, Titres, Artistes, recherche, page d'album (Lire, Aléatoire),
+  file « À suivre », lecteur (aléatoire, précédent, lecture, suivant, répéter, progression,
+  volume). Son décodé par symphonia et joué par `pw-cat` (PipeWire), sans en-têtes ALSA.
+- Serveur MPRIS `org.mpris.MediaPlayer2.ferrite_musique` : touches multimédia, écran
+  verrouillé et widget le pilotent. Les octets nuls des étiquettes WAV sont retirés (D-Bus
+  coupait la connexion).
+- Widget Musique (optionnel, « Modifier les widgets ») : pochette, titre, artiste,
+  progression, précédent/lecture/suivant ; sans lecteur, un clic ouvre Musique. Le lecteur
+  est suivi tant que le widget est posé. Fichiers ouvre les morceaux dans Musique ; entrée
+  du menu Applications, `ferrite-music.desktop` et types MIME audio.
+
+Vérifié : tests (6 pour Musique, 140 pour le bureau), clippy ; avec un album de test
+silencieux : lecture par pw-cat, métadonnées MPRIS, commande Next par D-Bus, captures de
+l'application et du widget.
+
+Reste : widgets Notes de la maquette (Note rapide, Notes récentes, Note épinglée) ; essai
+réel avec de vrais morceaux ; « Titres aimés » et playlists.
+
+## 2026-11-03 — Bureau des widgets ; widgets Notes
+
+Fait :
+- Bureau 0 réservé aux widgets (voir DECISIONS) : les fenêtres s'ouvrent sur le bureau 1 et
+  suivantes, les widgets s'effacent en quittant le bureau 0, Super+W y va et en revient,
+  Super+Maj+1…9 visent les bureaux 1 à 9.
+- Widgets Notes de la maquette, optionnels : Note rapide (bouton « Écrire »), Notes
+  récentes (titre et heure, un clic montre la note dans le widget Notes), Note épinglée
+  (lignes « - [ ] » de la note la plus récente qui en a, cochables depuis le bureau, avec
+  « 2/4 faites » et sa barre).
+
+Vérifié : tests (142 pour le shell, dont le bureau 0 jamais supprimé et la liste à cocher),
+clippy ; captures : Fichiers ouvert au démarrage arrive sur le bureau 1 sans widgets, et
+les trois widgets Notes sur une copie des réglages.
+
+- Sur le ThinkBook, après « Relancer le bureau » : bureau des widgets, Super+W et widgets
+  Notes essayés, tout marche.
+
+## 2026-11-03 — Saccades : widgets redessinés en plein écran
+
+Constat : machine au repos (95 % de processeur libre, 11 Gio libres, pas de swap), mais
+ferrite-shell à ~12 % d'un cœur et une image perdue toutes les ~2 s. Mesure ajoutée
+(`render/profile.rs`, activée par le fichier `$XDG_RUNTIME_DIR/ferrite-profil`) : les
+widgets étaient redessinés au processeur en plein écran (2560 × 1600) à chaque mesure du
+widget Système ou avancée du widget Musique, 12 à 14 ms (dessin des cartes 7-10 ms, copie
+du verre 3,5 ms, copie de l'image 1 ms), d'où des images de 20 à 45 ms.
+
+Fait : `DashboardCache` garde les pixels des widgets ; hors édition, seules les cartes dont
+les données vivantes changent (`cards::card_live` : heure, mesures, lecture) sont
+redessinées sur leur verre, et seule leur zone est renvoyée à la carte graphique
+(`MemoryRenderBuffer::render().draw` avec dommages). Tout autre changement redessine tout.
+La mesure note aussi ce qui a changé quand les panneaux sont redessinés.
+
+Vérifié : bureau en fenêtre, version optimisée : mise à jour des widgets 2-3 ms (au lieu
+de 12-14), pire image au repos 4-10 ms (au lieu de 20-45). Session réelle (DRM) : pire
+image au repos sous 1 ms. Tests (143, dont celui des clés vivantes), clippy.
+
+Reste : ouvrir le centre de contrôle coûte encore ~31 ms (une image) ; ~8 % d'un cœur au
+repos (essais de rendu toutes les 16 ms, applications ouvertes).
+
+## 2026-11-03 — Dialogue d'arrêt de la maquette
+
+Fait (planches « Dialogue d’arrêt » clair et sombre) : dialogue de 480 px, titre et texte
+selon l'action choisie (nombre d'applications ouvertes, compte à rebours de 60 s puis
+action automatique), trois tuiles Éteindre (rouge), Redémarrer, Veille ; Annuler et le
+bouton de l'action ; Se déconnecter, Verrouiller, Relancer le bureau. Clavier : Super+Échap
+ouvre, Entrée confirme, Échap annule, ← → changent d'action. Veille : `systemctl suspend`,
+le bureau reste ouvert (seuls l'arrêt et le redémarrage le ferment). Le bloc « Travail non
+enregistré » de la maquette n'est pas repris : le bureau ne sait pas ce qui est enregistré.
+
+Vérifié : tests (143, dont les clics du nouveau dialogue), clippy, capture.
+
+Vu en passant : dans les réglages réels, le widget Musique chevauche le widget Système.
+
+## 2026-11-03 — Gestes plus fiables, repos plus léger, mode nuit
+
+Fait :
+- Gestes à trois doigts : déplacements non accélérés de libinput (la page suit les doigts
+  quelle que soit leur vitesse, ~28 mm par page) ; sens décidé après ~0,8 mm au lieu de
+  ~0,2 mm et en faveur de l'horizontal (un geste n'est vertical que s'il l'est 1,6 fois
+  plus) : le tremblement des doigts qui se posent en faisait souvent un geste vertical
+  sans effet. Bilan de chaque geste dans le journal quand la mesure est activée.
+- Repos : après une demi-seconde sans rien à redessiner, les essais de rendu passent de
+  16 à 100 ms ; événements système, notifications, verrouillage, météo, glisser de
+  fichiers et répétition des touches déclenchent désormais un rendu immédiat.
+- Mode nuit (`ferrite_system::night`, `shell/src/desktop/night.rs`) : désactivé,
+  toujours, du coucher au lever du soleil (NOAA, ville de la météo) ou heures choisies ;
+  température de 2700 à 5500 K ; fondu de 20 min aux bascules ; appliqué par la table de
+  gamma de l'écran (DRM). Tuile large dans le centre de contrôle (clic : forcer jusqu'à la
+  prochaine bascule ; chevron : Paramètres › Écrans), section Mode nuit dans Paramètres.
+
+Vérifié : tests (145 shell, 35 services : soleil à Ouagadougou, fondu, gains, réglages,
+table de gamma, sens des gestes), clippy ; captures de la tuile et de Paramètres.
+
+Gestes recalés sur le pavé du ThinkBook (mesures `ferrite-profil`) : les gestes francs font
+76 à 380 unités brutes ; vue d'ensemble dès 70 (au lieu de 400), page entière pour 600 (au
+lieu de 1100).
+
+Essayé sur le ThinkBook : gestes à trois doigts dans les quatre sens et mode nuit (teinte
+DRM), tout marche.
+
+Images en continu : la mesure compte désormais les images
+envoyées à l'écran et celles soumises par chaque application. Le fond du Dock voyait ses
+paramètres réécrits à chaque image (`update_uniforms`), ce qui le marquait modifié et
+faisait redessiner sans cesse : réécrits seulement si l'échelle change. Après correction,
+au repos : préparation 0,3 ms, plus aucun panneau redessiné ; les images restantes (60 à
+73/s) suivent l'application Claude, qui en soumet 37 à 58/s même en attente. Écran :
+2880 × 1800 à 90 Hz, échelle 200 %.

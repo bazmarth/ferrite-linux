@@ -31,6 +31,23 @@ const BLINK: Duration = Duration::from_millis(530);
 const MULTI_CLICK: Duration = Duration::from_millis(400);
 const MAX_TAB_WIDTH: f32 = 220.0;
 
+/// La grille garde le clavier : Tab, les flèches et Échap vont au programme, jamais à la
+/// navigation d'egui entre les boutons (qui volait le clavier, et qu'Entrée ou Espace
+/// faisait ensuite « cliquer », jusqu'à fermer l'onglet).
+fn grid_id() -> egui::Id {
+    egui::Id::unique("ferrite-terminal-grid")
+}
+
+/// Champ de la barre de recherche, seul autre endroit où l'on peut taper.
+fn search_field_id() -> egui::Id {
+    egui::Id::unique("ferrite-terminal-search")
+}
+
+/// Le clavier va-t-il ailleurs que dans le terminal (recherche ou menu ouvert) ?
+fn keyboard_elsewhere(context: &egui::Context) -> bool {
+    context.memory(|memory| memory.has_focus(search_field_id())) || egui::Popup::is_any_open(context)
+}
+
 /// Options de `ferrite-apps terminal [dossier] [-e programme arguments…]`.
 pub fn parse_launch(mut args: impl Iterator<Item = String>) -> Launch {
     let mut launch = Launch::default();
@@ -205,8 +222,7 @@ impl TerminalState {
 
     fn handle_keyboard(&mut self, context: &egui::Context, events: &[Event], actions: &mut Vec<Action>) {
         // Ni le champ de recherche ni un menu ouvert ne doivent écrire dans le terminal.
-        let elsewhere =
-            context.memory(|memory| memory.focused().is_some()) || egui::Popup::is_any_open(context);
+        let elsewhere = keyboard_elsewhere(context);
         let mode = self.session().map_or(TermMode::NONE, Session::mode);
         let focused = context.input(|input| input.focused);
         if focused != self.focused {
@@ -471,6 +487,7 @@ impl TerminalState {
                 ui.horizontal(|ui| {
                     let field = ui.add(
                         egui::TextEdit::singleline(&mut bar.text)
+                            .id(search_field_id())
                             .hint_text("Rechercher dans l’historique")
                             .desired_width(280.0),
                     );
@@ -561,7 +578,25 @@ impl TerminalState {
             return;
         }
 
-        let response = ui.allocate_rect(full, Sense::click());
+        let response = ui.interact(full, grid_id(), Sense::click());
+        // Un clic dans la grille y ramène le clavier, même depuis la recherche.
+        if response.is_pointer_button_down_on() {
+            response.request_focus();
+        }
+        if !keyboard_elsewhere(&context) {
+            context.memory_mut(|memory| {
+                memory.request_focus(grid_id());
+                memory.set_focus_lock_filter(
+                    grid_id(),
+                    egui::EventFilter {
+                        tab: true,
+                        horizontal_arrows: true,
+                        vertical_arrows: true,
+                        escape: true,
+                    },
+                );
+            });
+        }
         if response.hovered() {
             context.set_cursor_icon(egui::CursorIcon::Text);
         }
@@ -894,6 +929,35 @@ mod tests {
             repeat: false,
             modifiers: Modifiers::CTRL | Modifiers::SHIFT,
         };
+        // Tab, puis Espace et Entrée : le clavier reste au shell, aucun bouton des onglets
+        // ne prend le focus ni ne se fait « cliquer ».
+        let key = |key| Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Modifiers::NONE,
+        };
+        frame(&mut state, vec![Event::Text("echo tab".to_owned())]);
+        for _ in 0..3 {
+            frame(&mut state, vec![key(Key::Tab)]);
+        }
+        frame(&mut state, vec![key(Key::Space)]);
+        frame(&mut state, vec![Event::Text("$((1+1))".to_owned())]);
+        frame(&mut state, vec![key(Key::Enter)]);
+        assert_eq!(state.tabs.len(), 1);
+        assert!(context.memory(|memory| memory.has_focus(grid_id())));
+        let start = Instant::now();
+        // Les tabulations arrivées au shell y séparent les mots : « tab 2 ».
+        while !state.tabs[0].screen_text().contains("tab 2") {
+            assert!(
+                start.elapsed() < Duration::from_secs(10),
+                "écran : {:?}",
+                state.tabs[0].screen_text()
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
         frame(&mut state, vec![press(Key::T)]);
         assert_eq!(state.tabs.len(), 2);
         assert_eq!(state.active, 1);

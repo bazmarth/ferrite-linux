@@ -1320,7 +1320,7 @@ mod tests {
     fn couleurs_dominantes_distinctes() {
         let mut image = solid(10, 10, [200, 30, 30]);
         // Un tiers de bleu, et un rouge presque identique qui ne compte pas en plus.
-        for pixel in image.rgba.chunks_exact_mut(4).take(33) {
+        for pixel in image.rgba.as_chunks_mut::<4>().0.iter_mut().take(33) {
             pixel.copy_from_slice(&[20, 40, 220, 255]);
         }
         image.rgba[396..400].copy_from_slice(&[205, 32, 30, 255]);

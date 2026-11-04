@@ -1,6 +1,6 @@
 #!/bin/sh
-# Session Ferrite, lancée à la connexion sur tty1 : le bureau ferrite-shell avec
-# l'explorateur Fichiers ouvert. Si le bureau ne démarre pas (ou quand on le quitte avec Ctrl+Alt+Retour
+# Session Ferrite, lancée à la connexion sur tty1 : le bureau ferrite-shell, ouvert sur
+# l'espace des widgets (aucune application lancée d'office). Si le bureau ne démarre pas (ou quand on le quitte avec Ctrl+Alt+Retour
 # arrière), on retombe sur la console avec les commandes utiles.
 set -u
 export FERRITE_SESSION=1
@@ -16,6 +16,18 @@ case "${SHELL:-}" in
 esac
 
 log="${XDG_RUNTIME_DIR:-/tmp}/ferrite-shell.log"
+
+# Bus D-Bus de la session : celui de systemd (--user) quand il existe. Le coffre à mots de
+# passe (gnome-keyring), le son et les portails y tournent déjà ; un bus à part
+# (dbus-run-session) ne trouvait pas le coffre, et Brave ou Claude l'attendaient 2 minutes
+# au démarrage.
+user_bus="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/bus"
+if [ -S "$user_bus" ]; then
+    export DBUS_SESSION_BUS_ADDRESS="unix:path=$user_bus"
+    bus=""
+else
+    bus="dbus-run-session --"
+fi
 
 # Mode développement : les binaires compilés remplacent ceux de /usr/local/bin, et quitter
 # le bureau (Ctrl+Alt+Retour arrière) le relance avec la dernière version. Deux sources :
@@ -49,6 +61,15 @@ crashes=0
 dev_crashes=0
 window_start=$(date +%s)
 first=1
+# Le bureau démarre sur l'écran de verrouillage (la connexion sur tty1 est automatique),
+# sauf quand on le relance soi-même depuis le bureau. Pas sur le système live de l'ISO :
+# son utilisateur n'a pas de mot de passe connu de qui le démarre.
+if grep -qw "boot=live" /proc/cmdline 2>/dev/null; then
+    lock_default=0
+else
+    lock_default=1
+fi
+lock=$lock_default
 choose_bin
 while [ -x "$bin/ferrite-shell" ]; do
     # Les applications lancées par le bureau viennent du même dossier que lui.
@@ -60,19 +81,20 @@ while [ -x "$bin/ferrite-shell" ]; do
     export PATH
     if [ "$first" = 1 ]; then
         printf '\n  Démarrage du bureau Ferrite… (journal : %s)\n' "$log"
-        client="ferrite-apps files"
     else
         printf '\n  Redémarrage du bureau Ferrite…\n'
-        client=""
     fi
     first=0
     [ -f "$log" ] && mv -f "$log" "$log.precedent"
-    # shellcheck disable=SC2086 # $client est vide ou une commande et son argument.
-    dbus-run-session -- "$bin/ferrite-shell" --drm ${client:+-- $client} >"$log" 2>&1
+    # shellcheck disable=SC2086 # $bus est vide ou « dbus-run-session -- ».
+    FERRITE_LOCK=$lock $bus "$bin/ferrite-shell" --drm >"$log" 2>&1
     status=$?
+    # Après un arrêt imprévu, on repart verrouillé : planter ne doit pas ouvrir la session.
+    lock=$lock_default
     # Codes choisis dans le dialogue d'arrêt du bureau (voir PowerAction::exit_code).
     if [ "$status" -eq 3 ]; then
         # « Relancer le bureau » : prend aussi la dernière copie de tools/dev-on.sh.
+        lock=0
         crashes=0
         dev_crashes=0
         choose_bin
@@ -94,6 +116,7 @@ while [ -x "$bin/ferrite-shell" ]; do
     if [ "$status" -eq 0 ]; then
         # En développement, quitter le bureau sert à le relancer ; Ctrl+Alt+F2 donne une console.
         [ "$dev" = 1 ] || break
+        lock=0
         crashes=0
         dev_crashes=0
         choose_bin

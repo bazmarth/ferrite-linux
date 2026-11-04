@@ -74,6 +74,16 @@ xdg-desktop-portal
 xdg-desktop-portal-gtk
 dbus-bin
 
+# Coffre à mots de passe (Secret Service) : navigateurs, Claude, VS Code y rangent leurs
+# identifiants. Démarré par systemd sur le bus de la session (voir ferrite-session) ;
+# gcr fournit la fenêtre qui demande de le déverrouiller.
+gnome-keyring
+libpam-gnome-keyring
+gcr
+
+# Disques et clés USB formatés sous Windows (NTFS), en lecture et écriture
+ntfs-3g
+
 # Terminal de secours et d'essais (le Terminal du bureau est celui de ferrite-apps)
 foot
 # Shell des terminaux du bureau : complétion par Tab et suggestions (voir ferrite-session)

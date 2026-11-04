@@ -25,8 +25,9 @@ Debian 13         noyau Linux, Mesa, micrologiciels
 2. live-config crée l'utilisateur `ferrite` (sudo sans mot de passe).
 3. `getty@tty1` connecte `ferrite` automatiquement.
 4. `/etc/profile.d/90-ferrite.sh` exécute `/usr/local/bin/ferrite-session` sur tty1.
-5. Phase 1 : `ferrite-session` affiche l'accueil puis un shell. Phase 2 : il lancera
-   `dbus-run-session ferrite-shell`.
+5. `ferrite-session` lance `ferrite-shell --drm` sur le bus D-Bus de systemd (--user),
+   où tournent déjà le coffre à mots de passe, le son et les portails
+   (`dbus-run-session` seulement si ce bus manque), écran verrouillé.
 
 ## Unités
 

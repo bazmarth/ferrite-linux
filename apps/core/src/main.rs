@@ -1,5 +1,5 @@
 //! Applications de base Ferrite : Fichiers, TextEdit, Terminal, Calculatrice, Paramètres,
-//! Moniteur d'activité, Visionneuse et Musique.
+//! Moniteur d'activité, Visionneuse, lecteur PDF et Musique.
 
 mod calculator;
 mod details;
@@ -8,10 +8,12 @@ mod files;
 mod markdown;
 mod monitor;
 mod music;
+mod pdf_viewer;
 mod settings;
 mod single;
 mod style;
 mod terminal;
+mod video;
 mod viewer;
 
 use std::{
@@ -24,7 +26,7 @@ use eframe::egui;
 
 use crate::{
     calculator::CalculatorState, editor::EditorState, files::FilesState, monitor::MonitorState,
-    music::MusicState, settings::SettingsState, terminal::TerminalState, viewer::ViewerState,
+    music::MusicState, pdf_viewer::ViewerApp, settings::SettingsState, terminal::TerminalState,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,7 +38,9 @@ enum AppKind {
     Settings,
     Monitor,
     Viewer,
+    PdfViewer,
     Music,
+    Video,
 }
 
 impl AppKind {
@@ -49,7 +53,9 @@ impl AppKind {
             "settings" => Some(Self::Settings),
             "monitor" => Some(Self::Monitor),
             "viewer" => Some(Self::Viewer),
+            "pdf" => Some(Self::PdfViewer),
             "music" => Some(Self::Music),
+            "video" => Some(Self::Video),
             _ => None,
         }
     }
@@ -63,7 +69,9 @@ impl AppKind {
             Self::Settings => "Paramètres",
             Self::Monitor => "Moniteur d'activité",
             Self::Viewer => "Visionneuse",
+            Self::PdfViewer => "Lecteur PDF",
             Self::Music => "Musique",
+            Self::Video => "Lecteur vidéo",
         }
     }
 
@@ -77,7 +85,9 @@ impl AppKind {
             Self::Settings => "ferrite-settings",
             Self::Monitor => "ferrite-monitor",
             Self::Viewer => "ferrite-viewer",
+            Self::PdfViewer => "ferrite-pdf",
             Self::Music => "ferrite-music",
+            Self::Video => "ferrite-video",
         }
     }
 
@@ -91,7 +101,9 @@ impl AppKind {
             Self::Settings => ([1008.0, 640.0], [720.0, 440.0]),
             Self::Monitor => ([1000.0, 640.0], [680.0, 460.0]),
             Self::Viewer => ([1180.0, 760.0], [640.0, 440.0]),
+            Self::PdfViewer => ([1180.0, 760.0], [640.0, 440.0]),
             Self::Music => ([1240.0, 800.0], [760.0, 520.0]),
+            Self::Video => ([1180.0, 760.0], [640.0, 420.0]),
         }
     }
 }
@@ -107,7 +119,7 @@ fn main() -> eframe::Result {
     }
     let Some(kind) = args.next().and_then(|arg| AppKind::parse(&arg)) else {
         eprintln!(
-            "Utilisation : ferrite-apps <files|textedit|terminal|calculator|settings|monitor|viewer|music> [dossier ou fichier]"
+            "Utilisation : ferrite-apps <files|textedit|terminal|calculator|settings|monitor|viewer|pdf|music|video> [dossier ou fichier]"
         );
         return Ok(());
     };
@@ -176,8 +188,9 @@ struct FerriteApp {
     settings: Option<SettingsState>,
     monitor: Option<MonitorState>,
     terminal: Option<TerminalState>,
-    viewer: Option<ViewerState>,
+    viewer: Option<ViewerApp>,
     music: Option<MusicState>,
+    video: Option<video::VideoState>,
     /// Lancements suivants de la même application (instance unique).
     requests: Option<single::Requests>,
     settings_stamp: Option<SystemTime>,
@@ -199,8 +212,14 @@ impl FerriteApp {
             *waker = Some(context.egui_ctx.clone());
         }
         let mut editor = EditorState::default();
-        let viewer = (kind == AppKind::Viewer).then(|| ViewerState::new(initial_file.clone()));
+        let viewer = match kind {
+            AppKind::Viewer => Some(ViewerApp::new(initial_file.clone())),
+            AppKind::PdfViewer => Some(ViewerApp::new_pdf(initial_file.clone())),
+            _ => None,
+        };
         let music = (kind == AppKind::Music).then(|| MusicState::new(initial_file.clone()));
+        let video = (kind == AppKind::Video)
+            .then(|| video::VideoState::new(initial_file.clone(), context.egui_ctx.clone()));
         let mut files = (kind == AppKind::Files).then(FilesState::default);
         let mut settings = (kind == AppKind::Settings).then(SettingsState::default);
         if let Some(path) = initial_file {
@@ -208,7 +227,10 @@ impl FerriteApp {
                 settings.open_page(&path.to_string_lossy());
             } else if let Some(files) = &mut files {
                 files.open_at(path);
-            } else if !matches!(kind, AppKind::Viewer | AppKind::Music) {
+            } else if !matches!(
+                kind,
+                AppKind::Viewer | AppKind::PdfViewer | AppKind::Music | AppKind::Video
+            ) {
                 editor.open(path);
             }
         }
@@ -222,6 +244,7 @@ impl FerriteApp {
             terminal: (kind == AppKind::Terminal).then(|| TerminalState::new(&context.egui_ctx, launch)),
             viewer,
             music,
+            video,
             requests,
             settings_stamp: {
                 watch_settings(context.egui_ctx.clone());
@@ -260,9 +283,15 @@ impl FerriteApp {
             } else if let Some(files) = &mut self.files {
                 files.open_at(file);
             } else if let Some(viewer) = &mut self.viewer {
-                viewer.open(file);
+                if self.kind == AppKind::PdfViewer {
+                    viewer.open_pdf(file);
+                } else {
+                    viewer.open(file);
+                }
             } else if let Some(music) = &mut self.music {
                 music.open(file);
+            } else if let Some(video) = &mut self.video {
+                video.open(file);
             } else {
                 self.editor.open(file);
             }
@@ -314,9 +343,19 @@ impl eframe::App for FerriteApp {
                     viewer.update(ui);
                 }
             }
+            AppKind::PdfViewer => {
+                if let Some(viewer) = &mut self.viewer {
+                    viewer.update(ui);
+                }
+            }
             AppKind::Music => {
                 if let Some(music) = &mut self.music {
                     music.update(ui);
+                }
+            }
+            AppKind::Video => {
+                if let Some(video) = &mut self.video {
+                    video.update(ui);
                 }
             }
         }

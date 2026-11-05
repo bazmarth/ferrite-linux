@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Lecteur vidéo
+Comment=Lecteur vidéo de Ferrite
+Exec=ferrite-apps video %f
+Icon=multimedia-video-player
+MimeType=video/mp4;video/x-m4v;video/x-matroska;video/webm;video/x-msvideo;video/quicktime;video/ogg;video/mpeg;video/x-ms-wmv;video/x-flv;video/3gpp;video/mp2t;
+Categories=AudioVideo;Player;
+NoDisplay=true

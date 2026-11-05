@@ -1083,3 +1083,63 @@ fil à part. Agent polkit dans ferrite-shell (`desktop/polkit.rs`, fenêtre
 `polkit-agent-helper-1` ; pas d'agent dans un bureau imbriqué (`--demo-auth` pour les
 captures). Un dossier illisible propose « Ouvrir en administrateur » (`pkexec`, ajouté à
 l'image).
+
+## 2026-11-05 — Lecteur PDF (Poppler, zoom, ajustement à la page ou à la largeur)
+
+Fait :
+- `apps/core/src/pdf_viewer.rs` : véritable lecteur PDF. Les pages sont rendues par
+  Poppler (`pdftoppm -scale-to`), décodées en `ColorImage` (PNG lu par la caisse `png` ;
+  RGB, gris et gris+alpha convertis en RGBA) puis envoyées une seule fois à la carte
+  graphique. Un rendu par demande, dans un fil, résultat renvoyé par un canal : rien de
+  lourd dans la boucle du compositeur. Un numéro de demande fait ignorer la réponse d'une
+  page qu'on a déjà quittée.
+- Barre d'outils : page précédente/suivante, numéro de page à saisir, « sur N »,
+  ajustement à la page ou à la largeur, « Ouvrir… », indicateur d'attente, nom du
+  document à droite, zoom −/+. Touches : ←/→, Page↑/Page↓, Début/Fin, +/−, 0 (page
+  entière), W (largeur), Ctrl+molette, Ctrl+O (sélecteur de Fichiers).
+- Deux qualités de rendu : 2400 px pour lire, 3600 px dès qu'on zoome au-delà de 1,5 ou
+  qu'on ajuste à la largeur ; la page déjà affichée reste à l'écran pendant ce nouveau
+  rendu, l'attente se voit dans la barre.
+- Fenêtre sans document : icône PDF, « Aucun document ouvert » et bouton « Choisir un
+  document », avec le même sélecteur de fichiers que le lecteur vidéo.
+- Scène grise autour de la feuille, comme la Visionneuse : sur fond blanc, la page ne se
+  distinguait pas du panneau.
+
+Vérifié :
+- `tools/ci.sh` réussie : formatage, clippy `--all-targets -D warnings`, tests (dont six
+  nouveaux tests du lecteur), shellcheck absent sur cette machine.
+- Bureau imbriqué `--winit --capture` sur un PDF de trois pages fabriqué pour l'essai
+  (`build/essai-pdf/rapport.pdf`) : page blanche de 962 × 1350 px, centrée, rapport 0,713
+  (0,707 en A4), 39 lignes de texte, barre remplie, aucune panique au journal. Sans
+  document : icône PDF, textes et bouton bien dessinés.
+- Ces contrôles ont été mesurés sur les captures PNG par un petit script Python jetable
+  (couleurs dominantes, rectangles, lignes de texte), l'image n'étant pas regardable
+  directement ici. Le premier essai montrait une feuille étirée à toute la largeur : le
+  cadre était posé dans un agencement vertical, qui l'étire ; il est maintenant dans un
+  agencement horizontal, avec la marge de centrage calculée.
+
+Limites :
+- Navigation, zoom, Ctrl+O et le sélecteur n'ont pas été essayés à la souris : seuls le
+  premier affichage et l'écran vide ont été vus en capture. À essayer sur le bureau.
+- Thème sombre non vérifié en capture (session en thème clair) ; la scène et la barre
+  suivent `style::themed`.
+- Le rendu dépend de Poppler (`pdftoppm`, `pdfinfo`) : s'ils manquent, le lecteur affiche
+  « Poppler n'est pas installé ».
+- Une page paysage n'a pas été essayée ; l'ajustement prend le plus petit des deux
+  rapports, elle doit donc tenir.
+- `shell/src/input.rs` (modifié par une autre session, non commité) ne passait plus
+  clippy (priorité d'opérateurs sur `ctrl * … | alt * …`) : parenthèses ajoutées.
+
+## 2026-11-05 — Lecteur vidéo (GStreamer, intégré à la fenêtre)
+
+Codé avec le lecteur PDF dans les mêmes fichiers (`main.rs`, `Cargo.toml`) :
+`ferrite-apps video [fichier]` (`apps/core/src/video.rs`). Lecture par GStreamer
+(`gstreamer`, `gstreamer-app`, `gstreamer-video`), image intégrée à la fenêtre egui (une
+texture réutilisée, actualisée toutes les 100 ms) et son par la sortie système. Barre de
+lecture : lecture/pause, muet, position et durée, recherche par pas de 5 s, et sélecteur de
+fichiers (`FilesState`). Les vidéos du même dossier s'enchaînent dans une file ; types
+reconnus par extension (mp4, mkv, webm, avi, mov…).
+
+Vérifié : compilation et clippy `-D warnings` propres, tests (mise en forme du temps,
+encodage des chemins en URI, extensions reconnues). Pas encore vu en capture : la lecture
+d'une vraie vidéo reste à essayer sur le bureau.

@@ -19,6 +19,11 @@ Chaque dépendance avec sa licence et la raison de sa présence. Les versions ex
 | `zbus` 5 (`blocking-api`) | ferrite-shell | MIT | serveur `org.freedesktop.Notifications`, signal de mise en veille de logind ; imposé par le plan |
 | `alacritty_terminal` 0.26 | ferrite-apps | Apache-2.0 | émulation du Terminal ; imposé par le plan |
 | `eframe` 0.37 | ferrite-apps | MIT/Apache-2.0 | fenêtres natives Wayland pour Fichiers, TextEdit et Calculatrice ; rendu GLES et prise en charge clavier/souris |
+| `gstreamer`, `gstreamer-app`, `gstreamer-video` 0.25 | ferrite-apps | MIT/Apache-2.0 | décodage vidéo, lecture du son système et transfert des images vers la Visionneuse vidéo |
+
+La Visionneuse PDF utilise `pdfinfo` et `pdftoppm` de Poppler (`poppler-utils`), fournis par
+l'image live. `pdftoppm` rasterise chaque page à la demande ; ces outils ne sont pas inclus
+dans l'exécutable Ferrite.
 
 ## Paquets de l'image live
 
@@ -36,6 +41,8 @@ Liste : `image/config/package-lists/ferrite.list.chroot`. Points notables :
 | `pulseaudio-utils` | `pactl` : balance et volume par application dans Paramètres |
 | `curl` | relevé de la météo (widget Horloge, écran de verrouillage) |
 | `libarchive-tools` | `bsdtar` : navigation dans les archives sans extraction, création ZIP/TAR.GZ et extraction ZIP/TAR/RAR dans Fichiers |
+| `poppler-utils` | `pdfinfo` et `pdftoppm` : métadonnées et rendu à la demande des pages PDF dans la Visionneuse |
+| `gstreamer1.0-plugins-base`, `gstreamer1.0-plugins-good`, `gstreamer1.0-plugins-bad`, `gstreamer1.0-libav` | éléments et codecs GStreamer utilisés par le Lecteur vidéo Ferrite |
 | `rar` | création d’archives RAR ; outil propriétaire fourni par les dépôts non libres |
 | `dbus-bin` | `dbus-update-activation-environment` : transmet `WAYLAND_DISPLAY` et `DISPLAY` aux services D-Bus |
 | `foot`, `tmux` | terminal de secours ; le Terminal Ferrite ne les utilise pas |

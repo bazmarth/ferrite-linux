@@ -189,3 +189,22 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
   Les widgets s'effacent à mesure qu'on quitte le bureau 0 et ne reçoivent de clics que sur
   lui. Super+W va au bureau des widgets puis revient au bureau quitté ; Super+Maj+1…9
   visent les bureaux 1 à 9.
+- **2026-11-05 — Lecteur PDF : Poppler appelé dans un fil, une image par page.** Le rendu
+  s'appuie sur `pdftoppm` (image) et `pdfinfo` (nombre de pages) plutôt que sur une
+  bibliothèque liée : moins de code, le rendu est celui de Poppler, et la compilation ne
+  dépend pas de développement de poppler-glib. Chaque page est rendue à la demande dans un
+  fil (`ferrite_system` non requis, la commande est ponctuelle) et son PNG revient par un
+  canal ; la boucle du bureau ne bloque jamais. Un numéro de demande croissant fait jeter
+  la réponse d'une page qu'on a déjà quittée, et la texture est réutilisée (`TextureHandle::set`)
+  pour ne pas en créer une par page.
+- **2026-11-05 — Deux qualités de rendu, pas de flou qui traîne.** Une page est d'abord
+  rendue à 2400 px de côté (lecture entière), puis rendue à 3600 px quand on zoome au-delà
+  de 1,5 ou qu'on ajuste à la largeur. Pendant ce second rendu, la page déjà affichée reste
+  à l'écran et la barre montre l'attente : pas de clignotement, et pas de texte flou
+  agrandi à l'écran. Un rendu refusé au-delà de 24 Mpx protège la mémoire.
+- **2026-11-05 — Feuille centrée à la main plutôt que dans un cadre de mise en page.** Un
+  `egui::Frame` posé directement dans un agencement vertical s'étire à toute la largeur
+  disponible : la « page » devenait un fond blanc plein écran, invisible sur un panneau
+  blanc (constaté en capture). Le cadre est désormais dans un agencement horizontal, avec la
+  marge de centrage calculée, et la scène autour reprend les couleurs de la Visionneuse
+  (0xEDEFF2 clair, 0x121418 sombre) pour que la feuille se détache.

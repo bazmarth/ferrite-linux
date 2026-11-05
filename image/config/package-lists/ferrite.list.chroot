@@ -66,6 +66,9 @@ udisks2
 packagekit
 flatpak
 polkitd
+# Lancer une application en administrateur (Fichiers : « Ouvrir en administrateur ») ;
+# le mot de passe est demandé par l'agent polkit du bureau.
+pkexec
 accountsservice
 
 # Compatibilité avec les applications Linux : portails (dialogues de fichiers, ouverture
@@ -83,6 +86,10 @@ gcr
 
 # Disques et clés USB formatés sous Windows (NTFS), en lecture et écriture
 ntfs-3g
+
+# Archives ZIP/TAR/RAR dans Fichiers (RAR en lecture via libarchive, création via rar)
+libarchive-tools
+rar
 
 # Terminal de secours et d'essais (le Terminal du bureau est celui de ferrite-apps)
 foot

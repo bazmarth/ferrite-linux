@@ -6,12 +6,316 @@
 use std::{
     fs,
     io::{Read, Write},
+    os::unix::fs::DirBuilderExt,
     path::{Path, PathBuf},
+    process::{Command, Stdio},
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
+    thread,
+    time::Duration,
 };
+
+#[derive(Debug, Clone)]
+pub struct ArchiveEntry {
+    pub name: String,
+    pub member: String,
+    pub directory: bool,
+}
+
+/// Liste le contenu immédiat d'un dossier d'archive sans le matérialiser sur disque.
+pub fn list_archive(archive: &Path, directory: &str) -> Result<Vec<ArchiveEntry>, String> {
+    let output = Command::new("bsdtar")
+        .args(["-tf"])
+        .arg(archive)
+        .output()
+        .map_err(|error| format!("Lecture de l’archive impossible : {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "Lecture de l’archive impossible : {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+
+    let mut children = std::collections::BTreeMap::<String, ArchiveEntry>::new();
+    let prefix = if directory.is_empty() {
+        String::new()
+    } else {
+        format!("{directory}/")
+    };
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let is_directory = line.ends_with('/');
+        let Some(member) = safe_archive_member(line) else {
+            continue;
+        };
+        let relative = if prefix.is_empty() {
+            member.as_str()
+        } else if let Some(relative) = member.strip_prefix(&prefix) {
+            relative
+        } else {
+            continue;
+        };
+        let (name, remainder) = match relative.split_once('/') {
+            Some((name, rest)) => (name, Some(rest)),
+            None if !relative.is_empty() => (relative, None),
+            None => continue,
+        };
+        if name.is_empty() {
+            continue;
+        }
+        let child_member = if directory.is_empty() {
+            name.to_owned()
+        } else {
+            format!("{directory}/{name}")
+        };
+        let directory_entry = remainder.is_some() || is_directory;
+        children
+            .entry(name.to_owned())
+            .and_modify(|entry| entry.directory |= directory_entry)
+            .or_insert_with(|| ArchiveEntry {
+                name: name.to_owned(),
+                member: child_member,
+                directory: directory_entry,
+            });
+    }
+    Ok(children.into_values().collect())
+}
+
+/// Matérialise uniquement le fichier ouvert, dans un répertoire temporaire privé.
+pub fn materialize_archive_member(archive: &Path, member: &str) -> Result<(PathBuf, PathBuf), String> {
+    let member = safe_archive_member(member).ok_or("Chemin de fichier invalide dans l’archive")?;
+    let name = Path::new(&member)
+        .file_name()
+        .ok_or("Nom de fichier invalide dans l’archive")?;
+    static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+    let (directory, file) = loop {
+        let id = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
+        let directory = std::env::temp_dir().join(format!("ferrite-archive-{}-{id}", std::process::id()));
+        let mut builder = fs::DirBuilder::new();
+        builder.mode(0o700);
+        match builder.create(&directory) {
+            Ok(()) => break (directory.clone(), directory.join(name)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(format!("Ouverture du fichier de l’archive impossible : {error}")),
+        }
+    };
+    let output = match fs::File::create(&file) {
+        Ok(output) => output,
+        Err(error) => {
+            let _ = fs::remove_dir_all(&directory);
+            return Err(format!("Ouverture du fichier de l’archive impossible : {error}"));
+        }
+    };
+    let result = Command::new("bsdtar")
+        .args(["-xOf"])
+        .arg(archive)
+        .arg("--")
+        .arg(&member)
+        .stdout(Stdio::from(output))
+        .output()
+        .map_err(|error| format!("Ouverture du fichier de l’archive impossible : {error}"));
+    match result {
+        Ok(output) if output.status.success() => Ok((directory, file)),
+        Ok(output) => {
+            let _ = fs::remove_dir_all(&directory);
+            Err(format!(
+                "Ouverture du fichier de l’archive impossible : {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ))
+        }
+        Err(error) => {
+            let _ = fs::remove_dir_all(&directory);
+            Err(error)
+        }
+    }
+}
+
+fn safe_archive_member(name: &str) -> Option<String> {
+    use std::path::Component;
+
+    let mut parts = Vec::new();
+    for component in Path::new(name.trim_end_matches('/')).components() {
+        match component {
+            Component::Normal(part) => parts.push(part.to_str()?),
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
+        }
+    }
+    (!parts.is_empty()).then(|| parts.join("/"))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArchiveFormat {
+    Zip,
+    Tar,
+    TarGz,
+    Rar,
+}
+
+impl ArchiveFormat {
+    fn extension(self) -> &'static str {
+        match self {
+            Self::Zip => "zip",
+            Self::Tar => "tar",
+            Self::TarGz => "tar.gz",
+            Self::Rar => "rar",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Zip => "ZIP",
+            Self::Tar => "TAR",
+            Self::TarGz => "TAR.GZ",
+            Self::Rar => "RAR",
+        }
+    }
+}
+
+pub fn is_archive(path: &Path) -> bool {
+    let name = path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_ascii_lowercase();
+    [".zip", ".tar", ".tar.gz", ".tgz", ".rar"]
+        .iter()
+        .any(|extension| name.ends_with(extension))
+}
+
+/// Crée une archive à côté du dossier affiché.
+pub fn create_archive(
+    sources: &[PathBuf],
+    dir: &Path,
+    format: ArchiveFormat,
+    job: &Job,
+) -> Result<(), String> {
+    if sources.is_empty() {
+        return Err("Aucun élément à compresser".into());
+    }
+    if sources.iter().any(|source| source.parent() != Some(dir)) {
+        return Err("Les éléments doivent être dans le dossier affiché".into());
+    }
+    let base = if sources.len() == 1 {
+        sources[0]
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "Archive".into())
+    } else {
+        "Archive".into()
+    };
+    let name = format!("{base}.{}", format.extension());
+    let target = unique_destination(dir, &name);
+    job.update(|progress| progress.current = name.clone());
+
+    let result = match format {
+        ArchiveFormat::Rar => {
+            let mut command = Command::new("rar");
+            command
+                .args(["a", "-idq", "-y"])
+                .arg(target.file_name().unwrap_or_default());
+            command.args(
+                sources
+                    .iter()
+                    .filter_map(|path| path.file_name())
+                    .map(|name| PathBuf::from("./").join(name)),
+            );
+            command.current_dir(dir);
+            run_command(command, job, "Création RAR impossible")
+        }
+        ArchiveFormat::Zip | ArchiveFormat::Tar | ArchiveFormat::TarGz => {
+            let mut command = Command::new("bsdtar");
+            match format {
+                ArchiveFormat::Zip => command.args(["--format", "zip", "-cf"]),
+                ArchiveFormat::TarGz => command.args(["-a", "-cf"]),
+                ArchiveFormat::Tar => command.args(["-cf"]),
+                ArchiveFormat::Rar => unreachable!(),
+            }
+            .arg(&target)
+            .arg("-C")
+            .arg(dir)
+            .arg("--");
+            command.args(sources.iter().filter_map(|path| path.file_name()));
+            run_command(command, job, "Création de l’archive impossible")
+        }
+    };
+    if result.is_err() {
+        let _ = fs::remove_file(target);
+    }
+    result
+}
+
+/// Extrait une archive dans un nouveau dossier voisin, sans écraser un contenu existant.
+pub fn extract_archive(archive: &Path, job: &Job) -> Result<(), String> {
+    if !is_archive(archive) {
+        return Err("Format d’archive non pris en charge".into());
+    }
+    let parent = archive.parent().unwrap_or_else(|| Path::new("."));
+    let name = archive.file_name().unwrap_or_default().to_string_lossy();
+    let lower = name.to_ascii_lowercase();
+    let suffix = [".tar.gz", ".tgz", ".tar", ".zip", ".rar"]
+        .iter()
+        .find(|suffix| lower.ends_with(**suffix))
+        .ok_or("Format d’archive non pris en charge")?;
+    let folder_name = &name[..name.len() - suffix.len()];
+    let folder_name = if folder_name.is_empty() {
+        "Archive"
+    } else {
+        folder_name
+    };
+    let destination = unique_destination(parent, folder_name);
+    fs::create_dir(&destination).map_err(|error| format!("Extraction impossible : {error}"))?;
+    job.update(|progress| progress.current = name.into_owned());
+
+    let mut command = Command::new("bsdtar");
+    command.args(["-xf"]).arg(archive).arg("-C").arg(&destination);
+    let result = run_command(command, job, "Extraction impossible");
+    if result.is_err() {
+        let _ = fs::remove_dir_all(destination);
+    }
+    result
+}
+
+fn run_command(mut command: Command, job: &Job, failure: &str) -> Result<(), String> {
+    command.stdout(Stdio::null()).stderr(Stdio::piped());
+    let mut child = command.spawn().map_err(|error| format!("{failure} : {error}"))?;
+    let mut stderr = child.stderr.take().ok_or("Sortie d’erreur indisponible")?;
+    let stderr_reader = thread::spawn(move || {
+        let mut output = Vec::new();
+        let _ = stderr.read_to_end(&mut output);
+        output
+    });
+    loop {
+        if job.cancelled() {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("Annulé".into());
+        }
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => thread::sleep(Duration::from_millis(100)),
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("{failure} : {error}"));
+            }
+        }
+    }
+    let status = child.wait().map_err(|error| format!("{failure} : {error}"))?;
+    let detail = String::from_utf8_lossy(&stderr_reader.join().unwrap_or_default())
+        .trim()
+        .to_owned();
+    if status.success() {
+        Ok(())
+    } else {
+        Err(if detail.is_empty() {
+            format!("{failure} (code {})", status)
+        } else {
+            format!("{failure} : {detail}")
+        })
+    }
+}
 
 /// Avancement d'une opération longue.
 #[derive(Debug, Clone, Default)]
@@ -282,6 +586,76 @@ mod tests {
         assert!(validate_name("a/b").is_err());
         assert!(validate_name("  ").is_err());
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn reconnait_les_archives_prises_en_charge() {
+        for name in [
+            "fichier.zip",
+            "sauvegarde.tar",
+            "sauvegarde.tar.gz",
+            "sauvegarde.tgz",
+            "fichier.rar",
+            "FICHIER.ZIP",
+        ] {
+            assert!(is_archive(Path::new(name)), "{name}");
+        }
+        for name in ["fichier.gz", "fichier.7z", "document.txt"] {
+            assert!(!is_archive(Path::new(name)), "{name}");
+        }
+    }
+
+    #[test]
+    fn navigue_dans_une_archive_sans_l_extraire() {
+        let dir = scratch("archive");
+        let source = dir.join("contenu");
+        fs::create_dir_all(source.join("sous-dossier")).unwrap();
+        fs::write(source.join("racine.txt"), "à la racine").unwrap();
+        fs::write(source.join("sous-dossier/note.txt"), "texte interne").unwrap();
+        let archive = dir.join("test.zip");
+        let status = Command::new("bsdtar")
+            .args(["--format", "zip", "-cf"])
+            .arg(&archive)
+            .arg("-C")
+            .arg(&source)
+            .arg("--")
+            .args(["racine.txt", "sous-dossier"])
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        let root = list_archive(&archive, "").unwrap();
+        assert!(
+            root.iter()
+                .any(|entry| entry.name == "racine.txt" && !entry.directory)
+        );
+        assert!(
+            root.iter()
+                .any(|entry| entry.name == "sous-dossier" && entry.directory)
+        );
+        let nested = list_archive(&archive, "sous-dossier").unwrap();
+        assert_eq!(nested.len(), 1);
+        assert_eq!(nested[0].member, "sous-dossier/note.txt");
+        let (temporary_dir, file) = materialize_archive_member(&archive, &nested[0].member).unwrap();
+        assert_eq!(fs::read_to_string(file).unwrap(), "texte interne");
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            fs::metadata(&temporary_dir).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert!(!dir.join("sous-dossier").exists());
+        fs::remove_dir_all(temporary_dir).unwrap();
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn refuse_les_chemins_d_archive_hors_racine() {
+        assert_eq!(
+            safe_archive_member("./dossier/fichier.txt"),
+            Some("dossier/fichier.txt".into())
+        );
+        assert_eq!(safe_archive_member("../fichier.txt"), None);
+        assert_eq!(safe_archive_member("/fichier.txt"), None);
     }
 
     #[test]

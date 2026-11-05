@@ -35,6 +35,8 @@ Liste : `image/config/package-lists/ferrite.list.chroot`. Points notables :
 | `xdg-desktop-portal`, `xdg-desktop-portal-gtk` | dialogues de fichiers et ouverture de liens des applications (navigateurs, Flatpak) |
 | `pulseaudio-utils` | `pactl` : balance et volume par application dans Paramètres |
 | `curl` | relevé de la météo (widget Horloge, écran de verrouillage) |
+| `libarchive-tools` | `bsdtar` : navigation dans les archives sans extraction, création ZIP/TAR.GZ et extraction ZIP/TAR/RAR dans Fichiers |
+| `rar` | création d’archives RAR ; outil propriétaire fourni par les dépôts non libres |
 | `dbus-bin` | `dbus-update-activation-environment` : transmet `WAYLAND_DISPLAY` et `DISPLAY` aux services D-Bus |
 | `foot`, `tmux` | terminal de secours ; le Terminal Ferrite ne les utilise pas |
 | `fonts-jetbrains-mono` | police du terminal `foot` (`/etc/xdg/foot/foot.ini`) |

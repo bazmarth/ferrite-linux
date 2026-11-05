@@ -365,7 +365,8 @@ impl FilesState {
                     .as_deref()
                     .is_some_and(|mount| self.current_dir() == Some(mount));
                 let mut eject = false;
-                let response = self.device(ui, look, &device.label, device.usage, Some(&mut eject), selected);
+                let button = device.removable.then_some(&mut eject);
+                let response = self.device(ui, look, &device.label, device.usage, button, selected);
                 if let Some(mount) = &device.mount {
                     targets.push((response.rect, Target::Folder(mount.clone())));
                 }
@@ -716,10 +717,45 @@ impl FilesState {
             }
             return;
         }
-        let parts: Vec<(String, Option<PathBuf>)> = match &self.location {
+        let parts: Vec<(String, Option<Location>)> = match &self.location {
             Location::Trash => vec![("Corbeille".into(), None)],
             Location::Recent => vec![("Récents".into(), None)],
             Location::Tag(tag) => vec![(tag.clone(), None)],
+            Location::Archive { archive, directory } => {
+                let parent = archive.parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
+                let parent_name = if parent == home() {
+                    "Dossier perso".to_owned()
+                } else if parent.as_os_str() == "/" {
+                    "Système".to_owned()
+                } else {
+                    file_name(&parent)
+                };
+                let mut parts = vec![
+                    (parent_name, Some(Location::Folder(parent))),
+                    (
+                        file_name(archive),
+                        Some(Location::Archive {
+                            archive: archive.clone(),
+                            directory: String::new(),
+                        }),
+                    ),
+                ];
+                let mut current = String::new();
+                for component in directory.split('/').filter(|part| !part.is_empty()) {
+                    if !current.is_empty() {
+                        current.push('/');
+                    }
+                    current.push_str(component);
+                    parts.push((
+                        component.to_owned(),
+                        Some(Location::Archive {
+                            archive: archive.clone(),
+                            directory: current.clone(),
+                        }),
+                    ));
+                }
+                parts
+            }
             Location::Folder(dir) => {
                 let home = home();
                 let mut parts: Vec<PathBuf> = if dir.starts_with(&home) {
@@ -744,7 +780,7 @@ impl FilesState {
                         } else {
                             file_name(&part)
                         };
-                        (name, Some(part))
+                        (name, Some(Location::Folder(part)))
                     })
                     .collect()
             }
@@ -794,13 +830,14 @@ impl FilesState {
                 if current { look.fg } else { look.fg2 },
                 rect.width() - 16.0,
             );
-            if let Some(path) = &path {
+            if let Some(Location::Folder(path)) = &path {
                 targets.push((rect, Target::Folder(path.clone())));
             }
             if response.clicked() {
                 match (current, path) {
-                    (true, Some(_)) => actions.push(Action::EditPath),
-                    (false, Some(path)) => actions.push(Action::Navigate(path)),
+                    (true, Some(Location::Folder(_))) => actions.push(Action::EditPath),
+                    (true, Some(Location::Archive { .. })) => {}
+                    (false, Some(location)) => actions.push(Action::Show(location)),
                     _ => {}
                 }
             }
@@ -889,7 +926,12 @@ impl FilesState {
 
     fn empty(&mut self, ui: &mut egui::Ui, look: &Look) {
         let searching = !self.search.trim().is_empty();
-        let (title, hint) = if searching {
+        let (title, hint) = if self.denied {
+            (
+                "Dossier réservé à l’administrateur",
+                "Son contenu n’est lisible qu’avec le mot de passe administrateur.",
+            )
+        } else if searching {
             ("Aucun résultat", "Essayez un autre nom.")
         } else if self.location == Location::Trash {
             ("La Corbeille est vide", "Les éléments supprimés arrivent ici.")
@@ -928,6 +970,27 @@ impl FilesState {
             font(14.0, false),
             look.fg2,
         );
+        if self.denied {
+            let button = egui::Rect::from_center_size(
+                egui::pos2(center.x, icon.bottom() + 92.0),
+                egui::vec2(230.0, 36.0),
+            );
+            let clicked = ui
+                .put(
+                    button,
+                    egui::Button::new(
+                        egui::RichText::new("Ouvrir en administrateur")
+                            .font(font(14.0, true))
+                            .color(egui::Color32::WHITE),
+                    )
+                    .fill(look.accent)
+                    .corner_radius(9.0),
+                )
+                .clicked();
+            if clicked {
+                self.open_as_admin();
+            }
+        }
     }
 
     /// Grille ; rend la zone visible des éléments et son défilement.
@@ -972,7 +1035,7 @@ impl FilesState {
                         } else if response.hovered() && self.drag.is_none() {
                             ui.painter().rect_filled(rect, 14.0, style::tint(6));
                         }
-                        if entry.directory {
+                        if entry.directory && !self.in_archive() {
                             targets.push((rect, Target::Folder(entry.path.clone())));
                         }
                         // Image : sa vignette ; sinon l'icône de 72.
@@ -1125,7 +1188,7 @@ impl FilesState {
                 } else if response.hovered() && self.drag.is_none() {
                     ui.painter().rect_filled(rect, 9.0, style::tint(6));
                 }
-                if entry.directory {
+                if entry.directory && !self.in_archive() {
                     targets.push((rect, Target::Folder(entry.path.clone())));
                 }
                 let (ink, sub) = if selected {
@@ -1256,6 +1319,14 @@ impl FilesState {
                                     file_name(dir)
                                 },
                             ),
+                            Location::Archive { archive, directory } => (
+                                "places-folder",
+                                if directory.is_empty() {
+                                    file_name(archive)
+                                } else {
+                                    directory.rsplit('/').next().unwrap_or_default().to_owned()
+                                },
+                            ),
                             Location::Trash => ("places-trash", "Corbeille".into()),
                             Location::Recent => ("app-clock", "Récents".into()),
                             Location::Tag(tag) => ("places-folder", tag.clone()),
@@ -1315,7 +1386,7 @@ impl FilesState {
                             .corner_radius(10)
                             .min_size(egui::vec2(flex, 36.0));
                     if ui
-                        .add_enabled(!selection.is_empty(), share)
+                        .add_enabled(!selection.is_empty() && !self.in_archive(), share)
                         .on_hover_text("Copie l’adresse du fichier, à coller dans un message")
                         .clicked()
                     {
@@ -1335,7 +1406,9 @@ impl FilesState {
                             }
                         },
                     );
-                    if let Some(entry) = &single {
+                    if let Some(entry) = &single
+                        && !self.in_archive()
+                    {
                         egui::Popup::menu(&more).show(|ui| self.item_menu(ui, entry, actions));
                     }
                 });

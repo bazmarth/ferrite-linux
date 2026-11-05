@@ -5,8 +5,9 @@
 //! - navigation : précédent, suivant, dossier parent, chemin cliquable ou saisi (Ctrl+L),
 //!   barre latérale (Favoris, Corbeille, clés USB) ;
 //! - sélection multiple (Ctrl, Maj, Ctrl+A), menu contextuel, raccourcis habituels ;
-//! - copier, couper, coller, dupliquer (en arrière-plan, avec progression), renommer (F2),
-//!   nouveau dossier, Corbeille (restaurer, vider), suppression définitive confirmée ;
+//! - ouvrir les archives comme des dossiers virtuels sans les extraire, compresser et extraire
+//!   des archives (en arrière-plan), renommer (F2), nouveau dossier, Corbeille (restaurer, vider),
+//!   suppression définitive confirmée ;
 //! - ouvrir, ouvrir avec…, propriétés, ouvrir un terminal ici ;
 //! - montage et éjection des clés USB ;
 //! - mode sélecteur (`FilesState::picker`) : les autres applications l'affichent pour
@@ -51,6 +52,8 @@ struct FileEntry {
     symlink: bool,
     modified: Option<SystemTime>,
     size: Option<u64>,
+    /// Chemin interne d'un élément affiché dans une archive.
+    archive_member: Option<String>,
     /// Élément de la Corbeille : emplacement d'origine et date de suppression.
     trash: Option<TrashItem>,
 }
@@ -58,6 +61,11 @@ struct FileEntry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Location {
     Folder(PathBuf),
+    /// Dossier virtuel à l'intérieur d'une archive, sans extraction globale.
+    Archive {
+        archive: PathBuf,
+        directory: String,
+    },
     Trash,
     /// Fichiers ouverts récemment (toutes applications).
     Recent,
@@ -135,6 +143,8 @@ struct Disks {
 /// Résultat d'un calcul en arrière-plan.
 enum Update {
     Devices(Disks),
+    /// Montage terminé (le mot de passe administrateur a pu être demandé entre-temps).
+    Mounted(Result<PathBuf, String>),
     FolderSize(PathBuf, (u64, u64)),
 }
 
@@ -174,6 +184,8 @@ enum Action {
     Cut,
     Paste,
     Duplicate,
+    Compress(ops::ArchiveFormat),
+    Extract(PathBuf),
     Trash,
     AskDeleteForever,
     ConfirmDeleteForever(Vec<PathBuf>),
@@ -241,6 +253,8 @@ pub struct FilesState {
     message: Option<(String, bool)>,
     /// Date de modification du dossier lors de sa dernière lecture.
     loaded: Option<SystemTime>,
+    /// Le dossier affiché est réservé à l'administrateur (lecture refusée).
+    denied: bool,
     icons: Icons,
     picker: Option<Picker>,
 }
@@ -264,6 +278,7 @@ impl Default for FilesState {
             back: Vec::new(),
             forward: Vec::new(),
             show_hidden: false,
+            denied: false,
             view: View::Grid,
             sort: SortKey::Name,
             ascending: true,
@@ -341,7 +356,7 @@ impl FilesState {
         self.picker.as_mut()?.choice.take()
     }
 
-    /// Ouvre `path` : un dossier s'affiche, un fichier est montré sélectionné dans le sien.
+    /// Ouvre `path` : un dossier ou une archive s'affiche, un fichier est montré dans son dossier.
     pub fn open_at(&mut self, path: PathBuf) {
         // Adresse donnée par la corbeille du Dock.
         if path.as_os_str() == "corbeille:" {
@@ -352,6 +367,12 @@ impl FilesState {
         let path = fs::canonicalize(&path).unwrap_or(path);
         if path.is_dir() {
             self.location = Location::Folder(path);
+            self.refresh();
+        } else if ops::is_archive(&path) {
+            self.location = Location::Archive {
+                archive: path,
+                directory: String::new(),
+            };
             self.refresh();
         } else if let Some(parent) = path.parent().filter(|parent| parent.is_dir()) {
             self.location = Location::Folder(parent.to_path_buf());
@@ -414,10 +435,36 @@ apercu={}
         let _ = fs::write(path, text);
     }
 
+    /// Rouvre le dossier affiché dans une fenêtre Fichiers administrateur (`pkexec`, qui
+    /// demande le mot de passe par l'agent polkit du bureau).
+    fn open_as_admin(&mut self) {
+        let Some(dir) = self.current_dir().map(Path::to_path_buf) else {
+            return;
+        };
+        let result = env::current_exe().and_then(|exe| {
+            let mut command = Command::new("pkexec");
+            command.arg("env");
+            // pkexec vide l'environnement : la fenêtre doit retrouver l'écran.
+            for key in ["WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "XDG_SESSION_TYPE", "LANG"] {
+                if let Some(value) = env::var_os(key) {
+                    let mut pair = std::ffi::OsString::from(format!("{key}="));
+                    pair.push(value);
+                    command.arg(pair);
+                }
+            }
+            command.arg(exe).arg("files").arg(&dir);
+            spawn_detached(command)
+        });
+        match result {
+            Ok(_) => self.info("Mot de passe administrateur demandé…"),
+            Err(error) => self.error(format!("Ouverture en administrateur impossible : {error}")),
+        }
+    }
+
     fn current_dir(&self) -> Option<&Path> {
         match &self.location {
             Location::Folder(path) => Some(path),
-            Location::Trash | Location::Recent | Location::Tag(_) => None,
+            Location::Archive { .. } | Location::Trash | Location::Recent | Location::Tag(_) => None,
         }
     }
 
@@ -429,6 +476,12 @@ apercu={}
             && !path.is_dir()
         {
             self.error(format!("Dossier introuvable : {}", path.display()));
+            return;
+        }
+        if let Location::Archive { archive, .. } = &location
+            && !archive.is_file()
+        {
+            self.error(format!("Archive introuvable : {}", archive.display()));
             return;
         }
         let previous = std::mem::replace(&mut self.location, location);
@@ -482,6 +535,7 @@ apercu={}
                             symlink: false,
                             modified: metadata.as_ref().and_then(|m| m.modified().ok()),
                             size: metadata.filter(|m| !m.is_dir()).map(|m| m.len()),
+                            archive_member: None,
                             trash: Some(item),
                         }
                     })
@@ -502,9 +556,36 @@ apercu={}
                     .filter_map(|path| entry_for(&path))
                     .collect()
             }
+            Location::Archive { archive, directory } => {
+                self.loaded = modified(archive);
+                self.denied = false;
+                match ops::list_archive(archive, directory) {
+                    Ok(entries) => entries
+                        .into_iter()
+                        .map(|entry| FileEntry {
+                            name: entry.name,
+                            path: archive_virtual_path(archive, &entry.member),
+                            directory: entry.directory,
+                            symlink: false,
+                            modified: None,
+                            size: None,
+                            archive_member: Some(entry.member),
+                            trash: None,
+                        })
+                        .collect(),
+                    Err(error) => {
+                        self.error(error);
+                        Vec::new()
+                    }
+                }
+            }
             Location::Folder(dir) => {
                 self.loaded = modified(dir);
-                match fs::read_dir(dir) {
+                let listing = fs::read_dir(dir);
+                self.denied = listing
+                    .as_ref()
+                    .is_err_and(|error| error.kind() == std::io::ErrorKind::PermissionDenied);
+                match listing {
                     Ok(entries) => entries
                         .filter_map(Result::ok)
                         .filter_map(|entry| {
@@ -520,10 +601,13 @@ apercu={}
                                 modified: metadata.modified().ok(),
                                 size: (!metadata.is_dir()).then_some(metadata.len()),
                                 path,
+                                archive_member: None,
                                 trash: None,
                             })
                         })
                         .collect(),
+                    // Dossier réservé : la vue propose de l'ouvrir en administrateur.
+                    Err(_) if self.denied => Vec::new(),
                     Err(error) => {
                         self.error(format!("Impossible de lire ce dossier : {error}"));
                         Vec::new()
@@ -573,10 +657,49 @@ apercu={}
     }
 
     fn open(&mut self, path: PathBuf, directory: bool) {
+        if let Location::Archive { archive, .. } = &self.location {
+            let Some(entry) = self.entries.iter().find(|entry| entry.path == path) else {
+                self.error("Élément introuvable dans l’archive");
+                return;
+            };
+            let Some(member) = &entry.archive_member else {
+                return;
+            };
+            if directory {
+                self.go(Location::Archive {
+                    archive: archive.clone(),
+                    directory: member.clone(),
+                });
+            } else {
+                match ops::materialize_archive_member(archive, member) {
+                    Ok((temporary_dir, path)) => {
+                        if let Err(error) = self.open_materialized(path, Some(temporary_dir.clone())) {
+                            let _ = fs::remove_dir_all(temporary_dir);
+                            self.error(error);
+                        }
+                    }
+                    Err(error) => self.error(error),
+                }
+            }
+            return;
+        }
         if directory {
             self.go(Location::Folder(path));
             return;
         }
+        if ops::is_archive(&path) {
+            self.go(Location::Archive {
+                archive: path,
+                directory: String::new(),
+            });
+            return;
+        }
+        if let Err(error) = self.open_materialized(path, None) {
+            self.error(error);
+        }
+    }
+
+    fn open_materialized(&self, path: PathBuf, temporary_dir: Option<PathBuf>) -> Result<(), String> {
         // TextEdit et la Visionneuse sont le même exécutable que Fichiers.
         let builtin = if is_text_file(&path) {
             Some("textedit")
@@ -587,6 +710,24 @@ apercu={}
         } else {
             None
         };
+        if let (Some(app), Some(temporary_dir)) = (builtin, temporary_dir) {
+            let result = env::current_exe().and_then(|exe| {
+                let mut command = Command::new(exe);
+                command
+                    .arg(app)
+                    .arg(&path)
+                    .stdin(std::process::Stdio::null())
+                    .spawn()
+            });
+            return result
+                .map(|mut child| {
+                    thread::spawn(move || {
+                        let _ = child.wait();
+                        let _ = fs::remove_dir_all(temporary_dir);
+                    });
+                })
+                .map_err(|error| format!("Ouverture impossible : {error}"));
+        }
         let result = if let Some(app) = builtin {
             env::current_exe().map(Command::new).and_then(|mut command| {
                 command.arg(app).arg(&path);
@@ -597,9 +738,13 @@ apercu={}
             command.arg(&path);
             spawn_detached(command)
         };
-        if let Err(error) = result {
-            self.error(format!("Ouverture impossible : {error}"));
-        }
+        result
+            .map(|_| ())
+            .map_err(|error| format!("Ouverture impossible : {error}"))
+    }
+
+    fn in_archive(&self) -> bool {
+        matches!(self.location, Location::Archive { .. })
     }
 
     /// Lance une tâche longue (copie, déplacement) dans un fil à part.
@@ -614,6 +759,36 @@ apercu={}
     }
 
     fn apply(&mut self, action: Action, ctx: &egui::Context) {
+        if self.in_archive()
+            && matches!(
+                &action,
+                Action::Share(_)
+                    | Action::ToggleTag(_, _)
+                    | Action::StartDrag(_)
+                    | Action::Drop { .. }
+                    | Action::StartRename(_)
+                    | Action::CommitRename
+                    | Action::Copy
+                    | Action::Cut
+                    | Action::Paste
+                    | Action::Duplicate
+                    | Action::Compress(_)
+                    | Action::Extract(_)
+                    | Action::Trash
+                    | Action::AskDeleteForever
+                    | Action::ConfirmDeleteForever(_)
+                    | Action::Restore
+                    | Action::AskEmptyTrash
+                    | Action::ConfirmEmptyTrash
+                    | Action::NewFolder
+                    | Action::Properties(_)
+                    | Action::OpenWith(_)
+                    | Action::LaunchWith(_, _)
+                    | Action::TerminalHere
+            )
+        {
+            return;
+        }
         match action {
             Action::Navigate(path) => self.go(Location::Folder(path)),
             Action::Show(location) => self.go(location),
@@ -656,11 +831,26 @@ apercu={}
             Action::Drop { target, paths, copy } => self.drop_on(target, paths, copy),
             Action::Back => self.go_back(),
             Action::Forward => self.go_forward(),
-            Action::Up => {
-                if let Some(parent) = self.current_dir().and_then(Path::parent) {
-                    self.go(Location::Folder(parent.to_path_buf()));
+            Action::Up => match &self.location {
+                Location::Folder(dir) => {
+                    if let Some(parent) = dir.parent() {
+                        self.go(Location::Folder(parent.to_path_buf()));
+                    }
                 }
-            }
+                Location::Archive { archive, directory } => {
+                    if let Some((parent, _)) = directory.rsplit_once('/') {
+                        self.go(Location::Archive {
+                            archive: archive.clone(),
+                            directory: parent.to_owned(),
+                        });
+                    } else {
+                        self.go(Location::Folder(
+                            archive.parent().unwrap_or_else(|| Path::new(".")).to_path_buf(),
+                        ));
+                    }
+                }
+                Location::Trash | Location::Recent | Location::Tag(_) => {}
+            },
             Action::Open(path, directory) if self.picker.is_some() => {
                 if directory {
                     self.go(Location::Folder(path));
@@ -791,6 +981,18 @@ apercu={}
                         self.run_job("Duplication", move |job| ops::copy_into(&sources, &dir, job));
                     }
                 }
+            }
+            Action::Compress(format) => {
+                if let Some(dir) = self.current_dir().map(Path::to_path_buf) {
+                    let sources = self.selection();
+                    let title = format!("Compression {}", format.label());
+                    self.run_job(&title, move |job| {
+                        ops::create_archive(&sources, &dir, format, job)
+                    });
+                }
+            }
+            Action::Extract(archive) => {
+                self.run_job("Extraction", move |job| ops::extract_archive(&archive, job));
             }
             Action::Trash => {
                 let selection = self.selection();
@@ -929,13 +1131,14 @@ apercu={}
                     self.go(Location::Folder(path));
                 }
             }
-            Action::Mount(device) => match devices::mount(&device) {
-                Ok(path) => {
-                    self.devices_checked = None;
-                    self.go(Location::Folder(path));
-                }
-                Err(error) => self.error(error),
-            },
+            Action::Mount(device) => {
+                let sender = self.sender.clone();
+                let ctx = ctx.clone();
+                thread::spawn(move || {
+                    let _ = sender.send(Update::Mounted(devices::mount(&device)));
+                    ctx.request_repaint();
+                });
+            }
             Action::Eject(device) => {
                 if self
                     .current_dir()
@@ -999,6 +1202,11 @@ apercu={}
                     self.downloads = disks.downloads;
                     self.devices_pending = false;
                 }
+                Update::Mounted(Ok(path)) => {
+                    self.devices_checked = None;
+                    self.go(Location::Folder(path));
+                }
+                Update::Mounted(Err(error)) => self.error(error),
                 Update::FolderSize(path, size) => {
                     if let Some(Dialog::Properties(properties)) = &mut self.dialog
                         && properties.path == path
@@ -1020,7 +1228,7 @@ apercu={}
             let ctx = ctx.clone();
             thread::spawn(move || {
                 let home = home();
-                let devices = devices::removable()
+                let devices = devices::list()
                     .into_iter()
                     .map(|device| Device {
                         usage: device.mount.as_deref().and_then(places::disk_usage),
@@ -1060,6 +1268,7 @@ apercu={}
         // Le dossier suit les changements faits ailleurs (F5 force la relecture).
         let stamp = match &self.location {
             Location::Folder(dir) => modified(dir),
+            Location::Archive { archive, .. } => modified(archive),
             Location::Trash => modified(&trash::files_dir()),
             Location::Recent | Location::Tag(_) => None,
         };
@@ -1144,7 +1353,12 @@ apercu={}
                     || (pressed(Key::Enter) && self.picker.is_some()))
             {
                 let path = self.selection()[0].clone();
-                actions.push(Action::Open(path.clone(), path.is_dir()));
+                let directory = self
+                    .entries
+                    .iter()
+                    .find(|entry| entry.path == path)
+                    .is_some_and(|entry| entry.directory);
+                actions.push(Action::Open(path, directory));
             }
             if pressed(Key::Space) && self.quick.is_none() {
                 actions.push(Action::QuickLook);
@@ -1262,6 +1476,9 @@ apercu={}
             single,
             Action::Open(entry.path.clone(), entry.directory),
         );
+        if self.in_archive() {
+            return;
+        }
         if !entry.directory {
             item(
                 ui,
@@ -1275,6 +1492,27 @@ apercu={}
         item(ui, "Copier", "Ctrl+C", true, Action::Copy);
         item(ui, "Couper", "Ctrl+X", true, Action::Cut);
         item(ui, "Dupliquer", "Ctrl+D", true, Action::Duplicate);
+        if self.picker.is_none() && self.current_dir().is_some() {
+            if !entry.directory && ops::is_archive(&entry.path) {
+                item(ui, "Extraire ici", "", true, Action::Extract(entry.path.clone()));
+            }
+            style::menu_separator(ui);
+            let enabled = !self.selected.is_empty();
+            for format in [
+                ops::ArchiveFormat::Zip,
+                ops::ArchiveFormat::Tar,
+                ops::ArchiveFormat::TarGz,
+                ops::ArchiveFormat::Rar,
+            ] {
+                item(
+                    ui,
+                    &format!("Compresser en {}", format.label()),
+                    "",
+                    enabled,
+                    Action::Compress(format),
+                );
+            }
+        }
         item(
             ui,
             "Renommer",
@@ -1302,6 +1540,19 @@ apercu={}
                 ui.close();
             }
         };
+        if self.in_archive() {
+            item(
+                ui,
+                if self.show_hidden {
+                    "Masquer les fichiers cachés"
+                } else {
+                    "Afficher les fichiers cachés"
+                },
+                true,
+                Action::ToggleHidden,
+            );
+            return;
+        }
         if self.location == Location::Trash {
             item(
                 ui,
@@ -1354,7 +1605,11 @@ apercu={}
         actions: &mut Vec<Action>,
     ) {
         let entry = &self.entries[index];
-        if response.drag_started() && self.picker.is_none() && self.location != Location::Trash {
+        if response.drag_started()
+            && self.picker.is_none()
+            && !self.in_archive()
+            && self.location != Location::Trash
+        {
             actions.push(Action::StartDrag(index));
             return;
         }
@@ -1717,8 +1972,21 @@ fn entry_for(path: &Path) -> Option<FileEntry> {
         symlink: path.symlink_metadata().is_ok_and(|m| m.file_type().is_symlink()),
         modified: metadata.modified().ok(),
         size: (!metadata.is_dir()).then_some(metadata.len()),
+        archive_member: None,
         trash: None,
     })
+}
+
+fn archive_virtual_path(archive: &Path, member: &str) -> PathBuf {
+    let name = archive
+        .file_name()
+        .map(|name| name.to_string_lossy())
+        .unwrap_or_default();
+    archive
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join(format!(".ferrite-archive-{name}"))
+        .join(member)
 }
 
 /// Icône du dossier `icons/SVG` selon la nature de l'entrée.
@@ -1918,6 +2186,50 @@ mod tests {
         assert_eq!(files.location, start);
         files.go_forward();
         assert_eq!(files.location, Location::Folder(PathBuf::from("/")));
+    }
+
+    #[test]
+    fn ouvre_une_archive_comme_un_dossier_virtuel() {
+        let dir = std::env::temp_dir().join(format!("ferrite-archive-ui-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let source = dir.join("source");
+        fs::create_dir_all(source.join("sous-dossier")).unwrap();
+        fs::write(source.join("sous-dossier/note.txt"), "contenu").unwrap();
+        let archive = dir.join("test.zip");
+        let status = Command::new("bsdtar")
+            .args(["--format", "zip", "-cf"])
+            .arg(&archive)
+            .arg("-C")
+            .arg(&source)
+            .arg("--")
+            .arg("sous-dossier")
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        let mut files = FilesState::default();
+        files.open(archive.clone(), false);
+        assert_eq!(
+            files.location,
+            Location::Archive {
+                archive: archive.clone(),
+                directory: String::new(),
+            }
+        );
+        assert_eq!(files.entries.len(), 1);
+        assert!(files.entries[0].directory);
+
+        files.open(files.entries[0].path.clone(), true);
+        assert_eq!(
+            files.location,
+            Location::Archive {
+                archive,
+                directory: "sous-dossier".into(),
+            }
+        );
+        assert_eq!(files.entries[0].name, "note.txt");
+        assert!(!dir.join("sous-dossier").exists());
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

@@ -38,6 +38,7 @@ use smithay::{
     utils::{Logical, Point, Rectangle, Size},
 };
 
+mod auth;
 mod cards;
 mod lock_screen;
 
@@ -241,6 +242,9 @@ pub enum DesktopAction {
     PowerChoose(PowerAction),
     ConfirmPower(PowerAction),
     CancelPower,
+    /// Fenêtre d'authentification : autoriser (vérifier le mot de passe) ou annuler.
+    AuthSubmit,
+    AuthCancel,
     /// Historique du presse-papiers : indices dans la liste complète.
     ClipboardPaste(usize),
     ClipboardPin(usize),
@@ -526,6 +530,17 @@ pub struct LockView {
     pub media: Option<crate::desktop::lock::Media>,
 }
 
+/// Fenêtre d'authentification : ce que demande l'application, pour quel compte, et le
+/// nombre de caractères tapés (jamais le mot de passe lui-même).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthView {
+    pub message: String,
+    pub user: String,
+    pub length: usize,
+    pub checking: bool,
+    pub refused: bool,
+}
+
 /// Message sous le champ du mot de passe.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LockMessage {
@@ -634,6 +649,8 @@ pub struct DesktopView {
     /// Mode nuit : teinte active, et l'état écrit sur sa tuile.
     pub night: (bool, String),
     pub power: Option<PowerAction>,
+    /// Mot de passe administrateur demandé (polkit).
+    pub auth: Option<AuthView>,
     /// Dialogue d'arrêt : secondes avant l'action automatique, applications ouvertes.
     pub power_left: u32,
     pub power_apps: usize,
@@ -1580,6 +1597,10 @@ impl Panels {
         // Confirmation explicite, pour éviter un arrêt accidentel.
         if let Some(power) = view.power {
             self.draw_dialog(&mut canvas, &layout, power, view);
+        }
+        // Mot de passe administrateur : par-dessus tout le reste.
+        if let Some(auth) = &view.auth {
+            self.draw_auth(&mut canvas, &layout, auth);
         }
 
         MemoryRenderBuffer::from_slice(
@@ -3369,6 +3390,11 @@ pub fn action_at(
     view: &DesktopView,
 ) -> Option<DesktopAction> {
     let layout = Layout::new(output.size.w as f64, output.size.h as f64, view);
+    // Authentification demandée : la fenêtre est modale, rien d'autre ne reçoit le clic.
+    if view.auth.is_some() {
+        let pos = Point::from((pos.x - output.loc.x as f64, pos.y - output.loc.y as f64));
+        return Some(auth::action_at(&layout, pos));
+    }
     let (popover, pending_power) = (view.popover, view.power);
     if !view.bar_visible && pending_power.is_none() && popover.is_none() && pos.y < view.bar_height as f64 {
         // Barre masquée (plein écran) : le clic va à l'application.

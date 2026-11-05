@@ -95,6 +95,9 @@ fn run(options: Options) -> Result<u8, Box<dyn std::error::Error>> {
         state.popover = Some(desktop::panels::Popover::Controls);
         state.controls.page = page;
     }
+    if options.demo_auth {
+        state.auth.push_back(desktop::polkit::Auth::demo());
+    }
     if options.demo_power {
         state.open_power_dialog(crate::state::PowerAction::PowerOff);
     }
@@ -126,6 +129,13 @@ fn run(options: Options) -> Result<u8, Box<dyn std::error::Error>> {
     // ne se verrouille pas.
     if !has_display && std::env::var_os("FERRITE_LOCK").is_some_and(|value| value == "1") {
         state.lock_session();
+    }
+    // Un seul agent polkit par session : pas pour un bureau imbriqué.
+    if !has_display {
+        match desktop::polkit::start(&event_loop.handle()) {
+            Ok(link) => state.polkit_link = Some(link),
+            Err(err) => warn!(%err, "agent polkit indisponible"),
+        }
     }
     match options.backend.resolve(has_display) {
         BackendChoice::Drm => backend::drm::init(&mut event_loop, &mut state, &options)?,

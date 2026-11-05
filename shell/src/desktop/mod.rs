@@ -11,5 +11,6 @@ pub mod lock;
 pub mod night;
 pub mod notifications;
 pub mod panels;
+pub mod polkit;
 pub mod svg;
 pub mod widgets;

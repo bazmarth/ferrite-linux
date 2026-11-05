@@ -1072,3 +1072,14 @@ une présence, du son en cours (flux actif dans `wpctl status`, casques Bluetoot
 ALSA en secours) reporte la veille. Essayé en bureau imbriqué : verrouillé après 60 s.
 
 Dock masqué automatiquement : il se cache dès que la souris le quitte (plus de délai de 1,5 s, `REVEAL_HOLD` retiré).
+
+Fichiers montre aussi les partitions internes de données (FICHIERS, la partition de
+Windows) : montées sous /media ou /mnt, ou pas montées et d'au moins 4 Gio ; les
+partitions techniques (EFI, réservée, récupération, échange) restent cachées. Une
+partition interne s'ouvre en lecture seule, après le mot de passe administrateur, dans un
+fil à part. Agent polkit dans ferrite-shell (`desktop/polkit.rs`, fenêtre
+`panels/auth.rs`) : inscrit pour la session de connexion sur le bus système, il affiche
+« Authentification requise » et fait vérifier le mot de passe par
+`polkit-agent-helper-1` ; pas d'agent dans un bureau imbriqué (`--demo-auth` pour les
+captures). Un dossier illisible propose « Ouvrir en administrateur » (`pkexec`, ajouté à
+l'image).

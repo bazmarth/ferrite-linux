@@ -124,8 +124,14 @@ pub(crate) enum Action {
     LockMove(isize),
     LockSubmit,
     LockReveal,
-    /// Touche relâchée pendant le verrouillage : rien à faire, rien ne passe aux clients.
+    /// Touche relâchée pendant le verrouillage ou l'authentification, ou touche sans
+    /// effet dans celle-ci : rien à faire, rien ne passe aux clients.
     LockIgnore,
+    /// Fenêtre d'authentification (polkit) : caractère, effacer, valider, annuler.
+    AuthType(char),
+    AuthErase,
+    AuthSubmit,
+    AuthCancel,
     LockCancel,
     ToggleWidgets,
     WidgetsDismiss,
@@ -158,6 +164,8 @@ impl Action {
                 | Action::PasswordErase
                 | Action::LockType(_)
                 | Action::LockErase
+                | Action::AuthType(_)
+                | Action::AuthErase
                 | Action::LockDelete
                 | Action::LockMove(_)
                 | Action::ClipboardType(_)
@@ -324,6 +332,23 @@ impl Ferrite {
                                 Action::LockType(character)
                             }
                             _ => Action::LockReveal,
+                        },
+                    });
+                }
+                // Mot de passe administrateur demandé : la fenêtre garde le clavier.
+                if !state.auth.is_empty() {
+                    if !pressed {
+                        return FilterResult::Intercept(Action::LockIgnore);
+                    }
+                    return FilterResult::Intercept(match sym {
+                        Keysym::Escape => Action::AuthCancel,
+                        Keysym::BackSpace => Action::AuthErase,
+                        Keysym::Return | Keysym::KP_Enter => Action::AuthSubmit,
+                        sym => match sym.key_char().filter(|c| !c.is_control()) {
+                            Some(character) if !modifiers.ctrl && !modifiers.alt && !modifiers.logo => {
+                                Action::AuthType(character)
+                            }
+                            _ => Action::LockIgnore,
                         },
                     });
                 }
@@ -765,6 +790,10 @@ impl Ferrite {
             Some(Action::LockSubmit) => self.lock_submit(),
             Some(Action::LockReveal) => self.lock_reveal(),
             Some(Action::LockIgnore) => {}
+            Some(Action::AuthType(character)) => self.auth_type(character),
+            Some(Action::AuthErase) => self.auth_erase(),
+            Some(Action::AuthSubmit) => self.auth_submit(),
+            Some(Action::AuthCancel) => self.auth_cancel(),
             Some(Action::LockCancel) => {
                 if self.pending_power.take().is_none() {
                     self.lock_cancel();
@@ -1486,6 +1515,8 @@ impl Ferrite {
             DesktopAction::RequestPower(power) => self.open_power_dialog(power),
             DesktopAction::PowerChoose(power) => self.open_power_dialog(power),
             DesktopAction::CancelPower => self.pending_power = None,
+            DesktopAction::AuthSubmit => self.auth_submit(),
+            DesktopAction::AuthCancel => self.auth_cancel(),
             DesktopAction::ConfirmPower(power) => {
                 self.pending_power = None;
                 if let Some(code) = power.exit_code() {

@@ -1102,6 +1102,16 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
         keyboard_light: system.keyboard_light,
         night: night_view(state),
         power: state.pending_power,
+        // Pas par-dessus l'écran verrouillé : elle attend le déverrouillage.
+        auth: state.auth.front().filter(|_| state.lock.is_none()).map(|auth| {
+            crate::desktop::panels::AuthView {
+                message: auth.message.clone(),
+                user: auth.user.clone(),
+                length: auth.password.chars().count(),
+                checking: auth.checking,
+                refused: auth.refused,
+            }
+        }),
         power_left: state.power_deadline.map_or(0, |deadline| {
             deadline
                 .saturating_duration_since(std::time::Instant::now())

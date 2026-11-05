@@ -284,6 +284,9 @@ pub struct Ferrite {
     /// Verrouillage par un client (`ext-session-lock`), et son gestionnaire.
     pub session_lock_state: smithay::wayland::session_lock::SessionLockManagerState,
     pub session_lock: Option<crate::protocols::session_lock::ClientLock>,
+    /// Demandes de mot de passe administrateur (polkit), la première affichée.
+    pub auth: std::collections::VecDeque<crate::desktop::polkit::Auth>,
+    pub polkit_link: Option<crate::desktop::polkit::Link>,
     /// Copies d'écran demandées par les clients (`wlr-screencopy`), faites à l'image suivante.
     pub screencopy: Vec<crate::protocols::screencopy::PendingCopy>,
     /// Gestionnaire des fenêtres X11, une fois XWayland prêt.
@@ -461,6 +464,8 @@ impl Ferrite {
             layer_shell_state,
             session_lock_state,
             session_lock: None,
+            auth: Default::default(),
+            polkit_link: None,
             screencopy: Vec::new(),
             xwm: None,
             x_display: None,

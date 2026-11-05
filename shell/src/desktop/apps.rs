@@ -266,25 +266,31 @@ pub enum App {
     TextEdit,
     Terminal,
     Calculator,
+    Clock,
     Settings,
     Monitor,
     Viewer,
+    PdfViewer,
     Music,
+    Video,
     /// Corbeille, toujours en dernière case du Dock : la vue Corbeille de Fichiers.
     Trash,
 }
 
 impl App {
     /// Applications Ferrite du menu Applications.
-    pub const ALL: [App; 8] = [
+    pub const ALL: [App; 11] = [
         App::Files,
         App::TextEdit,
         App::Terminal,
         App::Calculator,
+        App::Clock,
         App::Settings,
         App::Monitor,
         App::Viewer,
+        App::PdfViewer,
         App::Music,
+        App::Video,
     ];
 
     /// Applications épinglées dans le Dock.
@@ -302,10 +308,13 @@ impl App {
             App::TextEdit => "TextEdit",
             App::Terminal => "Terminal",
             App::Calculator => "Calculatrice",
+            App::Clock => "Horloge",
             App::Settings => "Paramètres",
             App::Monitor => "Moniteur d'activité",
             App::Viewer => "Visionneuse",
+            App::PdfViewer => "Lecteur PDF",
             App::Music => "Musique",
+            App::Video => "Lecteur vidéo",
             App::Trash => "Corbeille",
         }
     }
@@ -317,10 +326,13 @@ impl App {
             App::TextEdit => "app-text-editor",
             App::Terminal => "app-terminal",
             App::Calculator => "app-calculator",
+            App::Clock => "app-clock",
             App::Settings => "app-settings",
             App::Monitor => "app-monitor",
             App::Viewer => "app-photos",
+            App::PdfViewer => "app-pdf",
             App::Music => "app-music",
+            App::Video => "app-video",
             App::Trash => "places-trash",
         }
     }
@@ -332,10 +344,13 @@ impl App {
             App::TextEdit => "ferrite-textedit",
             App::Terminal => "ferrite-terminal",
             App::Calculator => "ferrite-calculator",
+            App::Clock => "ferrite-clock",
             App::Settings => "ferrite-settings",
             App::Monitor => "ferrite-monitor",
             App::Viewer => "ferrite-viewer",
+            App::PdfViewer => "ferrite-pdf",
             App::Music => "ferrite-music",
+            App::Video => "ferrite-video",
             App::Trash => "ferrite-trash",
         }
     }
@@ -346,10 +361,13 @@ impl App {
             App::TextEdit => ("ferrite-apps", Some("textedit")),
             App::Terminal => ("ferrite-apps", Some("terminal")),
             App::Calculator => ("ferrite-apps", Some("calculator")),
+            App::Clock => ("ferrite-apps", Some("clock")),
             App::Settings => ("ferrite-apps", Some("settings")),
             App::Monitor => ("ferrite-apps", Some("monitor")),
             App::Viewer => ("ferrite-apps", Some("viewer")),
+            App::PdfViewer => ("ferrite-apps", Some("pdf")),
             App::Music => ("ferrite-apps", Some("music")),
+            App::Video => ("ferrite-apps", Some("video")),
             App::Trash => ("ferrite-apps", Some("files")),
         }
     }

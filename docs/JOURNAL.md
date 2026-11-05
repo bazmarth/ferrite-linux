@@ -1143,3 +1143,34 @@ reconnus par extension (mp4, mkv, webm, avi, mov…).
 Vérifié : compilation et clippy `-D warnings` propres, tests (mise en forme du temps,
 encodage des chemins en URI, extensions reconnues). Pas encore vu en capture : la lecture
 d'une vraie vidéo reste à essayer sur le bureau.
+
+## 2026-11-05 — Horloge (heure locale et mondiale, minuteur, chronomètre)
+
+Fait :
+- `apps/core/src/clock.rs` : application Horloge (`ferrite-apps clock`), trois onglets.
+  L'Horloge affiche l'heure locale (chiffres larges, date en toutes lettres en français)
+  et sept horloges du monde (Paris, Londres, New York, Los Angeles, Tokyo, Sydney, UTC)
+  avec leur décalage et l'indication « hier » / « demain » quand le jour diffère. Le
+  Minuteur règle heures/minutes/secondes, compte à rebours avec barre de progression,
+  pause, reprise et message « Temps écoulé » à zéro. Le Chronomètre mesure au centième,
+  avec tours cumulés et durée de chaque tour.
+- L'heure locale vient de l'heure Unix (`SystemTime`) plus le décalage lu par `date +%z`,
+  mis en cache et relu toutes les minutes (bascule d'heure d'été). La date civile est
+  calculée par l'algorithme de Howard Hinnant (jour → année/mois/jour), sans dépendance.
+- Ajoutée au menu Applications du bureau (`App::Clock`, icône `app-clock`, lancement
+  `ferrite-apps clock`) ; fenêtre 440 × 560, instance unique comme les autres.
+
+Vérifié :
+- `cargo clippy --all-targets -D warnings` propre, sept tests du module (décalage, dates
+  civiles, aller-retour jour↔date, formatages, minuteur qui s'arrête à zéro, pause/reprise,
+  tours).
+- Capture en bureau imbriqué `--winit --capture` : barre de titre, trois onglets (Horloge
+  choisi), heure en grands chiffres, date, puis la liste des horloges du monde. Mesuré sur
+  la capture PNG par un petit script (emplacement des chiffres et des lignes de villes).
+
+Limites :
+- Les horloges du monde utilisent des décalages fixes (heure d'hiver) : l'heure d'été n'y
+  est pas appliquée. L'heure locale, elle, est exacte (décalage réel du système).
+- Les onglets Minuteur et Chronomètre n'ont pas été vus en capture (changement d'onglet à la
+  souris) : leur logique est couverte par les tests, à essayer sur le bureau.
+- Le minuteur signale la fin par un message visuel, sans son.

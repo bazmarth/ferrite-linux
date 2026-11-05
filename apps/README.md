@@ -11,6 +11,8 @@ Applications du premier ensemble du bureau, en Rust avec eframe/egui :
   les fichiers Markdown ont les modes Éditer, Partagé et Aperçu avec rendu des titres,
   listes, tableaux, citations et blocs de code.
 - **Calculatrice** : opérations `+`, `-`, `*`, `/`, nombres décimaux et parenthèses.
+- **Horloge** : heure locale, horloges du monde, minuteur et chronomètre
+  (`ferrite-apps clock`).
 - **Visionneuse** : images PNG/JPEG et documents PDF, avec navigation par page et zoom.
   Le rendu PDF s'appuie sur Poppler (`poppler-utils`).
 - **Lecteur vidéo** : lecture des vidéos prises en charge par GStreamer, avec son,
@@ -24,7 +26,8 @@ Applications du premier ensemble du bureau, en Rust avec eframe/egui :
 
 Lancement : `ferrite-apps files`, `ferrite-apps viewer [image ou PDF]`,
 `ferrite-apps video [fichier vidéo]`,
-`ferrite-apps textedit [fichier]`, `ferrite-apps calculator` ou `ferrite-apps settings`.
+`ferrite-apps textedit [fichier]`, `ferrite-apps calculator`, `ferrite-apps clock`
+ou `ferrite-apps settings`.
 
 Les applications sont des étapes utilisables, pas encore le périmètre complet de la phase
 5 : corbeille, opérations de fichiers avec progression, profils du terminal, coloration

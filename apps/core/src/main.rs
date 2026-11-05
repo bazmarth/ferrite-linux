@@ -1,7 +1,8 @@
-//! Applications de base Ferrite : Fichiers, TextEdit, Terminal, Calculatrice, Paramètres,
-//! Moniteur d'activité, Visionneuse, lecteur PDF et Musique.
+//! Applications de base Ferrite : Fichiers, TextEdit, Terminal, Calculatrice, Horloge,
+//! Paramètres, Moniteur d'activité, Visionneuse, lecteur PDF et Musique.
 
 mod calculator;
+mod clock;
 mod details;
 mod editor;
 mod files;
@@ -25,8 +26,9 @@ use std::{
 use eframe::egui;
 
 use crate::{
-    calculator::CalculatorState, editor::EditorState, files::FilesState, monitor::MonitorState,
-    music::MusicState, pdf_viewer::ViewerApp, settings::SettingsState, terminal::TerminalState,
+    calculator::CalculatorState, clock::ClockState, editor::EditorState, files::FilesState,
+    monitor::MonitorState, music::MusicState, pdf_viewer::ViewerApp, settings::SettingsState,
+    terminal::TerminalState,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -35,6 +37,7 @@ enum AppKind {
     TextEdit,
     Terminal,
     Calculator,
+    Clock,
     Settings,
     Monitor,
     Viewer,
@@ -50,6 +53,7 @@ impl AppKind {
             "textedit" => Some(Self::TextEdit),
             "terminal" => Some(Self::Terminal),
             "calculator" => Some(Self::Calculator),
+            "clock" => Some(Self::Clock),
             "settings" => Some(Self::Settings),
             "monitor" => Some(Self::Monitor),
             "viewer" => Some(Self::Viewer),
@@ -66,6 +70,7 @@ impl AppKind {
             Self::TextEdit => "TextEdit",
             Self::Terminal => "Terminal",
             Self::Calculator => "Calculatrice",
+            Self::Clock => "Horloge",
             Self::Settings => "Paramètres",
             Self::Monitor => "Moniteur d'activité",
             Self::Viewer => "Visionneuse",
@@ -82,6 +87,7 @@ impl AppKind {
             Self::TextEdit => "ferrite-textedit",
             Self::Terminal => "ferrite-terminal",
             Self::Calculator => "ferrite-calculator",
+            Self::Clock => "ferrite-clock",
             Self::Settings => "ferrite-settings",
             Self::Monitor => "ferrite-monitor",
             Self::Viewer => "ferrite-viewer",
@@ -98,6 +104,7 @@ impl AppKind {
             Self::TextEdit => ([1000.0, 640.0], [420.0, 280.0]),
             Self::Terminal => ([720.0, 450.0], [420.0, 260.0]),
             Self::Calculator => ([320.0, 470.0], [280.0, 420.0]),
+            Self::Clock => ([440.0, 560.0], [360.0, 480.0]),
             Self::Settings => ([1008.0, 640.0], [720.0, 440.0]),
             Self::Monitor => ([1000.0, 640.0], [680.0, 460.0]),
             Self::Viewer => ([1180.0, 760.0], [640.0, 440.0]),
@@ -119,7 +126,7 @@ fn main() -> eframe::Result {
     }
     let Some(kind) = args.next().and_then(|arg| AppKind::parse(&arg)) else {
         eprintln!(
-            "Utilisation : ferrite-apps <files|textedit|terminal|calculator|settings|monitor|viewer|pdf|music|video> [dossier ou fichier]"
+            "Utilisation : ferrite-apps <files|textedit|terminal|calculator|clock|settings|monitor|viewer|pdf|music|video> [dossier ou fichier]"
         );
         return Ok(());
     };
@@ -185,6 +192,7 @@ struct FerriteApp {
     files: Option<FilesState>,
     editor: EditorState,
     calculator: CalculatorState,
+    clock: ClockState,
     settings: Option<SettingsState>,
     monitor: Option<MonitorState>,
     terminal: Option<TerminalState>,
@@ -239,6 +247,7 @@ impl FerriteApp {
             files,
             editor,
             calculator: CalculatorState::default(),
+            clock: ClockState::default(),
             settings,
             monitor: (kind == AppKind::Monitor).then(MonitorState::default),
             terminal: (kind == AppKind::Terminal).then(|| TerminalState::new(&context.egui_ctx, launch)),
@@ -328,6 +337,7 @@ impl eframe::App for FerriteApp {
                 }
             }
             AppKind::Calculator => self.calculator.update(ui),
+            AppKind::Clock => self.clock.update(ui),
             AppKind::Settings => {
                 if let Some(settings) = &mut self.settings {
                     settings.update(ui);

@@ -208,3 +208,9 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
   blanc (constaté en capture). Le cadre est désormais dans un agencement horizontal, avec la
   marge de centrage calculée, et la scène autour reprend les couleurs de la Visionneuse
   (0xEDEFF2 clair, 0x121418 sombre) pour que la feuille se détache.
+- **2026-11-05 — Horloge sans bibliothèque de temps.** L'heure locale est l'heure Unix
+  (`SystemTime`) plus le décalage lu par `date +%z` (mis en cache et relu chaque minute), et
+  la date civile est calculée par l'algorithme de Howard Hinnant (jour ↔ année/mois/jour) :
+  pas de dépendance `chrono`/`time` pour une application simple. Les horloges du monde
+  gardent des décalages fixes (heure d'hiver) ; l'heure d'été n'y est pas appliquée pour
+  l'instant, l'heure locale restant exacte grâce au décalage réel du système.

@@ -353,6 +353,18 @@ impl Ferrite {
     /// au premier plan si elle est ouverte ailleurs, restaure toutes ses fenêtres si elles
     /// sont réduites, ou réduit sa fenêtre active si elle est déjà au premier plan.
     pub fn activate_app(&mut self, key: &AppKey) {
+        self.bring_app(key, true);
+    }
+
+    /// Affiche l'application au premier plan, la lance si elle ne l'est pas, sans
+    /// jamais la réduire (îlot, notification) : déjà devant, elle y reste.
+    pub fn show_app(&mut self, key: &AppKey) {
+        self.bring_app(key, false);
+    }
+
+    /// Fenêtre de l'application au premier plan ; `toggle` : déjà active, elle se réduit
+    /// (Dock, comme sur macOS).
+    fn bring_app(&mut self, key: &AppKey, toggle: bool) {
         let (mapped, minimized) = self.app_windows(key);
         // Sa fenêtre est sur un autre bureau : on y va, comme sur macOS.
         if mapped.is_empty()
@@ -370,7 +382,8 @@ impl Ferrite {
             return;
         }
 
-        if let Some(top) = self.top_window()
+        if toggle
+            && let Some(top) = self.top_window()
             && self.window_app(&top).as_ref() == Some(key)
         {
             // Comme sur macOS, un deuxième appui sur l'application active la réduit.

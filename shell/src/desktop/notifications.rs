@@ -62,6 +62,8 @@ pub struct Notice {
     pub actions: Vec<(String, String)>,
     /// Heure de réception.
     pub received: std::time::SystemTime,
+    /// Fichier à ouvrir au clic (capture, enregistrement) ; sinon le clic ouvre l'application.
+    pub file: Option<PathBuf>,
 }
 
 /// Message vers la boucle du compositeur.
@@ -211,6 +213,15 @@ pub fn local_notice(summary: &str, body: &str) -> Notice {
         has_default: false,
         actions: Vec::new(),
         received: std::time::SystemTime::now(),
+        file: None,
+    }
+}
+
+/// Notification du bureau qui ouvre `file` au clic (capture d'écran, enregistrement).
+pub fn file_notice(summary: &str, body: &str, file: PathBuf) -> Notice {
+    Notice {
+        file: Some(file),
+        ..local_notice(summary, body)
     }
 }
 
@@ -285,6 +296,7 @@ impl Server {
                 .map(|pair| (pair[0].clone(), limited(&pair[1], 16)))
                 .collect(),
             received: std::time::SystemTime::now(),
+            file: None,
         };
         if self.events.send(Event::Notify(notice)).is_err() {
             tracing::warn!("notification perdue : le bureau ne répond plus");
@@ -419,25 +431,32 @@ impl Ferrite {
         if self.notifications.has_default(id) {
             self.send_notification_signal(Signal::Action(id, "default".to_owned()));
         }
-        self.show_notification_app(id);
+        self.open_notification_target(id);
         self.dismiss_notification(id);
     }
 
-    /// L'application qui a envoyé la notification passe devant, si elle est ouverte (une
+    /// Ce qu'ouvre le clic sur une notification : son fichier (une capture dans la
+    /// Visionneuse, un enregistrement dans le Lecteur vidéo, autre chose dans Fichiers),
+    /// sinon l'application qui l'a envoyée, mise au premier plan ou lancée (une
     /// application Wayland ne peut pas se mettre au premier plan seule).
-    fn show_notification_app(&mut self, id: u32) {
-        let Some(entry) = self
-            .notifications
-            .history()
-            .find(|notice| notice.id == id)
-            .map(|notice| notice.entry.clone())
-            .filter(|entry| !entry.is_empty())
-        else {
+    fn open_notification_target(&mut self, id: u32) {
+        use crate::desktop::apps::{App, AppKey};
+        let Some(notice) = self.notifications.history().find(|notice| notice.id == id) else {
             return;
         };
-        let key = crate::desktop::apps::AppKey::for_window(&entry, &self.applications);
-        if self.app_running(&key) {
-            self.activate_app(&key);
+        let (file, entry) = (notice.file.clone(), notice.entry.clone());
+        if let Some(file) = file.filter(|file| file.exists()) {
+            let app = App::for_file(&file);
+            let env = self.client_environment();
+            app.launch_with(&env, &[file]);
+            return;
+        }
+        if entry.is_empty() {
+            return;
+        }
+        let key = AppKey::for_window(&entry, &self.applications);
+        if self.app_running(&key) || !matches!(key, AppKey::Other(_)) {
+            self.show_app(&key);
         }
     }
 

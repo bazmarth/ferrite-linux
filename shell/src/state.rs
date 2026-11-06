@@ -235,6 +235,8 @@ pub struct Ferrite {
     pub island_timer: Option<crate::desktop::island::TimerActivity>,
     pub island_open_until: Option<std::time::Instant>,
     pub island_ticking: bool,
+    /// Activité dépliée par un clic (une bulle), sinon la première.
+    pub island_focus: Option<crate::desktop::island::IslandFocus>,
     /// Sélection d'une fenêtre à capturer : mode actif, et fenêtre survolée.
     pub window_select: bool,
     pub window_select_hover: Option<Window>,
@@ -476,6 +478,7 @@ impl Ferrite {
             island_timer: None,
             island_open_until: None,
             island_ticking: false,
+            island_focus: None,
             window_select: false,
             window_select_hover: None,
             overview_order: Vec::new(),

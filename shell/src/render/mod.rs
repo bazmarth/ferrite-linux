@@ -1172,6 +1172,7 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
     // Plein écran : la pastille repliée se cache avec la barre ; les annonces passent.
     if !state.bar_visible() && island.kind.as_ref().is_some_and(|kind| kind.compact()) {
         island.kind = None;
+        island.others.clear();
     }
     let system = &state.system;
     let dark_theme = state.appearance.is_dark();
@@ -1668,7 +1669,7 @@ fn render_screenshot(
         .flatten();
     let copy = request.clipboard;
     capture::capture_in_background(image, width, height, request.save, move |result| {
-        use crate::desktop::notifications::{Event, local_notice};
+        use crate::desktop::notifications::{Event, file_notice, local_notice};
         let notice = match result {
             Ok((path, png)) => {
                 let copied = if copy {
@@ -1704,16 +1705,20 @@ fn render_screenshot(
                     (Some(path), true, true) => {
                         tracing::info!("capture d'écran enregistrée : {}", path.display());
                         let name = path.file_name().map(|name| name.to_string_lossy().into_owned());
-                        local_notice("Capture copiée et enregistrée", &name.unwrap_or_default())
+                        file_notice("Capture copiée et enregistrée", &name.unwrap_or_default(), path)
                     }
                     (Some(path), true, false) => {
                         let name = path.file_name().map(|name| name.to_string_lossy().into_owned());
-                        local_notice("Capture enregistrée, copie impossible", &name.unwrap_or_default())
+                        file_notice(
+                            "Capture enregistrée, copie impossible",
+                            &name.unwrap_or_default(),
+                            path,
+                        )
                     }
                     (Some(path), false, _) => {
                         tracing::info!("capture d'écran enregistrée : {}", path.display());
                         let name = path.file_name().map(|name| name.to_string_lossy().into_owned());
-                        local_notice("Capture enregistrée", &name.unwrap_or_default())
+                        file_notice("Capture enregistrée", &name.unwrap_or_default(), path)
                     }
                     (None, true, true) => local_notice("Capture copiée", "L’image est prête à être collée."),
                     (None, true, false) => local_notice(

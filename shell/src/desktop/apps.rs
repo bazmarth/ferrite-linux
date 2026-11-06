@@ -274,6 +274,21 @@ impl App {
     pub const SETTINGS: App = App("settings");
     pub const MUSIC: App = App("music");
     pub const CLOCK: App = App("clock");
+
+    /// Application Ferrite qui ouvre `file` : Visionneuse pour une image, Lecteur vidéo
+    /// pour une vidéo, Fichiers (sur le fichier) pour le reste.
+    pub fn for_file(file: &std::path::Path) -> App {
+        let extension = file
+            .extension()
+            .map(|extension| extension.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        match extension.as_str() {
+            "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" => App("viewer"),
+            "mp4" | "mkv" | "webm" | "mov" | "avi" => App("video"),
+            "pdf" => App("pdf"),
+            _ => App::FILES,
+        }
+    }
     pub const TRASH: App = App(TRASH_COMMAND);
 
     /// Applications Ferrite du menu Applications.
@@ -397,6 +412,15 @@ mod tests {
             wm_class: None,
             categories: Vec::new(),
         }
+    }
+
+    #[test]
+    fn chaque_fichier_s_ouvre_dans_la_bonne_application() {
+        let app = |name: &str| App::for_file(std::path::Path::new(name)).app_id();
+        assert_eq!(app("/home/a/Images/Capture du 6 nov.PNG"), "ferrite-viewer");
+        assert_eq!(app("/home/a/Vidéos/Enregistrement.mp4"), "ferrite-video");
+        assert_eq!(app("/home/a/doc.pdf"), "ferrite-pdf");
+        assert_eq!(app("/home/a/notes.txt"), "ferrite-files");
     }
 
     #[test]

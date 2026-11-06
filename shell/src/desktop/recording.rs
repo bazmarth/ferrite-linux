@@ -10,7 +10,7 @@ use std::{
 
 use smithay::utils::{Logical, Rectangle};
 
-use crate::desktop::notifications::{Event, local_notice};
+use crate::desktop::notifications::{Event, file_notice, local_notice};
 
 /// Enregistrement en cours.
 #[derive(Debug)]
@@ -83,8 +83,8 @@ impl Recording {
                 .unwrap_or_default();
             let saved = std::fs::metadata(&self.path).is_ok_and(|meta| meta.len() > 0);
             let notice = match (saved, interrupted) {
-                (true, false) => local_notice("Enregistrement terminé", &name),
-                (true, true) => local_notice("Enregistrement interrompu", &name),
+                (true, false) => file_notice("Enregistrement terminé", &name, self.path.clone()),
+                (true, true) => file_notice("Enregistrement interrompu", &name, self.path.clone()),
                 (false, _) => local_notice("Enregistrement impossible", "wf-recorder n’a rien enregistré."),
             };
             if let Some(events) = events {

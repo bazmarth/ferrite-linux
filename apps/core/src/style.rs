@@ -1181,8 +1181,17 @@ fn rasterize(name: &str, side: u32, ink: Option<Color32>) -> Option<egui::ColorI
 mod tests {
     use super::*;
 
+    /// Le thème est global : les tests qui le changent passent l'un après l'autre, sinon
+    /// l'un lit le thème que l'autre vient de poser.
+    static THEME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn theme_lock() -> std::sync::MutexGuard<'static, ()> {
+        THEME.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     #[test]
     fn adaptateur_egui_applique_les_tokens_partages() {
+        let _theme = theme_lock();
         let context = egui::Context::default();
         apply(&context);
         let style = context.style_of(egui::Theme::Light);
@@ -1198,6 +1207,7 @@ mod tests {
 
     #[test]
     fn changement_de_theme_met_a_jour_la_palette_egui() {
+        let _theme = theme_lock();
         let context = egui::Context::default();
         let dark = Settings::parse("apparence = sombre\naccent = jaune\n");
         apply_preferences(&context, &dark);

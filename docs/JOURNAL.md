@@ -1438,3 +1438,39 @@ devant.
 
 Pas vérifié : nouvelle mesure en mouvement sur le vrai bureau, clics réels sur l'îlot
 depuis cette correction.
+
+## 2026-11-06 — Îlot : le premier clic le déplie
+
+À la demande de l'utilisateur : un premier clic sur la pastille repliée (minuteur,
+musique) déplie l'îlot avec ses boutons ; c'est un clic sur l'îlot déplié, hors boutons,
+qui ouvre l'application (Horloge, lecteur) et le replie. Un clic ailleurs le replie
+toujours aussitôt. Pas encore essayé à la souris.
+Suite : le clic sur l'îlot déplié passait par `activate_app`, qui réduit l'application
+quand elle est déjà au premier plan (comportement du Dock). L'îlot et les notifications
+passent maintenant par `show_app` : l'application vient au premier plan, sort du Dock si
+elle était réduite, est lancée si elle est fermée, et n'est jamais réduite.
+
+## 2026-11-06 — Un clic sur une notification ouvre ce qu'elle annonce
+
+- Les notifications du bureau gardent le fichier qu'elles annoncent (`Notice::file`,
+  `file_notice`) : un clic sur « Capture enregistrée » l'ouvre dans la Visionneuse, sur
+  « Enregistrement terminé » dans le Lecteur vidéo (`App::for_file` : images, vidéos,
+  PDF, sinon Fichiers). Si l'application est déjà ouverte, elle reçoit le fichier et
+  passe devant (instance unique).
+- Les autres notifications ouvrent l'application qui les a envoyées : au premier plan si
+  elle est ouverte ou réduite, lancée si elle est fermée (`show_app`, jamais réduite).
+- Même règle depuis l'îlot et depuis l'historique sous l'horloge.
+
+Testé : `App::for_file`. Pas encore essayé à la souris.
+
+## 2026-11-06 — Îlot : plusieurs activités en même temps
+
+L'îlot ne montrait qu'une activité (enregistrement, sinon minuteur, sinon musique) ; les
+autres étaient cachées. Toutes les activités en cours sont maintenant visibles, comme sur
+l'iPhone : la plus pressante dans la pastille, chacune des autres dans une bulle ronde à
+droite (point rouge, anneau du minuteur, barres de la musique), qui apparaît en fondu.
+Un clic sur une bulle déplie son activité (`IslandFocus`) ; sur la bulle de
+l'enregistrement, il l'arrête. Notifications, son et fin du minuteur passent toujours
+devant, bulles masquées le temps de l'annonce.
+Vérifié : capture d'un minuteur et d'une musique (lecteur MPRIS simulé) ; test des bulles
+(`une_bulle_par_autre_activite`). Pas encore essayé à la souris.

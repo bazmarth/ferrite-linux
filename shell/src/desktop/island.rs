@@ -20,6 +20,29 @@ use crate::{
 /// Temps pendant lequel l'îlot reste déplié après un clic.
 const OPEN_FOR: Duration = Duration::from_secs(6);
 
+/// Activité que l'îlot déplie : celle de la pastille, ou celle d'une bulle touchée.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IslandFocus {
+    Timer,
+    Media,
+}
+
+impl IslandFocus {
+    /// Activité qui se déplie, pour ce qu'affiche une pastille ou une bulle.
+    fn of(kind: &IslandKind) -> Option<Self> {
+        match kind {
+            IslandKind::Timer { .. } => Some(Self::Timer),
+            IslandKind::Media { .. } => Some(Self::Media),
+            _ => None,
+        }
+    }
+
+    /// Encore en cours ?
+    fn matches(self, live: &[IslandKind]) -> bool {
+        live.iter().any(|kind| Self::of(kind) == Some(self))
+    }
+}
+
 /// Minuteur de l'Horloge, vu par l'îlot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TimerActivity {
@@ -88,6 +111,26 @@ impl Ferrite {
         });
         let opened = self.island_open_until.is_some_and(|until| now < until);
         let media = self.media.as_ref();
+        // Activités en cours, de la plus pressante à la plus discrète.
+        let mut live: Vec<IslandKind> = Vec::new();
+        if let Some(recording) = &self.recording {
+            live.push(IslandKind::Recording(crate::desktop::recording::elapsed_label(
+                recording.elapsed(),
+            )));
+        }
+        if let Some((left, paused, done, false)) = timer.clone() {
+            live.push(IslandKind::Timer { left, paused, done });
+        }
+        if let Some(media) = media.filter(|media| media.playing) {
+            live.push(IslandKind::Media {
+                playing: media.playing,
+            });
+        }
+        // Activité dépliée : celle choisie (une bulle), sinon la première qui se déplie.
+        let focus = self
+            .island_focus
+            .filter(|focus| focus.matches(&live))
+            .or_else(|| live.iter().find_map(IslandFocus::of));
         let kind = if let Some(osd) = self.osd_view() {
             Some(IslandKind::Osd(osd))
         } else if let Some(notification) = notifications.bubbles.first() {
@@ -97,29 +140,31 @@ impl Ferrite {
             })
         } else if timer.as_ref().is_some_and(|timer| timer.3) {
             Some(IslandKind::TimerDone)
-        } else if let (true, Some((left, paused, done, _))) = (opened, timer.clone()) {
+        } else if let (true, Some(IslandFocus::Timer), Some((left, paused, done, _))) =
+            (opened, focus, timer.clone())
+        {
             Some(IslandKind::TimerOpen { left, paused, done })
-        } else if let (true, Some(media)) = (opened, media) {
+        } else if let (true, Some(IslandFocus::Media), Some(media)) = (opened, focus, media) {
             Some(IslandKind::MediaOpen {
                 title: media.title.clone(),
                 artist: media.artist.clone(),
                 playing: media.playing,
                 cover: media.cover.clone(),
             })
-        } else if let Some(recording) = &self.recording {
-            Some(IslandKind::Recording(crate::desktop::recording::elapsed_label(
-                recording.elapsed(),
-            )))
-        } else if let Some((left, paused, done, _)) = timer {
-            Some(IslandKind::Timer { left, paused, done })
+        } else if !live.is_empty() {
+            // Repliée : la première activité dans la pastille, les autres en bulles.
+            let main = live.remove(0);
+            return IslandView {
+                kind: Some(main),
+                others: live,
+            };
         } else {
-            media
-                .filter(|media| media.playing)
-                .map(|media| IslandKind::Media {
-                    playing: media.playing,
-                })
+            None
         };
-        IslandView { kind }
+        IslandView {
+            kind,
+            others: Vec::new(),
+        }
     }
 
     /// L'Horloge annonce son minuteur : « marche », « pause », « fini » ou « arret ».
@@ -191,18 +236,33 @@ impl Ferrite {
     /// Clic dans l'îlot.
     pub fn island_press(&mut self, hit: IslandHit) {
         let notifications = crate::render::desktop_view(self).notifications;
-        let Some(kind) = self.island_view(&notifications).kind else {
+        let view = self.island_view(&notifications);
+        let Some(kind) = view.kind.clone() else {
             return;
         };
-        match (kind, hit) {
-            // Un clic sur l'activité ouvre son application (clic droit : ses boutons).
-            (IslandKind::Timer { .. } | IslandKind::TimerOpen { .. }, IslandHit::Side | IslandHit::Body) => {
-                self.open_clock();
-                self.island_expand();
+        // Bulle d'une autre activité : l'enregistrement s'arrête, le reste se déplie.
+        if let IslandHit::Other(index) = hit {
+            match view.others.get(index) {
+                Some(IslandKind::Recording(_)) => self.stop_recording(),
+                Some(other) => self.island_open(IslandFocus::of(other)),
+                None => {}
             }
-            (IslandKind::Media { .. } | IslandKind::MediaOpen { .. }, IslandHit::Side | IslandHit::Body) => {
+            self.request_redraw();
+            return;
+        }
+        match (kind, hit) {
+            // Premier clic : l'îlot se déplie avec ses boutons. Un clic sur l'îlot déplié
+            // (hors boutons) ouvre l'application, et il se replie.
+            (main @ (IslandKind::Timer { .. } | IslandKind::Media { .. }), _) => {
+                self.island_open(IslandFocus::of(&main));
+            }
+            (IslandKind::TimerOpen { .. }, IslandHit::Body | IslandHit::Side) => {
+                self.island_open_until = None;
+                self.open_clock();
+            }
+            (IslandKind::MediaOpen { .. }, IslandHit::Body | IslandHit::Side) => {
+                self.island_open_until = None;
                 self.open_media_player();
-                self.island_expand();
             }
             (IslandKind::TimerDone, IslandHit::Body) => {
                 self.island_timer = None;
@@ -232,16 +292,19 @@ impl Ferrite {
         self.request_redraw();
     }
 
-    /// Clic droit sur la pastille repliée : elle se déplie avec ses boutons (pause,
+    /// Clic (gauche ou droit) sur la pastille repliée : elle se déplie avec ses boutons (pause,
     /// arrêter, morceau précédent ou suivant) pendant [`OPEN_FOR`].
     pub fn island_expand(&mut self) {
         let notifications = crate::render::desktop_view(self).notifications;
-        if !matches!(
-            self.island_view(&notifications).kind,
-            Some(IslandKind::Timer { .. } | IslandKind::Media { .. })
-        ) {
-            return;
+        let main = self.island_view(&notifications).kind;
+        if let Some(focus) = main.as_ref().and_then(IslandFocus::of) {
+            self.island_open(Some(focus));
         }
+    }
+
+    /// Déplie l'îlot sur `focus` (sinon sur la première activité) pendant [`OPEN_FOR`].
+    fn island_open(&mut self, focus: Option<IslandFocus>) {
+        self.island_focus = focus;
         self.island_open_until = Some(Instant::now() + OPEN_FOR);
         // Il se replie seul : une image de plus à l'échéance.
         let _ = self
@@ -255,7 +318,7 @@ impl Ferrite {
 
     /// L'Horloge, sur son minuteur.
     fn open_clock(&mut self) {
-        self.open_app(&crate::desktop::apps::AppKey::Builtin(
+        self.show_app(&crate::desktop::apps::AppKey::Builtin(
             crate::desktop::apps::App::CLOCK,
         ));
     }
@@ -279,7 +342,7 @@ impl Ferrite {
                 None => return,
             }
         }
-        self.open_app(&key);
+        self.show_app(&key);
     }
 
     /// Clic ailleurs que sur l'îlot déplié : il se replie aussitôt (minuteur ou musique

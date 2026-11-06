@@ -16,6 +16,8 @@ const COMPACT_W: f64 = 340.0;
 const SIDE_W: f64 = 74.0;
 /// Pastille de départ et d'arrivée quand l'îlot apparaît ou s'efface.
 const SEED_W: f64 = 200.0;
+/// Écart entre la pastille et les bulles des autres activités.
+const BUBBLE_GAP: f64 = 8.0;
 /// Haut de l'îlot déplié, et marge autour de sa forme pour son ombre.
 const OPEN_TOP: f64 = 6.0;
 const SHADOW: f64 = 6.0;
@@ -67,6 +69,9 @@ impl IslandKind {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct IslandView {
     pub kind: Option<IslandKind>,
+    /// Autres activités en cours (enregistrement, minuteur, musique), chacune dans une
+    /// bulle ronde à droite de la pastille repliée, comme sur l'iPhone.
+    pub others: Vec<IslandKind>,
 }
 
 /// Endroit cliqué dans l'îlot.
@@ -78,6 +83,8 @@ pub enum IslandHit {
     Button(usize),
     /// Ailleurs sur l'îlot déplié.
     Body,
+    /// La bulle d'une autre activité, de gauche à droite.
+    Other(usize),
 }
 
 impl Layout {
@@ -96,6 +103,24 @@ impl Layout {
     fn island_seed(&self) -> Rect {
         let compact = self.island_compact();
         Rect::new(((self.w - SEED_W) / 2.0).round(), compact.y, SEED_W, compact.h)
+    }
+
+    /// Bulles des autres activités, à droite de la pastille repliée.
+    pub(super) fn island_bubbles(&self, island: &IslandView) -> Vec<Rect> {
+        if !island.kind.as_ref().is_some_and(IslandKind::compact) {
+            return Vec::new();
+        }
+        let pill = self.island_compact();
+        (0..island.others.len())
+            .map(|index| {
+                Rect::new(
+                    pill.right() + BUBBLE_GAP + index as f64 * (pill.h + BUBBLE_GAP),
+                    pill.y,
+                    pill.h,
+                    pill.h,
+                )
+            })
+            .collect()
     }
 
     /// Place de l'îlot, s'il est affiché.
@@ -157,6 +182,13 @@ impl Layout {
 /// Endroit de l'îlot sous `pos`. Le milieu de la pastille repliée n'en fait pas partie :
 /// c'est l'heure, qui ouvre toujours le calendrier.
 pub(super) fn island_at(layout: &Layout, island: &IslandView, pos: Point<f64, Logical>) -> Option<IslandHit> {
+    if let Some(index) = layout
+        .island_bubbles(island)
+        .iter()
+        .position(|bubble| bubble.contains(pos))
+    {
+        return Some(IslandHit::Other(index));
+    }
     let kind = island.kind.as_ref()?;
     let rect = layout.island(island)?;
     if !rect.contains(pos) {
@@ -182,6 +214,10 @@ pub fn island_contains(
     let layout = Layout::new(output.size.w as f64, output.size.h as f64, view);
     let pos = Point::from((pos.x - output.loc.x as f64, pos.y - output.loc.y as f64));
     layout.island(&view.island).is_some_and(|rect| rect.contains(pos))
+        || layout
+            .island_bubbles(&view.island)
+            .iter()
+            .any(|bubble| bubble.contains(pos))
 }
 
 /// Mouvement de l'îlot d'une image à l'autre.
@@ -197,6 +233,10 @@ pub(super) struct IslandMotion {
     content: Option<(IslandKind, String, u32, Rect, MemoryRenderBuffer)>,
     /// Forme noire dessinée : taille en pixels physiques, et ses pixels.
     shape: Option<((u32, u32), MemoryRenderBuffer)>,
+    /// Bulles des autres activités : ce qu'elles montrent, l'échelle, leurs pixels.
+    bubbles: Vec<(IslandKind, u32, MemoryRenderBuffer)>,
+    /// Part visible des bulles (0 à 1), et son dernier pas.
+    bubbles_shown: std::cell::Cell<(f64, Option<Instant>)>,
 }
 
 /// Pas d'un mouvement : un léger dépassement à l'arrivée, comme un ressort.
@@ -363,6 +403,104 @@ impl Panels {
         if let Some((pixels, buffer)) = motion.shape.as_ref() {
             push(buffer, rect.expand(SHADOW), *pixels, alpha);
         }
+
+        // Bulles des autres activités : elles apparaissent et s'effacent en fondu.
+        let places = layout.island_bubbles(&view.island);
+        let target_shown = if places.is_empty() { 0.0 } else { 1.0 };
+        let shown = crate::desktop::dock::ease(crate::desktop::dock::DockMotion::step(
+            &motion.bubbles_shown,
+            target_shown,
+            ferrite_ui::tokens::motion::SHORT,
+        ));
+        if !places.is_empty() {
+            let fresh = motion.bubbles.len() == view.island.others.len()
+                && motion
+                    .bubbles
+                    .iter()
+                    .zip(&view.island.others)
+                    .all(|((known, known_scale, _), kind)| known == kind && *known_scale == scale_milli);
+            if !fresh {
+                let side = places[0].w;
+                motion.bubbles = view
+                    .island
+                    .others
+                    .iter()
+                    .map(|kind| {
+                        (
+                            kind.clone(),
+                            scale_milli,
+                            self.rasterize_bubble(kind, side, scale),
+                        )
+                    })
+                    .collect();
+            }
+        }
+        let pixels = |side: f64| {
+            let edge = ((side + SHADOW * 2.0) * scale).ceil() as u32;
+            (edge, edge)
+        };
+        if shown > 0.0 {
+            for (place, (_, _, buffer)) in places.iter().zip(&motion.bubbles) {
+                push(buffer, place.expand(SHADOW), pixels(place.w), shown * alpha);
+            }
+        } else if places.is_empty() {
+            motion.bubbles.clear();
+        }
+    }
+
+    /// Bulle ronde d'une autre activité : forme noire et son symbole, ombre comprise.
+    fn rasterize_bubble(&self, kind: &IslandKind, side: f64, scale: f64) -> MemoryRenderBuffer {
+        let edge = ((side + SHADOW * 2.0) * scale).ceil() as u32;
+        let mut canvas = Canvas {
+            pixels: vec![0; edge as usize * edge as usize * 4],
+            width: edge,
+            height: edge,
+            scale: scale as f32,
+            bold: &self.bold,
+            icons: &self.icons,
+        };
+        let disc = Rect::new(SHADOW, SHADOW, side, side);
+        let radius = (side / 2.0) as f32;
+        for (grow, shade) in [(3.0, 16), (2.0, 22), (1.0, 34)] {
+            canvas.fill(
+                Rect::new(
+                    disc.x - grow,
+                    disc.y - grow + 1.5,
+                    disc.w + grow * 2.0,
+                    disc.h + grow * 2.0,
+                ),
+                radius + grow as f32,
+                Color::BLACK.with_alpha(shade),
+            );
+        }
+        canvas.fill(disc, radius, ISLAND_BG);
+        let center = disc.center();
+        match kind {
+            IslandKind::Recording(_) => {
+                canvas.fill(Rect::new(center.0 - 5.0, center.1 - 5.0, 10.0, 10.0), 5.0, RED);
+            }
+            IslandKind::Timer { paused, done, .. } => {
+                let color = if *paused { DIM } else { ORANGE };
+                ring(&mut canvas, center, 7.5, 2.4, f64::from(*done) / 1000.0, color);
+            }
+            IslandKind::Media { playing } => {
+                let heights: [f64; 3] = if *playing { [7.0, 12.0, 9.0] } else { [3.0; 3] };
+                let color = if *playing { GREEN } else { DIM };
+                for (index, height) in heights.iter().enumerate() {
+                    let x = center.0 - 7.5 + index as f64 * 6.0;
+                    canvas.fill(Rect::new(x, center.1 - height / 2.0, 3.0, *height), 1.5, color);
+                }
+            }
+            _ => {}
+        }
+        MemoryRenderBuffer::from_slice(
+            &canvas.pixels,
+            Fourcc::Argb8888,
+            (edge as i32, edge as i32),
+            1,
+            smithay::utils::Transform::Normal,
+            None,
+        )
     }
 
     /// Contenu de l'îlot, sur fond transparent, à la taille `rect`.
@@ -674,6 +812,7 @@ mod tests {
                 paused: false,
                 done: 10,
             }),
+            others: Vec::new(),
         };
         let rect = layout.island(&island).expect("affiché");
         assert!(rect.y >= 0.0 && rect.bottom() <= 34.0);
@@ -698,6 +837,7 @@ mod tests {
                 paused: true,
                 done: 10,
             }),
+            others: Vec::new(),
         };
         let buttons = layout.island_buttons(&island);
         assert_eq!(buttons.len(), 2);
@@ -722,12 +862,39 @@ mod tests {
             bar_height: 34,
             island: IslandView {
                 kind: Some(IslandKind::TimerDone),
+                ..IslandView::default()
             },
             ..DesktopView::default()
         };
         assert!(island_contains(output, Point::from((720.0, 30.0)), &view));
         assert!(!island_contains(output, Point::from((720.0, 400.0)), &view));
         assert!(!island_contains(output, Point::from((40.0, 30.0)), &view));
+    }
+
+    #[test]
+    fn une_bulle_par_autre_activite() {
+        let layout = layout();
+        let island = IslandView {
+            kind: Some(IslandKind::Recording("0:07".to_owned())),
+            others: vec![
+                IslandKind::Timer {
+                    left: "4:59".to_owned(),
+                    paused: false,
+                    done: 10,
+                },
+                IslandKind::Media { playing: true },
+            ],
+        };
+        let pill = layout.island(&island).expect("affichée");
+        let bubbles = layout.island_bubbles(&island);
+        assert_eq!(bubbles.len(), 2);
+        assert!(bubbles[0].x > pill.right() && bubbles[1].x > bubbles[0].right());
+        for (index, bubble) in bubbles.iter().enumerate() {
+            assert_eq!(
+                island_at(&layout, &island, Point::from(bubble.center())),
+                Some(IslandHit::Other(index))
+            );
+        }
     }
 
     #[test]

@@ -3733,7 +3733,7 @@ pub fn action_at(
         && let Some(hit) = island::island_at(&layout, &view.island, pos)
     {
         return Some(match (&view.island.kind, hit) {
-            (Some(IslandKind::Recording(_)), _) => DesktopAction::StopRecording,
+            (Some(IslandKind::Recording(_)), IslandHit::Side) => DesktopAction::StopRecording,
             (Some(IslandKind::Notification { notification, .. }), IslandHit::Button(index)) => {
                 DesktopAction::NotificationAction(notification.id, index)
             }
@@ -6786,6 +6786,7 @@ mod tests {
                 notification: notification.clone(),
                 more: 0,
             }),
+            others: Vec::new(),
         };
         let layout = Layout::new(1440.0, 900.0, &view);
         let bubble = layout.island(&view.island).expect("îlot affiché");

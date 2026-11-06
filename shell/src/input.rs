@@ -1098,6 +1098,9 @@ impl Ferrite {
             }
             return;
         }
+        if button.state == ButtonState::Pressed {
+            self.island_click_outside(location);
+        }
         // Fin d'un déplacement de widget.
         if button.button == BTN_LEFT
             && button.state == ButtonState::Released

@@ -47,7 +47,7 @@ pub use cards::{tasks_scroll_limit, widget_at, widget_edges_at, widgets_areas};
 pub use lock_screen::{LOCK_BLUR_MAX, LOCK_WALLS, LockAction, LockPicture, lock_action_at};
 
 use cards::dashboard_action_at;
-pub use island::{IslandHit, IslandKind, IslandView};
+pub use island::{IslandHit, IslandKind, IslandView, island_contains};
 
 use crate::clipboard::{self, Filter as ClipFilter, Kind as ClipKind, Thumbnail};
 use crate::desktop::svg::{self, IconCache, Style};

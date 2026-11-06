@@ -1401,3 +1401,11 @@ Vérifié : capture de Brave (profil temporaire) avec fermer à gauche et agrand
 Reste à part : les applications Electron à barre de titre maison (VS Code, Claude,
 ChatGPT) dessinent leurs boutons elles-mêmes ; VS Code peut prendre la barre du bureau
 (`"window.titleBarStyle": "native"`).
+
+## 2026-11-06 — L'îlot se replie au premier clic ailleurs
+
+Un clic hors de l'îlot déplié le replie aussitôt, sans attendre ses 6 s : minuteur ou
+musique ouverts, son et luminosité, notification (elle file dans l'historique, avec
+`Center::hide_bubbles`). La fin d'un minuteur reste affichée jusqu'à « Arrêter ». Le clic
+poursuit ensuite son chemin (fenêtre, bureau). Testé : `island_contains` et
+`hide_bubbles` ; pas encore essayé à la souris sur le bureau.

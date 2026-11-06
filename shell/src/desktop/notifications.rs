@@ -150,6 +150,16 @@ impl Center {
             .any(|item| item.notice.id == id && item.notice.has_default)
     }
 
+    /// Masque toutes les bulles (elles restent dans l'historique) ; renvoie si une l'était.
+    pub fn hide_bubbles(&mut self) -> bool {
+        let mut hidden = false;
+        for item in self.items.iter_mut().filter(|item| item.bubble) {
+            item.bubble = false;
+            hidden = true;
+        }
+        hidden
+    }
+
     /// Bulles à afficher, la plus récente en haut.
     pub fn bubbles(&self) -> impl Iterator<Item = &Notice> {
         self.items
@@ -448,6 +458,17 @@ mod tests {
             id,
             ..local_notice("Titre", "Texte")
         }
+    }
+
+    #[test]
+    fn un_clic_ailleurs_range_les_bulles_dans_l_historique() {
+        let mut center = Center::default();
+        center.notify(notice(1), Instant::now());
+        center.notify(notice(2), Instant::now());
+        assert!(center.hide_bubbles());
+        assert_eq!(center.bubbles().count(), 0);
+        assert_eq!(center.history().count(), 2);
+        assert!(!center.hide_bubbles());
     }
 
     #[test]

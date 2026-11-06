@@ -173,6 +173,17 @@ pub(super) fn island_at(layout: &Layout, island: &IslandView, pos: Point<f64, Lo
     Some(button.map_or(IslandHit::Body, IslandHit::Button))
 }
 
+/// Le point `pos` (coordonnées de l'écran `output`) est-il sur l'îlot affiché ?
+pub fn island_contains(
+    output: Rectangle<i32, Logical>,
+    pos: Point<f64, Logical>,
+    view: &DesktopView,
+) -> bool {
+    let layout = Layout::new(output.size.w as f64, output.size.h as f64, view);
+    let pos = Point::from((pos.x - output.loc.x as f64, pos.y - output.loc.y as f64));
+    layout.island(&view.island).is_some_and(|rect| rect.contains(pos))
+}
+
 /// Mouvement de l'îlot d'une image à l'autre.
 #[derive(Debug, Default)]
 pub(super) struct IslandMotion {
@@ -699,6 +710,22 @@ mod tests {
             island_at(&layout, &island, Point::from((rect.x + 20.0, rect.y + 10.0))),
             Some(IslandHit::Body)
         );
+    }
+
+    #[test]
+    fn l_ilot_deplie_sait_ce_qui_est_dessus() {
+        let output = Rectangle::from_size((1440, 900).into());
+        let view = DesktopView {
+            bar_visible: true,
+            bar_height: 34,
+            island: IslandView {
+                kind: Some(IslandKind::TimerDone),
+            },
+            ..DesktopView::default()
+        };
+        assert!(island_contains(output, Point::from((720.0, 30.0)), &view));
+        assert!(!island_contains(output, Point::from((720.0, 400.0)), &view));
+        assert!(!island_contains(output, Point::from((40.0, 30.0)), &view));
     }
 
     #[test]

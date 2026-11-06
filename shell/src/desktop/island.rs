@@ -232,6 +232,33 @@ impl Ferrite {
         self.request_redraw();
     }
 
+    /// Clic ailleurs que sur l'îlot déplié : il se replie aussitôt (minuteur ou musique
+    /// ouverts, son, notification qui file dans l'historique). La fin d'un minuteur, elle,
+    /// attend qu'on l'arrête. Le clic poursuit ensuite son chemin.
+    pub fn island_click_outside(&mut self, location: smithay::utils::Point<f64, smithay::utils::Logical>) {
+        let view = crate::render::desktop_view(self);
+        let Some(kind) = view.island.kind.as_ref() else {
+            return;
+        };
+        if kind.compact() || matches!(kind, IslandKind::TimerDone) {
+            return;
+        }
+        let Some(area) = self.screen_area() else {
+            return;
+        };
+        if crate::desktop::panels::island_contains(area, location, &view) {
+            return;
+        }
+        match kind {
+            IslandKind::Osd(_) => self.osd = None,
+            IslandKind::Notification { .. } => {
+                self.notifications.hide_bubbles();
+            }
+            _ => self.island_open_until = None,
+        }
+        self.request_redraw();
+    }
+
     /// Un bouton touché : l'îlot reste déplié encore un moment.
     fn keep_island_open(&mut self) {
         self.island_open_until = Some(Instant::now() + OPEN_FOR);

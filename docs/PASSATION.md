@@ -86,21 +86,29 @@ ferrite-linux/
 │           ├── panels.rs   ~6 000 lignes : barre, menus, centre de contrôle, lanceur, dialogue
 │           │               d'arrêt, OSD, notifications ; Canvas ; hit-test `action_at`
 │           ├── panels/     lock_screen.rs (écran de verrouillage en couches), auth.rs
-│           │               (fenêtre polkit), cards.rs (widgets)
+│           │               (fenêtre polkit), cards.rs (widgets), island.rs (îlot)
 │           ├── dock.rs     Dock (layout, agrandissement, masquage, rebond)
 │           ├── lock.rs     état du verrouillage, vérification unix_chkpwd, MPRIS
 │           ├── polkit.rs   agent d'authentification polkit
 │           ├── idle.rs     verrouillage / veille après inactivité
 │           ├── night.rs    mode nuit (table gamma DRM)
-│           ├── notifications.rs  serveur org.freedesktop.Notifications
+│           ├── notifications.rs  serveur org.freedesktop.Notifications (+ org.ferrite.Ilot)
+│           ├── island.rs   îlot du haut : ce qu'il montre, minuteur de l'Horloge, clics
+│           │               (dessin : panels/island.rs)
+│           ├── recording.rs  enregistrement vidéo de l'écran (wf-recorder)
 │           ├── widgets.rs  espace 0 (widgets), météo
 │           ├── apps.rs, launch.rs, controls.rs, function_keys.rs, file_drag.rs, svg.rs
 ├── apps/core/              ferrite-apps (egui) : files/ (Fichiers), terminal/, editor/,
 │                           settings.rs + settings/ (Paramètres), monitor/, music/,
-│                           viewer.rs (Visionneuse), calculator.rs, style.rs, details.rs
+│                           viewer.rs (Visionneuse), pdf_viewer.rs, video.rs, clock.rs,
+│                           calculator.rs, gallery.rs (galerie des pièces), details.rs ;
+│                           main.rs (vues `AppView` créées par `create`), style.rs (thème,
+│                           rôles de couleur), kit.rs (pièces communes), island.rs (lien
+│                           de l'Horloge avec l'îlot). Nouvelle appli : docs/NOUVELLE-APPLICATION.md
 ├── services/system/        ferrite-system : appels système partagés (nmcli, wpctl, bluetoothctl,
 │                           brightnessctl, timedatectl, rfkill, udisks…), config.rs (réglages),
-│                           night.rs, idle.rs, weather.rs, command.rs (délais, kill)
+│                           night.rs, idle.rs, weather.rs, command.rs (délais, kill),
+│                           catalog.rs (liste unique des applications Ferrite)
 ├── ui/                     ferrite-ui : tokens.rs, theme.rs (palette, Scale, Easing), wallpaper.rs, icons.rs
 ├── icons/SVG, assets/fonts embarqués à la compilation ; ferrite-theme/ = pack d'icônes (voir §0.3)
 ├── image/                  live-build : auto/config, config/package-lists/ferrite.list.chroot,
@@ -272,14 +280,21 @@ Elle prime sur la charte §3.4 de `PLAN.md` (voir `DECISIONS.md`, 2026-11-02).
 - Rayons : contrôles 8, panneaux/menus 10, dialogues 20.
 - Polices embarquées : Inter Medium/SemiBold (interface), InterDisplay Light (grande horloge),
   JetBrains Mono (terminal, code). Tailles : 12 / 14 (corps) / 16 / 13 mono.
+- **Rôles de couleur** dans `Palette` (fond, filet, rail, titre, scène, inverse, succès…) :
+  les applications les lisent par `style::nom()`, le bureau par `palette().nom`. Une couleur
+  écrite à la main est refusée par `tools/check-colors.sh` (lancé par `tools/ci.sh`), sauf
+  les exceptions listées en tête du script. La galerie (`ferrite-apps galerie`) les montre.
 - Mode sombre sans couleur figée : `themed` (valeur par thème) et `tint` ; la barre du haut
   suit la luminosité du fond d'écran ; le thème est annoncé aux applis tierces par la clé
   GNOME `color-scheme` (portail GTK).
 
 ### 3.2 Animations
 
-- 200 ms (courtes) / 280 ms (normales), `EaseOut` cubique pour les apparitions,
-  `EaseInOut` entre deux états ; Dock 180 ms ; écran de verrouillage 320 ms.
+- Échelle commune `tokens::motion` : QUICK 150 ms (disparitions, survols), SHORT 200
+  (panneaux, fondus, Dock), NORMAL 280 (fenêtres, vue d'ensemble, contrôles), LONG 360
+  (bureaux, verrouillage, îlot, retour d'un glisser). `EaseOut` cubique pour les
+  apparitions, `EaseInOut` entre deux états. Applications : `kit::glide`. Exceptions
+  voulues : génie 520 ms, rebond du Dock, pulsation de l'invitation.
 - `reduire_animations` : état final immédiat (`Easing::progress`). Toujours le respecter.
 - Effet génie à la réduction, rebond des icônes du Dock au lancement, agrandissement au survol.
 
@@ -342,17 +357,12 @@ l'utilisateur ; pousser de force (`--force`) sur `main`.
 
 ## 5. Feuille de route
 
-### 5.1 En cours au moment de la passation (non commité, autre session)
+### 5.1 État au 2026-11-06 (tout est commité)
 
-`apps/core/src/video.rs`, `ferrite-video.desktop` et des modifications liées (settings,
-style, mimeapps, panels, lock, idle → `lock_and_sleep`). À relire, finir, passer
-`tools/ci.sh`, puis commiter.
-
-Le lecteur PDF (`apps/core/src/pdf_viewer.rs`) est fait et vérifié en bureau imbriqué
-(journal du 2026-11-05) : Poppler par `pdftoppm`/`pdfinfo` dans un fil, barre d'outils
-(pages, numéro, zoom, ajustement page/largeur, « Ouvrir… »), deux qualités de rendu, écran
-sans document. Reste à l'essayer à la souris sur le bureau (navigation, zoom, Ctrl+O) ; le
-thème sombre n'a pas été vu en capture.
+Faits et poussés : lecteur vidéo, lecteur PDF, Horloge (minuteur, chronomètre), capture
+d'écran façon GNOME et enregistrement vidéo (wf-recorder), îlot du haut, bouton
+d'alimentation géré par le bureau, socle commun des applications (catalogue, `kit`, rôles
+de couleur, durées communes, galerie, guide). Le détail est dans `docs/JOURNAL.md`.
 
 ### 5.2 À vérifier sur la vraie machine (codé, pas encore confirmé par l'utilisateur)
 
@@ -360,9 +370,11 @@ thème sombre n'a pas été vu en capture.
   partition Windows, « Ouvrir en administrateur » sur `/root`.
 - Parcours des archives ZIP/TAR/RAR dans Fichiers : couvert par des tests, reste à essayer
   visuellement sur la vraie machine.
-- Mode `deep` et réveil à confirmer sur le ThinkBook ; le ventilateur reste géré par le
-  firmware. Mise en veille réelle après inactivité (le verrouillage a été vérifié en bureau
-  imbriqué).
+- Veille légère (`s2idle`, choix du noyau) : un cycle veille → réveil reste à confirmer
+  sur le ThinkBook. Le mode `deep` ne se réveille pas (incident du 2026-11-06) : ne pas le
+  forcer. Le ventilateur reste géré par le firmware.
+- Îlot du haut : animation à l'œil, minuteur de l'Horloge (annonce et boutons), musique,
+  clics réels. Enregistrement vidéo : vérifié par l'utilisateur (vidéo du 2026-11-06).
 - Premier démarrage après le passage au bus systemd (notifications, son, portails, coffre ;
   une appli peut redemander sa connexion une fois).
 
@@ -370,8 +382,8 @@ thème sombre n'a pas été vu en capture.
 
 1. Thème de curseurs réel (aujourd'hui grisé dans Paramètres) : les liens de
    `ferrite-theme/` sont réparés depuis le 2026-11-06.
-2. Finir la phase 5 : lecteur vidéo (en cours), Horloge (minuteur, chronomètre),
-   réglages encore grisés (taille du texte, taille du curseur, pavé tactile).
+2. Finir la phase 5 : réglages encore grisés (taille du texte, taille du curseur, pavé
+   tactile).
 3. « Éteindre l'écran après… » (DPMS DRM) avant la veille.
 4. Applications par défaut et « Ouvrir avec… » partout (MIME).
 5. Logithèque (phase 7) : PackageKit + Flatpak, notification des mises à jour (polkit est prêt).
@@ -398,6 +410,11 @@ tools/ci.sh                                   # avant tout commit
 tools/dev-on.sh                               # puis « Relancer le bureau » (dialogue d'arrêt)
 target/debug/ferrite-shell --winit --capture /tmp/x.png --capture-delay 5 [--demo-lock|--demo-auth|--demo-power] [-- ferrite-apps settings energie]
 XDG_CONFIG_HOME=/tmp/cfg target/debug/ferrite-shell --winit …   # réglages isolés pour un essai
+# Appli déjà ouverte sur le vrai bureau : sinon l'instance unique lui passe la main.
+# Bus et dossier d'exécution à part (chemin court : limite des sockets à 108 caractères).
+R=$(mktemp -d /tmp/fr.XXXX); XDG_RUNTIME_DIR=$R WAYLAND_DISPLAY=/run/user/1000/wayland-1 \
+  dbus-run-session -- target/debug/ferrite-shell --winit --capture /tmp/x.png -- ferrite-apps clock
+ferrite-apps galerie                          # toutes les pièces et couleurs communes
 tools/usb.sh --final                          # ISO à distribuer (sudo, ~30 min la première fois)
 tools/vm-test.sh tools/scenarios/stabilite.txt  # ISO dans QEMU + captures dans build/
 ```

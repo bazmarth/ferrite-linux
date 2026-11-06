@@ -2,6 +2,10 @@
 
 ## `ferrite-apps` (`apps/core`)
 
+Créer une application : [`docs/NOUVELLE-APPLICATION.md`](../docs/NOUVELLE-APPLICATION.md)
+(catalogue, vue, pièces communes de `kit.rs`, rôles de couleur de `style.rs`). La galerie
+(`ferrite-apps galerie`) montre toutes les pièces en clair et en sombre.
+
 Applications du premier ensemble du bureau, en Rust avec eframe/egui :
 
 - **Fichiers** : parcourir les dossiers, remonter, saisir un chemin, trier dossiers et

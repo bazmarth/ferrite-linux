@@ -135,7 +135,7 @@ impl Group<'_> {
                 &child,
                 "glyph-lock",
                 lock,
-                style::IconStyle::Tinted(Color32::from_rgb(0x6B, 0x72, 0x80)),
+                style::IconStyle::Tinted(style::tertiary_text()),
             );
         }
         // Reste de la ligne, à gauche des commandes.
@@ -167,7 +167,7 @@ impl Group<'_> {
                     let color = if (index as u8) < level {
                         style::primary_text()
                     } else {
-                        style::themed(rgb(0xD5D9E0), rgb(0x4B5360))
+                        style::track()
                     };
                     child.painter().rect_filled(bar, 1.0, color);
                 }
@@ -182,7 +182,7 @@ impl Group<'_> {
         };
         let title = one_line(&child, row.label, font, style::primary_text(), width);
         let hint_color = if row.ok {
-            style::themed(rgb(0x1F7A4D), rgb(0x4ADE80))
+            style::success()
         } else {
             style::text_secondary()
         };
@@ -288,7 +288,7 @@ pub fn group<R>(
         RichText::new(title)
             .size(13.0)
             .family(style::strong_family())
-            .color(style::themed(rgb(0x374151), rgb(0xD1D5DB))),
+            .color(style::heading_text()),
     );
     ui.add_space(8.0);
     let result = Frame::new()
@@ -309,21 +309,7 @@ pub fn group<R>(
     result
 }
 
-/// Bouton de ligne : gris, ou couleur d'accent pour l'action principale.
-pub fn button(ui: &mut egui::Ui, text: &str, primary: bool) -> egui::Response {
-    let (fill, ink) = if primary {
-        (style::accent(), style::accent_text())
-    } else {
-        (style::control_background(), style::primary_text())
-    };
-    ui.add(
-        egui::Button::new(RichText::new(text).size(13.0).color(ink))
-            .fill(fill)
-            .stroke(Stroke::NONE)
-            .corner_radius(8)
-            .min_size(egui::vec2(0.0, 30.0)),
-    )
-}
+pub use crate::kit::{button, radio, segments, slider, status, switch};
 
 /// Liste déroulante : renvoie vrai si le choix a changé.
 pub fn pick<T: PartialEq + Copy>(ui: &mut egui::Ui, id: &str, value: &mut T, options: &[(T, &str)]) -> bool {
@@ -342,62 +328,6 @@ pub fn pick<T: PartialEq + Copy>(ui: &mut egui::Ui, id: &str, value: &mut T, opt
     changed
 }
 
-/// Interrupteur de ligne, 44 × 26 px.
-pub fn switch(ui: &mut egui::Ui, on: &mut bool) -> bool {
-    style::switch_sized(ui, on, true, egui::vec2(44.0, 26.0)).changed()
-}
-
-/// Curseur de 200 px et sa valeur à droite. La réponse dit si la valeur a changé et si le
-/// glissement est fini.
-pub fn slider(ui: &mut egui::Ui, value: &mut u8, text: &str) -> egui::Response {
-    let (label, _) = ui.allocate_exact_size(egui::vec2(44.0, 20.0), Sense::hover());
-    ui.painter().text(
-        label.right_center(),
-        egui::Align2::RIGHT_CENTER,
-        text,
-        egui::FontId::proportional(12.0),
-        style::text_secondary(),
-    );
-    // Le curseur se raccourcit dans une colonne étroite, pour que le libellé reste lisible.
-    let track = (ui.available_width() - 130.0).clamp(80.0, 146.0);
-    let (rect, mut response) = ui.allocate_exact_size(egui::vec2(track, 20.0), Sense::click_and_drag());
-    if let Some(pointer) = response.interact_pointer_pos() {
-        let span = (rect.width() - 20.0).max(1.0);
-        let next = (((pointer.x - rect.left() - 10.0) / span).clamp(0.0, 1.0) * 100.0).round() as u8;
-        if next != *value {
-            *value = next;
-            response.mark_changed();
-        }
-    }
-    let center = rect.center().y;
-    let x = rect.left() + 10.0 + (rect.width() - 20.0) * f32::from(*value) / 100.0;
-    let painter = ui.painter();
-    let rail = egui::Rect::from_min_max(
-        egui::pos2(rect.left(), center - 3.0),
-        egui::pos2(rect.right(), center + 3.0),
-    );
-    painter.rect_filled(rail, 3.0, style::themed(rgb(0xD5D9E0), rgb(0x4B5360)));
-    let done = egui::Rect::from_min_max(rail.min, egui::pos2(x, rail.bottom()));
-    painter.rect_filled(done, 3.0, style::accent());
-    painter.circle_filled(egui::pos2(x, center + 1.0), 10.0, Color32::from_black_alpha(50));
-    painter.circle_filled(egui::pos2(x, center), 10.0, Color32::WHITE);
-    response
-}
-
-/// Choix unique dans une liste.
-pub fn radio(ui: &mut egui::Ui, on: bool) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), Sense::click());
-    let painter = ui.painter();
-    if on {
-        painter.circle_filled(rect.center(), 10.0, style::accent());
-        painter.circle_filled(rect.center(), 4.0, style::background());
-    } else {
-        painter.circle_filled(rect.center(), 10.0, style::background());
-        painter.circle_stroke(rect.center(), 9.0, Stroke::new(2.0, rgb(0xAEB6C2)));
-    }
-    response
-}
-
 /// Vu-mètre à 16 cases.
 pub fn meter(ui: &mut egui::Ui, level: usize) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(16.0 * 11.0 - 3.0, 14.0), Sense::hover());
@@ -409,60 +339,11 @@ pub fn meter(ui: &mut egui::Ui, level: usize) {
         let color = if index >= level {
             style::separator()
         } else if index < 11 {
-            rgb(0x1F9D63)
+            style::success()
         } else {
-            rgb(0xFF9F0A)
+            style::warning()
         };
         ui.painter().rect_filled(cell, 2.0, color);
-    }
-}
-
-/// Contrôle à segments : renvoie le segment cliqué.
-pub fn segments(ui: &mut egui::Ui, options: &[&str], selected: usize) -> Option<usize> {
-    let font = egui::FontId::proportional(13.0);
-    let ink = style::primary_text();
-    let widths: Vec<f32> = options
-        .iter()
-        .map(|option| {
-            ui.painter()
-                .layout_no_wrap((*option).to_owned(), font.clone(), ink)
-                .size()
-                .x
-                + 24.0
-        })
-        .collect();
-    let width = widths.iter().sum::<f32>() + 6.0 + 2.0 * widths.len().saturating_sub(1) as f32;
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 32.0), Sense::hover());
-    ui.painter().rect_filled(rect, 9.0, style::control_background());
-    let mut clicked = None;
-    let mut x = rect.left() + 3.0;
-    for (index, (option, segment)) in options.iter().zip(&widths).enumerate() {
-        let cell = egui::Rect::from_min_size(egui::pos2(x, rect.top() + 3.0), egui::vec2(*segment, 26.0));
-        let response = ui.interact(cell, ui.scope_id().with(("segment", index)), Sense::click());
-        if response.clicked() {
-            clicked = Some(index);
-        }
-        let on = index == selected;
-        if on {
-            ui.painter().rect_filled(cell, 7.0, style::background());
-        }
-        let font = if on {
-            egui::FontId::new(13.0, style::strong_family())
-        } else {
-            font.clone()
-        };
-        ui.painter()
-            .text(cell.center(), egui::Align2::CENTER_CENTER, option, font, ink);
-        x += segment + 2.0;
-    }
-    clicked
-}
-
-/// État en cours, avec un cercle qui tourne.
-pub fn status(ui: &mut egui::Ui, text: &str, running: bool) {
-    ui.label(RichText::new(text).size(12.0).color(style::text_secondary()));
-    if running {
-        ui.add(egui::Spinner::new().size(16.0));
     }
 }
 

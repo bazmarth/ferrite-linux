@@ -880,7 +880,7 @@ impl Ferrite {
 
     fn open_terminal(&mut self) {
         self.launch_app(&crate::desktop::apps::AppKey::Builtin(
-            crate::desktop::apps::App::Terminal,
+            crate::desktop::apps::App::TERMINAL,
         ));
     }
 
@@ -1203,7 +1203,7 @@ impl Ferrite {
                         // Une icône épinglée se clique ou se déplace : décidé au relâchement.
                         if item.pinned
                             && item.key
-                                != crate::desktop::apps::AppKey::Builtin(crate::desktop::apps::App::Trash)
+                                != crate::desktop::apps::AppKey::Builtin(crate::desktop::apps::App::TRASH)
                         {
                             self.dock_drag = Some(crate::desktop::launch::DockDrag {
                                 key: item.key,
@@ -1487,7 +1487,7 @@ impl Ferrite {
             DesktopAction::DashboardOpenMusic => {
                 self.stop_dashboard_editing();
                 self.activate_app(&crate::desktop::apps::AppKey::Builtin(
-                    crate::desktop::apps::App::Music,
+                    crate::desktop::apps::App::MUSIC,
                 ));
             }
             DesktopAction::GoToPage(page) => self.go_to_page(page),
@@ -1568,7 +1568,7 @@ impl Ferrite {
             DesktopAction::OpenSettings => {
                 self.popover = None;
                 self.open_app(&crate::desktop::apps::AppKey::Builtin(
-                    crate::desktop::apps::App::Settings,
+                    crate::desktop::apps::App::SETTINGS,
                 ));
             }
             DesktopAction::ToggleKeyboardLayout => self.toggle_keyboard_layout(),

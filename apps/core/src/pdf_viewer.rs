@@ -562,22 +562,16 @@ fn toolbar_toggle(ui: &mut egui::Ui, label: &str, selected: bool, hint: &str) ->
 }
 
 fn bar() -> Color32 {
-    style::themed(Color32::WHITE, Color32::from_rgb(0x1C, 0x1F, 0x25))
+    style::background()
 }
 
 /// Scène autour de la page, comme celle de la Visionneuse : la page blanche s'y détache.
 fn stage() -> Color32 {
-    style::themed(
-        Color32::from_rgb(0xED, 0xEF, 0xF2),
-        Color32::from_rgb(0x12, 0x14, 0x18),
-    )
+    style::stage()
 }
 
 fn line() -> Color32 {
-    style::themed(
-        Color32::from_rgb(0xE3, 0xE6, 0xEB),
-        Color32::from_rgb(0x2C, 0x30, 0x38),
-    )
+    style::line()
 }
 
 pub fn supported(path: &Path) -> bool {

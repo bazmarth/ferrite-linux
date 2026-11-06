@@ -54,8 +54,7 @@ fn sort_key(name: &str) -> String {
 /// `query` (sans tenir compte de la casse).
 pub fn launcher_entries<'a>(installed: &'a [DesktopEntry], query: &str) -> Vec<LauncherEntry<'a>> {
     let query = query.trim().to_lowercase();
-    let mut entries: Vec<LauncherEntry<'a>> = App::ALL
-        .into_iter()
+    let mut entries: Vec<LauncherEntry<'a>> = App::all()
         .map(LauncherEntry::Builtin)
         .chain(installed.iter().map(LauncherEntry::Installed))
         .filter(|entry| query.is_empty() || entry.name().to_lowercase().contains(&query))
@@ -137,7 +136,7 @@ impl AppKey {
     }
 
     pub fn from_token(token: &str, installed: &[DesktopEntry]) -> AppKey {
-        if let Some(app) = App::ALL.into_iter().find(|app| app.app_id() == token) {
+        if let Some(app) = App::for_app_id(token) {
             return AppKey::Builtin(app);
         }
         if installed.iter().any(|entry| entry.id == token) {
@@ -148,7 +147,7 @@ impl AppKey {
 
     /// Application d'une fenêtre d'identifiant `app_id` (ou classe X11 en minuscules).
     pub fn for_window(app_id: &str, installed: &[DesktopEntry]) -> AppKey {
-        if let Some(app) = App::ALL.into_iter().find(|app| app.app_id() == app_id) {
+        if let Some(app) = App::for_app_id(app_id) {
             return AppKey::Builtin(app);
         }
         let id = app_id.to_lowercase();
@@ -260,116 +259,60 @@ fn is_chromium(program: &str) -> bool {
     .any(|known| name.starts_with(known))
 }
 
+/// Application Ferrite (voir `ferrite_system::catalog`), ou la Corbeille du Dock.
+/// Nommée par son argument de `ferrite-apps`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum App {
-    Files,
-    TextEdit,
-    Terminal,
-    Calculator,
-    Clock,
-    Settings,
-    Monitor,
-    Viewer,
-    PdfViewer,
-    Music,
-    Video,
-    /// Corbeille, toujours en dernière case du Dock : la vue Corbeille de Fichiers.
-    Trash,
-}
+pub struct App(&'static str);
+
+/// Corbeille, toujours en dernière case du Dock : la vue Corbeille de Fichiers.
+const TRASH_COMMAND: &str = "corbeille";
 
 impl App {
-    /// Applications Ferrite du menu Applications.
-    pub const ALL: [App; 11] = [
-        App::Files,
-        App::TextEdit,
-        App::Terminal,
-        App::Calculator,
-        App::Clock,
-        App::Settings,
-        App::Monitor,
-        App::Viewer,
-        App::PdfViewer,
-        App::Music,
-        App::Video,
-    ];
+    pub const FILES: App = App("files");
+    pub const TERMINAL: App = App("terminal");
+    pub const CALCULATOR: App = App("calculator");
+    pub const SETTINGS: App = App("settings");
+    pub const MUSIC: App = App("music");
+    pub const TRASH: App = App(TRASH_COMMAND);
 
-    /// Applications épinglées dans le Dock.
-    pub const DOCK: [App; 5] = [
-        App::Files,
-        App::TextEdit,
-        App::Terminal,
-        App::Calculator,
-        App::Settings,
-    ];
+    /// Applications Ferrite du menu Applications.
+    pub fn all() -> impl Iterator<Item = App> {
+        ferrite_system::catalog::APPS
+            .iter()
+            .filter(|info| info.menu)
+            .map(|info| App(info.command))
+    }
+
+    /// Applications épinglées dans le Dock d'origine.
+    pub fn dock() -> Vec<App> {
+        ferrite_system::catalog::APPS
+            .iter()
+            .filter(|info| info.dock)
+            .map(|info| App(info.command))
+            .collect()
+    }
+
+    /// Application Ferrite d'une fenêtre, même hors du menu (la galerie).
+    pub fn for_app_id(app_id: &str) -> Option<App> {
+        ferrite_system::catalog::by_app_id(app_id).map(|info| App(info.command))
+    }
+
+    fn info(self) -> Option<&'static ferrite_system::catalog::AppInfo> {
+        ferrite_system::catalog::by_command(self.0)
+    }
 
     pub fn name(self) -> &'static str {
-        match self {
-            App::Files => "Fichiers",
-            App::TextEdit => "TextEdit",
-            App::Terminal => "Terminal",
-            App::Calculator => "Calculatrice",
-            App::Clock => "Horloge",
-            App::Settings => "Paramètres",
-            App::Monitor => "Moniteur d'activité",
-            App::Viewer => "Visionneuse",
-            App::PdfViewer => "Lecteur PDF",
-            App::Music => "Musique",
-            App::Video => "Lecteur vidéo",
-            App::Trash => "Corbeille",
-        }
+        self.info().map_or("Corbeille", |info| info.name)
     }
 
     /// Icône du dossier `icons/SVG`.
     pub fn icon(self) -> &'static str {
-        match self {
-            App::Files => "app-files",
-            App::TextEdit => "app-text-editor",
-            App::Terminal => "app-terminal",
-            App::Calculator => "app-calculator",
-            App::Clock => "app-clock",
-            App::Settings => "app-settings",
-            App::Monitor => "app-monitor",
-            App::Viewer => "app-photos",
-            App::PdfViewer => "app-pdf",
-            App::Music => "app-music",
-            App::Video => "app-video",
-            App::Trash => "places-trash",
-        }
+        self.info().map_or("places-trash", |info| info.icon)
     }
 
     /// Identifiant Wayland (`app_id`) des fenêtres de l'application.
     pub fn app_id(self) -> &'static str {
-        match self {
-            App::Files => "ferrite-files",
-            App::TextEdit => "ferrite-textedit",
-            App::Terminal => "ferrite-terminal",
-            App::Calculator => "ferrite-calculator",
-            App::Clock => "ferrite-clock",
-            App::Settings => "ferrite-settings",
-            App::Monitor => "ferrite-monitor",
-            App::Viewer => "ferrite-viewer",
-            App::PdfViewer => "ferrite-pdf",
-            App::Music => "ferrite-music",
-            App::Video => "ferrite-video",
-            App::Trash => "ferrite-trash",
-        }
-    }
-
-    fn command(self) -> (&'static str, Option<&'static str>) {
-        match self {
-            App::Files => ("ferrite-apps", Some("files")),
-            App::TextEdit => ("ferrite-apps", Some("textedit")),
-            App::Terminal => ("ferrite-apps", Some("terminal")),
-            App::Calculator => ("ferrite-apps", Some("calculator")),
-            App::Clock => ("ferrite-apps", Some("clock")),
-            App::Settings => ("ferrite-apps", Some("settings")),
-            App::Monitor => ("ferrite-apps", Some("monitor")),
-            App::Viewer => ("ferrite-apps", Some("viewer")),
-            App::PdfViewer => ("ferrite-apps", Some("pdf")),
-            App::Music => ("ferrite-apps", Some("music")),
-            App::Video => ("ferrite-apps", Some("video")),
-            App::Trash => ("ferrite-apps", Some("files")),
-        }
+        self.info().map_or("ferrite-trash", |info| info.app_id)
     }
 
     /// Paramètres sur une rubrique : s'il est déjà ouvert, la fenêtre existante y va.
@@ -391,16 +334,15 @@ impl App {
     /// ouvre chacun, le Terminal s'ouvre dans le dossier du premier. La Corbeille, elle, y
     /// met les fichiers.
     pub fn launch_with(self, env: &[(String, String)], files: &[std::path::PathBuf]) {
-        let (program, argument) = self.command();
-        let mut command = ferrite_command(program);
+        let mut command = ferrite_command("ferrite-apps");
         match (self, files.first()) {
-            (App::Trash, Some(_)) => {
-                command.arg("corbeille").args(files);
+            (App::TRASH, Some(_)) => {
+                command.arg(TRASH_COMMAND).args(files);
             }
-            (App::Trash, None) => {
+            (App::TRASH, None) => {
                 command.args(["files", "corbeille:"]);
             }
-            (App::Terminal, Some(first)) => {
+            (App::TERMINAL, Some(first)) => {
                 let dir = if first.is_dir() {
                     first.as_path()
                 } else {
@@ -409,7 +351,7 @@ impl App {
                 command.arg("terminal").arg(dir);
             }
             (_, _) => {
-                command.args(argument).args(files);
+                command.arg(self.0).args(files);
             }
         }
         command.envs(env.iter().map(|(key, value)| (key, value)));
@@ -489,7 +431,7 @@ mod tests {
         let installed = [vlc, brave];
         assert_eq!(
             AppKey::for_window("ferrite-files", &installed),
-            AppKey::Builtin(App::Files)
+            AppKey::Builtin(App::FILES)
         );
         assert_eq!(
             AppKey::for_window("vlc", &installed),
@@ -507,7 +449,7 @@ mod tests {
         assert_eq!(key.token(), "org.videolan.VLC");
         assert_eq!(
             AppKey::from_token("ferrite-textedit", &installed),
-            AppKey::Builtin(App::TextEdit)
+            AppKey::Builtin(App("textedit"))
         );
     }
 
@@ -515,7 +457,7 @@ mod tests {
     fn le_menu_trie_et_filtre() {
         let installed = [entry("Brave Web Browser"), entry("VLC media player")];
         let all = launcher_entries(&installed, "");
-        assert_eq!(all.len(), App::ALL.len() + 2);
+        assert_eq!(all.len(), App::all().count() + 2);
         assert_eq!(all[0].name(), "Brave Web Browser");
         let found = launcher_entries(&installed, "vlc");
         assert_eq!(found.len(), 1);

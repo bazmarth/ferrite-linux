@@ -69,9 +69,9 @@ render_elements! {
 }
 
 /// Durée de l'ouverture et de la fermeture de la vue d'ensemble.
-const OVERVIEW_TRANSITION: std::time::Duration = std::time::Duration::from_millis(260);
+const OVERVIEW_TRANSITION: std::time::Duration = ferrite_ui::tokens::motion::NORMAL;
 /// Estompe des widgets recouverts par une fenêtre.
-const WIDGETS_FADE: std::time::Duration = std::time::Duration::from_millis(200);
+const WIDGETS_FADE: std::time::Duration = ferrite_ui::tokens::motion::SHORT;
 const WIDGETS_FADED_ALPHA: f32 = 0.35;
 
 /// Ressources de rendu créées avec le moteur de rendu.

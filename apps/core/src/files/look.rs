@@ -31,10 +31,6 @@ pub struct Look {
     pub drop: Color32,
 }
 
-fn hex(value: u32) -> Color32 {
-    Color32::from_rgb((value >> 16) as u8, (value >> 8) as u8, value as u8)
-}
-
 fn mix(from: Color32, to: Color32, amount: f32) -> Color32 {
     let channel = |a: u8, b: u8| (f32::from(a) + (f32::from(b) - f32::from(a)) * amount).round() as u8;
     Color32::from_rgb(
@@ -46,49 +42,39 @@ fn mix(from: Color32, to: Color32, amount: f32) -> Color32 {
 
 pub fn look() -> Look {
     let accent = style::accent();
-    if style::theme_is_dark() {
-        let win = hex(0x22262D);
+    // Rôles communs de `style` ; seule la sélection dérive de l'accentuation.
+    let (win, selection) = if style::theme_is_dark() {
         // L'accent s'éclaircit sur fond sombre (#2779E0 donne #6CB8FF sur la planche).
         let light = mix(accent, Color32::WHITE, 0.33);
-        Look {
-            fg: hex(0xE5E7EB),
-            fg2: hex(0x9CA3AF),
-            fg3: hex(0x8B93A0),
-            icon: hex(0xE5E7EB),
-            win,
-            side: hex(0x1E2127),
-            line: hex(0x353A42),
-            chip: hex(0x2A2E35),
-            track: hex(0x353A42),
-            preview: hex(0x1E2127),
-            stage: hex(0x2A2E35),
-            sel_bg: mix(win, light, 0.16),
-            sel_fg: mix(light, Color32::WHITE, 0.4),
-            accent: light,
-            head: hex(0x9CA3AF),
-            seg_on: hex(0x3A3F47),
-            drop: mix(win, light, 0.26),
-        }
+        (
+            style::background(),
+            (light, mix(light, Color32::WHITE, 0.4), 0.16, 0.26),
+        )
     } else {
-        Look {
-            fg: hex(0x111827),
-            fg2: hex(0x4B5563),
-            fg3: hex(0x6B7280),
-            icon: hex(0x1F2937),
-            win: Color32::WHITE,
-            side: hex(0xF2F3F6),
-            line: hex(0xE3E6EB),
-            chip: hex(0xEEF0F4),
-            track: hex(0xE3E6EB),
-            preview: hex(0xF7F8FA),
-            stage: hex(0xEEF0F4),
-            // #2779E0 donne #DCEAFB et #174F9E sur la planche.
-            sel_bg: mix(Color32::WHITE, accent, 0.17),
-            sel_fg: mix(accent, Color32::BLACK, 0.4),
-            accent,
-            head: hex(0x4B5563),
-            seg_on: Color32::WHITE,
-            drop: mix(Color32::WHITE, accent, 0.28),
-        }
+        // #2779E0 donne #DCEAFB et #174F9E sur la planche.
+        (
+            style::background(),
+            (accent, mix(accent, Color32::BLACK, 0.4), 0.17, 0.28),
+        )
+    };
+    let (accent, sel_fg, sel_amount, drop_amount) = selection;
+    Look {
+        fg: style::primary_text(),
+        fg2: style::text_secondary(),
+        fg3: style::tertiary_text(),
+        icon: style::primary_text(),
+        win,
+        side: style::sidebar_color(),
+        line: style::line(),
+        chip: style::control_hover(),
+        track: style::line(),
+        preview: style::header_color(),
+        stage: style::control_hover(),
+        sel_bg: mix(win, accent, sel_amount),
+        sel_fg,
+        accent,
+        head: style::text_secondary(),
+        seg_on: style::segment_on(),
+        drop: mix(win, accent, drop_amount),
     }
 }

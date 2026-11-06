@@ -53,17 +53,17 @@ impl Panels {
         let dark = palette().text.r > 128;
         let pick = |light: u32, dark_value: u32| Color::rgb(if dark { dark_value } else { light });
         let (fg, fg2, fg3) = (
-            pick(0x111827, 0xE5E7EB),
-            pick(0x4B5563, 0x9CA3AF),
-            pick(0x6B7280, 0x8B93A0),
+            palette().text,
+            palette().text_secondary,
+            palette().window_title_inactive,
         );
         let (panel, line, chip, field) = (
-            pick(0xFFFFFF, 0x22262D),
-            pick(0xE3E6EB, 0x353A42),
-            pick(0xEEF0F4, 0x2A2E35),
+            palette().window_background,
+            palette().separator,
+            palette().control_hover,
             pick(0xF5F6F8, 0x1B1F25),
         );
-        let blue = Color::rgb(0x2779E0);
+        let blue = accent();
         let red = pick(0xD92D20, 0xFF8A80);
         let scrim = if dark {
             Color::BLACK.with_alpha(128)

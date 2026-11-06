@@ -9,7 +9,7 @@
 use super::*;
 
 /// Durée d'un changement de forme.
-const MORPH: Duration = Duration::from_millis(380);
+const MORPH: Duration = ferrite_ui::tokens::motion::LONG;
 /// Largeur de la pastille repliée autour de l'heure.
 const COMPACT_W: f64 = 340.0;
 /// Côtés de la pastille repliée où se lit l'activité (le milieu reste l'horloge).

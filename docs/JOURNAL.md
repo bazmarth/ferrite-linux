@@ -1334,3 +1334,48 @@ Pas vérifié : l'animation à l'œil, la musique (aucun lecteur sur le bus d'es
 l'enregistrement dans l'îlot (wf-recorder absent), les clics réels, le lien avec la vraie
 Horloge (annonce et boutons). Pour une capture avec une application déjà ouverte sur le
 vrai bureau : `XDG_RUNTIME_DIR` court et à part, sinon l'instance unique lui passe la main.
+
+## 2026-11-06 — Socle commun des applications
+
+- Catalogue unique des applications (`services/system/src/catalog.rs`) : commande,
+  `app_id`, nom, icône, tailles, Dock, menu. `ferrite-apps` et `ferrite-shell` le lisent ;
+  le bureau n'a plus sa propre liste (`App` y devient un nom de commande).
+- `ferrite-apps` : chaque application est une vue (`AppView` : `update`, `open`) créée à un
+  seul endroit (`create`) ; le reste (thème en direct, fond, F11, instance unique) est
+  commun. Ajouter une application : `docs/NOUVELLE-APPLICATION.md`.
+- Pièces communes (`apps/core/src/kit.rs`) : cartes, titres, boutons, interrupteur,
+  curseur, radio, segments (le choix glisse), état, chiffres stables. Les Paramètres et
+  l'Horloge les utilisent au lieu de leurs copies.
+- Rôles de couleur dans `style` (scène, filet, rail, inverse, succès, attention, voile,
+  ombre…) ; Visionneuse, PDF, Musique, Fichiers, détails, TextEdit, Horloge et Paramètres
+  les prennent au lieu de leurs teintes propres (les gris sombres variaient d'une
+  application à l'autre). `tools/check-colors.sh` (dans `tools/ci.sh`) refuse toute
+  nouvelle couleur écrite à la main ; les exceptions voulues sont listées en tête.
+- Animations : échelle commune `tokens::motion` (QUICK 150, SHORT 200, NORMAL 280,
+  LONG 360 ms) pour le bureau (panneaux, Dock, vue d'ensemble, fenêtres, bureaux,
+  verrouillage, îlot, glisser) ; `kit::glide` pour les applications, même courbe.
+- Galerie Ferrite (`ferrite-apps galerie`, hors du menu) : toutes les pièces et les rôles
+  de couleur, en clair et en sombre.
+- Corrigé en chemin : la carte douce était blanche sur blanc en thème clair (horloges du
+  monde de l'Horloge), le segment choisi invisible en sombre.
+
+Vérifié : `tools/ci.sh` ; captures de la galerie (deux pages, clair et sombre), de
+l'Horloge (sombre, chronomètre clair), des Paramètres (Son clair, Apparence sombre) et de
+Fichiers (clair et sombre).
+Pas vérifié : la glissade des segments à l'œil.
+
+Suite du même jour :
+- Les rôles de couleur sont dans la charte partagée (`ferrite_ui::theme::Palette` : rail,
+  titre, texte de réussite, scène, inverse et son texte et son action) ; `style` et les
+  panneaux du bureau les lisent tous deux. Panneaux du bureau : titres, fonds de liste,
+  rails, vert « Connecté », menus et dialogue d'arrêt (accent choisi au lieu du bleu fixe),
+  presse-papiers et fenêtre de mot de passe passent par la palette.
+- `tools/check-colors.sh` surveille aussi le bureau : les couleurs propres qui restent
+  (widgets et écran de verrouillage en verre sombre, îlot, barre de capture, météo) sont
+  plafonnées fichier par fichier, aucune ailleurs.
+- Visionneuse : un chemin long dans les informations garde sa fin (« …/Photos ») au lieu
+  de déborder sur le libellé.
+
+Vérifié : `tools/ci.sh` ; captures de Musique (clair), du Moniteur (clair et sombre), du
+lecteur PDF (sombre), de la Visionneuse (chemin long), du dialogue d'arrêt (clair et
+sombre), de la fenêtre de mot de passe et du centre de contrôle (sombre).

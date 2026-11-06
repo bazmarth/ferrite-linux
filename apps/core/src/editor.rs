@@ -1571,8 +1571,8 @@ impl EditorState {
             "LF"
         };
         let (state, dot) = match (document.dirty(), document.path.is_some()) {
-            (true, _) => ("Modifié", Color32::from_rgb(0xF0, 0x9A, 0x1A)),
-            (false, true) => ("Enregistré", Color32::from_rgb(0x2E, 0xB8, 0x6B)),
+            (true, _) => ("Modifié", style::warning()),
+            (false, true) => ("Enregistré", style::success()),
             (false, false) => ("Non enregistré", style::text_secondary()),
         };
         let kind = document.kind();

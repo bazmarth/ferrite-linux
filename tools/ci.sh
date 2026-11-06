@@ -16,6 +16,9 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 info "cargo test"
 cargo test --workspace --locked
 
+info "couleurs"
+"$REPO/tools/check-colors.sh"
+
 if command -v shellcheck >/dev/null 2>&1; then
     info "shellcheck"
     shellcheck -x -e SC1091 tools/*.sh image/auto/config image/config/hooks/live/*.hook.chroot \

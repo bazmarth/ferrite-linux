@@ -1248,13 +1248,7 @@ impl MusicState {
         let response = ui
             .interact(play, ui.scope_id().with("lecture"), Sense::click())
             .on_hover_text("Lecture ou pause (Espace)");
-        let (play_fill, play_ink) = style::themed(
-            (Color32::from_rgb(0x16, 0x18, 0x1C), Color32::WHITE),
-            (
-                Color32::from_rgb(0xE5, 0xE7, 0xEB),
-                Color32::from_rgb(0x16, 0x18, 0x1C),
-            ),
-        );
+        let (play_fill, play_ink) = (style::inverse(), style::inverse_text());
         ui.painter().circle_filled(
             play.center(),
             20.0,
@@ -1474,51 +1468,33 @@ fn home_relative(path: &Path) -> String {
     }
 }
 
-/// Couleurs des planches (clair, sombre).
+/// Couleurs des planches, prises dans les rôles communs de `style`.
 fn side() -> Color32 {
-    style::themed(
-        Color32::from_rgb(0xF2, 0xF3, 0xF6),
-        Color32::from_rgb(0x1E, 0x21, 0x27),
-    )
+    style::sidebar_color()
 }
 
 fn bar() -> Color32 {
-    style::themed(
-        Color32::from_rgb(0xF7, 0xF8, 0xFA),
-        Color32::from_rgb(0x1E, 0x21, 0x27),
-    )
+    style::header_color()
 }
 
 fn window() -> Color32 {
-    style::themed(Color32::WHITE, Color32::from_rgb(0x22, 0x26, 0x2D))
+    style::background()
 }
 
 fn line() -> Color32 {
-    style::themed(
-        Color32::from_rgb(0xE3, 0xE6, 0xEB),
-        Color32::from_rgb(0x35, 0x3A, 0x42),
-    )
+    style::line()
 }
 
 fn row_on() -> Color32 {
-    style::themed(
-        Color32::from_rgb(0xEA, 0xF2, 0xFD),
-        Color32::from_rgba_unmultiplied(108, 184, 255, 26),
-    )
+    style::sidebar_selected()
 }
 
 fn track_color() -> Color32 {
-    style::themed(
-        Color32::from_rgb(0xD5, 0xD9, 0xE0),
-        Color32::from_rgb(0x3A, 0x3F, 0x47),
-    )
+    style::track()
 }
 
 fn fill_color() -> Color32 {
-    style::themed(
-        Color32::from_rgb(0x1F, 0x29, 0x37),
-        Color32::from_rgb(0xE5, 0xE7, 0xEB),
-    )
+    style::primary_text()
 }
 
 fn centered_message(ui: &mut egui::Ui, title: &str, text: &str) {

@@ -36,34 +36,23 @@ pub struct Tokens {
     shadow: Color32,
 }
 
-fn rgb(hex: u32) -> Color32 {
-    Color32::from_rgb((hex >> 16) as u8, (hex >> 8) as u8, hex as u8)
-}
-
 pub fn tokens() -> Tokens {
-    let pick = |light: u32, dark: u32| rgb(style::themed(light, dark));
     Tokens {
-        fg: pick(0x111827, 0xE5E7EB),
-        fg2: pick(0x4B5563, 0x9CA3AF),
-        fg3: pick(0x6B7280, 0x8B93A0),
-        panel: pick(0xFFFFFF, 0x22262D),
-        line: pick(0xE3E6EB, 0x353A42),
-        chip: pick(0xEEF0F4, 0x2A2E35),
-        soft: pick(0xF5F6F8, 0x1E2127),
-        field: pick(0xFFFFFF, 0x1E2127),
-        field_ring: pick(0xD5D9E0, 0x3A3F47),
+        fg: style::primary_text(),
+        fg2: style::text_secondary(),
+        fg3: style::tertiary_text(),
+        panel: style::background(),
+        line: style::line(),
+        chip: style::control_hover(),
+        soft: style::sidebar_color(),
+        field: style::themed(style::background(), style::sidebar_color()),
+        field_ring: style::track(),
         ring: style::themed(Color32::from_black_alpha(20), Color32::from_white_alpha(15)),
-        ok: pick(0x1A7F4B, 0x5FD39A),
-        danger: pick(0xC42B20, 0xFF8A80),
-        seg_on: pick(0xFFFFFF, 0x3A3F47),
-        scrim: style::themed(
-            Color32::from_rgba_unmultiplied(15, 23, 42, 71),
-            Color32::from_black_alpha(115),
-        ),
-        shadow: style::themed(
-            Color32::from_rgba_unmultiplied(15, 23, 42, 64),
-            Color32::from_black_alpha(140),
-        ),
+        ok: style::success(),
+        danger: style::error(),
+        seg_on: style::segment_on(),
+        scrim: style::scrim(),
+        shadow: style::shadow(),
     }
 }
 

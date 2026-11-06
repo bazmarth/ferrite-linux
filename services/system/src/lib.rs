@@ -12,6 +12,7 @@ pub mod about;
 pub mod applications;
 pub mod audio;
 pub mod bluetooth;
+pub mod catalog;
 pub mod command;
 pub mod config;
 pub mod display;

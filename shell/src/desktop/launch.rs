@@ -87,7 +87,7 @@ impl Ferrite {
                 .iter()
                 .map(|token| AppKey::from_token(token, &self.applications))
                 .collect(),
-            None => App::DOCK.into_iter().map(AppKey::Builtin).collect(),
+            None => App::dock().into_iter().map(AppKey::Builtin).collect(),
         };
         if let Some(drag) = &self.dock_drag
             && let Some(target) = drag.target
@@ -161,7 +161,7 @@ impl Ferrite {
         let mut running: Vec<AppKey> = Vec::new();
         let mut several: Vec<AppKey> = Vec::new();
         // La corbeille a sa case fixe en bout de Dock : jamais une deuxième, ni de point.
-        let trash = AppKey::Builtin(App::Trash);
+        let trash = AppKey::Builtin(App::TRASH);
         for key in windows
             .filter_map(|window| self.window_app(window))
             .filter(|key| *key != trash)
@@ -206,7 +206,7 @@ impl Ferrite {
                     .map(|key| (key.clone(), false)),
             )
             // La corbeille ferme toujours la rangée, après le trait.
-            .chain(std::iter::once((AppKey::Builtin(App::Trash), true)))
+            .chain(std::iter::once((AppKey::Builtin(App::TRASH), true)))
             .map(|(key, pinned)| DockItem {
                 icon: key.icon(&self.applications),
                 running: running.contains(&key),
@@ -283,7 +283,7 @@ impl Ferrite {
     /// L'application peut-elle ouvrir plusieurs fenêtres ? Le Terminal toujours, les autres
     /// selon Paramètres.
     pub fn allows_multiple_windows(&self, key: &AppKey) -> bool {
-        *key == AppKey::Builtin(crate::desktop::apps::App::Terminal)
+        *key == AppKey::Builtin(crate::desktop::apps::App::TERMINAL)
             || self.multi_window.iter().any(|token| *token == key.token())
     }
 
@@ -303,8 +303,8 @@ impl Ferrite {
         let env = self.client_environment();
         if key.launch(&self.applications, &env) {
             // La corbeille s'ouvre dans Fichiers : c'est la fenêtre de Fichiers qu'on attend.
-            if *key == AppKey::Builtin(App::Trash) {
-                self.start_bounce(&AppKey::Builtin(App::Files));
+            if *key == AppKey::Builtin(App::TRASH) {
+                self.start_bounce(&AppKey::Builtin(App::FILES));
                 return;
             }
             self.start_bounce(key);
@@ -401,7 +401,7 @@ impl Ferrite {
     /// Entrées du menu d'une case du Dock.
     pub fn dock_menu_entries(&self, item: &DockItem) -> Vec<DockMenuAction> {
         let mut entries = Vec::new();
-        if item.key == AppKey::Builtin(App::Trash) {
+        if item.key == AppKey::Builtin(App::TRASH) {
             return entries;
         }
         let launchable = !matches!(item.key, AppKey::Other(_));
@@ -486,7 +486,7 @@ pub fn load_recent_apps() -> Vec<String> {
 impl Ferrite {
     /// L'application vient d'être utilisée (fenêtre au premier plan ou lancement).
     pub fn note_recent_app(&mut self, key: &AppKey) {
-        if matches!(key, AppKey::Other(_) | AppKey::Builtin(App::Trash)) {
+        if matches!(key, AppKey::Other(_) | AppKey::Builtin(App::TRASH)) {
             return;
         }
         let token = key.token();

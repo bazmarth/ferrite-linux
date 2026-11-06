@@ -856,8 +856,8 @@ const DESKTOP_MENU: [&str; 2] = ["Modifier les widgets", "Changer le fond d’é
 const PAGE_MARK: f64 = 6.0;
 const PAGE_MARK_ACTIVE: f64 = 16.0;
 const PAGE_MARK_GAP: f64 = 6.0;
-const LAYER_IN: Duration = Duration::from_millis(200);
-const LAYER_OUT: Duration = Duration::from_millis(150);
+const LAYER_IN: Duration = ferrite_ui::tokens::motion::SHORT;
+const LAYER_OUT: Duration = ferrite_ui::tokens::motion::QUICK;
 const LAYER_SCALE: f64 = 0.94;
 
 /// Panneau dessiné à part pour pouvoir s'animer : son rectangle (ombre comprise, en
@@ -2269,8 +2269,8 @@ impl Panels {
             } else {
                 (
                     control_fill(),
-                    themed(Color::WHITE, Color::rgb(0x22262D)),
-                    themed(Color::rgb(0x374151), Color::rgb(0xE5E7EB)),
+                    palette().window_background,
+                    palette().heading,
                     primary_text(),
                     text_secondary(),
                 )
@@ -2318,7 +2318,7 @@ impl Panels {
             // Pas de curseur pour un réglage que la machine n'offre pas.
             let Some(value) = value else { continue };
             let row = layout.control_row(control);
-            let ink = themed(Color::rgb(0x374151), Color::rgb(0xE5E7EB));
+            let ink = palette().heading;
             canvas.icon(
                 glyph,
                 (row.x + 10.0, row.y + row.h / 2.0),
@@ -2354,7 +2354,7 @@ impl Panels {
             footer.x,
             footer.y + 23.0,
             px(13.0),
-            themed(Color::rgb(0x374151), Color::rgb(0xE5E7EB)),
+            palette().heading,
         );
         let link = layout.control_row(Control::Settings);
         let width = canvas.text_width(&self.bold, "Paramètres…", px(13.0));
@@ -2376,7 +2376,7 @@ impl Panels {
             let ink = if control == Control::Power {
                 Color::WHITE
             } else {
-                themed(Color::rgb(0x374151), Color::rgb(0xE5E7EB))
+                palette().heading
             };
             canvas.icon(glyph, button.center(), 16.0, Style::Symbolic(ink));
         }
@@ -2408,11 +2408,7 @@ impl Panels {
             primary_text(),
         );
         let switch = layout.controls_switch();
-        let track = if on {
-            accent()
-        } else {
-            themed(Color::rgb(0xD5D9E0), Color::rgb(0x4B5360))
-        };
+        let track = if on { accent() } else { palette().track };
         canvas.fill(switch, (switch.h / 2.0) as f32, track);
         let knob = switch.h - 4.0;
         let x = if on {
@@ -2465,7 +2461,7 @@ impl Panels {
         let controls = &view.controls;
         self.draw_controls_header(canvas, layout, "Wi-Fi", view.wifi == Some(true));
         let list = layout.wifi_list();
-        canvas.fill(list, 14.0, themed(Color::WHITE, Color::rgb(0x22262D)));
+        canvas.fill(list, 14.0, palette().window_background);
         if controls.networks.is_empty() {
             let text = match view.wifi {
                 Some(true) => "Analyse en cours…",
@@ -2497,7 +2493,7 @@ impl Panels {
                 let color = if (index as u8) < network.level {
                     primary_text()
                 } else {
-                    themed(Color::rgb(0xD5D9E0), Color::rgb(0x4B5360))
+                    palette().track
                 };
                 canvas.fill(bar, 1.0, color);
             }
@@ -2505,7 +2501,7 @@ impl Panels {
             let name = canvas.fit_text(&self.bold, &network.ssid, px(14.0), row.w - 48.0 - 64.0);
             canvas.label(&self.bold, &name, x, row.y + 8.0, px(14.0), primary_text());
             let hint = if network.connected {
-                themed(Color::rgb(0x1F7A4D), Color::rgb(0x4ADE80))
+                palette().success_text
             } else {
                 text_secondary()
             };
@@ -2638,7 +2634,7 @@ impl Panels {
                 px(13.0),
                 text_secondary(),
             );
-            canvas.fill(list, 14.0, themed(Color::WHITE, Color::rgb(0x22262D)));
+            canvas.fill(list, 14.0, palette().window_background);
         }
         for (slot, device) in controls.devices.iter().enumerate() {
             let row = layout.bluetooth_row(slot);
@@ -2669,7 +2665,7 @@ impl Panels {
                 primary_text(),
             );
             let hint = if device.connected {
-                themed(Color::rgb(0x1F7A4D), Color::rgb(0x4ADE80))
+                palette().success_text
             } else {
                 text_secondary()
             };
@@ -2733,7 +2729,7 @@ impl Panels {
     fn menu_row(&self, canvas: &mut Canvas, row: Rect, text: &str, pointer: Option<(i32, i32)>) {
         let hovered = pointer.is_some_and(|(x, y)| row.contains(Point::from((f64::from(x), f64::from(y)))));
         if hovered {
-            canvas.fill(row, 6.0, Color::rgb(0x2779E0));
+            canvas.fill(row, 6.0, accent());
         }
         let ink = if hovered { Color::WHITE } else { primary_text() };
         canvas.label(&self.regular, text, row.x + 10.0, row.y + 8.0, px(13.0), ink);
@@ -3109,7 +3105,7 @@ impl Panels {
         };
         let title = canvas.fit_text(&self.bold, title, px(13.0), right - when_width - 8.0 - x);
         canvas.label(&self.bold, &title, x, rect.y + 13.0, px(13.0), primary_text());
-        let ink = themed(Color::rgb(0x374151), Color::rgb(0xD1D5DB));
+        let ink = palette().heading;
         for (index, line) in wrap_two_lines(canvas, &self.regular, &notification.body, px(13.0), right - x)
             .iter()
             .enumerate()
@@ -3234,7 +3230,7 @@ impl Panels {
         );
         for (slot, notification) in view.history.iter().take(layout.notification_rows()).enumerate() {
             let row = layout.notification_row(view.history.len(), slot);
-            canvas.fill(row, 12.0, themed(Color::WHITE, Color::rgb(0x22262D)));
+            canvas.fill(row, 12.0, palette().window_background);
             canvas.stroke(row, 12.0, palette().separator, 1.0);
             self.draw_notification(canvas, row, notification);
         }
@@ -3400,16 +3396,19 @@ impl Panels {
         let dark = palette().text.r > 128;
         let pick = |light: u32, dark_value: u32| Color::rgb(if dark { dark_value } else { light });
         let (fg, fg2, fg3) = (
-            pick(0x111827, 0xE5E7EB),
-            pick(0x4B5563, 0x9CA3AF),
-            pick(0x6B7280, 0x8B93A0),
+            palette().text,
+            palette().text_secondary,
+            palette().window_title_inactive,
         );
         let (panel, line, chip) = (
-            pick(0xFFFFFF, 0x22262D),
-            pick(0xE3E6EB, 0x353A42),
-            pick(0xEEF0F4, 0x2A2E35),
+            palette().window_background,
+            palette().separator,
+            palette().control_hover,
         );
-        let (tile, dot) = (pick(0xF5F6F8, 0x2A2E35), pick(0xFFFFFF, 0x353A42));
+        let (tile, dot) = (
+            palette().header_background,
+            themed(Color::WHITE, palette().separator),
+        );
         let tile_on = if dark {
             Color::rgb(0x6CB8FF).with_alpha(31)
         } else {
@@ -3422,7 +3421,7 @@ impl Panels {
             Color::rgb(0xFDE7E5)
         };
         let red_icon = pick(0xD92D20, 0xFF8A80);
-        let blue = Color::rgb(0x2779E0);
+        let blue = accent();
         let scrim = if dark {
             Color::BLACK.with_alpha(128)
         } else {
@@ -4983,25 +4982,24 @@ struct ClipTokens {
 }
 
 fn clip_tokens() -> ClipTokens {
-    let pick = |light: u32, dark: u32| Color::rgb(themed(light, dark));
     ClipTokens {
-        fg: pick(0x111827, 0xE5E7EB),
-        fg2: pick(0x4B5563, 0x9CA3AF),
-        fg3: pick(0x6B7280, 0x8B93A0),
-        icon: pick(0x1F2937, 0xE5E7EB),
-        panel: pick(0xFFFFFF, 0x22262D),
-        line: pick(0xE3E6EB, 0x353A42),
-        chip: pick(0xEEF0F4, 0x2A2E35),
-        field: pick(0xF7F8FA, 0x1E2127),
-        field_ring: pick(0xE3E6EB, 0x353A42),
+        fg: palette().text,
+        fg2: palette().text_secondary,
+        fg3: palette().window_title_inactive,
+        icon: palette().window_title_active,
+        panel: palette().window_background,
+        line: palette().separator,
+        chip: palette().control_hover,
+        field: themed(palette().header_background, palette().sidebar_background),
+        field_ring: palette().separator,
         ring: themed(Color::BLACK.with_alpha(20), Color::WHITE.with_alpha(15)),
-        tile: pick(0xF2F3F6, 0x2A2E35),
-        kbd_ring: pick(0xD5D9E0, 0x3A3F47),
-        toast_bg: pick(0x16181C, 0xE5E7EB),
-        toast_fg: pick(0xFFFFFF, 0x16181C),
-        toast_action: pick(0x9CC7FF, 0x174F9E),
-        filter_on: pick(0x16181C, 0xE5E7EB),
-        filter_on_fg: pick(0xFFFFFF, 0x16181C),
+        tile: themed(palette().sidebar_background, palette().header_background),
+        kbd_ring: palette().track,
+        toast_bg: palette().inverse,
+        toast_fg: palette().inverse_text,
+        toast_action: palette().inverse_action,
+        filter_on: palette().inverse,
+        filter_on_fg: palette().inverse_text,
     }
 }
 
@@ -5478,7 +5476,7 @@ impl Canvas<'_> {
     fn slider(&mut self, track: Rect, value: u8) {
         let center_y = track.y + track.h / 2.0;
         let rail = Rect::new(track.x, center_y - 3.0, track.w, 6.0);
-        self.fill(rail, 3.0, themed(Color::rgb(0xD5D9E0), Color::rgb(0x4B5360)));
+        self.fill(rail, 3.0, palette().track);
         let knob = track.h;
         let x = track.x + (track.w - knob) * f64::from(value) / 100.0;
         self.fill(

@@ -60,11 +60,19 @@ pub mod control {
     pub const HEIGHT: f32 = 30.0;
 }
 
+/// Durées des animations, communes au bureau et aux applications. La courbe est
+/// `theme::Easing::EaseOut` (départ rapide, arrivée douce), sauf mention contraire.
 pub mod motion {
     use std::time::Duration;
 
+    /// Disparitions, survols, petits changements d'état.
+    pub const QUICK: Duration = Duration::from_millis(150);
+    /// Apparition d'un panneau ou d'un menu, fondus.
     pub const SHORT: Duration = Duration::from_millis(200);
+    /// Ouverture d'une fenêtre, vue d'ensemble, glissement d'un contrôle.
     pub const NORMAL: Duration = Duration::from_millis(280);
+    /// Grands mouvements : changement de bureau, verrouillage, îlot, retour d'un glisser.
+    pub const LONG: Duration = Duration::from_millis(360);
 }
 
 #[cfg(test)]

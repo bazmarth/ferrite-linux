@@ -156,7 +156,7 @@ impl Ferrite {
                 });
             }
             FunctionKey::Airplane => self.toggle_airplane(),
-            FunctionKey::Calculator => self.activate_app(&AppKey::Builtin(App::Calculator)),
+            FunctionKey::Calculator => self.activate_app(&AppKey::Builtin(App::CALCULATOR)),
             FunctionKey::Search => {
                 self.handle_desktop_action(crate::desktop::panels::DesktopAction::TogglePopover(
                     Popover::Launcher,

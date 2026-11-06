@@ -22,9 +22,9 @@ use smithay::{
 /// Durée d'une réduction ou d'une réapparition.
 pub const DURATION: Duration = Duration::from_millis(520);
 /// Durée de l'apparition d'une nouvelle fenêtre.
-pub const OPEN_DURATION: Duration = Duration::from_millis(260);
+pub const OPEN_DURATION: Duration = ferrite_ui::tokens::motion::NORMAL;
 /// Durée du passage d'une fenêtre à sa taille agrandie, ou de son retour.
-pub const ZOOM_DURATION: Duration = Duration::from_millis(300);
+pub const ZOOM_DURATION: Duration = ferrite_ui::tokens::motion::NORMAL;
 /// Taille de départ d'une nouvelle fenêtre, par rapport à sa taille finale.
 const OPEN_SCALE: f64 = 0.88;
 /// Côté du point, au centre de l'icône du Dock, où la fenêtre disparaît et d'où elle

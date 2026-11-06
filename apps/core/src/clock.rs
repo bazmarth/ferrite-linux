@@ -2,9 +2,9 @@
 
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use eframe::egui::{self, Color32, CornerRadius, FontId, Frame, Margin, RichText};
+use eframe::egui::{self, CornerRadius, FontId, Frame, Margin, RichText};
 
-use crate::style;
+use crate::{kit, style};
 
 /// Villes de l'horloge mondiale : nom et décalage fixe par rapport à l'UTC, en secondes.
 /// Décalages d'hiver ; l'heure d'été n'est pas encore appliquée (voir la limite en fin de
@@ -333,40 +333,17 @@ impl ClockState {
 
     /// Onglets en segments, au milieu de la barre de la fenêtre.
     fn tabs(&mut self, ui: &mut egui::Ui) {
-        let tabs = [
-            (Tab::Horloge, "Horloge"),
-            (Tab::Minuteur, "Minuteur"),
-            (Tab::Chronomètre, "Chronomètre"),
-        ];
-        let segment = 104.0;
-        let width = segment * tabs.len() as f32 + 4.0;
-        let bar = ui.max_rect();
-        let track = egui::Rect::from_center_size(
-            egui::pos2(bar.center().x, bar.center().y),
-            egui::vec2(width, 30.0),
-        );
-        ui.painter().rect_filled(track, 8.0, style::control_background());
-        for (index, (tab, label)) in tabs.into_iter().enumerate() {
-            let rect = egui::Rect::from_min_size(
-                track.min + egui::vec2(2.0 + index as f32 * segment, 2.0),
-                egui::vec2(segment, 26.0),
-            );
-            let response = ui.interact(rect, ui.scope_id().with(("onglet", index)), egui::Sense::click());
-            style::segment_background(ui, rect, self.tab == tab, response.hovered());
-            ui.painter().text(
-                rect.center(),
-                egui::Align2::CENTER_CENTER,
-                label,
-                FontId::new(13.0, style::strong_family()),
-                if self.tab == tab {
-                    style::primary_text()
-                } else {
-                    style::text_secondary()
-                },
-            );
-            if response.clicked() {
-                self.tab = tab;
-            }
+        let tabs = [Tab::Horloge, Tab::Minuteur, Tab::Chronomètre];
+        let selected = tabs.iter().position(|tab| *tab == self.tab).unwrap_or(0);
+        let center = ui.max_rect().center();
+        if let Some(index) = kit::segments_at(
+            ui,
+            center,
+            104.0,
+            &["Horloge", "Minuteur", "Chronomètre"],
+            selected,
+        ) {
+            self.tab = tabs[index];
         }
     }
 
@@ -387,14 +364,14 @@ impl ClockState {
         // Heure : heures et minutes en grand, secondes plus petites à côté.
         let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 132.0), egui::Sense::hover());
         let painter = ui.painter();
-        section_label(
+        kit::caption(
             painter,
             rect.left_top(),
             &format!("Heure locale · UTC{}", format_offset(self.offset)),
         );
         let hours_minutes = format!("{:02}:{:02}", second_of_day / 3600, (second_of_day % 3600) / 60);
         let top = rect.top() + 22.0;
-        let big = tabular_text(
+        let big = kit::tabular_text(
             painter,
             egui::pos2(rect.left() - 3.0, top),
             egui::Align2::LEFT_TOP,
@@ -406,7 +383,7 @@ impl ClockState {
             .layout_no_wrap("00".to_owned(), light_font(30.0), style::text_secondary())
             .size()
             .y;
-        tabular_text(
+        kit::tabular_text(
             painter,
             egui::pos2(big.right() + 8.0, big.bottom() - seconds_height - 12.0),
             egui::Align2::LEFT_TOP,
@@ -425,15 +402,15 @@ impl ClockState {
         ui.add_space(22.0);
         let (heading, _) =
             ui.allocate_exact_size(egui::vec2(ui.available_width(), 18.0), egui::Sense::hover());
-        section_label(ui.painter(), heading.left_top(), "Horloges du monde");
+        kit::caption(ui.painter(), heading.left_top(), "Horloges du monde");
         ui.add_space(8.0);
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                card(ui, |ui| {
+                kit::soft_card(ui, |ui| {
                     for (index, (name, offset)) in WORLD.into_iter().enumerate() {
                         if index > 0 {
-                            hairline(ui);
+                            kit::separator(ui);
                         }
                         let city = now + offset;
                         let shift = city.div_euclid(86_400) - local_days;
@@ -507,7 +484,7 @@ impl ClockState {
         } else {
             format_hms(displayed.as_secs())
         };
-        tabular_text(
+        kit::tabular_text(
             painter,
             center,
             egui::Align2::CENTER_CENTER,
@@ -592,7 +569,7 @@ impl ClockState {
     fn stopwatch(&mut self, ui: &mut egui::Ui) {
         let current = self.stopwatch.current();
         let (area, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 120.0), egui::Sense::hover());
-        tabular_text(
+        kit::tabular_text(
             ui.painter(),
             area.center(),
             egui::Align2::CENTER_CENTER,
@@ -642,7 +619,7 @@ impl ClockState {
         ui.add_space(18.0);
         let (heading, _) =
             ui.allocate_exact_size(egui::vec2(ui.available_width(), 18.0), egui::Sense::hover());
-        section_label(ui.painter(), heading.left_top(), "Tours");
+        kit::caption(ui.painter(), heading.left_top(), "Tours");
         ui.add_space(8.0);
         let laps = lap_durations(&self.stopwatch.laps);
         // Au moins trois tours : le plus rapide en vert, le plus lent en rouge.
@@ -654,13 +631,13 @@ impl ClockState {
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
-                card(ui, |ui| {
+                kit::soft_card(ui, |ui| {
                     for (index, lap) in laps.iter().enumerate().rev() {
                         if index + 1 < laps.len() {
-                            hairline(ui);
+                            kit::separator(ui);
                         }
                         let color = if Some(*lap) == fastest {
-                            Color32::from_rgb(0x2E, 0xA0, 0x5B)
+                            style::success()
                         } else if Some(*lap) == slowest {
                             style::error()
                         } else {
@@ -691,88 +668,9 @@ impl ClockState {
     }
 }
 
-/// Écrit `text` en chiffres de largeur égale (comme des chiffres tabulaires) : un « 1 »
-/// prend la place d'un « 0 », et un nombre centré ne bouge plus quand il change.
-/// Renvoie le rectangle occupé.
-fn tabular_text(
-    painter: &egui::Painter,
-    at: egui::Pos2,
-    align: egui::Align2,
-    text: &str,
-    font: FontId,
-    color: egui::Color32,
-) -> egui::Rect {
-    let galley = |text: String| painter.layout_no_wrap(text, font.clone(), color);
-    let cell = ('0'..='9')
-        .map(|digit| galley(digit.to_string()).size().x)
-        .fold(0.0_f32, f32::max);
-    let parts: Vec<_> = text
-        .chars()
-        .map(|character| {
-            let piece = galley(character.to_string());
-            let width = if character.is_ascii_digit() {
-                cell
-            } else {
-                piece.size().x
-            };
-            (piece, width)
-        })
-        .collect();
-    let width: f32 = parts.iter().map(|(_, width)| width).sum();
-    let height = parts
-        .iter()
-        .map(|(piece, _)| piece.size().y)
-        .fold(0.0_f32, f32::max);
-    let rect = align.anchor_size(at, egui::vec2(width, height));
-    let mut x = rect.left();
-    for (piece, advance) in parts {
-        let offset = (advance - piece.size().x) / 2.0;
-        painter.galley(egui::pos2(x + offset, rect.top()), piece, color);
-        x += advance;
-    }
-    rect
-}
-
 /// Grands chiffres fins (Inter Display Light, comme le widget Horloge du bureau).
 fn light_font(size: f32) -> FontId {
     FontId::new(size, style::light_family())
-}
-
-/// Titre de section : petites capitales espacées, gris.
-fn section_label(painter: &egui::Painter, at: egui::Pos2, text: &str) {
-    let mut x = at.x;
-    for character in text.to_uppercase().chars() {
-        let galley = painter.layout_no_wrap(
-            character.to_string(),
-            FontId::new(11.0, style::strong_family()),
-            style::text_secondary(),
-        );
-        let width = galley.size().x;
-        painter.galley(egui::pos2(x, at.y), galley, style::text_secondary());
-        x += width + 0.9;
-    }
-}
-
-/// Carte arrondie, fond gris léger.
-fn card(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
-    Frame::new()
-        .fill(style::content_gray())
-        .corner_radius(CornerRadius::same(14))
-        .inner_margin(Margin::symmetric(16, 4))
-        .show(ui, |ui| {
-            ui.spacing_mut().item_spacing.y = 0.0;
-            ui.set_width(ui.available_width());
-            add(ui);
-        });
-}
-
-fn hairline(ui: &mut egui::Ui) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
-    ui.painter().hline(
-        rect.x_range(),
-        rect.center().y,
-        egui::Stroke::new(1.0, style::separator()),
-    );
 }
 
 /// Arc de cercle partant du haut, dans le sens des aiguilles d'une montre.
@@ -823,8 +721,9 @@ fn stepper(ui: &mut egui::Ui, width: f32, label: &str, value: &mut u32, max: u32
     );
 }
 
-/// Deux boutons côte à côte : secondaire à gauche, principal (bleu, ou rouge s'il
-/// arrête quelque chose) à droite. Renvoie les clics.
+/// Écart avec l'heure locale : « même heure », « +1 h », « −5 h 30 ».
+/// Deux grands boutons côte à côte : secondaire à gauche, principal (rouge s'il arrête)
+/// à droite ; renvoie leurs clics.
 fn button_pair(
     ui: &mut egui::Ui,
     secondary: &str,
@@ -833,30 +732,21 @@ fn button_pair(
     primary_enabled: bool,
     primary_stops: bool,
 ) -> (bool, bool) {
-    let mut clicks = (false, false);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 12.0;
         let width = (ui.available_width() - 12.0) / 2.0;
-        let left = egui::Button::new(RichText::new(secondary).size(15.0).color(style::primary_text()))
-            .fill(style::control_background())
-            .corner_radius(CornerRadius::same(12))
-            .min_size(egui::vec2(width, 42.0));
-        clicks.0 = ui.add_enabled(secondary_enabled, left).clicked();
-        let fill = if primary_stops {
-            style::error()
+        let left = kit::wide_button(ui, width, secondary, kit::Tone::Plain, secondary_enabled).clicked();
+        let tone = if primary_stops {
+            kit::Tone::Danger
         } else {
-            style::accent()
+            kit::Tone::Accent
         };
-        let right = egui::Button::new(RichText::new(primary).size(15.0).color(Color32::WHITE))
-            .fill(fill)
-            .corner_radius(CornerRadius::same(12))
-            .min_size(egui::vec2(width, 42.0));
-        clicks.1 = ui.add_enabled(primary_enabled, right).clicked();
-    });
-    clicks
+        let right = kit::wide_button(ui, width, primary, tone, primary_enabled).clicked();
+        (left, right)
+    })
+    .inner
 }
 
-/// Écart avec l'heure locale : « même heure », « +1 h », « −5 h 30 ».
 fn format_hours(hours: f64) -> String {
     if hours == 0.0 {
         return "même heure".to_owned();

@@ -17,7 +17,7 @@ use smithay::{
 use crate::state::Ferrite;
 
 /// Durée du glissement jusqu'à la page d'arrivée.
-const GLIDE: Duration = Duration::from_millis(320);
+const GLIDE: Duration = ferrite_ui::tokens::motion::LONG;
 /// Course des doigts pour une page entière, en unités de libinput non accélérées : la page
 /// suit les doigts quelle que soit leur vitesse. Réglé sur le pavé du ThinkBook, où un geste
 /// franc fait 200 à 380 unités (mesuré avec `ferrite-profil`) : 300 font une demi-page.
@@ -846,7 +846,7 @@ mod tests {
         assert_eq!(pages.position(at(0)), 1.0);
         let middle = pages.position(at(100));
         assert!(middle > 1.0 && middle < 2.0);
-        assert_eq!(pages.position(at(320)), 2.0);
+        assert_eq!(pages.position(at(GLIDE.as_millis() as u64)), 2.0);
     }
 
     #[test]

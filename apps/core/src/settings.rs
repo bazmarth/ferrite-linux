@@ -38,6 +38,7 @@ use ferrite_system::{
 use ferrite_ui::wallpaper::{self, Builtin, Image, Source};
 
 use crate::details;
+use crate::kit::{card, heading, note, separator};
 use crate::style::{self, Icons};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2661,7 +2662,7 @@ fn section_title(ui: &mut egui::Ui, text: &str) {
         RichText::new(text)
             .size(14.0)
             .family(style::strong_family())
-            .color(style::themed(rgb(0x374151), rgb(0xD1D5DB))),
+            .color(style::heading_text()),
     );
     ui.add_space(12.0);
 }
@@ -2873,7 +2874,7 @@ fn builtin_wallpaper_tile(ui: &mut egui::Ui, builtin: Builtin, selected: bool) -
     let ring = if selected {
         Stroke::new(2.0, style::accent())
     } else {
-        Stroke::new(1.0, rgb(0xD5D9E0))
+        Stroke::new(1.0, style::track())
     };
     let offset = if selected { 3.0 } else { 0.0 };
     painter.rect_stroke(
@@ -2900,7 +2901,7 @@ fn add_wallpaper_tile(ui: &mut egui::Ui) -> egui::Response {
     ];
     painter.extend(egui::Shape::dashed_line(
         &path,
-        Stroke::new(2.0, rgb(0xAEB6C2)),
+        Stroke::new(2.0, style::border()),
         6.0,
         4.0,
     ));
@@ -3029,32 +3030,7 @@ fn current_user() -> (String, String) {
     (full, login)
 }
 
-// ---- Mise en page commune ------------------------------------------------------------
-
-/// Titre de section, en gras.
-fn heading(ui: &mut egui::Ui, text: &str) {
-    ui.add_space(20.0);
-    ui.label(RichText::new(text).size(17.0).family(style::strong_family()));
-    ui.add_space(8.0);
-}
-
-/// Texte d'explication, en gris.
-fn note(ui: &mut egui::Ui, text: &str) {
-    ui.label(RichText::new(text).size(12.0).color(style::text_secondary()));
-}
-
-/// Carte blanche bordée, pour une liste (réseaux, appareils, sorties).
-fn card(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
-    Frame::new()
-        .fill(style::background())
-        .stroke(Stroke::new(1.0, style::tint(16)))
-        .corner_radius(10)
-        .inner_margin(Margin::symmetric(20, 14))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            add(ui);
-        });
-}
+// ---- Mise en page commune (le reste vient de `kit`) -------------------------------------
 
 /// Ligne d'une liste dans une carte.
 fn list_row(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
@@ -3083,14 +3059,6 @@ fn shortcut_modifier_label(modifiers: u8) -> String {
     } else {
         parts.join(" + ")
     }
-}
-
-/// Trait fin entre deux lignes d'une carte.
-fn separator(ui: &mut egui::Ui) {
-    let rect = ui.available_rect_before_wrap();
-    ui.painter()
-        .hline(rect.x_range(), rect.top(), Stroke::new(1.0, style::separator()));
-    ui.add_space(1.0);
 }
 
 /// Interrupteur suivi de son titre (et d'un détail dessous), comme sur la maquette ;
@@ -3385,7 +3353,7 @@ fn appearance_choice(ui: &mut egui::Ui, mode: Appearance, selected: bool) -> egu
         painter.rect_filled(bar_at(26.0, body.width() * 0.6), 3.0, rgb(line));
         painter.rect_filled(bar_at(40.0, body.width() * 0.4), 3.0, rgb(line));
         let button = egui::Rect::from_min_size(body.min + egui::vec2(12.0, 58.0), egui::vec2(56.0, 16.0));
-        painter.rect_filled(button, 5.0, rgb(0x2779E0));
+        painter.rect_filled(button, 5.0, style::accent());
     };
     let painter = ui.painter();
     match mode {

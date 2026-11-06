@@ -764,10 +764,21 @@ impl ViewerState {
                 FontId::proportional(13.0),
                 style::text_secondary(),
             );
+            // Un chemin long garde sa fin (« …/Projets/Photos ») et ne déborde pas sur le
+            // libellé.
+            let key_width = painter
+                .layout_no_wrap(
+                    (*key).to_owned(),
+                    FontId::proportional(13.0),
+                    style::text_secondary(),
+                )
+                .size()
+                .x;
+            let room = table.width() - 28.0 - key_width - 16.0;
             painter.text(
                 pos2(table.right() - 14.0, y),
                 Align2::RIGHT_CENTER,
-                value,
+                keep_end(painter, value, FontId::proportional(13.0), room),
                 FontId::proportional(13.0),
                 style::primary_text(),
             );
@@ -1065,19 +1076,7 @@ impl ViewerState {
             .x;
         let width = text_w + 26.0 + if undo { 14.0 + 74.0 } else { 0.0 };
         let card = Rect::from_center_size(pos2(area.center().x, area.top() + 18.0 + 23.0), vec2(width, 46.0));
-        let (fill, ink, action) = if style::theme_is_dark() {
-            (
-                Color32::from_rgb(0xE5, 0xE7, 0xEB),
-                Color32::from_rgb(0x16, 0x18, 0x1C),
-                Color32::from_rgb(0x17, 0x4F, 0x9E),
-            )
-        } else {
-            (
-                Color32::from_rgb(0x16, 0x18, 0x1C),
-                Color32::WHITE,
-                Color32::from_rgb(0x9C, 0xC7, 0xFF),
-            )
-        };
+        let (fill, ink, action) = (style::inverse(), style::inverse_text(), style::inverse_action());
         let painter = ui.painter();
         painter.rect_filled(card, 12.0, fill);
         painter.text(
@@ -1093,11 +1092,8 @@ impl ViewerState {
                 vec2(74.0, 28.0),
             );
             let response = ui.interact(button, ui.scope_id().with("annuler"), Sense::click());
-            ui.painter().rect_filled(
-                button,
-                8.0,
-                Color32::from_gray(127).gamma_multiply(if response.hovered() { 0.3 } else { 0.18 }),
-            );
+            ui.painter()
+                .rect_filled(button, 8.0, style::tint(if response.hovered() { 77 } else { 46 }));
             ui.painter().text(
                 button.center(),
                 Align2::CENTER_CENTER,
@@ -1137,41 +1133,47 @@ fn home_relative(path: &Path) -> String {
     }
 }
 
-/// Couleurs des planches (sombre, clair).
+/// Couleurs des planches, prises dans les rôles communs de `style`.
 fn stage() -> Color32 {
-    style::themed(
-        Color32::from_rgb(0xED, 0xEF, 0xF2),
-        Color32::from_rgb(0x12, 0x14, 0x18),
-    )
+    style::stage()
 }
 
 fn bar() -> Color32 {
-    style::themed(Color32::WHITE, Color32::from_rgb(0x1C, 0x1F, 0x25))
+    style::background()
 }
 
 fn line() -> Color32 {
-    style::themed(
-        Color32::from_rgb(0xE3, 0xE6, 0xEB),
-        Color32::from_rgb(0x2C, 0x30, 0x38),
-    )
+    style::line()
 }
 
 fn floating() -> Color32 {
-    style::themed(
-        Color32::from_white_alpha(204),
-        Color32::from_rgba_unmultiplied(28, 31, 37, 184),
-    )
+    style::floating()
 }
 
 fn floating_ring() -> Color32 {
-    style::themed(Color32::from_black_alpha(20), Color32::from_white_alpha(31))
+    style::floating_ring()
 }
 
 fn floating_ink() -> Color32 {
-    style::themed(
-        Color32::from_rgb(0x1F, 0x29, 0x37),
-        Color32::from_rgb(0xF3, 0xF4, 0xF6),
-    )
+    style::primary_text()
+}
+
+/// `text` raccourci par le début (« …fin ») pour tenir en `room` pixels.
+fn keep_end(painter: &egui::Painter, text: &str, font: FontId, room: f32) -> String {
+    let width = |text: String| {
+        painter
+            .layout_no_wrap(text, font.clone(), Color32::WHITE)
+            .size()
+            .x
+    };
+    if width(text.to_owned()) <= room {
+        return text.to_owned();
+    }
+    let characters: Vec<char> = text.chars().collect();
+    (1..characters.len())
+        .map(|start| format!("…{}", characters[start..].iter().collect::<String>()))
+        .find(|candidate| width(candidate.clone()) <= room)
+        .unwrap_or_else(|| "…".to_owned())
 }
 
 /// Vignette recadrée pour couvrir `rect`.

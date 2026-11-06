@@ -28,8 +28,8 @@ use crate::{
 /// Auxiliaire de `pam_unix` : il ne vérifie que le compte qui l'appelle.
 const HELPERS: [&str; 2] = ["/usr/sbin/unix_chkpwd", "/sbin/unix_chkpwd"];
 /// Temps du passage du repos à la saisie, et de la secousse d'un refus.
-const TRANSITION: Duration = Duration::from_millis(320);
-pub const SCREEN_FADE_DURATION: Duration = Duration::from_millis(360);
+const TRANSITION: Duration = ferrite_ui::tokens::motion::LONG;
+pub const SCREEN_FADE_DURATION: Duration = ferrite_ui::tokens::motion::LONG;
 const SCREEN_FADE_STEP: Duration = Duration::from_millis(16);
 const SHAKE: Duration = Duration::from_millis(380);
 /// Message d'accueil, une fois le mot de passe accepté.

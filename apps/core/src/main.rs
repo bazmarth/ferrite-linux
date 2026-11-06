@@ -6,7 +6,9 @@ mod clock;
 mod details;
 mod editor;
 mod files;
+mod gallery;
 mod island;
+mod kit;
 mod markdown;
 mod monitor;
 mod music;
@@ -26,93 +28,152 @@ use std::{
 
 use eframe::egui;
 
+use ferrite_system::catalog::{self, AppInfo};
+
 use crate::{
     calculator::CalculatorState, clock::ClockState, editor::EditorState, files::FilesState,
     monitor::MonitorState, music::MusicState, pdf_viewer::ViewerApp, settings::SettingsState,
     terminal::TerminalState,
 };
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum AppKind {
-    Files,
-    TextEdit,
-    Terminal,
-    Calculator,
-    Clock,
-    Settings,
-    Monitor,
-    Viewer,
-    PdfViewer,
-    Music,
-    Video,
+/// Contenu d'une fenêtre d'application. Chaque application du catalogue
+/// (`ferrite_system::catalog`) en fournit une, créée par [`create`].
+trait AppView {
+    /// Dessine la fenêtre ; le fond, le thème et F11 sont déjà pris en charge.
+    fn update(&mut self, ui: &mut egui::Ui);
+    /// Fichier (ou rubrique) confié par un autre lancement de la même application.
+    fn open(&mut self, _target: PathBuf) {}
 }
 
-impl AppKind {
-    fn parse(value: &str) -> Option<Self> {
-        match value {
-            "files" => Some(Self::Files),
-            "textedit" => Some(Self::TextEdit),
-            "terminal" => Some(Self::Terminal),
-            "calculator" => Some(Self::Calculator),
-            "clock" => Some(Self::Clock),
-            "settings" => Some(Self::Settings),
-            "monitor" => Some(Self::Monitor),
-            "viewer" => Some(Self::Viewer),
-            "pdf" => Some(Self::PdfViewer),
-            "music" => Some(Self::Music),
-            "video" => Some(Self::Video),
-            _ => None,
+/// Crée la vue de l'application `info`, avec le fichier ou la rubrique demandé.
+///
+/// Nouvelle application : une ligne ici, une entrée dans le catalogue, et son module
+/// (voir `docs/NOUVELLE-APPLICATION.md`).
+fn create(
+    info: &AppInfo,
+    context: &egui::Context,
+    target: Option<PathBuf>,
+    launch: terminal::Launch,
+) -> Box<dyn AppView> {
+    let opened = |mut view: Box<dyn AppView>| {
+        if let Some(target) = target.clone() {
+            view.open(target);
         }
+        view
+    };
+    match info.command {
+        "files" => opened(Box::<FilesState>::default()),
+        "textedit" => opened(Box::<EditorState>::default()),
+        "terminal" => Box::new(TerminalState::new(context, launch)),
+        "calculator" => Box::new(CalculatorState::default()),
+        // `ferrite-apps clock minuteur` : l'Horloge ouvre directement cet onglet.
+        "clock" => Box::new(ClockState::with_tab(
+            target.as_deref().and_then(|path| path.to_str()),
+        )),
+        "settings" => opened(Box::<SettingsState>::default()),
+        "monitor" => Box::new(MonitorState::default()),
+        "viewer" => Box::new(ViewerApp::new(target)),
+        "pdf" => Box::new(Pdf(ViewerApp::new_pdf(target))),
+        "music" => Box::new(MusicState::new(target)),
+        "video" => Box::new(video::VideoState::new(target, context.clone())),
+        "galerie" => Box::new(gallery::GalleryState::default()),
+        other => unreachable!("application du catalogue sans vue : {other}"),
     }
+}
 
-    fn title(self) -> &'static str {
-        match self {
-            Self::Files => "Fichiers",
-            Self::TextEdit => "TextEdit",
-            Self::Terminal => "Terminal",
-            Self::Calculator => "Calculatrice",
-            Self::Clock => "Horloge",
-            Self::Settings => "Paramètres",
-            Self::Monitor => "Moniteur d'activité",
-            Self::Viewer => "Visionneuse",
-            Self::PdfViewer => "Lecteur PDF",
-            Self::Music => "Musique",
-            Self::Video => "Lecteur vidéo",
-        }
+impl AppView for gallery::GalleryState {
+    fn update(&mut self, ui: &mut egui::Ui) {
+        gallery::GalleryState::update(self, ui);
     }
+}
 
-    /// Identifiant Wayland, reconnu par le Dock de ferrite-shell.
-    fn app_id(self) -> &'static str {
-        match self {
-            Self::Files => "ferrite-files",
-            Self::TextEdit => "ferrite-textedit",
-            Self::Terminal => "ferrite-terminal",
-            Self::Calculator => "ferrite-calculator",
-            Self::Clock => "ferrite-clock",
-            Self::Settings => "ferrite-settings",
-            Self::Monitor => "ferrite-monitor",
-            Self::Viewer => "ferrite-viewer",
-            Self::PdfViewer => "ferrite-pdf",
-            Self::Music => "ferrite-music",
-            Self::Video => "ferrite-video",
-        }
+impl AppView for FilesState {
+    fn update(&mut self, ui: &mut egui::Ui) {
+        FilesState::update(self, ui);
     }
+    fn open(&mut self, target: PathBuf) {
+        self.open_at(target);
+    }
+}
 
-    /// Taille initiale et taille minimale de la fenêtre.
-    fn sizes(self) -> ([f32; 2], [f32; 2]) {
-        match self {
-            Self::Files => ([1000.0, 640.0], [560.0, 340.0]),
-            Self::TextEdit => ([1000.0, 640.0], [420.0, 280.0]),
-            Self::Terminal => ([720.0, 450.0], [420.0, 260.0]),
-            Self::Calculator => ([320.0, 470.0], [280.0, 420.0]),
-            Self::Clock => ([440.0, 560.0], [360.0, 480.0]),
-            Self::Settings => ([1008.0, 640.0], [720.0, 440.0]),
-            Self::Monitor => ([1000.0, 640.0], [680.0, 460.0]),
-            Self::Viewer => ([1180.0, 760.0], [640.0, 440.0]),
-            Self::PdfViewer => ([1180.0, 760.0], [640.0, 440.0]),
-            Self::Music => ([1240.0, 800.0], [760.0, 520.0]),
-            Self::Video => ([1100.0, 660.0], [640.0, 400.0]),
-        }
+impl AppView for EditorState {
+    fn update(&mut self, ui: &mut egui::Ui) {
+        EditorState::update(self, ui);
+    }
+    fn open(&mut self, target: PathBuf) {
+        EditorState::open(self, target);
+    }
+}
+
+impl AppView for TerminalState {
+    fn update(&mut self, ui: &mut egui::Ui) {
+        TerminalState::update(self, ui);
+    }
+}
+
+impl AppView for CalculatorState {
+    fn update(&mut self, ui: &mut egui::Ui) {
+        CalculatorState::update(self, ui);
+    }
+}
+
+impl AppView for ClockState {
+    fn update(&mut self, ui: &mut egui::Ui) {
+        ClockState::update(self, ui);
+    }
+}
+
+impl AppView for SettingsState {
+    fn update(&mut self, ui: &mut egui::Ui) {
+        SettingsState::update(self, ui);
+    }
+    fn open(&mut self, target: PathBuf) {
+        self.open_page(&target.to_string_lossy());
+    }
+}
+
+impl AppView for MonitorState {
+    fn update(&mut self, ui: &mut egui::Ui) {
+        MonitorState::update(self, ui);
+    }
+}
+
+impl AppView for ViewerApp {
+    fn update(&mut self, ui: &mut egui::Ui) {
+        ViewerApp::update(self, ui);
+    }
+    fn open(&mut self, target: PathBuf) {
+        ViewerApp::open(self, target);
+    }
+}
+
+/// La Visionneuse en lecteur PDF.
+struct Pdf(ViewerApp);
+
+impl AppView for Pdf {
+    fn update(&mut self, ui: &mut egui::Ui) {
+        self.0.update(ui);
+    }
+    fn open(&mut self, target: PathBuf) {
+        self.0.open_pdf(target);
+    }
+}
+
+impl AppView for MusicState {
+    fn update(&mut self, ui: &mut egui::Ui) {
+        MusicState::update(self, ui);
+    }
+    fn open(&mut self, target: PathBuf) {
+        MusicState::open(self, target);
+    }
+}
+
+impl AppView for video::VideoState {
+    fn update(&mut self, ui: &mut egui::Ui) {
+        video::VideoState::update(self, ui);
+    }
+    fn open(&mut self, target: PathBuf) {
+        video::VideoState::open(self, target);
     }
 }
 
@@ -125,17 +186,19 @@ fn main() -> eframe::Result {
         }
         return Ok(());
     }
-    let Some(kind) = args.next().and_then(|arg| AppKind::parse(&arg)) else {
+    let Some(info) = args.next().and_then(|arg| catalog::by_command(&arg)) else {
+        let commands: Vec<&str> = catalog::APPS.iter().map(|app| app.command).collect();
         eprintln!(
-            "Utilisation : ferrite-apps <files|textedit|terminal|calculator|clock|settings|monitor|viewer|pdf|music|video> [dossier ou fichier]"
+            "Utilisation : ferrite-apps <{}> [dossier ou fichier]",
+            commands.join("|")
         );
         return Ok(());
     };
-    if kind == AppKind::Terminal {
+    if info.command == "terminal" {
         style::set_always_dark();
         // Chaque lancement est une fenêtre de plus, avec son propre shell.
         let launch = terminal::parse_launch(args);
-        return run(kind, None, None, launch);
+        return run(info, None, None, launch);
     }
     let initial_file = args.next().map(PathBuf::from);
     // Une seule fenêtre par application, sauf celles choisies dans Paramètres : un
@@ -143,43 +206,43 @@ fn main() -> eframe::Result {
     let multiple = ferrite_system::config::Settings::load()
         .multi_window_apps()
         .iter()
-        .any(|id| id == kind.app_id());
+        .any(|id| id == info.app_id);
     let requests = if multiple {
         None
     } else {
-        match single::claim(kind.app_id(), initial_file.as_deref()) {
+        match single::claim(info.app_id, initial_file.as_deref()) {
             single::Start::Primary(requests) => Some(requests),
             single::Start::Forwarded => return Ok(()),
         }
     };
-    run(kind, initial_file, requests, terminal::Launch::default())
+    run(info, initial_file, requests, terminal::Launch::default())
 }
 
 fn run(
-    kind: AppKind,
+    info: &'static AppInfo,
     initial_file: Option<PathBuf>,
     requests: Option<single::Requests>,
     launch: terminal::Launch,
 ) -> eframe::Result {
-    let (size, min_size) = kind.sizes();
+    let size = |(w, h): (u16, u16)| [f32::from(w), f32::from(h)];
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Glow,
         viewport: egui::ViewportBuilder::default()
-            .with_app_id(kind.app_id())
+            .with_app_id(info.app_id)
             // Les applications Ferrite dessinent leur haut (colonne, barre d'outils et
             // boutons) ; ferrite-shell garde coins arrondis, ombre et bords.
             .with_decorations(false)
-            .with_inner_size(size)
-            .with_min_inner_size(min_size),
+            .with_inner_size(size(info.size))
+            .with_min_inner_size(size(info.min_size)),
         ..Default::default()
     };
     eframe::run_native(
-        kind.title(),
+        info.name,
         options,
         Box::new(move |context| {
             Ok(Box::new(FerriteApp::new(
                 context,
-                kind,
+                info,
                 initial_file,
                 requests,
                 launch,
@@ -188,18 +251,10 @@ fn run(
     )
 }
 
+/// Ce qui est commun à toutes les fenêtres : thème suivi en direct, fond, F11, instance
+/// unique ; le reste revient à la vue de l'application.
 struct FerriteApp {
-    kind: AppKind,
-    files: Option<FilesState>,
-    editor: EditorState,
-    calculator: CalculatorState,
-    clock: ClockState,
-    settings: Option<SettingsState>,
-    monitor: Option<MonitorState>,
-    terminal: Option<TerminalState>,
-    viewer: Option<ViewerApp>,
-    music: Option<MusicState>,
-    video: Option<video::VideoState>,
+    view: Box<dyn AppView>,
     /// Lancements suivants de la même application (instance unique).
     requests: Option<single::Requests>,
     settings_stamp: Option<SystemTime>,
@@ -209,7 +264,7 @@ struct FerriteApp {
 impl FerriteApp {
     fn new(
         context: &eframe::CreationContext<'_>,
-        kind: AppKind,
+        info: &'static AppInfo,
         initial_file: Option<PathBuf>,
         requests: Option<single::Requests>,
         launch: terminal::Launch,
@@ -220,48 +275,8 @@ impl FerriteApp {
         {
             *waker = Some(context.egui_ctx.clone());
         }
-        let mut editor = EditorState::default();
-        let viewer = match kind {
-            AppKind::Viewer => Some(ViewerApp::new(initial_file.clone())),
-            AppKind::PdfViewer => Some(ViewerApp::new_pdf(initial_file.clone())),
-            _ => None,
-        };
-        let music = (kind == AppKind::Music).then(|| MusicState::new(initial_file.clone()));
-        let video = (kind == AppKind::Video)
-            .then(|| video::VideoState::new(initial_file.clone(), context.egui_ctx.clone()));
-        // `ferrite-apps clock minuteur` : l'Horloge ouvre directement cet onglet.
-        let clock = ClockState::with_tab(
-            initial_file
-                .as_deref()
-                .filter(|_| kind == AppKind::Clock)
-                .and_then(|path| path.to_str()),
-        );
-        let mut files = (kind == AppKind::Files).then(FilesState::default);
-        let mut settings = (kind == AppKind::Settings).then(SettingsState::default);
-        if let Some(path) = initial_file {
-            if let Some(settings) = &mut settings {
-                settings.open_page(&path.to_string_lossy());
-            } else if let Some(files) = &mut files {
-                files.open_at(path);
-            } else if !matches!(
-                kind,
-                AppKind::Viewer | AppKind::PdfViewer | AppKind::Music | AppKind::Video
-            ) {
-                editor.open(path);
-            }
-        }
         Self {
-            kind,
-            files,
-            editor,
-            calculator: CalculatorState::default(),
-            clock,
-            settings,
-            monitor: (kind == AppKind::Monitor).then(MonitorState::default),
-            terminal: (kind == AppKind::Terminal).then(|| TerminalState::new(&context.egui_ctx, launch)),
-            viewer,
-            music,
-            video,
+            view: create(info, &context.egui_ctx, initial_file, launch),
             requests,
             settings_stamp: {
                 watch_settings(context.egui_ctx.clone());
@@ -295,23 +310,7 @@ impl FerriteApp {
             return;
         }
         for file in received.into_iter().flatten() {
-            if let Some(settings) = &mut self.settings {
-                settings.open_page(&file.to_string_lossy());
-            } else if let Some(files) = &mut self.files {
-                files.open_at(file);
-            } else if let Some(viewer) = &mut self.viewer {
-                if self.kind == AppKind::PdfViewer {
-                    viewer.open_pdf(file);
-                } else {
-                    viewer.open(file);
-                }
-            } else if let Some(music) = &mut self.music {
-                music.open(file);
-            } else if let Some(video) = &mut self.video {
-                video.open(file);
-            } else {
-                self.editor.open(file);
-            }
+            self.view.open(file);
         }
         ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
@@ -332,51 +331,7 @@ impl eframe::App for FerriteApp {
         // fond explicitement évite que le bureau transparaisse.
         ui.painter()
             .rect_filled(ui.max_rect(), egui::CornerRadius::ZERO, style::background());
-        match self.kind {
-            AppKind::Files => {
-                if let Some(files) = &mut self.files {
-                    files.update(ui);
-                }
-            }
-            AppKind::TextEdit => self.editor.update(ui),
-            AppKind::Terminal => {
-                if let Some(terminal) = &mut self.terminal {
-                    terminal.update(ui);
-                }
-            }
-            AppKind::Calculator => self.calculator.update(ui),
-            AppKind::Clock => self.clock.update(ui),
-            AppKind::Settings => {
-                if let Some(settings) = &mut self.settings {
-                    settings.update(ui);
-                }
-            }
-            AppKind::Monitor => {
-                if let Some(monitor) = &mut self.monitor {
-                    monitor.update(ui);
-                }
-            }
-            AppKind::Viewer => {
-                if let Some(viewer) = &mut self.viewer {
-                    viewer.update(ui);
-                }
-            }
-            AppKind::PdfViewer => {
-                if let Some(viewer) = &mut self.viewer {
-                    viewer.update(ui);
-                }
-            }
-            AppKind::Music => {
-                if let Some(music) = &mut self.music {
-                    music.update(ui);
-                }
-            }
-            AppKind::Video => {
-                if let Some(video) = &mut self.video {
-                    video.update(ui);
-                }
-            }
-        }
+        self.view.update(ui);
     }
 }
 

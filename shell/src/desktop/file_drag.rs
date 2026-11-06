@@ -42,7 +42,7 @@ use crate::{
 };
 
 /// Attente sur une icône du Dock avant que son application passe au premier plan.
-const SPRING: Duration = Duration::from_millis(350);
+const SPRING: Duration = ferrite_ui::tokens::motion::LONG;
 /// Bande au-dessus du Dock qui le fait apparaître pendant un glisser de fichiers.
 pub const DOCK_REACH: f64 = 60.0;
 
@@ -153,7 +153,7 @@ impl Ferrite {
         let item = self
             .dock_item_at(location)
             .map(|(_, item)| item)
-            .filter(|item| item.running && item.key != AppKey::Builtin(App::Trash));
+            .filter(|item| item.running && item.key != AppKey::Builtin(App::TRASH));
         let now = Instant::now();
         let spring = match (&self.file_drag.as_ref().and_then(|file| file.hover.clone()), item) {
             (Some((key, since, fired)), Some(item)) if *key == item.key => {
@@ -233,8 +233,8 @@ impl Ferrite {
         let paths = file.drag.paths.clone();
         let env = self.client_environment();
         if let Some((_, item)) = self.dock_item_at(location) {
-            if item.key == AppKey::Builtin(App::Trash) {
-                App::Trash.launch_with(&env, &paths);
+            if item.key == AppKey::Builtin(App::TRASH) {
+                App::TRASH.launch_with(&env, &paths);
             } else if item.key.launch_with(&self.applications, &env, &paths) {
                 if item.running {
                     self.bring_app_forward(&item.key);

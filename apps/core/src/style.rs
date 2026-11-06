@@ -61,6 +61,105 @@ pub fn control_background() -> Color32 {
     color(palette().control_pressed)
 }
 
+// ---- Rôles de couleur communs ----------------------------------------------------------
+// Les applications prennent ces rôles plutôt que d'écrire leurs propres couleurs : une
+// même chose a la même teinte partout, dans les deux thèmes (`tools/check-colors.sh`).
+
+/// Rail d'un curseur ou d'une jauge, sous la part remplie.
+pub fn track() -> Color32 {
+    color(palette().track)
+}
+
+/// Filet sous une barre ou entre deux zones de la fenêtre (plus marqué que
+/// [`separator`], qui sépare les lignes d'une carte).
+pub fn line() -> Color32 {
+    color(palette().separator)
+}
+
+/// Voile sous une fenêtre de dialogue.
+pub fn scrim() -> Color32 {
+    themed(
+        Color32::from_rgba_unmultiplied(15, 23, 42, 71),
+        Color32::from_black_alpha(115),
+    )
+}
+
+/// Ombre d'un panneau qui flotte au-dessus du contenu.
+pub fn shadow() -> Color32 {
+    themed(
+        Color32::from_rgba_unmultiplied(15, 23, 42, 64),
+        Color32::from_black_alpha(140),
+    )
+}
+
+/// Segment choisi d'un contrôle à segments, sur [`control_background`].
+pub fn segment_on() -> Color32 {
+    themed(Color32::WHITE, color(palette().border_hover))
+}
+
+/// Bord d'un champ ou d'une case à cocher.
+pub fn border() -> Color32 {
+    color(palette().border_hover)
+}
+
+/// Scène d'une image, d'une page ou d'une vidéo : un peu plus sombre que la fenêtre,
+/// pour que le document s'en détache.
+pub fn stage() -> Color32 {
+    color(palette().stage)
+}
+
+/// Commandes flottantes sur une scène (zoom, page suivante) : verre clair ou sombre.
+pub fn floating() -> Color32 {
+    themed(
+        Color32::from_white_alpha(204),
+        Color32::from_rgba_unmultiplied(28, 31, 37, 184),
+    )
+}
+
+pub fn floating_ring() -> Color32 {
+    tint_ring()
+}
+
+fn tint_ring() -> Color32 {
+    themed(Color32::from_black_alpha(20), Color32::from_white_alpha(31))
+}
+
+/// Contraste fort : fond foncé en thème clair, clair en thème sombre (bouton lecture,
+/// bandeau « Annuler »).
+pub fn inverse() -> Color32 {
+    color(palette().inverse)
+}
+
+/// Texte sur [`inverse`].
+pub fn inverse_text() -> Color32 {
+    color(palette().inverse_text)
+}
+
+/// Action sur [`inverse`] (« Annuler » d'un bandeau).
+pub fn inverse_action() -> Color32 {
+    color(palette().inverse_action)
+}
+
+/// Texte de titre de partie, entre le texte et le texte secondaire.
+pub fn heading_text() -> Color32 {
+    color(palette().heading)
+}
+
+/// Texte discret (aide, indications), plus pâle que le texte secondaire.
+pub fn tertiary_text() -> Color32 {
+    color(palette().window_title_inactive)
+}
+
+/// Réussite, enregistré, meilleur tour.
+pub fn success() -> Color32 {
+    color(palette().success_text)
+}
+
+/// Attention, modifié, niveau élevé.
+pub fn warning() -> Color32 {
+    color(palette().warning)
+}
+
 pub fn control_hover() -> Color32 {
     color(palette().control_hover)
 }

@@ -140,6 +140,18 @@ pub struct Palette {
     pub selection: Color,
     pub selection_text: Color,
     pub shadow: Color,
+    /// Rail d'un curseur ou d'une jauge, sous la part remplie.
+    pub track: Color,
+    /// Titre de partie, entre le texte et le texte secondaire.
+    pub heading: Color,
+    /// Texte de réussite (« Connecté », « Enregistré ») : plus lisible que `success`.
+    pub success_text: Color,
+    /// Scène d'une image, d'une page ou d'une vidéo, un peu plus sombre que la fenêtre.
+    pub stage: Color,
+    /// Contraste fort (bouton lecture, bandeau « Annuler ») : son fond, son texte, son action.
+    pub inverse: Color,
+    pub inverse_text: Color,
+    pub inverse_action: Color,
 }
 
 impl Palette {
@@ -177,6 +189,13 @@ impl Palette {
         selection: Color::rgb(0xDCEAFB),
         selection_text: Color::rgb(0x174F9E),
         shadow: Color::BLACK.with_alpha(97),
+        track: Color::rgb(0xD5D9E0),
+        heading: Color::rgb(0x374151),
+        success_text: Color::rgb(0x1F7A4D),
+        stage: Color::rgb(0xEDEFF2),
+        inverse: Color::rgb(0x16181C),
+        inverse_text: Color::WHITE,
+        inverse_action: Color::rgb(0x9CC7FF),
     };
 
     pub const DARK: Palette = Palette {
@@ -213,6 +232,13 @@ impl Palette {
         selection: Color::rgb(0x23395B),
         selection_text: Color::rgb(0xCFE3FB),
         shadow: Color::BLACK.with_alpha(115),
+        track: Color::rgb(0x4B5360),
+        heading: Color::rgb(0xD1D5DB),
+        success_text: Color::rgb(0x4ADE80),
+        stage: Color::rgb(0x121418),
+        inverse: Color::rgb(0xE5E7EB),
+        inverse_text: Color::rgb(0x16181C),
+        inverse_action: Color::rgb(0x174F9E),
     };
 
     pub const fn for_mode(mode: ThemeMode) -> Palette {

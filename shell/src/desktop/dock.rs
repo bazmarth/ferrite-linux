@@ -72,13 +72,13 @@ pub(crate) const REVEAL_APPROACH_GRACE: Duration = Duration::from_millis(600);
 /// par seconde).
 const MAX_STEP: Duration = Duration::from_millis(33);
 /// Durée du glissement du Dock.
-const SLIDE: Duration = Duration::from_millis(180);
+const SLIDE: Duration = ferrite_ui::tokens::motion::SHORT;
 /// Agrandissement maximal d'une icône sous la souris, et portée de l'effet (en icônes,
 /// de chaque côté du pointeur).
 const MAGNIFY: f64 = 1.9;
 const MAGNIFY_RANGE: f64 = 2.5;
 /// Durée de l'entrée et de la sortie de l'agrandissement.
-const MAGNIFY_EASE: Duration = Duration::from_millis(160);
+const MAGNIFY_EASE: Duration = ferrite_ui::tokens::motion::QUICK;
 
 /// Rebond d'une application qui démarre : durée d'un saut, hauteur (en icônes), et
 /// délai au-delà duquel on renonce à attendre sa fenêtre.
@@ -271,7 +271,7 @@ pub fn layout(
     // Le trait précède la corbeille, dernière case du Dock.
     let separator_after = items
         .iter()
-        .position(|item| item.key == AppKey::Builtin(App::Trash))
+        .position(|item| item.key == AppKey::Builtin(App::TRASH))
         .filter(|index| *index > 0);
     // Centres des icônes sans agrandissement, relatifs au bord gauche du fond.
     let mut base = Vec::with_capacity(count);
@@ -846,7 +846,7 @@ mod tests {
 
     #[test]
     fn dock_centre_et_laisse_une_marge_en_bas() {
-        let dock = layout(output(), medium(), &items(&App::DOCK, &[]), 1.0, None, 0.0);
+        let dock = layout(output(), medium(), &items(&App::dock(), &[]), 1.0, None, 0.0);
         assert_eq!(dock.plate.size.w, 354.0);
         assert_eq!(dock.plate.size.h, 86.0);
         assert_eq!(dock.plate.loc, Point::from((463.0, 616.0)));
@@ -857,16 +857,16 @@ mod tests {
         assert_eq!(above, below);
         assert_eq!(dock.separator, None);
         // Caché : entièrement sous le bord de l'écran.
-        let hidden = layout(output(), medium(), &items(&App::DOCK, &[]), 0.0, None, 0.0);
+        let hidden = layout(output(), medium(), &items(&App::dock(), &[]), 0.0, None, 0.0);
         assert!(hidden.plate.loc.y >= 720.0);
     }
 
     #[test]
     fn le_trait_precede_la_corbeille() {
-        let mut list = items(&App::DOCK, &["vlc", "brave"]);
+        let mut list = items(&App::dock(), &["vlc", "brave"]);
         list.push(DockItem {
-            key: AppKey::Builtin(App::Trash),
-            icon: AppIcon::Builtin(App::Trash.icon()),
+            key: AppKey::Builtin(App::TRASH),
+            icon: AppIcon::Builtin(App::TRASH.icon()),
             pinned: true,
             running: false,
             several: false,
@@ -880,7 +880,7 @@ mod tests {
 
     #[test]
     fn clics_sur_les_icones_identifient_les_cases() {
-        let list = items(&App::DOCK, &[]);
+        let list = items(&App::dock(), &[]);
         let dock = layout(output(), medium(), &list, 1.0, None, 0.0);
         let x0 = dock.plate.loc.x;
         let at = |dx: f64| dock.item_at(Point::from((x0 + dx, 660.0)));
@@ -892,7 +892,7 @@ mod tests {
 
     #[test]
     fn agrandissement_sous_la_souris() {
-        let list = items(&App::DOCK, &[]);
+        let list = items(&App::dock(), &[]);
         let flat = layout(output(), medium(), &list, 1.0, None, 0.0);
         let pointer = Point::from((flat.icons[2].loc.x + 29.0, 670.0));
         let zoomed = layout(output(), medium(), &list, 1.0, Some(pointer), 1.0);
@@ -926,7 +926,7 @@ mod tests {
 
     #[test]
     fn le_point_sous_la_souris_reste_fixe_entre_deux_icones() {
-        let list = items(&App::DOCK, &["vlc"]);
+        let list = items(&App::dock(), &["vlc"]);
         let flat = layout(output(), medium(), &list, 1.0, None, 0.0);
         let x = flat.icons[1].loc.x + 58.0 + ICON_GAP / 2.0;
         let zoomed = layout(output(), medium(), &list, 1.0, Some(Point::from((x, 670.0))), 1.0);
@@ -940,7 +940,7 @@ mod tests {
     fn masquage_intelligent_plein_ecran_et_retour_par_le_bas() {
         let far = [Rectangle::new((100, 100).into(), (400, 300).into())];
         let over = [Rectangle::new((300, 300).into(), (700, 400).into())];
-        let dock = layout(output(), medium(), &items(&App::DOCK, &[]), 1.0, None, 0.0).plate;
+        let dock = layout(output(), medium(), &items(&App::dock(), &[]), 1.0, None, 0.0).plate;
         let base = Visibility {
             config: medium(),
             dock,
@@ -1021,7 +1021,7 @@ mod tests {
 
     #[test]
     fn les_icones_restent_cliquables_jusqu_au_bord_bas() {
-        let list = items(&App::DOCK, &["vlc"]);
+        let list = items(&App::dock(), &["vlc"]);
         let dock = layout(output(), medium(), &list, 1.0, None, 0.0);
         let x = dock.icons[0].loc.x + dock.icons[0].size.w / 2.0;
         assert_eq!(dock.item_at(Point::from((x, 719.0))), Some(0));

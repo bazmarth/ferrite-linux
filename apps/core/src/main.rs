@@ -2,6 +2,7 @@
 //! Paramètres, Moniteur d'activité, Visionneuse, lecteur PDF et Musique.
 
 mod calculator;
+mod chooser;
 mod clock;
 mod details;
 mod editor;
@@ -77,7 +78,18 @@ fn create(
         "music" => Box::new(MusicState::new(target)),
         "video" => Box::new(video::VideoState::new(target, context.clone())),
         "galerie" => Box::new(gallery::GalleryState::default()),
+        // Arguments de la demande du portail, après `choisir`.
+        "choisir" => {
+            let args: Vec<String> = env::args().skip(2).collect();
+            Box::new(chooser::ChooserState::new(chooser::Request::parse(&args)))
+        }
         other => unreachable!("application du catalogue sans vue : {other}"),
+    }
+}
+
+impl AppView for chooser::ChooserState {
+    fn update(&mut self, ui: &mut egui::Ui) {
+        chooser::ChooserState::update(self, ui);
     }
 }
 
@@ -199,6 +211,10 @@ fn main() -> eframe::Result {
         // Chaque lancement est une fenêtre de plus, avec son propre shell.
         let launch = terminal::parse_launch(args);
         return run(info, None, None, launch);
+    }
+    // Sélecteur de fichiers : une fenêtre par demande, jamais confiée à une autre.
+    if info.command == "choisir" {
+        return run(info, None, None, terminal::Launch::default());
     }
     let initial_file = args.next().map(PathBuf::from);
     // Une seule fenêtre par application, sauf celles choisies dans Paramètres : un

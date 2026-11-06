@@ -27,12 +27,13 @@ dev="${XDG_DATA_HOME:-$HOME/.local/share}/ferrite-dev"
 target=${CARGO_TARGET_DIR:-"$REPO/target"}
 
 if [ "$build" = 1 ]; then
-    info "Compilation de ferrite-shell, ferrite-apps et ferrite-visage (release)"
-    cargo build --locked --release -p ferrite-shell -p ferrite-apps -p ferrite-visage
+    info "Compilation de ferrite-shell, ferrite-apps, ferrite-visage et du portail (release)"
+    cargo build --locked --release -p ferrite-shell -p ferrite-apps -p ferrite-visage \
+        -p xdg-desktop-portal-ferrite
 fi
 
 mkdir -p "$dev"
-for name in ferrite-shell ferrite-apps ferrite-visage; do
+for name in ferrite-shell ferrite-apps ferrite-visage xdg-desktop-portal-ferrite; do
     [ -x "$target/release/$name" ] || die "$target/release/$name absent : compiler d'abord"
     # Copie puis renommage : le binaire en cours d'exécution n'est pas écrasé en place.
     cp "$target/release/$name" "$dev/.$name.nouveau"
@@ -45,6 +46,23 @@ if [ -f "$REPO/assets/visage/face_recognition_sface_2021dec.onnx" ]; then
 else
     printf '  Modèles du visage absents : tools/visage-modeles.sh\n'
 fi
+# Sélecteur de fichiers de Ferrite pour les applications (portail) : service D-Bus et
+# préférence dans le dossier personnel ; seul le fichier .portal doit être dans /usr/share.
+services="${XDG_DATA_HOME:-$HOME/.local/share}/dbus-1/services"
+mkdir -p "$services" "${XDG_CONFIG_HOME:-$HOME/.config}/xdg-desktop-portal"
+printf '[D-BUS Service]\nName=org.freedesktop.impl.portal.desktop.ferrite\nExec=%s\n' \
+    "$dev/xdg-desktop-portal-ferrite" >"$services/org.freedesktop.impl.portal.desktop.ferrite.service"
+cp "$REPO/image/config/includes.chroot/usr/share/xdg-desktop-portal/ferrite-portals.conf" \
+    "${XDG_CONFIG_HOME:-$HOME/.config}/xdg-desktop-portal/ferrite-portals.conf"
+portal=/usr/share/xdg-desktop-portal/portals/ferrite.portal
+if [ ! -f "$portal" ]; then
+    printf '  Sélecteur de fichiers Ferrite : une fois, avec le mot de passe :\n'
+    printf '    sudo install -m 0644 %s /usr/share/xdg-desktop-portal/portals/\n' \
+        "$REPO/image/config/includes.chroot$portal"
+fi
+# Le portail relit sa configuration au démarrage : relancé pour prendre le nouveau service.
+pkill -f xdg-desktop-portal-ferrite 2>/dev/null || true
+systemctl --user try-restart xdg-desktop-portal.service 2>/dev/null || true
 ok "Binaires de développement dans $dev"
 
 if ! grep -q disk_dev /usr/local/bin/ferrite-session 2>/dev/null; then

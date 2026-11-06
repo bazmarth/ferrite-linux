@@ -109,6 +109,9 @@ ferrite-linux/
 │                           brightnessctl, timedatectl, rfkill, udisks…), config.rs (réglages),
 │                           night.rs, idle.rs, weather.rs, command.rs (délais, kill),
 │                           catalog.rs (liste unique des applications Ferrite)
+├── services/visage/        ferrite-visage : déverrouillage par visage (caméra infrarouge)
+├── services/portal/        xdg-desktop-portal-ferrite : sélecteur de fichiers des applications
+│                           (portail FileChooser → `ferrite-apps choisir`, apps/core/src/chooser.rs)
 ├── ui/                     ferrite-ui : tokens.rs, theme.rs (palette, Scale, Easing), wallpaper.rs, icons.rs
 ├── icons/SVG, assets/fonts embarqués à la compilation ; ferrite-theme/ = pack d'icônes (voir §0.3)
 ├── image/                  live-build : auto/config, config/package-lists/ferrite.list.chroot,

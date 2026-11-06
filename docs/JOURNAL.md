@@ -1562,3 +1562,25 @@ GTK sous X11 (GParted, y compris lancé en administrateur : XSETTINGS passe par 
 serveur X). `xsettingsd` ajouté à l'image ; sur la machine : `sudo apt install xsettingsd`.
 Vérifié : VLC en X11 dans un bureau d'essai à l'échelle 2, texte net et taille juste.
 Pas vérifié : GParted (xsettingsd absent de la machine), changement d'échelle à chaud.
+
+## 2026-11-06 — Sélecteur de fichiers Ferrite pour toutes les applications
+
+La fenêtre « Enregistrer » de Brave était celle de GTK (portail
+`xdg-desktop-portal-gtk`, `default=gtk`). Ferrite fournit maintenant son propre
+sélecteur :
+- `ferrite-apps choisir` (`apps/core/src/chooser.rs`, hors du menu, une fenêtre par
+  demande) : colonne des dossiers habituels, fil d'Ariane, liste (dossiers d'abord),
+  nom à enregistrer, filtres, nouveau dossier, confirmation avant de remplacer,
+  sélection multiple (Ctrl), choix d'un dossier ; Entrée valide, Échap annule. Le
+  bouton « Save » ou « Open » d'une application devient « Enregistrer » / « Ouvrir ».
+- `xdg-desktop-portal-ferrite` (`services/portal`) : `OpenFile`, `SaveFile`,
+  `SaveFiles` du portail ; titre, bouton, dossier, nom, filtres par motif ou type MIME
+  (base `/usr/share/mime/globs`), réponses en adresses `file://`.
+- `ferrite-portals.conf` : `FileChooser=ferrite;gtk` (GTK en repli), GTK pour le reste.
+  Image : `ferrite.portal`, service D-Bus, binaire dans `/usr/local/bin`. Machine de
+  développement : `dev-on.sh` installe service et préférence dans le dossier personnel ;
+  le fichier `ferrite.portal` va dans `/usr/share` une fois (sudo).
+Vérifié : demande `SaveFile` envoyée au service sur un bus d'essai (titre, dossier
+Documents, nom, filtre PDF, bouton traduit) ; tests (motifs, adresses, demande).
+Pas vérifié : avec Brave sur le vrai bureau (après installation de `ferrite.portal`),
+fermeture d'une demande par l'application (`Request.Close` non géré).

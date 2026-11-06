@@ -1990,11 +1990,15 @@ fn archive_virtual_path(archive: &Path, member: &str) -> PathBuf {
 
 /// Icône du dossier `icons/SVG` selon la nature de l'entrée.
 fn entry_icon(entry: &FileEntry) -> &'static str {
-    if entry.directory {
-        return folder_icon(&entry.path, &home());
+    path_icon(&entry.path, entry.directory)
+}
+
+/// Icône d'un chemin (dossier ou fichier), aussi pour le sélecteur de fichiers.
+pub(crate) fn path_icon(path: &Path, directory: bool) -> &'static str {
+    if directory {
+        return folder_icon(path, &home());
     }
-    let extension = entry
-        .path
+    let extension = path
         .extension()
         .and_then(|extension| extension.to_str())
         .map(str::to_ascii_lowercase)
@@ -2010,7 +2014,7 @@ fn entry_icon(entry: &FileEntry) -> &'static str {
         "pdf" => "file-pdf",
         "zip" | "tar" | "gz" | "xz" | "bz2" | "zst" | "7z" | "rar" | "deb" | "rpm" | "iso" => "file-archive",
         "appimage" | "run" | "bin" | "exe" => "file-executable",
-        _ if is_text_file(&entry.path) => "file-text",
+        _ if is_text_file(path) => "file-text",
         _ => "file-generic",
     }
 }

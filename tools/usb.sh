@@ -21,12 +21,14 @@ set -eu
 # l'utilisateur, pas pour root), puis relance du script en root.
 if [ "$(id -u)" -ne 0 ]; then
     info "Compilation de ferrite-shell, ferrite-apps et ferrite-visage (release)"
-    (cd "$REPO" && cargo build --release --locked -p ferrite-shell -p ferrite-apps -p ferrite-visage)
+    (cd "$REPO" && cargo build --release --locked -p ferrite-shell -p ferrite-apps -p ferrite-visage \
+        -p xdg-desktop-portal-ferrite)
     # Modèles du visage : téléchargés une fois (empreintes vérifiées), hors de git.
     "$REPO/tools/visage-modeles.sh"
     target="${CARGO_TARGET_DIR:-$REPO/target}/release"
     exec sudo FERRITE_SHELL_BIN="$target/ferrite-shell" FERRITE_APPS_BIN="$target/ferrite-apps" \
-        FERRITE_VISAGE_BIN="$target/ferrite-visage" "$0" "$@"
+        FERRITE_VISAGE_BIN="$target/ferrite-visage" \
+        FERRITE_PORTAL_BIN="$target/xdg-desktop-portal-ferrite" "$0" "$@"
 fi
 
 # Étape 2, en root : construction de l'image.
@@ -42,6 +44,10 @@ fi
 visage_bin=${FERRITE_VISAGE_BIN:-}
 if [ -z "$visage_bin" ] || [ ! -x "$visage_bin" ]; then
     die "binaire ferrite-visage introuvable (lance tools/usb.sh sans sudo)"
+fi
+portal_bin=${FERRITE_PORTAL_BIN:-}
+if [ -z "$portal_bin" ] || [ ! -x "$portal_bin" ]; then
+    die "binaire xdg-desktop-portal-ferrite introuvable (lance tools/usb.sh sans sudo)"
 fi
 models="$REPO/assets/visage"
 for model in face_detection_yunet_2023mar.onnx face_recognition_sface_2021dec.onnx; do
@@ -88,6 +94,7 @@ cp -r "$REPO/image/auto" "$REPO/image/config" .
 install -D -m 0755 "$bin" config/includes.chroot/usr/local/bin/ferrite-shell
 install -D -m 0755 "$apps_bin" config/includes.chroot/usr/local/bin/ferrite-apps
 install -D -m 0755 "$visage_bin" config/includes.chroot/usr/local/bin/ferrite-visage
+install -D -m 0755 "$portal_bin" config/includes.chroot/usr/local/bin/xdg-desktop-portal-ferrite
 # Modèles du visage, là où ferrite-visage les cherche une fois installé.
 install -d config/includes.chroot/usr/share/ferrite/visage
 install -m 0644 "$models"/*.onnx config/includes.chroot/usr/share/ferrite/visage/

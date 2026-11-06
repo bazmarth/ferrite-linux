@@ -1,0 +1,14 @@
+[package]
+name = "xdg-desktop-portal-ferrite"
+description = "Portail du bureau Ferrite : sélecteur de fichiers au style Ferrite pour toutes les applications"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
+blocking = "1"
+
+[lints]
+workspace = true

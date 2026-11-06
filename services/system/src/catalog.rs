@@ -146,6 +146,19 @@ pub const APPS: &[AppInfo] = &[
         (640, 400),
         false,
     ),
+    // Sélecteur de fichiers du portail (xdg-desktop-portal-ferrite), hors du menu.
+    AppInfo {
+        menu: false,
+        ..app(
+            "choisir",
+            "ferrite-chooser",
+            "Choisir un fichier",
+            "app-files",
+            (960, 620),
+            (620, 420),
+            false,
+        )
+    },
     // Pièces communes en démonstration, pour qui développe une application.
     AppInfo {
         menu: false,

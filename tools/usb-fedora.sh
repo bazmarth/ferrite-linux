@@ -38,6 +38,7 @@ sudo podman run --rm -it --privileged \
         FERRITE_SHELL_BIN=/src/target/release/ferrite-shell \
         FERRITE_APPS_BIN=/src/target/release/ferrite-apps \
         FERRITE_VISAGE_BIN=/src/target/release/ferrite-visage \
+        FERRITE_PORTAL_BIN=/src/target/release/xdg-desktop-portal-ferrite \
         /src/tools/usb.sh "$@"
     ' usb "$@"
 

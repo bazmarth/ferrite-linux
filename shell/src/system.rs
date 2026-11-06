@@ -216,7 +216,28 @@ fn publish_color_scheme(dark: bool) {
     }
 }
 
+/// Boutons de fenêtre des applications GTK (et de Firefox, Chromium, Brave, qui suivent
+/// GTK) : fermer à gauche, agrandir à droite, comme les fenêtres Ferrite.
+const WINDOW_BUTTONS: &str = "close:maximize";
+
+/// Annonce l'ordre des boutons de fenêtre aux applications tierces, par la clé GNOME que
+/// lisent GTK et le portail des réglages.
+fn publish_window_buttons() {
+    let args = [
+        "set",
+        "org.gnome.desktop.wm.preferences",
+        "button-layout",
+        WINDOW_BUTTONS,
+    ];
+    if let Err(err) = command::run("gsettings", &args) {
+        warn!("ordre des boutons de fenêtre non transmis : {err}");
+    }
+}
+
 fn worker(receiver: mpsc::Receiver<Change>, events: channel::Sender<Event>, nested: bool) {
+    if !nested {
+        publish_window_buttons();
+    }
     let mut layout_stamp: Option<SystemTime> = None;
     let mut settings_initialized = false;
     let mut known_theme = None;

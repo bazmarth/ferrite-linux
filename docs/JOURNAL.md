@@ -1388,3 +1388,16 @@ n'a suivi ; il a fallu forcer le redémarrage. Le micrologiciel du ThinkBook cho
 lui-même la veille légère (« Low-power S0 idle used by default »), qui se réveillait bien.
 `image/config/includes.chroot/etc/systemd/sleep.conf.d/60-ferrite.conf` est retiré de
 l'image ; sur la machine, le même fichier est à supprimer avec sudo. Voir PASSATION.
+
+## 2026-11-06 — Boutons de fenêtre des applications tierces
+
+Les applications GTK (et Firefox, Chromium, Brave, qui suivent GTK) mettaient « fermer »
+à droite : la clé GNOME `org.gnome.desktop.wm.preferences button-layout` valait
+`appmenu:close`. ferrite-shell la publie maintenant au démarrage (`close:maximize`, hors
+bureau imbriqué), comme `color-scheme` : fermer à gauche, agrandir à droite, comme les
+fenêtres Ferrite. Les applications qui laissent le bureau dessiner leur barre (Qt, foot,
+X11) avaient déjà les boutons Ferrite.
+Vérifié : capture de Brave (profil temporaire) avec fermer à gauche et agrandir à droite.
+Reste à part : les applications Electron à barre de titre maison (VS Code, Claude,
+ChatGPT) dessinent leurs boutons elles-mêmes ; VS Code peut prendre la barre du bureau
+(`"window.titleBarStyle": "native"`).

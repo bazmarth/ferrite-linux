@@ -220,3 +220,17 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
   redémarrage déclenché depuis Ferrite, puis relance les applications et replace leurs
   fenêtres au prochain démarrage. L'état interne des documents reste à la charge de chaque
   application ; les fenêtres d'applications absentes ou impossibles à relancer sont ignorées.
+
+- **2026-11-06 — Déverrouillage par visage, intégré et limité.** Plutôt que Howdy (module
+  PAM, absent de Debian 13, dépendances Python lourdes), un programme Ferrite :
+  `ferrite-visage` (`services/visage`) lit la seule caméra infrarouge (GRAY8 : une photo
+  sur un écran n'émet pas d'infrarouge), trouve le visage avec YuNet, en calcule
+  l'empreinte avec SFace (modèles OpenCV, MIT et Apache 2.0, exécutés en Rust pur par
+  `tract`) et la compare aux empreintes enregistrées (cosinus ≥ 0,6 sur deux images en
+  4 s). Seules des empreintes sont gardées, jamais d'image, dans un fichier 0600 de
+  l'utilisateur. Le mot de passe (`unix_chkpwd`) reste la seule vérification hors écran
+  verrouillé : le visage ne sert jamais aux droits administrateur (polkit), ni avant le
+  premier mot de passe de la session (il ouvre aussi le trousseau), et la vérification ne
+  part que sur un geste (touche, clic, réveil), jamais au moment où l'écran se verrouille.
+  Réglage `visage_deverrouillage` (désactivé par défaut). Les modèles (38 Mo) ne sont pas
+  dans git : `tools/visage-modeles.sh` les télécharge et vérifie leur SHA-256.

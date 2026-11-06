@@ -7,3 +7,6 @@ target/
 
 # Réglages personnels de Claude Code (autorisations locales)
 .claude/settings.local.json
+
+# Modèles de reconnaissance du visage, téléchargés par tools/visage-modeles.sh
+/assets/visage/

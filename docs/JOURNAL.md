@@ -1474,3 +1474,29 @@ l'enregistrement, il l'arrête. Notifications, son et fin du minuteur passent to
 devant, bulles masquées le temps de l'annonce.
 Vérifié : capture d'un minuteur et d'une musique (lecteur MPRIS simulé) ; test des bulles
 (`une_bulle_par_autre_activite`). Pas encore essayé à la souris.
+
+## 2026-11-06 — Déverrouillage par visage (caméra infrarouge)
+
+- Caméra : `/dev/video2` du ThinkBook donne du GRAY8 640 × 360 (infrarouge) ; sa lampe
+  s'allume seule environ une seconde après l'ouverture (images de test effacées).
+- `ferrite-visage` (`services/visage`, nouveau membre de l'espace de travail) :
+  `enregistrer` (8 empreintes), `verifier`, `effacer`, `etat`, `essai` (détection seule,
+  rien de gardé). YuNet (entrée 640 × 640) 124 ms, SFace 45 ms : environ 0,18 s par image
+  sur le processeur. La version int8 de SFace n'est pas prise en charge par `tract`
+  (QLinearMul) : modèle fp32. Tests : décodage de YuNet, alignement, cosinus, fichier
+  d'empreintes.
+- Bureau (`shell/src/desktop/face.rs`) : sur l'écran verrouillé, une touche, un clic ou le
+  réveil lance `ferrite-visage verifier` (au plus une fois toutes les 6 s), message
+  « Reconnaissance du visage… » sous le champ ; reconnu, l'écran s'ouvre comme après le
+  mot de passe. Garde-fous : voir DECISIONS.
+- Paramètres → Confidentialité : enregistrer son visage (progression, « Je ne vois pas
+  votre visage »), recommencer, effacer, interrupteur « Déverrouiller l'écran avec mon
+  visage ». `ferrite-apps settings visage` ouvre la page.
+- `tools/visage-modeles.sh` télécharge les modèles (SHA-256 vérifiés) dans
+  `assets/visage/` (hors git) ; `tools/dev-on.sh` installe `ferrite-visage` et les modèles.
+
+Vérifié : `essai` sur la vraie caméra (visage trouvé, confiance 0,84 à 0,89) ; puis par
+l'utilisateur : enregistrement et trois déverrouillages réels, ressemblance 0,90 à 0,94.
+Le seuil passe de 0,5 à 0,6 (plus strict envers les autres visages, large marge pour le
+sien) ; empreintes en 0600 dans un dossier 0700. Reste à faire : l'image ISO
+(installer `ferrite-visage` et télécharger les modèles pendant sa construction).

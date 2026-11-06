@@ -16,6 +16,7 @@ use std::{
 /// Durée pendant laquelle un curseur réglé à la main n'est pas remplacé par une relecture.
 const HOLD: Duration = Duration::from_secs(2);
 
+mod face;
 mod rows;
 
 use self::rows::{Lead, Row, group, hero};
@@ -80,6 +81,7 @@ impl Page {
             "clavier" => Page::Keyboard,
             "souris" => Page::Mouse,
             "comptes" => Page::Accounts,
+            "confidentialite" | "visage" => Page::Privacy,
             "date" => Page::DateTime,
             "apropos" => Page::About,
             _ => return None,
@@ -281,6 +283,8 @@ pub struct SettingsState {
     thumbnails: HashMap<Source, Option<egui::TextureHandle>>,
     requested: HashSet<PathBuf>,
     wallpaper_path: String,
+    /// Confidentialité : enregistrement du visage.
+    face: face::FaceState,
 }
 
 impl std::fmt::Debug for SettingsState {
@@ -340,6 +344,7 @@ impl Default for SettingsState {
             thumbnails: HashMap::new(),
             requested: HashSet::new(),
             wallpaper_path: String::new(),
+            face: face::FaceState::default(),
         }
     }
 }
@@ -587,11 +592,10 @@ impl SettingsState {
                         Page::DateTime => self.datetime_page(ui, &ctx),
                         Page::Accounts => self.accounts_page(ui),
                         Page::Energy => self.energy_page(ui),
-                        Page::Notifications
-                        | Page::Printers
-                        | Page::Privacy
-                        | Page::Accessibility
-                        | Page::Updates => self.pending_page(ui),
+                        Page::Privacy => self.privacy_page(ui),
+                        Page::Notifications | Page::Printers | Page::Accessibility | Page::Updates => {
+                            self.pending_page(ui)
+                        }
                     });
             });
         self.wifi_details_dialog(&ctx);

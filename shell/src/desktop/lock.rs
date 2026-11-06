@@ -105,6 +105,17 @@ impl Lock {
         }
     }
 
+    /// Mot de passe accepté ou visage reconnu : l'écran part après l'accueil.
+    pub fn accept(&mut self) {
+        self.forget_password();
+        self.welcome_until = Some(Instant::now() + WELCOME);
+    }
+
+    /// L'écran est en train de partir.
+    pub fn unlocking(&self) -> bool {
+        self.welcome_until.is_some()
+    }
+
     pub fn password_length(&self) -> usize {
         self.password.chars().count()
     }
@@ -436,6 +447,8 @@ pub enum Event {
     Lock,
     Resumed,
     Checked(Result<bool, String>),
+    /// Réponse de `ferrite-visage verifier` : visage reconnu ou non.
+    Face(bool),
     Media(Option<Media>),
 }
 
@@ -756,7 +769,12 @@ impl Ferrite {
     pub fn on_lock_event(&mut self, event: Event) {
         match event {
             Event::Lock => self.lock_session(),
-            Event::Resumed => self.screen_fade = None,
+            Event::Resumed => {
+                self.screen_fade = None;
+                // Retour de veille : la personne est devant l'écran.
+                self.try_face_unlock();
+            }
+            Event::Face(recognized) => self.on_face_checked(recognized),
             Event::Checked(result) => {
                 let accepted = match result {
                     Ok(accepted) => accepted,
@@ -771,6 +789,7 @@ impl Ferrite {
                 lock.forget_password();
                 if accepted {
                     lock.welcome_until = Some(Instant::now() + WELCOME);
+                    self.face_since_password = true;
                 } else {
                     lock.checking = false;
                     lock.message = LockMessage::Wrong;
@@ -792,6 +811,7 @@ impl Ferrite {
         if let Some(lock) = self.lock.as_mut().filter(|lock| !lock.checking) {
             if !lock.field_visible {
                 lock.show_field();
+                self.try_face_unlock();
                 return;
             }
             lock.message = LockMessage::Hint;
@@ -840,11 +860,12 @@ impl Ferrite {
         }
     }
 
-    /// Toute autre touche, ou un clic, fait apparaître le champ.
+    /// Toute autre touche, ou un clic, fait apparaître le champ (et essaie le visage).
     pub fn lock_reveal(&mut self) {
         if let Some(lock) = self.lock.as_mut() {
             lock.show_field();
         }
+        self.try_face_unlock();
     }
 
     /// Échap ou Annuler : retour au repos, le mot de passe commencé est oublié.

@@ -1,0 +1,15 @@
+[package]
+name = "ferrite-visage"
+description = "Déverrouillage par visage avec la caméra infrarouge : enregistrement et vérification"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+tract-onnx = "0.21"
+gstreamer = "0.25"
+gstreamer-app = "0.25"
+
+[lints]
+workspace = true

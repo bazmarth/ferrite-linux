@@ -3,6 +3,7 @@
 pub mod apps;
 pub mod controls;
 pub mod dock;
+pub mod face;
 pub mod file_drag;
 pub mod function_keys;
 pub mod idle;

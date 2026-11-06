@@ -554,6 +554,8 @@ pub enum LockMessage {
     Hint,
     Empty,
     Wrong,
+    /// La caméra infrarouge cherche le visage.
+    Face,
 }
 
 /// Notifications reçues : l'application et leur nombre, jamais leur contenu.

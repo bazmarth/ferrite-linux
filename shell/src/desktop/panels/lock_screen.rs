@@ -1348,7 +1348,7 @@ impl Panels {
         } else {
             let shake = f64::from(lock.shake) / 10.0;
             let field = Rect::new(field.x + shake, field.y, field.w, field.h);
-            let wrong = lock.message != LockMessage::Hint;
+            let wrong = matches!(lock.message, LockMessage::Empty | LockMessage::Wrong);
             canvas.fill(field, 24.0, tokens.field);
             let edge = if wrong { tokens.error.0 } else { tokens.field_edge };
             canvas.stroke(field, 24.0, edge, 1.5);
@@ -1417,6 +1417,7 @@ impl Panels {
                 LockMessage::Hint => ("Appuyez sur Entrée pour déverrouiller", tokens.fg3),
                 LockMessage::Empty => ("Saisissez votre mot de passe", tokens.error.1),
                 LockMessage::Wrong => ("Mot de passe incorrect", tokens.error.1),
+                LockMessage::Face => ("Reconnaissance du visage…", tokens.fg3),
             };
             canvas.centered(&self.regular, text, center, field.bottom() + 14.0, 13.0, ink);
         }

@@ -237,6 +237,11 @@ pub struct Ferrite {
     pub island_ticking: bool,
     /// Activité dépliée par un clic (une bulle), sinon la première.
     pub island_focus: Option<crate::desktop::island::IslandFocus>,
+    /// Déverrouillage par visage : mot de passe déjà donné dans cette session, vérification
+    /// en cours, dernier essai.
+    pub face_since_password: bool,
+    pub face_running: bool,
+    pub face_tried: Option<std::time::Instant>,
     /// Sélection d'une fenêtre à capturer : mode actif, et fenêtre survolée.
     pub window_select: bool,
     pub window_select_hover: Option<Window>,
@@ -479,6 +484,9 @@ impl Ferrite {
             island_open_until: None,
             island_ticking: false,
             island_focus: None,
+            face_since_password: false,
+            face_running: false,
+            face_tried: None,
             window_select: false,
             window_select_hover: None,
             overview_order: Vec::new(),

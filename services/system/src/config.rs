@@ -654,6 +654,29 @@ impl Settings {
             .unwrap_or_else(|| vec!["ferrite-files".to_owned()])
     }
 
+    /// Applications qui gardent leur propre cadre : ferrite-shell impose sa barre de titre
+    /// à toutes les autres (voir `shell/src/protocols/decoration.rs`). Les navigateurs de la
+    /// famille Chromium y mettent leurs onglets, et suivent déjà l'ordre des boutons de
+    /// Ferrite. Début de l'identifiant de fenêtre, sans tenir compte de la casse.
+    pub fn own_frame_apps(&self) -> Vec<String> {
+        self.get("cadre_propre").map(split_list).unwrap_or_else(|| {
+            [
+                "brave",
+                "chromium",
+                "google-chrome",
+                "microsoft-edge",
+                "vivaldi",
+                "opera",
+            ]
+            .map(str::to_owned)
+            .to_vec()
+        })
+    }
+
+    pub fn set_own_frame_apps(&mut self, apps: &[String]) {
+        self.set("cadre_propre", &apps.join(","));
+    }
+
     pub fn set_multi_window_apps(&mut self, apps: &[String]) {
         self.set("fenetres_multiples", &apps.join(","));
     }

@@ -61,6 +61,11 @@ impl XdgShellHandler for Ferrite {
         &mut self.xdg_shell_state
     }
 
+    /// L'identifiant de la fenêtre arrive : la règle des barres de titre est revue.
+    fn app_id_changed(&mut self, surface: ToplevelSurface) {
+        crate::protocols::decoration::app_id_changed(&surface);
+    }
+
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
         let titlebar_height = if wm::is_ferrite_app(&surface) {
             0

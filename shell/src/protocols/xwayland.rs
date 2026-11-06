@@ -56,6 +56,18 @@ pub fn start(handle: &LoopHandle<'static, Ferrite>, state: &mut Ferrite) {
         info!("dossier /tmp/.X11-unix en lecture seule : XWayland non démarré");
         return;
     }
+    // Créé au démarrage par systemd-tmpfiles (x11-common) ; s'il a disparu, XWayland ne
+    // peut plus ouvrir ses sockets et aucune application X11 ne s'affiche. Il est recréé
+    // avec les mêmes droits (1777, collant), le prochain démarrage le rendant à root.
+    if !sockets.exists() {
+        use std::os::unix::fs::PermissionsExt;
+        let created = std::fs::create_dir(sockets)
+            .and_then(|()| std::fs::set_permissions(sockets, std::fs::Permissions::from_mode(0o1777)));
+        match created {
+            Ok(()) => warn!("/tmp/.X11-unix manquait : recréé pour XWayland"),
+            Err(err) => warn!(%err, "/tmp/.X11-unix manquant et impossible à créer"),
+        }
+    }
     let spawned = XWayland::spawn(
         &state.display_handle,
         None,
@@ -72,6 +84,13 @@ pub fn start(handle: &LoopHandle<'static, Ferrite>, state: &mut Ferrite) {
             return;
         }
     };
+    // Écran à l'échelle ×2 : XWayland voit l'écran à sa vraie résolution, et ses fenêtres
+    // sont dessinées net au lieu d'être agrandies (floues). Smithay convertit positions et
+    // tailles ; les programmes X11 s'agrandissent eux-mêmes (voir `scale_x11_toolkits`).
+    let scale = x11_scale(state);
+    if let Some(data) = client.get_data::<smithay::xwayland::XWaylandClientData>() {
+        data.compositor_state.set_client_scale(f64::from(scale));
+    }
     let wm_handle = handle.clone();
     let inserted = handle.insert_source(xwayland, move |event, _, state| match event {
         XWaylandEvent::Ready {
@@ -83,6 +102,8 @@ pub fn start(handle: &LoopHandle<'static, Ferrite>, state: &mut Ferrite) {
                 state.xwm = Some(wm);
                 state.x_display = Some(display_number);
                 state.publish_environment();
+                allow_root_windows(display_number);
+                scale_x11_toolkits(display_number, scale);
             }
             Err(err) => warn!(%err, "gestionnaire de fenêtres X11 impossible à démarrer"),
         },
@@ -91,6 +112,94 @@ pub fn start(handle: &LoopHandle<'static, Ferrite>, state: &mut Ferrite) {
     if let Err(err) = inserted {
         warn!(%err, "XWayland non branché sur la boucle");
     }
+}
+
+/// Échelle entière de l'écran (2 sur le ThinkBook), pour XWayland.
+fn x11_scale(state: &Ferrite) -> u32 {
+    state
+        .space
+        .outputs()
+        .next()
+        .map_or(1.0, |output| output.current_scale().fractional_scale())
+        .round()
+        .max(1.0) as u32
+}
+
+/// Contenu de `xsettingsd` : échelle des fenêtres GTK sous X11 (GParted, même lancé en
+/// administrateur, car XSETTINGS passe par le serveur X et non par l'environnement), et
+/// polices à la bonne taille (DPI non agrandi : GTK l'agrandit déjà).
+fn xsettings(scale: u32) -> String {
+    format!(
+        "Gdk/WindowScalingFactor {scale}\nGdk/UnscaledDPI {}\nXft/DPI {}\n",
+        96 * 1024,
+        96 * 1024 * scale
+    )
+}
+
+/// Les programmes X11 dessinent à la vraie résolution : ils doivent s'agrandir eux-mêmes.
+/// `Xft.dpi` pour Qt (VLC) et les polices, `xsettingsd` pour GTK (paquet `xsettingsd`).
+fn scale_x11_toolkits(display: u32, scale: u32) {
+    let display = format!(":{display}");
+    std::thread::spawn(move || {
+        let resources = format!("Xft.dpi: {}\n", 96 * scale);
+        let merged = std::process::Command::new("xrdb")
+            .args(["-merge", "-"])
+            .env("DISPLAY", &display)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .and_then(|mut child| {
+                if let Some(mut stdin) = child.stdin.take() {
+                    std::io::Write::write_all(&mut stdin, resources.as_bytes())?;
+                }
+                child.wait()
+            });
+        if let Err(err) = merged {
+            warn!(%err, "xrdb indisponible : polices X11 non agrandies");
+        }
+        let Some(runtime) = std::env::var_os("XDG_RUNTIME_DIR") else {
+            return;
+        };
+        let config = std::path::PathBuf::from(runtime).join("ferrite-xsettingsd.conf");
+        if let Err(err) = std::fs::write(&config, xsettings(scale)) {
+            warn!(%err, "réglages XSETTINGS non écrits");
+            return;
+        }
+        let mut command = std::process::Command::new("xsettingsd");
+        command
+            .arg("-c")
+            .arg(&config)
+            .env("DISPLAY", &display)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        match ferrite_system::command::spawn_detached(command) {
+            Ok(_) => info!(scale, "programmes X11 agrandis (xsettingsd)"),
+            Err(err) => {
+                warn!(%err, "xsettingsd indisponible : programmes GTK sous X11 petits (sudo apt install xsettingsd)")
+            }
+        }
+    });
+}
+
+/// Les programmes lancés en administrateur depuis cette session (GParted par `pkexec`) ne
+/// reçoivent pas l'accès à Wayland, que `pkexec` retire : ils passent par XWayland, où le
+/// compte root local est autorisé, comme Ubuntu le fait pour GParted. Seul ce compte, qui
+/// peut déjà tout sur la machine, est ajouté ; ni le réseau ni les autres utilisateurs.
+fn allow_root_windows(display: u32) {
+    let mut command = std::process::Command::new("xhost");
+    command
+        .arg("+SI:localuser:root")
+        .env("DISPLAY", format!(":{display}"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    std::thread::spawn(move || match command.status() {
+        Ok(status) if status.success() => info!("fenêtres des programmes administrateur autorisées"),
+        Ok(status) => warn!(?status, "xhost a refusé l'accès de root"),
+        Err(err) => {
+            warn!(%err, "xhost indisponible : GParted et les programmes administrateur ne s'afficheront pas")
+        }
+    });
 }
 
 impl Ferrite {

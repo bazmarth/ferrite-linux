@@ -618,6 +618,9 @@ impl Ferrite {
             ("MOZ_ENABLE_WAYLAND".to_owned(), "1".to_owned()),
             ("ELECTRON_OZONE_PLATFORM_HINT".to_owned(), "auto".to_owned()),
             ("SDL_VIDEODRIVER".to_owned(), "wayland,x11".to_owned()),
+            // Qt 5 sous X11 (VLC) : agrandi selon `Xft.dpi`, qu'XWayland reçoit à l'échelle
+            // de l'écran ; sous Wayland, Qt suit l'échelle de l'écran sans la doubler.
+            ("QT_ENABLE_HIGHDPI_SCALING".to_owned(), "1".to_owned()),
         ];
         if let Some(display) = self.x_display {
             env.push(("DISPLAY".to_owned(), format!(":{display}")));

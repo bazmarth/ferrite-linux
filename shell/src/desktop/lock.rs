@@ -463,10 +463,16 @@ fn check_with(helper: &str, user: &str, password: &str) -> Result<bool, String> 
         .map_err(|err| err.to_string())?;
     if let Some(mut stdin) = child.stdin.take() {
         // L'auxiliaire attend le mot de passe terminé par un zéro.
-        stdin
+        // Un auxiliaire qui s'arrête sans lire (erreur de sa part) ferme l'entrée : c'est
+        // alors son code de sortie qui décide, jamais un déverrouillage par défaut.
+        let written = stdin
             .write_all(password.as_bytes())
-            .and_then(|()| stdin.write_all(&[0]))
-            .map_err(|err| err.to_string())?;
+            .and_then(|()| stdin.write_all(&[0]));
+        if let Err(err) = written
+            && err.kind() != std::io::ErrorKind::BrokenPipe
+        {
+            return Err(err.to_string());
+        }
     }
     let status = child.wait().map_err(|err| err.to_string())?;
     Ok(status.success())

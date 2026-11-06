@@ -234,3 +234,11 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
   part que sur un geste (touche, clic, réveil), jamais au moment où l'écran se verrouille.
   Réglage `visage_deverrouillage` (désactivé par défaut). Les modèles (38 Mo) ne sont pas
   dans git : `tools/visage-modeles.sh` les télécharge et vérifie leur SHA-256.
+
+- **2026-11-06 — Programmes administrateur sur XWayland (xhost root local).** `pkexec`
+  retire l'accès à Wayland : GParted lancé en administrateur ne trouvait aucun écran.
+  Quand XWayland est prêt, ferrite-shell lance `xhost +SI:localuser:root`, comme le
+  paquet GParted d'Ubuntu : seul le compte root local, qui peut déjà tout sur la machine,
+  peut ouvrir des fenêtres X11 ; ni le réseau ni les autres comptes. Si `/tmp/.X11-unix`
+  a disparu (constaté une fois, cause inconnue), ferrite-shell le recrée en 1777 avant de
+  lancer XWayland, sinon aucune application X11 ne s'affiche.

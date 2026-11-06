@@ -1519,3 +1519,46 @@ Vérifié : syntaxe des scripts (`sh -n`), présence des bibliothèques et comma
 système de la dernière image (4 nov.), `tools/ci.sh`.
 Pas vérifié : une construction complète de l'ISO (sudo, environ 30 minutes : la liste des
 paquets a changé, `tools/usb.sh` refera tout le système) et un démarrage de l'ISO.
+
+## 2026-11-06 — Une seule barre de titre pour toutes les fenêtres
+
+Les applications ArtCraft n'avaient aucun bouton de fenêtre : comme beaucoup
+d'applications egui ou winit sans cadre, elles demandent par `xdg-decoration` à dessiner
+leur cadre, puis n'en dessinent pas. La règle est inversée (`protocols/decoration.rs`) :
+toute fenêtre qui passe par ce protocole reçoit la barre de Ferrite (fermer à gauche,
+agrandir à droite, titre au centre), même si elle demande son propre cadre. Gardent le
+leur : les applications Ferrite (barre unifiée au même style) et `cadre_propre`
+(navigateurs Chromium : Brave, Chrome, Edge, Vivaldi, Opera, dont les onglets sont la
+barre et qui suivent déjà l'ordre des boutons de Ferrite). L'identifiant de la fenêtre
+arrivant souvent après la demande, la règle est revue à son arrivée (`app_id_changed`).
+Chaque demande est notée dans le journal du bureau (« décorations demandées »).
+Applications GTK : cadre maison avec l'ordre des boutons de Ferrite ; X11 : cadre Ferrite.
+Vérifié en bureau d'essai : Brave garde une seule barre (la sienne), foot reçoit celle de
+Ferrite ; test `seuls_ferrite_et_les_navigateurs_gardent_leur_cadre`. Pas vérifié :
+ArtCraft (une seule instance à la fois, à rouvrir sur le vrai bureau).
+Corrigé en chemin : le test `la_reponse_de_l_auxiliaire_decide` échouait par moments
+(`/bin/true` s'arrête avant de lire, l'envoi du mot de passe rencontrait « Broken pipe »).
+`check_with` laisse alors décider le code de sortie de l'auxiliaire (jamais un
+déverrouillage par défaut) et attend toujours sa fin.
+
+## 2026-11-06 — GParted ne démarrait pas (XWayland absent)
+
+GParted demandait bien le mot de passe, puis s'arrêtait : « cannot open display ».
+Deux causes : `pkexec` retire l'accès à Wayland (le programme passe donc par XWayland),
+et XWayland ne démarrait plus, `/tmp/.X11-unix` ayant disparu (règle de `x11-common`
+pourtant présente ; cause inconnue, journal système non lu). ferrite-shell recrée le
+dossier s'il manque, puis autorise root local sur XWayland (`xhost`, voir DECISIONS) ;
+`x11-xserver-utils` ajouté à l'image. Vérifié : compilation, `tools/ci.sh`. Pas vérifié :
+GParted réel (après relance du bureau).
+
+## 2026-11-06 — Applications X11 nettes sur l'écran ×2
+
+GParted et VLC passent par XWayland ; ils étaient dessinés à la moitié de la résolution
+puis agrandis (flous). Le client XWayland reçoit maintenant l'échelle de l'écran
+(`set_client_scale`, Smithay convertit positions et tailles) : XWayland voit l'écran à sa
+vraie résolution. Les programmes X11 s'agrandissent eux-mêmes : `Xft.dpi` (xrdb) et
+`QT_ENABLE_HIGHDPI_SCALING=1` pour Qt (VLC), `xsettingsd` (Gdk/WindowScalingFactor) pour
+GTK sous X11 (GParted, y compris lancé en administrateur : XSETTINGS passe par le
+serveur X). `xsettingsd` ajouté à l'image ; sur la machine : `sudo apt install xsettingsd`.
+Vérifié : VLC en X11 dans un bureau d'essai à l'échelle 2, texte net et taille juste.
+Pas vérifié : GParted (xsettingsd absent de la machine), changement d'échelle à chaud.

@@ -109,6 +109,12 @@ libglib2.0-bin
 gsettings-desktop-schemas
 dconf-gsettings-backend
 
+# xhost : ferrite-shell autorise root local sur XWayland, pour que les programmes lancés
+# en administrateur par pkexec (GParted…) puissent s'afficher (voir protocols/xwayland.rs).
+x11-xserver-utils
+# xsettingsd : échelle des programmes GTK sous X11 (GParted) sur un écran ×2, net.
+xsettingsd
+
 # Terminal de secours et d'essais (le Terminal du bureau est celui de ferrite-apps)
 foot
 # Shell des terminaux du bureau : complétion par Tab et suggestions (voir ferrite-session)

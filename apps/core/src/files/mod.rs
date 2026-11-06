@@ -5,9 +5,8 @@
 //! - navigation : précédent, suivant, dossier parent, chemin cliquable ou saisi (Ctrl+L),
 //!   barre latérale (Favoris, Corbeille, clés USB) ;
 //! - sélection multiple (Ctrl, Maj, Ctrl+A), menu contextuel, raccourcis habituels ;
-//! - ouvrir les archives comme des dossiers virtuels sans les extraire, compresser et extraire
-//!   des archives (en arrière-plan), renommer (F2), nouveau dossier, Corbeille (restaurer, vider),
-//!   suppression définitive confirmée ;
+//! - copier, couper, coller, dupliquer, compresser et extraire des archives (en arrière-plan),
+//!   renommer (F2), nouveau dossier, Corbeille (restaurer, vider), suppression définitive confirmée ;
 //! - ouvrir, ouvrir avec…, propriétés, ouvrir un terminal ici ;
 //! - montage et éjection des clés USB ;
 //! - mode sélecteur (`FilesState::picker`) : les autres applications l'affichent pour
@@ -356,7 +355,7 @@ impl FilesState {
         self.picker.as_mut()?.choice.take()
     }
 
-    /// Ouvre `path` : un dossier ou une archive s'affiche, un fichier est montré dans son dossier.
+    /// Ouvre `path` : un dossier s'affiche, un fichier est montré sélectionné dans le sien.
     pub fn open_at(&mut self, path: PathBuf) {
         // Adresse donnée par la corbeille du Dock.
         if path.as_os_str() == "corbeille:" {
@@ -466,6 +465,10 @@ apercu={}
             Location::Folder(path) => Some(path),
             Location::Archive { .. } | Location::Trash | Location::Recent | Location::Tag(_) => None,
         }
+    }
+
+    fn in_archive(&self) -> bool {
+        matches!(self.location, Location::Archive { .. })
     }
 
     fn go(&mut self, location: Location) {
@@ -600,8 +603,8 @@ apercu={}
                                 symlink,
                                 modified: metadata.modified().ok(),
                                 size: (!metadata.is_dir()).then_some(metadata.len()),
-                                path,
                                 archive_member: None,
+                                path,
                                 trash: None,
                             })
                         })
@@ -710,15 +713,19 @@ apercu={}
         } else {
             None
         };
-        if let (Some(app), Some(temporary_dir)) = (builtin, temporary_dir) {
-            let result = env::current_exe().and_then(|exe| {
-                let mut command = Command::new(exe);
-                command
-                    .arg(app)
-                    .arg(&path)
-                    .stdin(std::process::Stdio::null())
-                    .spawn()
-            });
+        if let Some(temporary_dir) = temporary_dir {
+            let result = if let Some(app) = builtin {
+                env::current_exe().map(|exe| {
+                    let mut command = Command::new(exe);
+                    command.arg(app).arg(&path);
+                    command
+                })
+            } else {
+                let mut command = Command::new("xdg-open");
+                command.arg(&path);
+                Ok(command)
+            }
+            .and_then(|mut command| command.stdin(std::process::Stdio::null()).spawn());
             return result
                 .map(|mut child| {
                     thread::spawn(move || {
@@ -743,10 +750,6 @@ apercu={}
             .map_err(|error| format!("Ouverture impossible : {error}"))
     }
 
-    fn in_archive(&self) -> bool {
-        matches!(self.location, Location::Archive { .. })
-    }
-
     /// Lance une tâche longue (copie, déplacement) dans un fil à part.
     fn run_job(&mut self, title: &str, work: impl FnOnce(&Job) -> Result<(), String> + Send + 'static) {
         let job = Job::new(title);
@@ -764,6 +767,7 @@ apercu={}
                 &action,
                 Action::Share(_)
                     | Action::ToggleTag(_, _)
+                    | Action::QuickLook
                     | Action::StartDrag(_)
                     | Action::Drop { .. }
                     | Action::StartRename(_)
@@ -1353,12 +1357,7 @@ apercu={}
                     || (pressed(Key::Enter) && self.picker.is_some()))
             {
                 let path = self.selection()[0].clone();
-                let directory = self
-                    .entries
-                    .iter()
-                    .find(|entry| entry.path == path)
-                    .is_some_and(|entry| entry.directory);
-                actions.push(Action::Open(path, directory));
+                actions.push(Action::Open(path.clone(), path.is_dir()));
             }
             if pressed(Key::Space) && self.quick.is_none() {
                 actions.push(Action::QuickLook);
@@ -2189,9 +2188,12 @@ mod tests {
     }
 
     #[test]
-    fn ouvre_une_archive_comme_un_dossier_virtuel() {
-        let dir = std::env::temp_dir().join(format!("ferrite-archive-ui-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+    fn ouvre_et_navigue_dans_une_archive_zip() {
+        let unique = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("ferrite-archive-ui-{}-{unique}", std::process::id()));
         let source = dir.join("source");
         fs::create_dir_all(source.join("sous-dossier")).unwrap();
         fs::write(source.join("sous-dossier/note.txt"), "contenu").unwrap();

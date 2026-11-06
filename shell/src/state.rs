@@ -83,6 +83,14 @@ pub struct Ferrite {
     pub popover: Option<Popover>,
     /// Applications installées (fichiers `.desktop`), relues par le fil système.
     pub applications: Vec<DesktopEntry>,
+    /// État chargé avant le démarrage du fil qui fournit les applications installées.
+    pub session_to_restore: Option<crate::session::Session>,
+    /// Fenêtres en attente de leur application au démarrage.
+    pub session_restore_queue: Vec<crate::session::SavedWindow>,
+    /// Garde les espaces restaurés en place pendant le lancement des applications.
+    pub session_restore_deadline: Option<Instant>,
+    /// La restauration ne s'applique qu'à la vraie session, pas aux bureaux imbriqués.
+    pub session_restore_enabled: bool,
     /// Recherche tapée dans le menu Applications.
     pub launcher_query: String,
     pub launcher_scroll: u32,
@@ -153,6 +161,8 @@ pub struct Ferrite {
     /// Dernier refus d'un réglage système, montré dans les réglages rapides.
     pub system_error: Option<String>,
     pub system_link: Option<SystemLink>,
+    /// Fondu au noir avant le verrouillage ou la mise en veille.
+    pub screen_fade: Option<(Instant, bool)>,
     pub pending_power: Option<PowerAction>,
     /// Fin du compte à rebours du dialogue d'arrêt : l'action choisie se fait seule.
     pub power_deadline: Option<std::time::Instant>,
@@ -197,6 +207,8 @@ pub struct Ferrite {
     /// Économie d'énergie demandée, et clavier affiché dans le centre de contrôle.
     pub power_saver: bool,
     pub keyboard_label: String,
+    /// Réglages des raccourcis du bureau, rechargés à chaque changement de configuration.
+    pub keyboard_shortcuts: Settings,
     /// Notifications reçues, et lien avec le service du bus de session.
     pub notifications: crate::desktop::notifications::Center,
     pub notification_link: Option<crate::desktop::notifications::Link>,
@@ -204,7 +216,18 @@ pub struct Ferrite {
     pub switcher: Option<crate::wm::switcher::Switcher>,
     /// Sélection à la souris de la zone à capturer, et capture à faire à la prochaine image.
     pub region_select: Option<crate::render::capture::RegionSelect>,
+    /// Zone déjà tracée, en cours d'ajustement avant la prise.
+    pub region_adjust: Option<crate::render::capture::RegionAdjust>,
     pub screenshot_request: Option<crate::render::capture::Request>,
+    pub screenshot_mode: crate::render::capture::Mode,
+    pub screenshot_save: bool,
+    pub screenshot_clipboard: bool,
+    pub screenshot_cursor: bool,
+    /// Délai avant la prise, en secondes (0 : immédiate).
+    pub screenshot_delay: u64,
+    /// Sélection d'une fenêtre à capturer : mode actif, et fenêtre survolée.
+    pub window_select: bool,
+    pub window_select_hover: Option<Window>,
     /// Fenêtres de la vue d'ensemble, dans l'ordre de son ouverture : une fenêtre garde
     /// sa case même si on la met au premier plan.
     pub overview_order: Vec<Window>,
@@ -355,6 +378,10 @@ impl Ferrite {
             exit_code: 0,
             popover: None,
             applications: Vec::new(),
+            session_to_restore: None,
+            session_restore_queue: Vec::new(),
+            session_restore_deadline: None,
+            session_restore_enabled: false,
             launcher_query: String::new(),
             launcher_scroll: 0,
             slider_drag: None,
@@ -393,6 +420,7 @@ impl Ferrite {
             system: Snapshot::default(),
             system_error: None,
             system_link: None,
+            screen_fade: None,
             pending_power: None,
             power_deadline: None,
             lock_picture: None,
@@ -420,11 +448,20 @@ impl Ferrite {
             last_snap: None,
             power_saver: false,
             keyboard_label: keyboard_label(&layout),
+            keyboard_shortcuts: settings.clone(),
             notifications: Default::default(),
             notification_link: None,
             switcher: None,
             region_select: None,
+            region_adjust: None,
             screenshot_request: None,
+            screenshot_mode: crate::render::capture::Mode::Screen,
+            screenshot_save: true,
+            screenshot_clipboard: true,
+            screenshot_cursor: false,
+            screenshot_delay: 0,
+            window_select: false,
+            window_select_hover: None,
             overview_order: Vec::new(),
             overview_shown: std::cell::Cell::new((0.0, None)),
             popups: PopupManager::default(),
@@ -497,7 +534,7 @@ impl Ferrite {
         match self.hit_test(pos) {
             Some(Hit::Surface(_, surface, location)) => Some((surface, location)),
             Some(Hit::Decoration(..)) => None,
-            None if self.overview || self.region_select.is_some() => None,
+            None if self.overview || self.region_select.is_some() || self.region_adjust.is_some() => None,
             None => self.layer_surface_under(pos, &[Layer::Bottom, Layer::Background]),
         }
     }
@@ -519,6 +556,20 @@ impl Ferrite {
         self.space
             .elements()
             .find(|window| window.wl_surface().is_some_and(|own| *own == *surface))
+            .cloned()
+    }
+
+    /// Fenêtre sous `pos`, de celle du dessus vers celle du dessous, cadre (barre de titre
+    /// comprise) pris en compte. Indépendant de `hit_test`, donc utilisable pendant la
+    /// sélection d'une fenêtre à capturer.
+    pub fn window_under(&self, pos: Point<f64, Logical>) -> Option<Window> {
+        self.space
+            .elements()
+            .rev()
+            .find(|window| {
+                self.window_frame(window)
+                    .is_some_and(|frame| frame.to_f64().contains(pos))
+            })
             .cloned()
     }
 
@@ -640,7 +691,12 @@ impl Ferrite {
                 self.switcher_step(1);
             }
             if std::mem::take(&mut self.demo_screenshot) {
-                self.screenshot_request = Some(crate::render::capture::Request { region: None });
+                self.screenshot_request = Some(crate::render::capture::Request {
+                    region: None,
+                    save: true,
+                    clipboard: false,
+                    cursor: false,
+                });
             }
         }
         let Some((fraction, None)) = self.genie_demo else {

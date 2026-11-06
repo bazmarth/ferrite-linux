@@ -1,5 +1,9 @@
 //! Traitement des entrées (clavier, souris) communes à tous les backends.
 
+use ferrite_system::config::{
+    KEYBOARD_SHORTCUTS, KeyboardShortcutDefinition, SHORTCUT_ALT, SHORTCUT_CTRL, SHORTCUT_SHIFT,
+    SHORTCUT_SUPER, Settings,
+};
 use smithay::{
     backend::input::{
         AbsolutePositionEvent, Axis, AxisSource, ButtonState, Event, GestureBeginEvent, GestureEndEvent,
@@ -31,6 +35,18 @@ pub struct WidgetDrag {
     pub edges: crate::desktop::widgets::WidgetEdges,
     pub pointer: Point<f64, smithay::utils::Logical>,
     pub start: crate::desktop::widgets::WidgetSlot,
+}
+
+fn capture_request(
+    state: &Ferrite,
+    region: Option<smithay::utils::Rectangle<i32, smithay::utils::Logical>>,
+) -> crate::render::capture::Request {
+    crate::render::capture::Request {
+        region,
+        save: state.screenshot_save,
+        clipboard: state.screenshot_clipboard,
+        cursor: state.screenshot_cursor,
+    }
 }
 
 /// Dialogue d'arrêt : l'action choisie se fait seule au bout de ce délai (maquette).
@@ -135,14 +151,16 @@ pub(crate) enum Action {
     LockCancel,
     ToggleWidgets,
     WidgetsDismiss,
-    /// Super+Espace : menu Applications et sa recherche.
-    ToggleLauncher,
+    /// Super+Espace : bascule entre les dispositions française et américaine.
+    ToggleKeyboardLayout,
     /// Super+N : historique des notifications.
     ToggleNotifications,
     /// Impr. écran : tout l'écran.
     ScreenshotFull,
     /// Maj+Impr. écran : zone choisie à la souris.
     ScreenshotRegion,
+    /// Zone à capturer en cours d'ajustement : Entrée valide la prise.
+    ConfirmRegionCapture,
     /// Super+Échap : dialogue d'arrêt ; dans le dialogue, Entrée et ← →.
     PowerDialog,
     PowerConfirm,
@@ -176,13 +194,80 @@ impl Action {
 
 /// Codes de touche XKB (indépendants de la disposition) : rangée 1 à 9, et la touche à gauche
 /// du 1 (`² ` en AZERTY, `` ` `` en QWERTY).
-const KEY_DIGIT_1: u32 = 10;
-const KEY_DIGIT_9: u32 = 18;
-const KEY_GRAVE: u32 = 49;
+fn shortcut_action(id: &str) -> Option<Action> {
+    Some(match id {
+        "close_window" => Action::CloseWindow,
+        "minimize_window" => Action::MinimizeWindow,
+        "hide_window" => Action::HideApp,
+        "maximize_window" => Action::Maximize,
+        "restore_minimize_window" => Action::RestoreOrMinimize,
+        "snap_left" => Action::SnapSide(true),
+        "snap_right" => Action::SnapSide(false),
+        "snap_center" => Action::Snap(crate::wm::Snap::Center),
+        "toggle_tiling" => Action::ToggleTiling,
+        "super_enter" => Action::SuperEnter,
+        "switcher_next" => Action::SwitcherStep(1),
+        "switcher_previous" => Action::SwitcherStep(-1),
+        "switcher_same_app_next" => Action::SwitcherSameApp(1),
+        "switcher_same_app_previous" => Action::SwitcherSameApp(-1),
+        "switch_page_previous" => Action::SwitchPage(-1),
+        "switch_page_next" => Action::SwitchPage(1),
+        "overview_open" => Action::Overview(true),
+        "overview_toggle" => Action::ToggleOverview,
+        "overview_close" => Action::Overview(false),
+        "toggle_controls" => Action::ToggleControls,
+        "toggle_notifications" => Action::ToggleNotifications,
+        "toggle_clipboard" => Action::ToggleClipboard,
+        "toggle_widgets" => Action::ToggleWidgets,
+        "toggle_keyboard_layout" => Action::ToggleKeyboardLayout,
+        "show_desktop" => Action::ShowDesktop,
+        "lock_screen" => Action::Lock,
+        "power_dialog" => Action::PowerDialog,
+        "open_terminal" => Action::OpenTerminal,
+        "quit_shell" => Action::Quit,
+        "restore_minimized" => Action::RestoreMinimized,
+        "screenshot" => Action::ScreenshotFull,
+        "screenshot_region" => Action::ScreenshotRegion,
+        id if id.starts_with("send_space_") => {
+            let space = id.strip_prefix("send_space_")?.parse::<usize>().ok()?;
+            Action::SendToSpace(space.saturating_sub(1))
+        }
+        id if id.starts_with("snap_third_") => {
+            let third = id.strip_prefix("snap_third_")?.parse::<u8>().ok()?;
+            Action::Snap(crate::wm::Snap::Third(third.saturating_sub(1)))
+        }
+        id if id.starts_with("switch_vt_") => {
+            let vt = id.strip_prefix("switch_vt_")?.parse::<i32>().ok()?;
+            Action::SwitchVt(vt)
+        }
+        _ => return None,
+    })
+}
 
-/// Symboles XKB `XF86Switch_VT_1` à `XF86Switch_VT_12`, produits par Ctrl+Alt+F1…F12.
-const SWITCH_VT_FIRST: u32 = 0x1008_FE01;
-const SWITCH_VT_LAST: u32 = 0x1008_FE0C;
+fn configured_shortcut(
+    settings: &Settings,
+    code: u32,
+    modifiers: &smithay::input::keyboard::ModifiersState,
+) -> Option<Action> {
+    let active = (u8::from(modifiers.ctrl) * SHORTCUT_CTRL)
+        | (u8::from(modifiers.alt) * SHORTCUT_ALT)
+        | (u8::from(modifiers.shift) * SHORTCUT_SHIFT)
+        | (u8::from(modifiers.logo) * SHORTCUT_SUPER);
+    for KeyboardShortcutDefinition { id, .. } in KEYBOARD_SHORTCUTS {
+        if settings
+            .keyboard_shortcut_bindings(id)
+            .iter()
+            .any(|binding| binding.key_code == code && binding.modifiers == active)
+        {
+            return shortcut_action(id);
+        }
+    }
+    None
+}
+
+fn works_while_locked(action: Action) -> bool {
+    matches!(action, Action::SwitchVt(_) | Action::ToggleKeyboardLayout)
+}
 
 fn scroll_direction(source: AxisSource, inverted: bool) -> i32 {
     if inverted && matches!(source, AxisSource::Wheel | AxisSource::WheelTilt) {
@@ -197,6 +282,16 @@ impl Ferrite {
         // Toute entrée est une activité (voir `protocols::idle`).
         self.idle_notifier_state.notify_activity(&self.seat);
         self.idle.activity();
+        if let InputEvent::Keyboard { event } = &event
+            && event.state() == KeyState::Pressed
+            && let Some(level) = self.idle.keyboard_activity(std::time::Instant::now())
+            && self
+                .system
+                .keyboard_light
+                .is_some_and(|(current, _)| current == 0)
+        {
+            self.request_system_change(Change::KeyboardLight(level));
+        }
         match event {
             InputEvent::Keyboard { event } => self.on_key::<I>(event),
             InputEvent::PointerMotionAbsolute { event } => {
@@ -276,15 +371,16 @@ impl Ferrite {
                 }
                 // Verrouillé par un client : tout va à lui, sauf le changement de terminal.
                 if state.session_lock.is_some() {
-                    let raw = sym.raw();
                     if pressed
-                        && modifiers.ctrl
-                        && modifiers.alt
-                        && (SWITCH_VT_FIRST..=SWITCH_VT_LAST).contains(&raw)
+                        && let Some(action @ Action::SwitchVt(_)) =
+                            configured_shortcut(&state.keyboard_shortcuts, code, modifiers)
                     {
-                        return FilterResult::Intercept(Action::SwitchVt((raw - SWITCH_VT_FIRST + 1) as i32));
+                        return FilterResult::Intercept(action);
                     }
                     return FilterResult::Forward;
+                }
+                if state.screen_fade.is_some() {
+                    return FilterResult::Intercept(Action::LockIgnore);
                 }
                 // Touches de fonction : réglages même verrouillé, applications sinon.
                 if pressed
@@ -305,15 +401,23 @@ impl Ferrite {
                         _ => {}
                     }
                 }
+                // Zone à capturer en cours d'ajustement : Entrée valide, Échap annule.
+                if pressed && state.region_adjust.is_some() {
+                    match sym {
+                        Keysym::Return | Keysym::KP_Enter => {
+                            return FilterResult::Intercept(Action::ConfirmRegionCapture);
+                        }
+                        Keysym::Escape => return FilterResult::Intercept(Action::CloseOverlay),
+                        _ => {}
+                    }
+                }
                 // Verrouillé : tout reste ici, sauf le changement de terminal virtuel.
                 if state.lock.is_some() {
-                    let raw = sym.raw();
                     if pressed
-                        && modifiers.ctrl
-                        && modifiers.alt
-                        && (SWITCH_VT_FIRST..=SWITCH_VT_LAST).contains(&raw)
+                        && let Some(action) = configured_shortcut(&state.keyboard_shortcuts, code, modifiers)
+                        && works_while_locked(action)
                     {
-                        return FilterResult::Intercept(Action::SwitchVt((raw - SWITCH_VT_FIRST + 1) as i32));
+                        return FilterResult::Intercept(action);
                     }
                     if !pressed {
                         return FilterResult::Intercept(Action::LockIgnore);
@@ -369,6 +473,14 @@ impl Ferrite {
                         }
                     }
                 }
+                if pressed
+                    && let Some(action) = configured_shortcut(&state.keyboard_shortcuts, code, modifiers)
+                {
+                    if modifiers.logo {
+                        state.super_used = true;
+                    }
+                    return FilterResult::Intercept(action);
+                }
                 if matches!(sym, Keysym::Super_L | Keysym::Super_R) {
                     return FilterResult::Intercept(if pressed {
                         Action::SuperDown
@@ -384,102 +496,13 @@ impl Ferrite {
                         _ => {}
                     }
                 }
-                if pressed && modifiers.alt && !modifiers.ctrl && code == KEY_GRAVE {
-                    return FilterResult::Intercept(Action::SwitcherSameApp(if modifiers.shift {
-                        -1
-                    } else {
-                        1
-                    }));
-                }
-                if pressed && modifiers.ctrl && modifiers.alt && matches!(sym, Keysym::t | Keysym::T) {
-                    return FilterResult::Intercept(Action::OpenTerminal);
-                }
-                if pressed && modifiers.alt && !modifiers.ctrl {
-                    match sym {
-                        Keysym::Tab if modifiers.shift => {
-                            return FilterResult::Intercept(Action::SwitcherStep(-1));
-                        }
-                        Keysym::ISO_Left_Tab => return FilterResult::Intercept(Action::SwitcherStep(-1)),
-                        Keysym::Tab => return FilterResult::Intercept(Action::SwitcherStep(1)),
-                        _ => {}
-                    }
-                }
                 // Touche de capture d'une zone (Lenovo) : comme Maj+Impr. écran.
                 if pressed && sym == Keysym::XF86_SelectiveScreenshot {
                     return FilterResult::Intercept(Action::ScreenshotRegion);
                 }
-                if pressed && sym == Keysym::Print {
-                    return FilterResult::Intercept(if modifiers.shift {
-                        Action::ScreenshotRegion
-                    } else {
-                        Action::ScreenshotFull
-                    });
-                }
-                if pressed && sym == Keysym::Escape && state.region_select.is_some() {
+                if pressed && sym == Keysym::Escape && (state.region_select.is_some() || state.window_select)
+                {
                     return FilterResult::Intercept(Action::CloseOverlay);
-                }
-                if pressed && state.super_held {
-                    // Super combinée à une autre touche : le menu ne s'ouvrira pas au relâcher.
-                    state.super_used = true;
-                    // Super+Maj+1…9 et Super+Alt+1, 2, 3 : par code de touche, car le symbole
-                    // dépend de la disposition et de Maj.
-                    if (KEY_DIGIT_1..=KEY_DIGIT_9).contains(&code) {
-                        let digit = (code - KEY_DIGIT_1) as usize;
-                        if modifiers.shift {
-                            return FilterResult::Intercept(Action::SendToSpace(digit));
-                        }
-                        if modifiers.alt && digit < 3 {
-                            return FilterResult::Intercept(Action::Snap(crate::wm::Snap::Third(
-                                digit as u8,
-                            )));
-                        }
-                    }
-                    match sym {
-                        Keysym::v | Keysym::V => return FilterResult::Intercept(Action::ToggleClipboard),
-                        Keysym::w | Keysym::W => return FilterResult::Intercept(Action::ToggleWidgets),
-                        Keysym::q | Keysym::Q => {
-                            return FilterResult::Intercept(Action::CloseWindow);
-                        }
-                        Keysym::m | Keysym::M => return FilterResult::Intercept(Action::MinimizeWindow),
-                        Keysym::h | Keysym::H => return FilterResult::Intercept(Action::HideApp),
-                        Keysym::space => return FilterResult::Intercept(Action::ToggleLauncher),
-                        Keysym::Escape => return FilterResult::Intercept(Action::PowerDialog),
-                        Keysym::n | Keysym::N => return FilterResult::Intercept(Action::ToggleNotifications),
-                        Keysym::a | Keysym::A => return FilterResult::Intercept(Action::ToggleControls),
-                        Keysym::s | Keysym::S => return FilterResult::Intercept(Action::ToggleOverview),
-                        Keysym::d | Keysym::D => return FilterResult::Intercept(Action::ShowDesktop),
-                        Keysym::l | Keysym::L => return FilterResult::Intercept(Action::Lock),
-                        Keysym::t | Keysym::T => return FilterResult::Intercept(Action::ToggleTiling),
-                        Keysym::c | Keysym::C => {
-                            return FilterResult::Intercept(Action::Snap(crate::wm::Snap::Center));
-                        }
-                        Keysym::Return | Keysym::KP_Enter => {
-                            return FilterResult::Intercept(Action::SuperEnter);
-                        }
-                        Keysym::Up if !modifiers.ctrl => return FilterResult::Intercept(Action::Maximize),
-                        Keysym::Down if !modifiers.ctrl => {
-                            return FilterResult::Intercept(Action::RestoreOrMinimize);
-                        }
-                        Keysym::Left if !modifiers.ctrl => {
-                            return FilterResult::Intercept(Action::SnapSide(true));
-                        }
-                        Keysym::Right if !modifiers.ctrl => {
-                            return FilterResult::Intercept(Action::SnapSide(false));
-                        }
-                        _ => {}
-                    }
-                    if modifiers.ctrl && sym == Keysym::Left {
-                        return FilterResult::Intercept(Action::SwitchPage(-1));
-                    }
-                    if modifiers.ctrl && sym == Keysym::Right {
-                        return FilterResult::Intercept(Action::SwitchPage(1));
-                    }
-                    if modifiers.ctrl && sym == Keysym::Up {
-                        return FilterResult::Intercept(Action::Overview(true));
-                    }
-                    if modifiers.ctrl && sym == Keysym::Down {
-                        return FilterResult::Intercept(Action::Overview(false));
-                    }
                 }
                 if pressed
                     && sym == Keysym::Escape
@@ -559,22 +582,7 @@ impl Ferrite {
                         }
                     }
                 }
-                if !(pressed && modifiers.ctrl && modifiers.alt) {
-                    return FilterResult::Forward;
-                }
-                let raw = keysym.modified_sym().raw();
-                if (SWITCH_VT_FIRST..=SWITCH_VT_LAST).contains(&raw) {
-                    return FilterResult::Intercept(Action::SwitchVt((raw - SWITCH_VT_FIRST + 1) as i32));
-                }
-                match keysym.modified_sym() {
-                    Keysym::BackSpace => FilterResult::Intercept(Action::Quit),
-                    Keysym::m | Keysym::M => FilterResult::Intercept(Action::RestoreMinimized),
-                    Keysym::Left => FilterResult::Intercept(Action::SwitchPage(-1)),
-                    Keysym::Right => FilterResult::Intercept(Action::SwitchPage(1)),
-                    Keysym::Up => FilterResult::Intercept(Action::Overview(true)),
-                    Keysym::Down => FilterResult::Intercept(Action::Overview(false)),
-                    _ => FilterResult::Forward,
-                }
+                FilterResult::Forward
             },
         );
         self.update_key_repeat(event.key_code().raw(), pressed, action);
@@ -643,6 +651,9 @@ impl Ferrite {
                 self.popover = None;
                 self.pending_power = None;
                 self.region_select = None;
+                self.region_adjust = None;
+                self.window_select = false;
+                self.window_select_hover = None;
                 self.close_overview();
             }
             Some(Action::LauncherType(character)) => {
@@ -801,23 +812,32 @@ impl Ferrite {
             }
             Some(Action::ToggleWidgets) => self.toggle_widgets_front(),
             Some(Action::WidgetsDismiss) => self.stop_widgets_overlay(),
-            Some(Action::ToggleLauncher) => {
-                self.pending_power = None;
-                self.handle_desktop_action(DesktopAction::TogglePopover(Popover::Launcher));
-            }
+            Some(Action::ToggleKeyboardLayout) => self.toggle_keyboard_layout(),
             Some(Action::ToggleNotifications) => {
                 self.pending_power = None;
                 self.handle_desktop_action(DesktopAction::TogglePopover(Popover::Notifications));
             }
             Some(Action::ScreenshotFull) => {
-                self.screenshot_request = Some(crate::render::capture::Request { region: None });
+                self.region_select = None;
+                self.region_adjust = None;
+                self.window_select = false;
+                self.window_select_hover = None;
+                self.popover = Some(Popover::Screenshot);
             }
             Some(Action::ScreenshotRegion) => {
                 self.popover = None;
+                self.region_adjust = None;
+                self.window_select = false;
+                self.window_select_hover = None;
                 self.region_select = Some(crate::render::capture::RegionSelect::default());
             }
+            Some(Action::ConfirmRegionCapture) => {
+                if let Some(adjust) = self.region_adjust.take() {
+                    self.schedule_screenshot(Some(adjust.rect));
+                }
+            }
             Some(Action::Function(key)) => self.on_function_key(key),
-            Some(Action::PowerDialog) => self.open_power_dialog(crate::state::PowerAction::PowerOff),
+            Some(Action::PowerDialog) => self.open_power_dialog(crate::state::PowerAction::Sleep),
             Some(Action::PowerConfirm) => {
                 if let Some(power) = self.pending_power {
                     self.handle_desktop_action(DesktopAction::ConfirmPower(power));
@@ -955,6 +975,9 @@ impl Ferrite {
         relative: Option<RelativeMotionEvent>,
         time: u32,
     ) {
+        if self.screen_fade.is_some() {
+            return;
+        }
         let Some(pointer) = self.seat.get_pointer() else {
             return;
         };
@@ -1014,6 +1037,16 @@ impl Ferrite {
         self.drag_widget(location);
         self.dock_drag_motion(location);
         self.file_drag_motion(location);
+        if self.window_select {
+            self.window_select_hover = self.window_under(location);
+            self.request_redraw();
+        }
+        if let Some(adjust) = self.region_adjust.as_mut()
+            && let Some((grip, start)) = adjust.grip
+        {
+            adjust.rect = crate::render::capture::adjust_region(adjust.rect, grip, start, location);
+            self.request_redraw();
+        }
         let under = if self.slider_drag.is_some() {
             None
         } else {
@@ -1034,6 +1067,9 @@ impl Ferrite {
     /// Clic de souris : décorations (feux, barre de titre, bords) gérées ici, le reste
     /// transmis au client sous le pointeur.
     fn on_button(&mut self, button: ButtonEvent) {
+        if self.screen_fade.is_some() {
+            return;
+        }
         let Some(pointer) = self.seat.get_pointer() else {
             return;
         };
@@ -1101,16 +1137,81 @@ impl Ferrite {
             self.save_dashboard();
             return;
         }
+        if self.region_adjust.is_some() {
+            if button.state == ButtonState::Pressed && button.button == BTN_LEFT {
+                let rect = self.region_adjust.map(|adjust| adjust.rect);
+                let on_capture_button = rect.is_some_and(|rect| {
+                    self.space
+                        .outputs()
+                        .next()
+                        .and_then(|output| self.space.output_geometry(output))
+                        .is_some_and(|output| {
+                            panels::region_capture_button_at(
+                                output,
+                                location,
+                                (rect.loc.x, rect.loc.y, rect.size.w, rect.size.h),
+                            )
+                        })
+                });
+                if on_capture_button {
+                    if let Some(rect) = rect {
+                        self.region_adjust = None;
+                        self.schedule_screenshot(Some(rect));
+                    }
+                } else if let Some(adjust) = self.region_adjust.as_mut() {
+                    let grip = crate::render::capture::region_grip(adjust.rect, location);
+                    adjust.grip = grip.map(|grip| (grip, location));
+                }
+            } else if button.state == ButtonState::Released {
+                if let Some(adjust) = self.region_adjust.as_mut() {
+                    adjust.grip = None;
+                }
+            }
+            return;
+        }
+        if self.window_select {
+            match (button.button, button.state) {
+                (BTN_LEFT, ButtonState::Released) => {
+                    self.window_select = false;
+                    let hovered = self.window_select_hover.take();
+                    let region = hovered.and_then(|window| {
+                        let output = self
+                            .space
+                            .outputs()
+                            .next()
+                            .and_then(|output| self.space.output_geometry(output))?;
+                        let rect = self.window_frame(&window)?;
+                        Some(smithay::utils::Rectangle::new(
+                            (rect.loc.x - output.loc.x, rect.loc.y - output.loc.y).into(),
+                            rect.size,
+                        ))
+                    });
+                    match region {
+                        Some(region) => self.schedule_screenshot(Some(region)),
+                        None => self.system_error = Some("Aucune fenêtre à cet endroit".to_owned()),
+                    }
+                }
+                (BTN_RIGHT, ButtonState::Pressed) => {
+                    self.window_select = false;
+                    self.window_select_hover = None;
+                }
+                _ => {}
+            }
+            return;
+        }
         if let Some(select) = self.region_select.as_mut() {
             match (button.button, button.state) {
                 (BTN_LEFT, ButtonState::Pressed) => select.start = Some(location),
                 (BTN_LEFT, ButtonState::Released) => {
                     let start = select.start;
                     self.region_select = None;
-                    self.screenshot_request = start
+                    if let Some(region) = start
                         .map(|start| crate::render::capture::region_between(start, location))
                         .filter(|region| region.size.w >= 4 && region.size.h >= 4)
-                        .map(|region| crate::render::capture::Request { region: Some(region) });
+                    {
+                        self.region_adjust = Some(crate::render::capture::RegionAdjust::new(region));
+                        self.request_redraw();
+                    }
                 }
                 (_, ButtonState::Pressed) => self.region_select = None,
                 _ => {}
@@ -1332,6 +1433,31 @@ impl Ferrite {
                     self.place_clipboard_near_pointer();
                 }
             }
+            DesktopAction::CaptureMode(mode) => self.screenshot_mode = mode,
+            DesktopAction::ToggleCaptureSave => self.screenshot_save = !self.screenshot_save,
+            DesktopAction::ToggleCaptureClipboard => {
+                self.screenshot_clipboard = !self.screenshot_clipboard;
+            }
+            DesktopAction::ToggleCaptureCursor => self.screenshot_cursor = !self.screenshot_cursor,
+            DesktopAction::CycleCaptureDelay => self.cycle_capture_delay(),
+            DesktopAction::CaptureNow => {
+                self.popover = None;
+                match self.screenshot_mode {
+                    crate::render::capture::Mode::Screen => {
+                        self.schedule_screenshot(None);
+                    }
+                    crate::render::capture::Mode::Window => {
+                        self.window_select = true;
+                        self.window_select_hover = self
+                            .pointer_location()
+                            .and_then(|location| self.window_under(location));
+                        self.request_redraw();
+                    }
+                    crate::render::capture::Mode::Area => {
+                        self.region_select = Some(crate::render::capture::RegionSelect::default());
+                    }
+                }
+            }
             DesktopAction::ClipboardDragStart(offset_x, offset_y) => {
                 self.clipboard_drag_offset = Some((offset_x, offset_y));
             }
@@ -1512,7 +1638,7 @@ impl Ferrite {
             }
             DesktopAction::SetVolume(value) => self.request_system_change(Change::Volume(value)),
             DesktopAction::SetBrightness(value) => self.request_system_change(Change::Brightness(value)),
-            DesktopAction::RequestPower(power) => self.open_power_dialog(power),
+            DesktopAction::RequestPower(_) => self.handle_power_button(),
             DesktopAction::PowerChoose(power) => self.open_power_dialog(power),
             DesktopAction::CancelPower => self.pending_power = None,
             DesktopAction::AuthSubmit => self.auth_submit(),
@@ -1525,8 +1651,13 @@ impl Ferrite {
                     self.request_exit();
                     self.loop_signal.stop();
                 } else {
-                    // Le bureau se ferme quand systemd accepte l'arrêt (voir `system.rs`).
-                    self.request_system_change(Change::Power(power));
+                    if power == crate::state::PowerAction::Sleep {
+                        self.lock_and_sleep();
+                    } else {
+                        self.save_session_before_power();
+                        // Le bureau se ferme quand systemd accepte l'arrêt (voir `system.rs`).
+                        self.request_system_change(Change::Power(power));
+                    }
                 }
             }
             DesktopAction::ClipboardPaste(index) => self.paste_history(index),
@@ -1567,6 +1698,7 @@ impl Ferrite {
             DesktopAction::CycleKeyboardLight => {
                 if let Some((level, max)) = self.system.keyboard_light {
                     let next = if level >= max { 0 } else { level + 1 };
+                    self.idle.manual_keyboard_light(next, std::time::Instant::now());
                     self.request_system_change(Change::KeyboardLight(next));
                 }
             }
@@ -1592,6 +1724,15 @@ impl Ferrite {
         }
     }
 
+    fn handle_power_button(&mut self) {
+        match self.keyboard_shortcuts.power_button_action() {
+            ferrite_system::config::PowerButtonAction::Sleep => self.lock_and_sleep(),
+            ferrite_system::config::PowerButtonAction::Dialog => {
+                self.open_power_dialog(crate::state::PowerAction::Sleep);
+            }
+        }
+    }
+
     /// Super+W : les widgets passent devant les fenêtres, ou y retournent.
     /// Ouvre (ou garde ouvert) le dialogue d'arrêt sur `power`, compte à rebours relancé.
     pub(crate) fn open_power_dialog(&mut self, power: crate::state::PowerAction) {
@@ -1608,6 +1749,40 @@ impl Ferrite {
             self.power_deadline = None;
             self.handle_desktop_action(DesktopAction::ConfirmPower(power));
         }
+    }
+
+    /// Programme la prise d'une capture, tout de suite ou après le délai choisi. Le délai
+    /// laisse à l'écran le temps de changer (fenêtre ouverte, menu…) avant l'image.
+    fn schedule_screenshot(
+        &mut self,
+        region: Option<smithay::utils::Rectangle<i32, smithay::utils::Logical>>,
+    ) {
+        let request = capture_request(self, region);
+        if self.screenshot_delay == 0 {
+            self.screenshot_request = Some(request);
+            return;
+        }
+        let delay = Duration::from_secs(self.screenshot_delay);
+        let timer = Timer::from_duration(delay);
+        let inserted = self.loop_handle.insert_source(timer, move |_, _, state| {
+            state.screenshot_request = Some(request);
+            state.request_redraw();
+            TimeoutAction::Drop
+        });
+        if let Err(error) = inserted {
+            tracing::warn!(%error, "délai de capture indisponible ; capture immédiate");
+            self.screenshot_request = Some(request);
+        }
+    }
+
+    /// Fait tourner le délai de capture : 0 (immédiat), 3 s, 5 s, 10 s.
+    fn cycle_capture_delay(&mut self) {
+        self.screenshot_delay = match self.screenshot_delay {
+            0 => 3,
+            3 => 5,
+            5 => 10,
+            _ => 0,
+        };
     }
 
     /// Applications ouvertes (fenêtres affichées, réduites ou sur un autre bureau).
@@ -1706,7 +1881,7 @@ impl Ferrite {
             LockAction::ToggleTheme => self.lock_toggle_theme(),
             LockAction::Wall(wall) => self.lock_set_wall(wall),
             LockAction::Keyboard => self.toggle_keyboard_layout(),
-            LockAction::Power => self.open_power_dialog(crate::state::PowerAction::PowerOff),
+            LockAction::Power => self.handle_power_button(),
             LockAction::Media(command) => self.lock_media(command),
             LockAction::Consume => {}
         }
@@ -1884,5 +2059,24 @@ mod tests {
         assert_eq!(scroll_direction(AxisSource::WheelTilt, true), -1);
         assert_eq!(scroll_direction(AxisSource::Wheel, false), 1);
         assert_eq!(scroll_direction(AxisSource::Finger, true), 1);
+    }
+
+    #[test]
+    fn tous_les_raccourcis_configures_ont_une_action() {
+        for shortcut in KEYBOARD_SHORTCUTS {
+            assert!(
+                shortcut_action(shortcut.id).is_some(),
+                "action manquante pour {}",
+                shortcut.id
+            );
+        }
+    }
+
+    #[test]
+    fn seuls_les_raccourcis_sans_acces_au_bureau_passent_le_verrouillage() {
+        assert!(works_while_locked(Action::SwitchVt(2)));
+        assert!(works_while_locked(Action::ToggleKeyboardLayout));
+        assert!(!works_while_locked(Action::ToggleControls));
+        assert!(!works_while_locked(Action::Lock));
     }
 }

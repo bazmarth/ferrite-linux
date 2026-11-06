@@ -1174,3 +1174,38 @@ Limites :
 - Les onglets Minuteur et Chronomètre n'ont pas été vus en capture (changement d'onglet à la
   souris) : leur logique est couverte par les tests, à essayer sur le bureau.
 - Le minuteur signale la fin par un message visuel, sans son.
+
+## 2026-11-06 — Écran noir maintenu pendant la veille
+
+Le fondu de mise en veille masquait le bureau, mais son échéance retirait aussi le voile noir
+juste après l'affichage de l'écran verrouillé. Le voile reste maintenant actif jusqu'au signal
+de reprise de logind ; il est également retiré si la commande de veille échoue ou si les
+services système ne sont pas disponibles. Le réveil du clavier reste inchangé.
+
+## 2026-11-06 — Veille directe au bouton d’alimentation
+
+Le bouton d’alimentation met maintenant directement l’ordinateur en veille. Dans Paramètres →
+Énergie, le comportement peut être remplacé par l’ouverture du dialogue d’alimentation. Ce
+réglage s’applique au bouton du centre de contrôle et à celui de l’écran verrouillé ; le
+raccourci clavier dédié continue d’ouvrir directement le dialogue.
+
+## 2026-11-06 — Rétroéclairage du clavier après une minute sans frappe
+
+Le compositeur éteint le rétroéclairage du clavier après une minute sans frappe, sans tenir
+compte des mouvements de souris. La première frappe suivante rétablit le dernier niveau
+utilisé. Le réglage manuel du rétroéclairage remplace le niveau mémorisé.
+
+## 2026-11-06 — Retrouver les applications et espaces après redémarrage
+
+Avant « Éteindre » ou « Redémarrer » depuis Ferrite, le bureau enregistre les applications,
+la position, la taille et l'espace de travail de leurs fenêtres, y compris les fenêtres
+réduites. Au lancement de la vraie session, les applications reconnues sont relancées et
+leurs fenêtres replacées après leur première configuration. Les documents ne sont pas
+enregistrés par Ferrite : leur contenu restauré dépend de chaque application. Les fenêtres
+d'applications absentes ou impossibles à lancer ne sont pas restaurées. Un arrêt effectué
+hors du dialogue d'alimentation Ferrite n'enregistre pas l'état.
+
+## 2026-11-06 — Voyant Caps Lock du clavier
+
+Le backend DRM actualise les voyants de tous les claviers libinput selon l’état Caps Lock
+géré par XKB. Le témoin physique s’allume quand le verrouillage des majuscules est actif.

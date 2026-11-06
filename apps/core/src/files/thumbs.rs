@@ -1,4 +1,4 @@
-//! Vignettes des images (PNG et SVG), décodées dans un fil à part puis gardées en texture :
+//! Vignettes des images (PNG, JPEG et SVG), décodées dans un fil à part puis gardées en texture :
 //! la grille et le panneau d'aperçu les montrent à la place de l'icône du fichier.
 
 use std::{
@@ -46,7 +46,7 @@ pub fn supported(path: &Path) -> bool {
             .and_then(|extension| extension.to_str())
             .map(str::to_ascii_lowercase)
             .as_deref(),
-        Some("png" | "svg")
+        Some("png" | "jpg" | "jpeg" | "svg")
     )
 }
 
@@ -100,6 +100,17 @@ fn decode(path: &Path) -> Option<egui::ColorImage> {
         .is_some_and(|extension| extension.eq_ignore_ascii_case("svg"));
     if is_svg {
         decode_svg(&data)
+    } else if path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| matches!(extension.to_ascii_lowercase().as_str(), "jpg" | "jpeg"))
+    {
+        let image = ferrite_ui::wallpaper::decode_bytes(data).ok()?;
+        let image = crate::viewer::shrink(&image, SIDE);
+        Some(egui::ColorImage::from_rgba_unmultiplied(
+            [image.width as usize, image.height as usize],
+            &image.rgba,
+        ))
     } else {
         decode_png(&data)
     }
@@ -165,4 +176,19 @@ fn decode_png(data: &[u8]) -> Option<egui::ColorImage> {
         }
     }
     Some(egui::ColorImage::from_rgba_unmultiplied([out_w, out_h], &rgba))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vignettes_les_images_jpeg_sans_tenir_compte_de_la_casse() {
+        assert!(supported(Path::new("photo.jpg")));
+        assert!(supported(Path::new("photo.jpeg")));
+        assert!(supported(Path::new("PHOTO.JPG")));
+        assert!(supported(Path::new("photo.png")));
+        assert!(supported(Path::new("dessin.svg")));
+        assert!(!supported(Path::new("photo.gif")));
+    }
 }

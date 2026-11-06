@@ -85,6 +85,7 @@ pub struct RenderAssets {
     pub dock: Dock,
     pub panels: Panels,
     overview_overlay: MemoryRenderBuffer,
+    screen_fade_overlay: MemoryRenderBuffer,
 }
 
 impl RenderAssets {
@@ -92,6 +93,14 @@ impl RenderAssets {
         let overview_overlay = MemoryRenderBuffer::from_slice(
             // Fond de la vue d'ensemble, #0F1620 opaque.
             &[0x20, 0x16, 0x0F, 255],
+            Fourcc::Argb8888,
+            (1, 1),
+            1,
+            smithay::utils::Transform::Normal,
+            None,
+        );
+        let screen_fade_overlay = MemoryRenderBuffer::from_slice(
+            &[0, 0, 0, 255],
             Fourcc::Argb8888,
             (1, 1),
             1,
@@ -106,6 +115,7 @@ impl RenderAssets {
             dock: Dock::new(),
             panels: Panels::new()?,
             overview_overlay,
+            screen_fade_overlay,
         })
     }
 }
@@ -176,6 +186,7 @@ fn build_output_elements(
                 );
             }
         }
+        push_screen_fade(renderer, state, assets, output_geo, &mut elements);
         return elements;
     }
 
@@ -456,7 +467,34 @@ fn build_output_elements(
         Ok(element) => elements.push(OutputElement::Memory(element)),
         Err(err) => warn!("fond d'écran non importé : {err:?}"),
     }
+    push_screen_fade(renderer, state, assets, output_geo, &mut elements);
     elements
+}
+
+fn push_screen_fade(
+    renderer: &mut GlesRenderer,
+    state: &Ferrite,
+    assets: &RenderAssets,
+    output_geo: Rectangle<i32, Logical>,
+    elements: &mut Vec<OutputElement>,
+) {
+    let Some((started, _)) = state.screen_fade else {
+        return;
+    };
+    let alpha = (started.elapsed().as_secs_f64() / crate::desktop::lock::SCREEN_FADE_DURATION.as_secs_f64())
+        .clamp(0.0, 1.0) as f32;
+    match MemoryRenderBufferRenderElement::from_buffer(
+        renderer,
+        Point::from((0.0, 0.0)),
+        &assets.screen_fade_overlay,
+        Some(alpha),
+        Some(Rectangle::from_size((1.0, 1.0).into())),
+        Some(output_geo.size),
+        Kind::Unspecified,
+    ) {
+        Ok(element) => elements.insert(0, OutputElement::Memory(element)),
+        Err(err) => warn!("voile avant verrouillage indisponible : {err:?}"),
+    }
 }
 
 /// Arbre de surfaces de `surface`, son origine en `location` (pixels de l'écran).
@@ -1223,6 +1261,13 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
             .filter(|_| matches!(state.popover, Some(Popover::DockMenu | Popover::DesktopMenu)))
             .map(|location| (location.x as i32, location.y as i32)),
         osd: state.osd_view(),
+        capture: crate::desktop::panels::CaptureView {
+            mode: state.screenshot_mode,
+            save: state.screenshot_save,
+            clipboard: state.screenshot_clipboard,
+            cursor: state.screenshot_cursor,
+            delay: state.screenshot_delay,
+        },
         overview: overview_view(state),
         switcher: switcher_view(state),
         lock: state.lock.as_ref().map(|lock| {
@@ -1298,6 +1343,24 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
                     let zone = capture::region_between(start, pointer);
                     (zone.loc.x, zone.loc.y, zone.size.w, zone.size.h)
                 }),
+        }),
+        window_select: state
+            .window_select
+            .then(|| {
+                state
+                    .window_select_hover
+                    .as_ref()
+                    .and_then(|window| state.window_frame(window))
+                    .map(|rect| (rect.loc.x, rect.loc.y, rect.size.w, rect.size.h))
+            })
+            .flatten(),
+        region_adjust: state.region_adjust.map(|adjust| {
+            (
+                adjust.rect.loc.x,
+                adjust.rect.loc.y,
+                adjust.rect.size.w,
+                adjust.rect.size.h,
+            )
         }),
         dock_menu: match (&state.dock_menu, state.popover) {
             (Some((_, actions, anchor)), Some(Popover::DockMenu)) => Some(DockMenuView {
@@ -1387,8 +1450,8 @@ fn named_shape(status: &CursorImageStatus) -> CursorShape {
     }
 }
 
-/// Fait la capture demandée, s'il y en a une : l'écran est redessiné à part, sans le curseur
-/// ni le sélecteur de zone, puis enregistré en arrière-plan.
+/// Fait la capture demandée, s'il y en a une : l'écran est redessiné sans son panneau de
+/// réglages, puis enregistré et/ou copié en arrière-plan.
 pub fn take_screenshot(
     renderer: &mut GlesRenderer,
     state: &mut Ferrite,
@@ -1521,7 +1584,7 @@ fn render_screenshot(
         .create_buffer(Fourcc::Abgr8888, buffer_size)
         .map_err(|err| format!("{err:?}"))?;
     let mut framebuffer = renderer.bind(&mut texture).map_err(|err| format!("{err:?}"))?;
-    let elements = output_elements(renderer, state, assets, output, false);
+    let elements = output_elements(renderer, state, assets, output, request.cursor);
     OutputDamageTracker::from_output(output)
         .render_output(renderer, &mut framebuffer, 0, &elements, [0.0, 0.0, 0.0, 1.0])
         .map_err(|err| format!("{err:?}"))?;
@@ -1545,13 +1608,68 @@ fn render_screenshot(
     let flip = output.current_transform() == smithay::utils::Transform::Flipped180;
     let (image, width, height) = capture::crop(pixels, width, height, flip, zone);
     let events = state.notification_link.as_ref().map(|link| link.events.clone());
-    capture::save_in_background(image, width, height, move |result| {
+    let clipboard_sender = request
+        .clipboard
+        .then(|| state.clipboard_sender.clone())
+        .flatten();
+    let copy = request.clipboard;
+    capture::capture_in_background(image, width, height, request.save, move |result| {
         use crate::desktop::notifications::{Event, local_notice};
         let notice = match result {
-            Ok(path) => {
-                tracing::info!("capture d'écran enregistrée : {}", path.display());
-                let name = path.file_name().map(|name| name.to_string_lossy().into_owned());
-                local_notice("Capture enregistrée", &name.unwrap_or_default())
+            Ok((path, png)) => {
+                let copied = if copy {
+                    match (
+                        clipboard_sender,
+                        crate::clipboard::decode(
+                            &crate::clipboard::Wanted::Image("image/png".to_owned()),
+                            png,
+                        ),
+                    ) {
+                        (Some(sender), Some(content)) => {
+                            if let Err(error) = sender.send((content, Some("Capture d’écran".to_owned())))
+                            {
+                                warn!(%error, "capture non transmise au presse-papiers");
+                                false
+                            } else {
+                                true
+                            }
+                        }
+                        (_, None) => {
+                            warn!("capture PNG illisible, copie impossible");
+                            false
+                        }
+                        (None, Some(_)) => {
+                            warn!("historique du presse-papiers indisponible");
+                            false
+                        }
+                    }
+                } else {
+                    false
+                };
+                match (path, copy, copied) {
+                    (Some(path), true, true) => {
+                        tracing::info!("capture d'écran enregistrée : {}", path.display());
+                        let name = path.file_name().map(|name| name.to_string_lossy().into_owned());
+                        local_notice("Capture copiée et enregistrée", &name.unwrap_or_default())
+                    }
+                    (Some(path), true, false) => {
+                        let name = path.file_name().map(|name| name.to_string_lossy().into_owned());
+                        local_notice("Capture enregistrée, copie impossible", &name.unwrap_or_default())
+                    }
+                    (Some(path), false, _) => {
+                        tracing::info!("capture d'écran enregistrée : {}", path.display());
+                        let name = path.file_name().map(|name| name.to_string_lossy().into_owned());
+                        local_notice("Capture enregistrée", &name.unwrap_or_default())
+                    }
+                    (None, true, true) => local_notice("Capture copiée", "L’image est prête à être collée."),
+                    (None, true, false) => local_notice(
+                        "Copie de capture impossible",
+                        "Le presse-papiers n’est pas disponible.",
+                    ),
+                    (None, false, _) => {
+                        local_notice("Capture impossible", "Aucune destination n’est activée.")
+                    }
+                }
             }
             Err(err) => {
                 warn!("capture d'écran impossible : {err}");

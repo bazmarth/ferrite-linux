@@ -767,11 +767,12 @@ icons![
     ;
     "ferrite-logo" => "places/start-here",
     "app-files" => "apps/system-file-manager",
+    "app-video" => "apps/multimedia-video-player",
     "app-music" => "apps/multimedia-audio-player",
     "app-photos" => "apps/image-viewer",
+    "app-pdf" => "mimetypes/application-pdf",
     "app-terminal" => "apps/utilities-terminal",
     "app-store" => "apps/system-software-install",
-    "app-video" => "apps/multimedia-video-player",
     "app-calendar" => "apps/x-office-calendar",
     "app-clock" => "apps/preferences-system-time",
     "app-settings" => "apps/preferences-system",

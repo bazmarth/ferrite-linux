@@ -5,8 +5,9 @@
 Applications du premier ensemble du bureau, en Rust avec eframe/egui :
 
 - **Fichiers** : parcourir les dossiers, remonter, saisir un chemin, trier dossiers et
-  fichiers, ouvrir les fichiers texte dans TextEdit, les images/PDF dans Visionneuse,
-  les vidéos dans le Lecteur vidéo et déléguer les autres à `xdg-open`.
+  fichiers, parcourir les archives ZIP/TAR/RAR sans les extraire, ouvrir les fichiers texte
+  dans TextEdit, les images/PDF dans Visionneuse, les vidéos dans le Lecteur vidéo et
+  déléguer les autres à `xdg-open`.
 - **TextEdit** : onglets, fichiers UTF-8, enregistrement et annulation/rétablissement ;
   les fichiers Markdown ont les modes Éditer, Partagé et Aperçu avec rendu des titres,
   listes, tableaux, citations et blocs de code.

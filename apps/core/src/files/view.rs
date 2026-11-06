@@ -1472,7 +1472,9 @@ impl FilesState {
                 });
 
                 // Étiquettes du fichier.
-                if let Some(entry) = &single {
+                if let Some(entry) = &single
+                    && !self.in_archive()
+                {
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 8.0;
                         ui.label(RichText::new("Étiquettes").font(font(12.0, true)).color(look.fg3));

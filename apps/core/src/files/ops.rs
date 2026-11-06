@@ -24,7 +24,7 @@ pub struct ArchiveEntry {
     pub directory: bool,
 }
 
-/// Liste le contenu immédiat d'un dossier d'archive sans le matérialiser sur disque.
+/// Liste le contenu immédiat d'un dossier d'archive sans l'extraire.
 pub fn list_archive(archive: &Path, directory: &str) -> Result<Vec<ArchiveEntry>, String> {
     let output = Command::new("bsdtar")
         .args(["-tf"])
@@ -82,7 +82,7 @@ pub fn list_archive(archive: &Path, directory: &str) -> Result<Vec<ArchiveEntry>
     Ok(children.into_values().collect())
 }
 
-/// Matérialise uniquement le fichier ouvert, dans un répertoire temporaire privé.
+/// Extrait un seul fichier vers un répertoire temporaire privé.
 pub fn materialize_archive_member(archive: &Path, member: &str) -> Result<(PathBuf, PathBuf), String> {
     let member = safe_archive_member(member).ok_or("Chemin de fichier invalide dans l’archive")?;
     let name = Path::new(&member)

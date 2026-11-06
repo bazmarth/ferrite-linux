@@ -214,3 +214,9 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
   pas de dépendance `chrono`/`time` pour une application simple. Les horloges du monde
   gardent des décalages fixes (heure d'hiver) ; l'heure d'été n'y est pas appliquée pour
   l'instant, l'heure locale restant exacte grâce au décalage réel du système.
+
+- **2026-11-06 — Restaurer les fenêtres après arrêt ou redémarrage.** La session Ferrite
+  mémorise les applications, leurs dimensions et leur espace de travail avant un arrêt ou un
+  redémarrage déclenché depuis Ferrite, puis relance les applications et replace leurs
+  fenêtres au prochain démarrage. L'état interne des documents reste à la charge de chaque
+  application ; les fenêtres d'applications absentes ou impossibles à relancer sont ignorées.

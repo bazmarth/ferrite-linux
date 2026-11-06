@@ -670,6 +670,13 @@ impl Ferrite {
 
     /// À chaque tour de boucle : met à jour la liste des bureaux.
     pub fn sync_desktops(&mut self) {
+        if self
+            .session_restore_deadline
+            .is_some_and(|deadline| Instant::now() < deadline)
+        {
+            return;
+        }
+        self.session_restore_deadline = None;
         self.keep_widgets_page_free();
         let occupied = self
             .space

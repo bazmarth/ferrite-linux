@@ -28,6 +28,7 @@ Options :
   --demo-auth           affiche une demande de mot de passe administrateur (pour les captures)
   --demo-osd            affiche la bulle du volume au démarrage (pour les captures)
   --demo-region         ouvre la sélection d'une zone à capturer au démarrage
+  --demo-capture        ouvre le panneau de capture au démarrage
   --demo-screenshot     enregistre une capture dans le dossier Images dès qu'une fenêtre existe
   --demo-page POSITION  fige l'affichage à cette position entre les bureaux (0 : le premier,
                         0.5 : à mi-chemin), pour les captures
@@ -83,6 +84,8 @@ pub struct Options {
     pub demo_osd: bool,
     pub demo_controls: Option<ControlsPage>,
     pub demo_screenshot: bool,
+    /// Ouvre le panneau de capture au démarrage (`--demo-capture`).
+    pub demo_capture: bool,
     pub command: Vec<String>,
 }
 
@@ -105,6 +108,7 @@ impl Default for Options {
             demo_osd: false,
             demo_controls: None,
             demo_screenshot: false,
+            demo_capture: false,
             command: Vec::new(),
         }
     }
@@ -163,6 +167,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
             "--demo-overview" => options.demo_overview = true,
             "--demo-switcher" => options.demo_switcher = true,
             "--demo-region" => options.demo_region = true,
+            "--demo-capture" => options.demo_capture = true,
             "--demo-lock" => options.demo_lock = true,
             "--demo-power" => options.demo_power = true,
             "--demo-auth" => options.demo_auth = true,

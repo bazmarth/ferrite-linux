@@ -12,6 +12,7 @@ mod input;
 mod options;
 mod protocols;
 mod render;
+mod session;
 mod state;
 mod system;
 mod wm;
@@ -56,7 +57,11 @@ fn main() -> ExitCode {
 fn run(options: Options) -> Result<u8, Box<dyn std::error::Error>> {
     let mut event_loop: EventLoop<'static, Ferrite> = EventLoop::try_new()?;
     let display: Display<Ferrite> = Display::new()?;
+    let has_display = std::env::var_os("WAYLAND_DISPLAY").is_some() || std::env::var_os("DISPLAY").is_some();
     let mut state = Ferrite::new(&mut event_loop, display)?;
+    state.prepare_session_restore(
+        !has_display && std::env::var_os("FERRITE_SESSION").is_some_and(|value| value == "1"),
+    );
     state.popover = options.menu;
     if let Some(position) = options.demo_page {
         state.workspaces.freeze(position);
@@ -66,6 +71,9 @@ fn run(options: Options) -> Result<u8, Box<dyn std::error::Error>> {
     }
     state.demo_switcher = options.demo_switcher;
     state.demo_screenshot = options.demo_screenshot;
+    if options.demo_capture {
+        state.popover = Some(desktop::panels::Popover::Screenshot);
+    }
     if options.demo_region {
         state.region_select = Some(render::capture::RegionSelect::default());
     }
@@ -99,7 +107,7 @@ fn run(options: Options) -> Result<u8, Box<dyn std::error::Error>> {
         state.auth.push_back(desktop::polkit::Auth::demo());
     }
     if options.demo_power {
-        state.open_power_dialog(crate::state::PowerAction::PowerOff);
+        state.open_power_dialog(crate::state::PowerAction::Sleep);
     }
     if options.demo_osd {
         let osd = desktop::panels::Osd {
@@ -123,7 +131,6 @@ fn run(options: Options) -> Result<u8, Box<dyn std::error::Error>> {
         warn!(%err, "météo du tableau de bord indisponible");
     }
 
-    let has_display = std::env::var_os("WAYLAND_DISPLAY").is_some() || std::env::var_os("DISPLAY").is_some();
     // Ouverture de session (ferrite-session, connexion automatique) : le bureau démarre
     // verrouillé. Un bureau imbriqué, lancé depuis un terminal, hérite de la variable : il
     // ne se verrouille pas.

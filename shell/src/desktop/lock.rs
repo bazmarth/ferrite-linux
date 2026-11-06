@@ -15,7 +15,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use smithay::reexports::calloop::{LoopHandle, channel};
+use smithay::reexports::calloop::{
+    LoopHandle, channel,
+    timer::{TimeoutAction, Timer},
+};
 
 use crate::{
     desktop::panels::{LOCK_BLUR_MAX, LOCK_WALLS, LockMessage},
@@ -26,6 +29,8 @@ use crate::{
 const HELPERS: [&str; 2] = ["/usr/sbin/unix_chkpwd", "/sbin/unix_chkpwd"];
 /// Temps du passage du repos à la saisie, et de la secousse d'un refus.
 const TRANSITION: Duration = Duration::from_millis(320);
+pub const SCREEN_FADE_DURATION: Duration = Duration::from_millis(360);
+const SCREEN_FADE_STEP: Duration = Duration::from_millis(16);
 const SHAKE: Duration = Duration::from_millis(380);
 /// Message d'accueil, une fois le mot de passe accepté.
 const WELCOME: Duration = Duration::from_millis(600);
@@ -421,6 +426,7 @@ fn wipe(password: &mut String) {
 #[derive(Debug)]
 pub enum Event {
     Lock,
+    Resumed,
     Checked(Result<bool, String>),
     Media(Option<Media>),
 }
@@ -552,6 +558,14 @@ pub fn start(handle: &LoopHandle<'static, Ferrite>) -> Result<(channel::Sender<E
 /// Attend le signal `PrepareForSleep` de logind.
 fn watch_sleep(events: &channel::Sender<Event>) -> zbus::Result<()> {
     let connection = zbus::blocking::Connection::system()?;
+    let manager = zbus::blocking::Proxy::new(
+        &connection,
+        "org.freedesktop.login1",
+        "/org/freedesktop/login1",
+        "org.freedesktop.login1.Manager",
+    )?;
+    let mut previous_keyboard_light = None;
+    let mut delay_inhibitor = acquire_sleep_delay_inhibitor(&manager);
     let rule = zbus::MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
         .sender("org.freedesktop.login1")?
@@ -560,11 +574,59 @@ fn watch_sleep(events: &channel::Sender<Event>) -> zbus::Result<()> {
         .build();
     for message in zbus::blocking::MessageIterator::for_match_rule(rule, &connection, None)? {
         let going_to_sleep: bool = message?.body().deserialize()?;
-        if going_to_sleep && events.send(Event::Lock).is_err() {
-            break;
+        if going_to_sleep {
+            previous_keyboard_light = ferrite_system::display::keyboard_light().map(|(level, _)| level);
+            if previous_keyboard_light.is_some_and(|level| level > 0)
+                && let Err(error) = ferrite_system::display::set_keyboard_light(0)
+            {
+                tracing::warn!(%error, "impossible d'éteindre le rétroéclairage avant la veille");
+            }
+            if events.send(Event::Lock).is_err() {
+                break;
+            }
+            drop(delay_inhibitor.take());
+        } else {
+            if let Some(level) = previous_keyboard_light.take()
+                && let Err(error) = ferrite_system::display::set_keyboard_light(level)
+            {
+                tracing::warn!(%error, "impossible de rétablir le rétroéclairage après la veille");
+            }
+            if events.send(Event::Resumed).is_err() {
+                break;
+            }
+            delay_inhibitor = acquire_sleep_delay_inhibitor(&manager);
         }
     }
     Ok(())
+}
+
+fn acquire_sleep_delay_inhibitor(manager: &zbus::blocking::Proxy<'_>) -> Option<zbus::zvariant::OwnedFd> {
+    if !ferrite_system::display::keyboard_light().is_some_and(|(level, _)| level > 0) {
+        return None;
+    }
+    match manager.call(
+        "Inhibit",
+        &(
+            "sleep",
+            "Ferrite",
+            "Extinction du rétroéclairage du clavier",
+            "delay",
+        ),
+    ) {
+        Ok(inhibitor) => Some(inhibitor),
+        Err(error) => {
+            tracing::warn!(%error, "impossible de retarder la veille pour éteindre le clavier");
+            None
+        }
+    }
+}
+
+fn finish_screen_fade(screen_fade: &mut Option<(Instant, bool)>) -> Option<bool> {
+    let (_, sleep_after) = *screen_fade.as_ref()?;
+    if !sleep_after {
+        *screen_fade = None;
+    }
+    Some(sleep_after)
 }
 
 impl Lock {
@@ -577,10 +639,65 @@ impl Lock {
 }
 
 impl Ferrite {
-    /// Verrouille la session : tout ce qui est ouvert au-dessus du bureau se referme.
+    /// Assombrit progressivement l'écran avant d'afficher l'écran de verrouillage.
     pub fn lock_session(&mut self) {
         if let Some(lock) = self.lock.as_mut() {
             // Mise en veille pendant l'accueil : on repart verrouillé.
+            lock.welcome_until = None;
+            lock.checking = false;
+            return;
+        }
+        self.begin_screen_fade(false);
+    }
+
+    /// Verrouille puis met l'écran en veille après le fondu.
+    pub fn lock_and_sleep(&mut self) {
+        self.begin_screen_fade(true);
+    }
+
+    fn begin_screen_fade(&mut self, sleep_after: bool) {
+        if let Some((started, pending_sleep)) = self.screen_fade {
+            self.screen_fade = Some((started, pending_sleep || sleep_after));
+            return;
+        }
+        self.screen_fade = Some((Instant::now(), sleep_after));
+        self.super_held = false;
+        self.super_used = true;
+        self.request_redraw();
+        let timer = Timer::from_duration(SCREEN_FADE_STEP);
+        let inserted = self.loop_handle.insert_source(timer, |_, _, state| {
+            let Some((started, _)) = state.screen_fade else {
+                return TimeoutAction::Drop;
+            };
+            if started.elapsed() < SCREEN_FADE_DURATION {
+                state.request_redraw();
+                return TimeoutAction::ToDuration(SCREEN_FADE_STEP);
+            }
+            let Some(sleep_after) = finish_screen_fade(&mut state.screen_fade) else {
+                return TimeoutAction::Drop;
+            };
+            state.lock_now();
+            if sleep_after {
+                state.request_system_change(crate::system::Change::Power(crate::state::PowerAction::Sleep));
+            }
+            state.request_redraw();
+            TimeoutAction::Drop
+        });
+        if let Err(error) = inserted {
+            tracing::warn!(%error, "fondu avant verrouillage indisponible");
+            let Some(sleep_after) = finish_screen_fade(&mut self.screen_fade) else {
+                return;
+            };
+            self.lock_now();
+            if sleep_after {
+                self.request_system_change(crate::system::Change::Power(crate::state::PowerAction::Sleep));
+            }
+        }
+    }
+
+    /// Verrouille la session : tout ce qui est ouvert au-dessus du bureau se referme.
+    fn lock_now(&mut self) {
+        if let Some(lock) = self.lock.as_mut() {
             lock.welcome_until = None;
             lock.checking = false;
             return;
@@ -600,6 +717,7 @@ impl Ferrite {
     pub fn on_lock_event(&mut self, event: Event) {
         match event {
             Event::Lock => self.lock_session(),
+            Event::Resumed => self.screen_fade = None,
             Event::Checked(result) => {
                 let accepted = match result {
                     Ok(accepted) => accepted,
@@ -847,6 +965,17 @@ mod tests {
         assert_eq!(media_progress(500, 200), 100);
         assert_eq!(media_progress(50, 0), 0);
         assert_eq!(media_progress(-1, 200), 0);
+    }
+
+    #[test]
+    fn le_voile_de_veille_reste_jusqu_a_la_reprise() {
+        let mut sleep_fade = Some((Instant::now(), true));
+        assert_eq!(finish_screen_fade(&mut sleep_fade), Some(true));
+        assert!(sleep_fade.is_some());
+
+        let mut lock_fade = Some((Instant::now(), false));
+        assert_eq!(finish_screen_fade(&mut lock_fade), Some(false));
+        assert!(lock_fade.is_none());
     }
 
     #[test]

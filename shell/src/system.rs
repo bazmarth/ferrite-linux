@@ -69,7 +69,7 @@ impl Change {
 pub enum Event {
     Snapshot(Snapshot),
     Failed(String),
-    KeyboardLayout(String),
+    KeyboardSettings(ferrite_system::config::Settings),
     /// Listes du centre de contrôle, relues à la demande.
     WifiList(Vec<network::WifiNetwork>, Vec<String>),
     BluetoothList(Vec<bluetooth::Device>),
@@ -86,6 +86,8 @@ pub enum Event {
     DockApps(Option<Vec<String>>, Vec<String>),
     Applications(Vec<DesktopEntry>),
     PowerAccepted,
+    /// La commande de veille a échoué : le voile noir ne doit pas rester affiché.
+    SleepFailed(String),
     /// Photo de l'écran de verrouillage, décodée (ou retirée).
     LockPicture(Option<crate::desktop::panels::LockPicture>),
     /// Délais de verrouillage et de mise en veille automatiques.
@@ -223,7 +225,6 @@ fn worker(receiver: mpsc::Receiver<Change>, events: channel::Sender<Event>, nest
     let mut known_lock_picture: Option<String> = None;
     let mut wallpaper_generation = 0u64;
     let mut last_snapshot: Option<Instant> = None;
-    let mut layout = String::new();
     let mut applications_stamp = None;
     loop {
         // Applications installées ou retirées (apt, Flatpak, .deb) : le menu suit.
@@ -244,12 +245,8 @@ fn worker(receiver: mpsc::Receiver<Change>, events: channel::Sender<Event>, nest
             settings_initialized = true;
             layout_stamp = stamp;
             let settings = Settings::load();
-            let current = settings.keyboard_layout().to_owned();
-            if current != layout {
-                layout.clone_from(&current);
-                if events.send(Event::KeyboardLayout(current)).is_err() {
-                    return;
-                }
+            if events.send(Event::KeyboardSettings(settings.clone())).is_err() {
+                return;
             }
             let dock = DockConfig::from_settings(&settings);
             if events.send(Event::Dock(dock)).is_err() {
@@ -344,6 +341,7 @@ fn worker(receiver: mpsc::Receiver<Change>, events: channel::Sender<Event>, nest
                 // La veille laisse le bureau ouvert ; l'arrêt et le redémarrage le ferment.
                 (Change::Power(PowerAction::PowerOff | PowerAction::Restart), Ok(())) => Event::PowerAccepted,
                 (_, Ok(())) => continue,
+                (Change::Power(PowerAction::Sleep), Err(message)) => Event::SleepFailed(message),
                 (_, Err(message)) => {
                     warn!(?change, %message, "réglage système refusé");
                     Event::Failed(message)
@@ -412,7 +410,17 @@ impl Ferrite {
                 self.system = snapshot;
             }
             Event::Failed(message) => self.system_error = Some(message),
-            Event::KeyboardLayout(layout) => self.set_keyboard_layout(&layout),
+            Event::SleepFailed(message) => {
+                warn!(%message, "mise en veille refusée");
+                self.screen_fade = None;
+                self.system_error = Some(message);
+            }
+            Event::KeyboardSettings(settings) => {
+                if self.keyboard_shortcuts.keyboard_layout() != settings.keyboard_layout() {
+                    self.set_keyboard_layout(settings.keyboard_layout());
+                }
+                self.keyboard_shortcuts = settings;
+            }
             Event::WifiList(networks, known) => {
                 self.controls.networks = networks;
                 self.controls.known = known;
@@ -463,6 +471,7 @@ impl Ferrite {
             Event::Applications(list) => {
                 info!(nombre = list.len(), "applications installées");
                 self.applications = list;
+                self.restore_session_after_applications();
             }
             Event::PowerAccepted => {
                 info!("arrêt du système accepté : fermeture du bureau");
@@ -506,7 +515,13 @@ impl Ferrite {
         }
         match &self.system_link {
             Some(link) => link.request(change),
-            None => warn!(?change, "services système indisponibles"),
+            None => {
+                warn!(?change, "services système indisponibles");
+                if change == Change::Power(PowerAction::Sleep) {
+                    self.screen_fade = None;
+                    self.system_error = Some("Services système indisponibles".to_owned());
+                }
+            }
         }
     }
 }

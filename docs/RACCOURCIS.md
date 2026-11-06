@@ -1,7 +1,9 @@
 # Raccourcis clavier et gestes
 
 La touche Super porte les commandes du système ; les raccourcis d'application (Ctrl + …) ne
-sont pas interceptés, sauf Ctrl + Alt + T et les combinaisons Ctrl + Alt ci-dessous.
+sont pas interceptés, sauf les attributions système indiquées ci-dessous. Les raccourcis
+peuvent être consultés et modifiés dans Paramètres → Clavier ; leurs changements sont appliqués
+sans redémarrer. L'écran s'assombrit progressivement avant le verrouillage et la mise en veille.
 
 ## Fenêtres
 
@@ -35,7 +37,7 @@ sont pas interceptés, sauf Ctrl + Alt + T et les combinaisons Ctrl + Alt ci-des
 
 | Action | Clavier |
 |---|---|
-| Lanceur | Super, Super + Espace |
+| Lanceur | Super |
 | Centre de contrôle | Super + A |
 | Calendrier et notifications | Super + N |
 | Historique du presse-papiers | Super + V |
@@ -43,7 +45,8 @@ sont pas interceptés, sauf Ctrl + Alt + T et les combinaisons Ctrl + Alt ci-des
 | Verrouiller | Super + L |
 | Widgets devant les fenêtres, puis derrière | Super + W, Échap |
 | Modifier les widgets | clic droit sur le bureau |
-| Capture de tout l'écran | Impr. écran |
-| Capture d'une zone | Maj + Impr. écran |
+| Régler puis capturer l'écran, une fenêtre ou une zone | Impr. écran, puis bouton « Capturer » |
+| Sélection rapide d'une zone | Maj + Impr. écran |
+| Changer de disposition clavier (aussi sur l'écran verrouillé, avec indication à l'écran) | Super + Espace |
 | Quitter le bureau | Ctrl + Alt + Retour arrière |
 | Terminal virtuel | Ctrl + Alt + F1…F12 |

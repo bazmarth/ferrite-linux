@@ -237,11 +237,22 @@ pub fn init(
     libinput_context
         .udev_assign_seat(&seat)
         .map_err(|()| format!("libinput : siège « {seat} » introuvable"))?;
-    handle.insert_source(
-        LibinputInputBackend::new(libinput_context.clone()),
-        |mut event, _, state| {
+    handle.insert_source(LibinputInputBackend::new(libinput_context.clone()), {
+        let mut keyboards = Vec::new();
+        move |mut event, _, state| {
+            let mut update_leds = false;
             if let InputEvent::DeviceAdded { device } = &mut event {
                 configure_input_device(device);
+                if device.has_capability(libinput::DeviceCapability::Keyboard) {
+                    keyboards.push(device.clone());
+                    update_leds = true;
+                }
+            }
+            if let InputEvent::DeviceRemoved { device } = &event {
+                keyboards.retain(|keyboard| keyboard != device);
+            }
+            if matches!(event, InputEvent::Keyboard { .. }) {
+                update_leds = true;
             }
             // Gestes : les déplacements bruts, pour que la page suive les doigts de façon
             // régulière (l'accélération de libinput dépend de la vitesse).
@@ -252,9 +263,15 @@ pub fn init(
                 return;
             }
             state.process_input_event(event);
+            if update_leds && let Some(keyboard) = state.seat.get_keyboard() {
+                let leds = libinput::Led::from(keyboard.led_state());
+                for device in &mut keyboards {
+                    device.led_update(leds);
+                }
+            }
             state.request_redraw();
-        },
-    )?;
+        }
+    })?;
 
     // Changement de terminal virtuel : la session se met en pause puis reprend.
     {

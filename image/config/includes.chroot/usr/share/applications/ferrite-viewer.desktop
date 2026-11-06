@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
-Name=Visionneuse
-Comment=Visionneuse d'images de Ferrite
+Name=Visionneuse d’images
+Comment=Visionneuse d’images de Ferrite
 Exec=ferrite-apps viewer %f
 Icon=image-viewer
 MimeType=image/png;image/jpeg;

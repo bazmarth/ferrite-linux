@@ -396,6 +396,7 @@ pub enum Hit {
 pub struct Minimized {
     pub window: Window,
     pub location: Point<i32, Logical>,
+    pub workspace: usize,
 }
 
 impl Ferrite {
@@ -483,7 +484,12 @@ impl Ferrite {
     pub fn hit_test(&self, pos: Point<f64, Logical>) -> Option<Hit> {
         // Ni les aperçus de la vue d'ensemble, ni les fenêtres sous la sélection d'une zone
         // à capturer ou sous l'écran de verrouillage ne reçoivent de survol ou de clic.
-        if self.overview || self.region_select.is_some() || self.lock.is_some() {
+        if self.overview
+            || self.region_select.is_some()
+            || self.region_adjust.is_some()
+            || self.window_select
+            || self.lock.is_some()
+        {
             return None;
         }
         for window in self.space.elements().rev() {
@@ -631,6 +637,7 @@ impl Ferrite {
         self.minimized.push(Minimized {
             window: window.clone(),
             location,
+            workspace: self.workspaces.current(),
         });
         let next = self.top_window();
         self.focus_window(next);
@@ -648,7 +655,7 @@ impl Ferrite {
         if index >= self.minimized.len() {
             return;
         }
-        let Minimized { window, location } = self.minimized.remove(index);
+        let Minimized { window, location, .. } = self.minimized.remove(index);
         let key = self.window_app(&window);
         let icon = self.dock_icon_rect(key.as_ref());
         // Une animation de réduction encore en cours s'arrête.

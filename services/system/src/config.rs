@@ -23,6 +23,510 @@ pub const KEYBOARD_LAYOUTS: &[(&str, &str)] = &[
     ("es", "Espagnol"),
 ];
 
+pub const SHORTCUT_CTRL: u8 = 1;
+pub const SHORTCUT_ALT: u8 = 2;
+pub const SHORTCUT_SHIFT: u8 = 4;
+pub const SHORTCUT_SUPER: u8 = 8;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeyboardShortcutBinding {
+    pub key_code: u32,
+    pub modifiers: u8,
+}
+
+impl KeyboardShortcutBinding {
+    pub const fn new(key_code: u32, modifiers: u8) -> Self {
+        Self { key_code, modifiers }
+    }
+
+    pub fn label(self) -> String {
+        let mut parts = Vec::new();
+        if self.modifiers & SHORTCUT_CTRL != 0 {
+            parts.push("Ctrl");
+        }
+        if self.modifiers & SHORTCUT_ALT != 0 {
+            parts.push("Alt");
+        }
+        if self.modifiers & SHORTCUT_SHIFT != 0 {
+            parts.push("Maj");
+        }
+        if self.modifiers & SHORTCUT_SUPER != 0 {
+            parts.push("Super");
+        }
+        parts.push(keyboard_shortcut_key_label(self.key_code));
+        parts.join(" + ")
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct KeyboardShortcutDefinition {
+    pub id: &'static str,
+    pub group: &'static str,
+    pub label: &'static str,
+    pub defaults: &'static [KeyboardShortcutBinding],
+}
+
+const CTRL_ALT: u8 = SHORTCUT_CTRL | SHORTCUT_ALT;
+const SUPER: u8 = SHORTCUT_SUPER;
+const SUPER_CTRL: u8 = SHORTCUT_SUPER | SHORTCUT_CTRL;
+const SUPER_SHIFT: u8 = SHORTCUT_SUPER | SHORTCUT_SHIFT;
+const SUPER_ALT: u8 = SHORTCUT_SUPER | SHORTCUT_ALT;
+
+const CLOSE_WINDOW: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(24, SUPER)];
+const MINIMIZE_WINDOW: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(58, SUPER)];
+const HIDE_WINDOW: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(43, SUPER)];
+const MAXIMIZE_WINDOW: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(111, SUPER)];
+const RESTORE_MINIMIZE_WINDOW: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(116, SUPER)];
+const SNAP_LEFT: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(113, SUPER)];
+const SNAP_RIGHT: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(114, SUPER)];
+const SNAP_CENTER: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(54, SUPER)];
+const TOGGLE_TILING: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(28, SUPER)];
+const SUPER_ENTER: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(36, SUPER)];
+const SWITCHER_NEXT: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(23, SHORTCUT_ALT)];
+const SWITCHER_PREVIOUS: &[KeyboardShortcutBinding] =
+    &[KeyboardShortcutBinding::new(23, SHORTCUT_ALT | SHORTCUT_SHIFT)];
+const SWITCHER_SAME_APP_NEXT: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(49, SHORTCUT_ALT)];
+const SWITCHER_SAME_APP_PREVIOUS: &[KeyboardShortcutBinding] =
+    &[KeyboardShortcutBinding::new(49, SHORTCUT_ALT | SHORTCUT_SHIFT)];
+const SWITCH_PAGE_PREVIOUS: &[KeyboardShortcutBinding] = &[
+    KeyboardShortcutBinding::new(113, CTRL_ALT),
+    KeyboardShortcutBinding::new(113, SUPER_CTRL),
+];
+const SWITCH_PAGE_NEXT: &[KeyboardShortcutBinding] = &[
+    KeyboardShortcutBinding::new(114, CTRL_ALT),
+    KeyboardShortcutBinding::new(114, SUPER_CTRL),
+];
+const OVERVIEW_OPEN: &[KeyboardShortcutBinding] = &[
+    KeyboardShortcutBinding::new(111, CTRL_ALT),
+    KeyboardShortcutBinding::new(111, SUPER_CTRL),
+];
+const OVERVIEW_TOGGLE: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(39, SUPER)];
+const OVERVIEW_CLOSE: &[KeyboardShortcutBinding] = &[
+    KeyboardShortcutBinding::new(116, CTRL_ALT),
+    KeyboardShortcutBinding::new(116, SUPER_CTRL),
+];
+const TOGGLE_CONTROLS: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(38, SUPER)];
+const TOGGLE_NOTIFICATIONS: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(57, SUPER)];
+const TOGGLE_CLIPBOARD: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(55, SUPER)];
+const TOGGLE_WIDGETS: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(25, SUPER)];
+const TOGGLE_KEYBOARD_LAYOUT: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(65, SUPER)];
+const SHOW_DESKTOP: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(40, SUPER)];
+const LOCK_SCREEN: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(46, SUPER)];
+const POWER_DIALOG: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(9, SUPER)];
+const OPEN_TERMINAL: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(28, CTRL_ALT)];
+const QUIT_SHELL: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(22, CTRL_ALT)];
+const RESTORE_MINIMIZED: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(58, CTRL_ALT)];
+const SCREENSHOT: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(107, 0)];
+const SCREENSHOT_REGION: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(107, SHORTCUT_SHIFT)];
+
+pub const KEYBOARD_SHORTCUTS: &[KeyboardShortcutDefinition] = &[
+    KeyboardShortcutDefinition {
+        id: "close_window",
+        group: "Fenêtres",
+        label: "Fermer la fenêtre",
+        defaults: CLOSE_WINDOW,
+    },
+    KeyboardShortcutDefinition {
+        id: "minimize_window",
+        group: "Fenêtres",
+        label: "Réduire la fenêtre",
+        defaults: MINIMIZE_WINDOW,
+    },
+    KeyboardShortcutDefinition {
+        id: "hide_window",
+        group: "Fenêtres",
+        label: "Masquer l’application",
+        defaults: HIDE_WINDOW,
+    },
+    KeyboardShortcutDefinition {
+        id: "maximize_window",
+        group: "Fenêtres",
+        label: "Agrandir ou restaurer",
+        defaults: MAXIMIZE_WINDOW,
+    },
+    KeyboardShortcutDefinition {
+        id: "restore_minimize_window",
+        group: "Fenêtres",
+        label: "Restaurer ou réduire",
+        defaults: RESTORE_MINIMIZE_WINDOW,
+    },
+    KeyboardShortcutDefinition {
+        id: "snap_left",
+        group: "Fenêtres",
+        label: "Accrocher à gauche",
+        defaults: SNAP_LEFT,
+    },
+    KeyboardShortcutDefinition {
+        id: "snap_right",
+        group: "Fenêtres",
+        label: "Accrocher à droite",
+        defaults: SNAP_RIGHT,
+    },
+    KeyboardShortcutDefinition {
+        id: "snap_center",
+        group: "Fenêtres",
+        label: "Centrer la fenêtre",
+        defaults: SNAP_CENTER,
+    },
+    KeyboardShortcutDefinition {
+        id: "toggle_tiling",
+        group: "Fenêtres",
+        label: "Activer ou arrêter le tuilage",
+        defaults: TOGGLE_TILING,
+    },
+    KeyboardShortcutDefinition {
+        id: "super_enter",
+        group: "Fenêtres",
+        label: "Échanger avec la fenêtre principale",
+        defaults: SUPER_ENTER,
+    },
+    KeyboardShortcutDefinition {
+        id: "switcher_next",
+        group: "Fenêtres",
+        label: "Fenêtre suivante",
+        defaults: SWITCHER_NEXT,
+    },
+    KeyboardShortcutDefinition {
+        id: "switcher_previous",
+        group: "Fenêtres",
+        label: "Fenêtre précédente",
+        defaults: SWITCHER_PREVIOUS,
+    },
+    KeyboardShortcutDefinition {
+        id: "switcher_same_app_next",
+        group: "Fenêtres",
+        label: "Fenêtre suivante de l’application",
+        defaults: SWITCHER_SAME_APP_NEXT,
+    },
+    KeyboardShortcutDefinition {
+        id: "switcher_same_app_previous",
+        group: "Fenêtres",
+        label: "Fenêtre précédente de l’application",
+        defaults: SWITCHER_SAME_APP_PREVIOUS,
+    },
+    KeyboardShortcutDefinition {
+        id: "switch_page_previous",
+        group: "Espaces de travail",
+        label: "Espace précédent",
+        defaults: SWITCH_PAGE_PREVIOUS,
+    },
+    KeyboardShortcutDefinition {
+        id: "switch_page_next",
+        group: "Espaces de travail",
+        label: "Espace suivant",
+        defaults: SWITCH_PAGE_NEXT,
+    },
+    KeyboardShortcutDefinition {
+        id: "overview_open",
+        group: "Espaces de travail",
+        label: "Ouvrir la vue d’ensemble",
+        defaults: OVERVIEW_OPEN,
+    },
+    KeyboardShortcutDefinition {
+        id: "overview_toggle",
+        group: "Espaces de travail",
+        label: "Afficher ou masquer la vue d’ensemble",
+        defaults: OVERVIEW_TOGGLE,
+    },
+    KeyboardShortcutDefinition {
+        id: "overview_close",
+        group: "Espaces de travail",
+        label: "Fermer la vue d’ensemble",
+        defaults: OVERVIEW_CLOSE,
+    },
+    KeyboardShortcutDefinition {
+        id: "send_space_1",
+        group: "Espaces de travail",
+        label: "Envoyer la fenêtre sur l’espace 1",
+        defaults: &[KeyboardShortcutBinding::new(10, SUPER_SHIFT)],
+    },
+    KeyboardShortcutDefinition {
+        id: "send_space_2",
+        group: "Espaces de travail",
+        label: "Envoyer la fenêtre sur l’espace 2",
+        defaults: &[KeyboardShortcutBinding::new(11, SUPER_SHIFT)],
+    },
+    KeyboardShortcutDefinition {
+        id: "send_space_3",
+        group: "Espaces de travail",
+        label: "Envoyer la fenêtre sur l’espace 3",
+        defaults: &[KeyboardShortcutBinding::new(12, SUPER_SHIFT)],
+    },
+    KeyboardShortcutDefinition {
+        id: "send_space_4",
+        group: "Espaces de travail",
+        label: "Envoyer la fenêtre sur l’espace 4",
+        defaults: &[KeyboardShortcutBinding::new(13, SUPER_SHIFT)],
+    },
+    KeyboardShortcutDefinition {
+        id: "send_space_5",
+        group: "Espaces de travail",
+        label: "Envoyer la fenêtre sur l’espace 5",
+        defaults: &[KeyboardShortcutBinding::new(14, SUPER_SHIFT)],
+    },
+    KeyboardShortcutDefinition {
+        id: "send_space_6",
+        group: "Espaces de travail",
+        label: "Envoyer la fenêtre sur l’espace 6",
+        defaults: &[KeyboardShortcutBinding::new(15, SUPER_SHIFT)],
+    },
+    KeyboardShortcutDefinition {
+        id: "send_space_7",
+        group: "Espaces de travail",
+        label: "Envoyer la fenêtre sur l’espace 7",
+        defaults: &[KeyboardShortcutBinding::new(16, SUPER_SHIFT)],
+    },
+    KeyboardShortcutDefinition {
+        id: "send_space_8",
+        group: "Espaces de travail",
+        label: "Envoyer la fenêtre sur l’espace 8",
+        defaults: &[KeyboardShortcutBinding::new(17, SUPER_SHIFT)],
+    },
+    KeyboardShortcutDefinition {
+        id: "send_space_9",
+        group: "Espaces de travail",
+        label: "Envoyer la fenêtre sur l’espace 9",
+        defaults: &[KeyboardShortcutBinding::new(18, SUPER_SHIFT)],
+    },
+    KeyboardShortcutDefinition {
+        id: "snap_third_1",
+        group: "Fenêtres",
+        label: "Accrocher au premier tiers",
+        defaults: &[KeyboardShortcutBinding::new(10, SUPER_ALT)],
+    },
+    KeyboardShortcutDefinition {
+        id: "snap_third_2",
+        group: "Fenêtres",
+        label: "Accrocher au deuxième tiers",
+        defaults: &[KeyboardShortcutBinding::new(11, SUPER_ALT)],
+    },
+    KeyboardShortcutDefinition {
+        id: "snap_third_3",
+        group: "Fenêtres",
+        label: "Accrocher au troisième tiers",
+        defaults: &[KeyboardShortcutBinding::new(12, SUPER_ALT)],
+    },
+    KeyboardShortcutDefinition {
+        id: "toggle_controls",
+        group: "Bureau",
+        label: "Centre de contrôle",
+        defaults: TOGGLE_CONTROLS,
+    },
+    KeyboardShortcutDefinition {
+        id: "toggle_notifications",
+        group: "Bureau",
+        label: "Calendrier et notifications",
+        defaults: TOGGLE_NOTIFICATIONS,
+    },
+    KeyboardShortcutDefinition {
+        id: "toggle_clipboard",
+        group: "Bureau",
+        label: "Historique du presse-papiers",
+        defaults: TOGGLE_CLIPBOARD,
+    },
+    KeyboardShortcutDefinition {
+        id: "toggle_widgets",
+        group: "Bureau",
+        label: "Afficher ou masquer les widgets",
+        defaults: TOGGLE_WIDGETS,
+    },
+    KeyboardShortcutDefinition {
+        id: "toggle_keyboard_layout",
+        group: "Bureau",
+        label: "Changer de disposition clavier",
+        defaults: TOGGLE_KEYBOARD_LAYOUT,
+    },
+    KeyboardShortcutDefinition {
+        id: "show_desktop",
+        group: "Bureau",
+        label: "Afficher le bureau",
+        defaults: SHOW_DESKTOP,
+    },
+    KeyboardShortcutDefinition {
+        id: "lock_screen",
+        group: "Bureau",
+        label: "Verrouiller la session",
+        defaults: LOCK_SCREEN,
+    },
+    KeyboardShortcutDefinition {
+        id: "power_dialog",
+        group: "Bureau",
+        label: "Dialogue d’arrêt",
+        defaults: POWER_DIALOG,
+    },
+    KeyboardShortcutDefinition {
+        id: "open_terminal",
+        group: "Bureau",
+        label: "Ouvrir un terminal",
+        defaults: OPEN_TERMINAL,
+    },
+    KeyboardShortcutDefinition {
+        id: "quit_shell",
+        group: "Bureau",
+        label: "Quitter Ferrite",
+        defaults: QUIT_SHELL,
+    },
+    KeyboardShortcutDefinition {
+        id: "restore_minimized",
+        group: "Fenêtres",
+        label: "Restaurer la fenêtre réduite",
+        defaults: RESTORE_MINIMIZED,
+    },
+    KeyboardShortcutDefinition {
+        id: "screenshot",
+        group: "Bureau",
+        label: "Capture de tout l’écran",
+        defaults: SCREENSHOT,
+    },
+    KeyboardShortcutDefinition {
+        id: "screenshot_region",
+        group: "Bureau",
+        label: "Capture d’une zone",
+        defaults: SCREENSHOT_REGION,
+    },
+    KeyboardShortcutDefinition {
+        id: "switch_vt_1",
+        group: "Bureau",
+        label: "Terminal virtuel 1",
+        defaults: &[KeyboardShortcutBinding::new(67, CTRL_ALT)],
+    },
+    KeyboardShortcutDefinition {
+        id: "switch_vt_2",
+        group: "Bureau",
+        label: "Terminal virtuel 2",
+        defaults: &[KeyboardShortcutBinding::new(68, CTRL_ALT)],
+    },
+    KeyboardShortcutDefinition {
+        id: "switch_vt_3",
+        group: "Bureau",
+        label: "Terminal virtuel 3",
+        defaults: &[KeyboardShortcutBinding::new(69, CTRL_ALT)],
+    },
+    KeyboardShortcutDefinition {
+        id: "switch_vt_4",
+        group: "Bureau",
+        label: "Terminal virtuel 4",
+        defaults: &[KeyboardShortcutBinding::new(70, CTRL_ALT)],
+    },
+    KeyboardShortcutDefinition {
+        id: "switch_vt_5",
+        group: "Bureau",
+        label: "Terminal virtuel 5",
+        defaults: &[KeyboardShortcutBinding::new(71, CTRL_ALT)],
+    },
+    KeyboardShortcutDefinition {
+        id: "switch_vt_6",
+        group: "Bureau",
+        label: "Terminal virtuel 6",
+        defaults: &[KeyboardShortcutBinding::new(72, CTRL_ALT)],
+    },
+    KeyboardShortcutDefinition {
+        id: "switch_vt_7",
+        group: "Bureau",
+        label: "Terminal virtuel 7",
+        defaults: &[KeyboardShortcutBinding::new(73, CTRL_ALT)],
+    },
+    KeyboardShortcutDefinition {
+        id: "switch_vt_8",
+        group: "Bureau",
+        label: "Terminal virtuel 8",
+        defaults: &[KeyboardShortcutBinding::new(74, CTRL_ALT)],
+    },
+    KeyboardShortcutDefinition {
+        id: "switch_vt_9",
+        group: "Bureau",
+        label: "Terminal virtuel 9",
+        defaults: &[KeyboardShortcutBinding::new(75, CTRL_ALT)],
+    },
+    KeyboardShortcutDefinition {
+        id: "switch_vt_10",
+        group: "Bureau",
+        label: "Terminal virtuel 10",
+        defaults: &[KeyboardShortcutBinding::new(76, CTRL_ALT)],
+    },
+    KeyboardShortcutDefinition {
+        id: "switch_vt_11",
+        group: "Bureau",
+        label: "Terminal virtuel 11",
+        defaults: &[KeyboardShortcutBinding::new(95, CTRL_ALT)],
+    },
+    KeyboardShortcutDefinition {
+        id: "switch_vt_12",
+        group: "Bureau",
+        label: "Terminal virtuel 12",
+        defaults: &[KeyboardShortcutBinding::new(96, CTRL_ALT)],
+    },
+];
+
+pub const KEYBOARD_SHORTCUT_KEYS: &[(u32, &str)] = &[
+    (9, "Échap"),
+    (10, "1"),
+    (11, "2"),
+    (12, "3"),
+    (13, "4"),
+    (14, "5"),
+    (15, "6"),
+    (16, "7"),
+    (17, "8"),
+    (18, "9"),
+    (19, "0"),
+    (22, "Retour arrière"),
+    (23, "Tab"),
+    (24, "Q"),
+    (25, "W"),
+    (26, "E"),
+    (27, "R"),
+    (28, "T"),
+    (29, "Y"),
+    (30, "U"),
+    (31, "I"),
+    (32, "O"),
+    (33, "P"),
+    (36, "Entrée"),
+    (38, "A"),
+    (39, "S"),
+    (40, "D"),
+    (41, "F"),
+    (42, "G"),
+    (43, "H"),
+    (44, "J"),
+    (45, "K"),
+    (46, "L"),
+    (49, "Accent grave"),
+    (52, "Z"),
+    (53, "X"),
+    (54, "C"),
+    (55, "V"),
+    (56, "B"),
+    (57, "N"),
+    (58, "M"),
+    (65, "Espace"),
+    (67, "F1"),
+    (68, "F2"),
+    (69, "F3"),
+    (70, "F4"),
+    (71, "F5"),
+    (72, "F6"),
+    (73, "F7"),
+    (74, "F8"),
+    (75, "F9"),
+    (76, "F10"),
+    (95, "F11"),
+    (96, "F12"),
+    (107, "Impr. écran"),
+    (111, "↑"),
+    (113, "←"),
+    (114, "→"),
+    (116, "↓"),
+];
+
+pub fn keyboard_shortcut_key_label(key_code: u32) -> &'static str {
+    KEYBOARD_SHORTCUT_KEYS
+        .iter()
+        .find(|(code, _)| *code == key_code)
+        .map_or("Touche inconnue", |(_, label)| label)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Settings {
     values: BTreeMap<String, String>,
@@ -67,6 +571,38 @@ impl Settings {
 
     pub fn set(&mut self, key: &str, value: &str) {
         self.values.insert(key.to_owned(), value.to_owned());
+    }
+
+    pub fn keyboard_shortcut_bindings(&self, id: &str) -> Vec<KeyboardShortcutBinding> {
+        let Some(definition) = KEYBOARD_SHORTCUTS.iter().find(|shortcut| shortcut.id == id) else {
+            return Vec::new();
+        };
+        let Some(value) = self.get(&format!("raccourci_{id}")) else {
+            return definition.defaults.to_vec();
+        };
+        value
+            .split(',')
+            .filter_map(|binding| {
+                let (key_code, modifiers) = binding.split_once(':')?;
+                Some(KeyboardShortcutBinding::new(
+                    key_code.parse().ok()?,
+                    modifiers.parse().ok()?,
+                ))
+            })
+            .collect()
+    }
+
+    pub fn set_keyboard_shortcut(&mut self, id: &str, binding: KeyboardShortcutBinding) {
+        if KEYBOARD_SHORTCUTS.iter().any(|shortcut| shortcut.id == id) {
+            self.set(
+                &format!("raccourci_{id}"),
+                &format!("{}:{}", binding.key_code, binding.modifiers),
+            );
+        }
+    }
+
+    pub fn reset_keyboard_shortcut(&mut self, id: &str) {
+        self.values.remove(&format!("raccourci_{id}"));
     }
 
     pub fn keyboard_layout(&self) -> &str {
@@ -212,6 +748,11 @@ impl Settings {
     /// fond Ferrite).
     pub fn wallpaper(&self) -> &str {
         self.get("fond_ecran").unwrap_or_default()
+    }
+
+    /// Comportement du bouton d’alimentation : veille par défaut, ou dialogue au choix.
+    pub fn power_button_action(&self) -> PowerButtonAction {
+        PowerButtonAction::parse(self.get("bouton_alimentation").unwrap_or_default())
     }
 
     /// Écrit le fichier entier (via un fichier temporaire, pour ne jamais le laisser à moitié).
@@ -635,6 +1176,39 @@ impl DoubleClick {
     }
 }
 
+/// Action du bouton d’alimentation dans le bureau.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum PowerButtonAction {
+    #[default]
+    Sleep,
+    Dialog,
+}
+
+impl PowerButtonAction {
+    pub const ALL: [PowerButtonAction; 2] = [PowerButtonAction::Sleep, PowerButtonAction::Dialog];
+
+    fn parse(value: &str) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|action| action.key() == value)
+            .unwrap_or_default()
+    }
+
+    pub fn key(self) -> &'static str {
+        match self {
+            PowerButtonAction::Sleep => "veille",
+            PowerButtonAction::Dialog => "dialogue",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            PowerButtonAction::Sleep => "Mettre en veille",
+            PowerButtonAction::Dialog => "Afficher le dialogue",
+        }
+    }
+}
+
 fn parse_height(value: Option<&str>, default: u32, min: u32, max: u32) -> u32 {
     value
         .and_then(|value| value.parse::<u32>().ok())
@@ -729,5 +1303,63 @@ dock_agrandissement = non
             DockHiding::Always
         );
         assert_eq!(DockSize::parse(DockSize::Small.key()), DockSize::Small);
+    }
+
+    #[test]
+    fn bouton_alimentation_en_veille_par_defaut_ou_dialogue_sur_demande() {
+        assert_eq!(
+            Settings::default().power_button_action(),
+            PowerButtonAction::Sleep
+        );
+        assert_eq!(
+            Settings::parse("bouton_alimentation = dialogue\n").power_button_action(),
+            PowerButtonAction::Dialog
+        );
+        for action in PowerButtonAction::ALL {
+            assert_eq!(PowerButtonAction::parse(action.key()), action);
+        }
+    }
+
+    #[test]
+    fn raccourcis_clavier_sont_modifiables_et_reinitialisables() {
+        let defaults = Settings::default();
+        assert_eq!(
+            defaults.keyboard_shortcut_bindings("toggle_keyboard_layout"),
+            [KeyboardShortcutBinding::new(65, SHORTCUT_SUPER)]
+        );
+
+        let mut settings = Settings::default();
+        let binding = KeyboardShortcutBinding::new(24, SHORTCUT_CTRL | SHORTCUT_ALT);
+        settings.set_keyboard_shortcut("toggle_keyboard_layout", binding);
+        let parsed = Settings::parse(&format!(
+            "raccourci_toggle_keyboard_layout = {}:{}",
+            binding.key_code, binding.modifiers
+        ));
+        assert_eq!(
+            parsed.keyboard_shortcut_bindings("toggle_keyboard_layout"),
+            [binding]
+        );
+        settings.reset_keyboard_shortcut("toggle_keyboard_layout");
+        assert_eq!(
+            settings.keyboard_shortcut_bindings("toggle_keyboard_layout"),
+            defaults.keyboard_shortcut_bindings("toggle_keyboard_layout")
+        );
+    }
+
+    #[test]
+    fn raccourcis_par_defaut_sans_conflit() {
+        for (index, shortcut) in KEYBOARD_SHORTCUTS.iter().enumerate() {
+            for other in &KEYBOARD_SHORTCUTS[index + 1..] {
+                assert!(
+                    shortcut
+                        .defaults
+                        .iter()
+                        .all(|binding| !other.defaults.contains(binding)),
+                    "conflit entre {} et {}",
+                    shortcut.id,
+                    other.id
+                );
+            }
+        }
     }
 }

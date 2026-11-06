@@ -710,8 +710,13 @@ pub fn start(handle: &LoopHandle<'static, Ferrite>) -> Result<Copies, String> {
                     ?source,
                     "copie ajoutée à l'historique du presse-papiers"
                 );
-                state.clipboard.add(content, source);
-                state.request_redraw();
+                if source.as_deref() == Some("Capture d’écran") {
+                    state.clipboard.add(content.clone(), source);
+                    state.publish_clipboard_content(content);
+                } else {
+                    state.clipboard.add(content, source);
+                    state.request_redraw();
+                }
             }
         })
         .map_err(|err| format!("canal du presse-papiers : {err}"))?;
@@ -719,6 +724,22 @@ pub fn start(handle: &LoopHandle<'static, Ferrite>) -> Result<Copies, String> {
 }
 
 impl Ferrite {
+    fn publish_clipboard_content(&mut self, content: Content) {
+        set_data_device_selection(
+            &self.display_handle,
+            &self.seat,
+            content.mime_types(),
+            Owner::History(content),
+        );
+        if let Some(xwm) = self.xwm.as_mut()
+            && let Err(err) =
+                xwm.new_selection(SelectionTarget::Clipboard, Some(vec!["image/png".to_owned()]))
+        {
+            warn!(?err, "capture non transmise au presse-papiers X11");
+        }
+        self.request_redraw();
+    }
+
     /// Une application Wayland vient de copier : son contenu rejoint l'historique.
     pub fn capture_wayland_clipboard(&mut self, mime_types: &[String]) {
         info!(?mime_types, "nouvelle copie d'une application Wayland");

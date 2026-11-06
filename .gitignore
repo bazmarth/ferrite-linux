@@ -4,3 +4,6 @@ target/
 *.qcow2
 *.img
 *.log
+
+# Clés API de Continue (DeepSeek) : jamais dans le dépôt
+.continue/.env

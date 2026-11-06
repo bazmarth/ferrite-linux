@@ -9,7 +9,7 @@ use ferrite_system::{
 };
 
 use crate::{
-    desktop::panels::{ControlsPage, DeviceRow, NetworkRow, PasswordRow},
+    desktop::panels::{ControlsPage, DeviceRow, NetworkRow, Osd, PasswordRow},
     state::Ferrite,
     system::Event,
 };
@@ -349,7 +349,17 @@ impl Ferrite {
         if let Err(error) = settings.save() {
             tracing::warn!(%error, "disposition du clavier non enregistrée");
         }
+        self.keyboard_shortcuts = settings.clone();
         self.set_keyboard_layout(next);
+        self.show_osd(Osd {
+            icon: "cc-keyboard",
+            label: if next == "fr" {
+                "Français (AZERTY)"
+            } else {
+                "Anglais (QWERTY)"
+            },
+            level: None,
+        });
     }
 }
 

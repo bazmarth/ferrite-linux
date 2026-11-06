@@ -35,6 +35,7 @@ macro_rules! icons {
 icons![
     "app-code",
     "app-search",
+    "app-video",
     "status-battery-000",
     "status-battery-010",
     "status-battery-020",
@@ -88,6 +89,7 @@ icons![
     "app-calculator" => "apps/accessories-calculator",
     "app-monitor" => "apps/utilities-system-monitor",
     "app-photos" => "apps/image-viewer",
+    "app-pdf" => "mimetypes/application-pdf",
     "app-music" => "apps/multimedia-audio-player",
     "app-calendar" => "apps/x-office-calendar",
     "app-clock" => "apps/preferences-system-time",

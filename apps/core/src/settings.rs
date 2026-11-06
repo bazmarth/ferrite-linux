@@ -27,7 +27,8 @@ use ferrite_system::{
     bluetooth,
     config::{
         Accent, Appearance, ClockStyle, CornerAction, DockHiding, DockSize, DoubleClick, KEYBOARD_LAYOUTS,
-        ScrollBars, Settings,
+        KEYBOARD_SHORTCUT_KEYS, KEYBOARD_SHORTCUTS, PowerButtonAction, SHORTCUT_ALT, SHORTCUT_CTRL,
+        SHORTCUT_SHIFT, SHORTCUT_SUPER, ScrollBars, Settings,
     },
     display,
     idle::{self, IdleSettings},
@@ -1815,6 +1816,7 @@ impl SettingsState {
         let mut settings = Settings::load();
         let before = settings.clone();
         let mut idle = IdleSettings::load(&settings);
+        let mut power_button_action = settings.power_button_action();
         let icons = &mut self.icons;
         let choices = |minutes: &[u32]| -> Vec<(u32, String)> {
             minutes
@@ -1858,9 +1860,25 @@ impl SettingsState {
                 &idle::SLEEP_CHOICES,
             );
         });
+        group(ui, icons, "Bouton d’alimentation", |rows| {
+            let options: Vec<_> = PowerButtonAction::ALL
+                .into_iter()
+                .map(|action| (action, action.label()))
+                .collect();
+            if rows
+                .row(Row::new("Au clic sur le bouton"), |ui| {
+                    rows::pick(ui, "bouton-alimentation", &mut power_button_action, &options)
+                })
+                .0
+            {
+                settings.set("bouton_alimentation", power_button_action.key());
+            }
+        });
         idle.save(&mut settings);
         // Rien n'est écrit tant qu'on garde les valeurs d'origine.
-        if settings != before && IdleSettings::load(&before) != idle {
+        if settings != before
+            && (IdleSettings::load(&before) != idle || power_button_action != before.power_button_action())
+        {
             self.save(&settings);
         }
     }
@@ -2405,6 +2423,120 @@ impl SettingsState {
                     .desired_width(f32::INFINITY),
             );
         });
+
+        heading(ui, "Raccourcis du bureau et du système");
+        note(
+            ui,
+            "Choisis une touche et ses modificateurs. Les changements s’appliquent sans redémarrer.",
+        );
+        let mut settings = Settings::load();
+        if ui.button("Rétablir tous les raccourcis par défaut").clicked() {
+            for shortcut in KEYBOARD_SHORTCUTS {
+                settings.reset_keyboard_shortcut(shortcut.id);
+            }
+            self.message = Some(
+                settings
+                    .save()
+                    .map(|()| "Raccourcis rétablis".to_owned())
+                    .map_err(|error| format!("Enregistrement impossible : {error}")),
+            );
+            settings = Settings::load();
+        }
+
+        let groups: Vec<&str> =
+            KEYBOARD_SHORTCUTS
+                .iter()
+                .map(|shortcut| shortcut.group)
+                .fold(Vec::new(), |mut groups, group| {
+                    if !groups.contains(&group) {
+                        groups.push(group);
+                    }
+                    groups
+                });
+        for group in groups {
+            heading(ui, group);
+            card(ui, |ui| {
+                for shortcut in KEYBOARD_SHORTCUTS
+                    .iter()
+                    .filter(|shortcut| shortcut.group == group)
+                {
+                    let bindings = settings.keyboard_shortcut_bindings(shortcut.id);
+                    let current = bindings.first().copied().unwrap_or(shortcut.defaults[0]);
+                    let mut selected = current;
+                    let mut reset = false;
+                    list_row(ui, |ui| {
+                        ui.add_sized([170.0, 40.0], egui::Label::new(shortcut.label).wrap());
+                        egui::ComboBox::from_id_salt(("shortcut-modifiers", shortcut.id))
+                            .selected_text(shortcut_modifier_label(selected.modifiers))
+                            .width(120.0)
+                            .show_ui(ui, |ui| {
+                                for modifiers in 0..=15 {
+                                    let label = shortcut_modifier_label(modifiers);
+                                    ui.selectable_value(&mut selected.modifiers, modifiers, label);
+                                }
+                            });
+                        egui::ComboBox::from_id_salt(("shortcut-key", shortcut.id))
+                            .selected_text(ferrite_system::config::keyboard_shortcut_key_label(
+                                selected.key_code,
+                            ))
+                            .width(110.0)
+                            .show_ui(ui, |ui| {
+                                for (code, label) in KEYBOARD_SHORTCUT_KEYS {
+                                    ui.selectable_value(&mut selected.key_code, *code, *label);
+                                }
+                            });
+                        if ui.small_button("Défaut").clicked() {
+                            reset = true;
+                        }
+                    });
+
+                    if reset {
+                        settings.reset_keyboard_shortcut(shortcut.id);
+                        self.message = Some(
+                            settings
+                                .save()
+                                .map(|()| "Raccourci rétabli".to_owned())
+                                .map_err(|error| format!("Enregistrement impossible : {error}")),
+                        );
+                        settings = Settings::load();
+                    } else if selected != current {
+                        let conflict = KEYBOARD_SHORTCUTS.iter().find_map(|other| {
+                            (other.id != shortcut.id
+                                && settings.keyboard_shortcut_bindings(other.id).contains(&selected))
+                            .then_some(other.label)
+                        });
+                        if let Some(label) = conflict {
+                            self.message = Some(Err(format!("Ce raccourci est déjà attribué à « {label} »")));
+                        } else {
+                            settings.set_keyboard_shortcut(shortcut.id, selected);
+                            self.message = Some(
+                                settings
+                                    .save()
+                                    .map(|()| "Raccourci enregistré".to_owned())
+                                    .map_err(|error| format!("Enregistrement impossible : {error}")),
+                            );
+                            settings = Settings::load();
+                        }
+                    }
+                    if bindings.len() > 1 {
+                        note(
+                            ui,
+                            &format!(
+                                "Autres attributions : {}",
+                                bindings[1..]
+                                    .iter()
+                                    .map(|binding| binding.label())
+                                    .collect::<Vec<_>>()
+                                    .join(" / ")
+                            ),
+                        );
+                    }
+                    if shortcut.id != KEYBOARD_SHORTCUTS.last().map_or("", |last| last.id) {
+                        separator(ui);
+                    }
+                }
+            });
+        }
     }
 
     fn mouse_page(&mut self, ui: &mut egui::Ui) {
@@ -2930,6 +3062,27 @@ fn list_row(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
         ui.set_min_height(44.0);
         add(ui);
     });
+}
+
+fn shortcut_modifier_label(modifiers: u8) -> String {
+    let mut parts = Vec::new();
+    if modifiers & SHORTCUT_CTRL != 0 {
+        parts.push("Ctrl");
+    }
+    if modifiers & SHORTCUT_ALT != 0 {
+        parts.push("Alt");
+    }
+    if modifiers & SHORTCUT_SHIFT != 0 {
+        parts.push("Maj");
+    }
+    if modifiers & SHORTCUT_SUPER != 0 {
+        parts.push("Super");
+    }
+    if parts.is_empty() {
+        "Aucun".to_owned()
+    } else {
+        parts.join(" + ")
+    }
 }
 
 /// Trait fin entre deux lignes d'une carte.

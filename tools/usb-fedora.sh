@@ -17,8 +17,9 @@ set -eu
 
 command -v podman >/dev/null 2>&1 || die "Podman absent (sudo dnf install podman)"
 
-info "Compilation de ferrite-shell et ferrite-apps pour Debian 13"
+info "Compilation de ferrite-shell, ferrite-apps et ferrite-visage pour Debian 13"
 "$REPO/tools/vm-build.sh"
+"$REPO/tools/visage-modeles.sh"
 
 # Outils de live-build installés une fois dans une image locale (refaite seulement si
 # cette recette change), au lieu d'un apt-get à chaque construction.
@@ -36,6 +37,7 @@ sudo podman run --rm -it --privileged \
     sh -eu -c '
         FERRITE_SHELL_BIN=/src/target/release/ferrite-shell \
         FERRITE_APPS_BIN=/src/target/release/ferrite-apps \
+        FERRITE_VISAGE_BIN=/src/target/release/ferrite-visage \
         /src/tools/usb.sh "$@"
     ' usb "$@"
 

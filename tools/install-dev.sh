@@ -51,6 +51,7 @@ printf '  système : %s\n\n' "$system"
 # --- Binaires Ferrite compatibles Debian 13 --------------------------------------------
 info "Compilation de Ferrite pour Debian 13"
 "$REPO/tools/vm-build.sh"
+"$REPO/tools/visage-modeles.sh"
 
 printf '\033[1;31mTOUT LE CONTENU DE %s (%s, %s) VA ÊTRE EFFACÉ.\033[0m\n' "$part" "$size" "$system"
 printf 'Retape « %s » pour continuer : ' "$part"

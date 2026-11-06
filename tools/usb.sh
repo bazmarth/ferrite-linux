@@ -1,5 +1,6 @@
 #!/bin/sh
-# Construit l'image live hybride BIOS/UEFI : build/ferrite-live.iso, avec ferrite-shell.
+# Construit l'image live hybride BIOS/UEFI : build/ferrite-live.iso, avec ferrite-shell,
+# ferrite-apps, ferrite-visage et les modèles du déverrouillage par visage.
 #
 #   tools/usb.sh            compile le compositeur et les applications (release), puis construit l'image
 #   tools/usb.sh --complet  reconstruit aussi le système de l'image (paquets réinstallés)
@@ -19,10 +20,13 @@ set -eu
 # Étape 1, en utilisateur normal : compilation de ferrite-shell (Rust est installé pour
 # l'utilisateur, pas pour root), puis relance du script en root.
 if [ "$(id -u)" -ne 0 ]; then
-    info "Compilation de ferrite-shell et ferrite-apps (release)"
-    (cd "$REPO" && cargo build --release --locked -p ferrite-shell -p ferrite-apps)
+    info "Compilation de ferrite-shell, ferrite-apps et ferrite-visage (release)"
+    (cd "$REPO" && cargo build --release --locked -p ferrite-shell -p ferrite-apps -p ferrite-visage)
+    # Modèles du visage : téléchargés une fois (empreintes vérifiées), hors de git.
+    "$REPO/tools/visage-modeles.sh"
     target="${CARGO_TARGET_DIR:-$REPO/target}/release"
-    exec sudo FERRITE_SHELL_BIN="$target/ferrite-shell" FERRITE_APPS_BIN="$target/ferrite-apps" "$0" "$@"
+    exec sudo FERRITE_SHELL_BIN="$target/ferrite-shell" FERRITE_APPS_BIN="$target/ferrite-apps" \
+        FERRITE_VISAGE_BIN="$target/ferrite-visage" "$0" "$@"
 fi
 
 # Étape 2, en root : construction de l'image.
@@ -35,6 +39,14 @@ fi
 if [ -z "$apps_bin" ] || [ ! -x "$apps_bin" ]; then
     die "binaire ferrite-apps introuvable (lance tools/usb.sh sans sudo)"
 fi
+visage_bin=${FERRITE_VISAGE_BIN:-}
+if [ -z "$visage_bin" ] || [ ! -x "$visage_bin" ]; then
+    die "binaire ferrite-visage introuvable (lance tools/usb.sh sans sudo)"
+fi
+models="$REPO/assets/visage"
+for model in face_detection_yunet_2023mar.onnx face_recognition_sface_2021dec.onnx; do
+    [ -f "$models/$model" ] || die "modèle $model absent (tools/visage-modeles.sh)"
+done
 
 work=${FERRITE_WORK:-/var/tmp/ferrite-image}
 mkdir -p "$work"
@@ -75,6 +87,10 @@ rm -rf auto config
 cp -r "$REPO/image/auto" "$REPO/image/config" .
 install -D -m 0755 "$bin" config/includes.chroot/usr/local/bin/ferrite-shell
 install -D -m 0755 "$apps_bin" config/includes.chroot/usr/local/bin/ferrite-apps
+install -D -m 0755 "$visage_bin" config/includes.chroot/usr/local/bin/ferrite-visage
+# Modèles du visage, là où ferrite-visage les cherche une fois installé.
+install -d config/includes.chroot/usr/share/ferrite/visage
+install -m 0644 "$models"/*.onnx config/includes.chroot/usr/share/ferrite/visage/
 chmod +x auto/config config/hooks/live/*.hook.chroot config/includes.chroot/usr/local/bin/*
 
 if [ "$fast" = 1 ]; then

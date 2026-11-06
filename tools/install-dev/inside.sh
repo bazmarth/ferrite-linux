@@ -100,6 +100,9 @@ say "Fichiers du bureau Ferrite"
 cp -a /src/image/config/includes.chroot/. "$target/"
 install -m 0755 /src/target/release/ferrite-shell "$target/usr/local/bin/ferrite-shell"
 install -m 0755 /src/target/release/ferrite-apps "$target/usr/local/bin/ferrite-apps"
+install -m 0755 /src/target/release/ferrite-visage "$target/usr/local/bin/ferrite-visage"
+install -d "$target/usr/share/ferrite/visage"
+install -m 0644 /src/assets/visage/*.onnx "$target/usr/share/ferrite/visage/"
 # Connexion automatique de l'utilisateur sur tty1, comme l'utilisateur live de l'image.
 sed -i "s/--autologin ferrite/--autologin $user/" \
     "$target/etc/systemd/system/getty@tty1.service.d/autologin.conf"

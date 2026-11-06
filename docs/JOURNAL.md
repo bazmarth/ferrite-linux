@@ -1500,3 +1500,22 @@ l'utilisateur : enregistrement et trois déverrouillages réels, ressemblance 0,
 Le seuil passe de 0,5 à 0,6 (plus strict envers les autres visages, large marge pour le
 sien) ; empreintes en 0600 dans un dossier 0700. Reste à faire : l'image ISO
 (installer `ferrite-visage` et télécharger les modèles pendant sa construction).
+
+## 2026-11-06 — Tout le travail du jour dans l'ISO et l'installation
+
+- `tools/usb.sh` (et `usb-fedora.sh`, `vm-build.sh`, `install-dev.sh`) compilent et
+  installent aussi `ferrite-visage` dans `/usr/local/bin`, et les modèles du visage dans
+  `/usr/share/ferrite/visage` (téléchargés une fois par `tools/visage-modeles.sh`,
+  empreintes vérifiées ; la construction s'arrête s'ils manquent).
+- Paquets listés explicitement, qui n'arrivaient jusqu'ici que par les dépendances
+  d'autres paquets : GStreamer (lecteur vidéo, Musique, caméra infrarouge), et
+  `gsettings`, ses schémas et dconf (thème et boutons de fenêtre des applis tierces).
+  Ajouté : `gstreamer1.0-libav`, sans lequel le lecteur vidéo de l'ISO ne lisait pas les
+  vidéos H.264 (dont les enregistrements d'écran).
+- Le reste du jour est dans les binaires (îlot, capture, socle, Horloge…) ou déjà dans
+  l'image (wf-recorder, veille profonde retirée, mimeapps).
+
+Vérifié : syntaxe des scripts (`sh -n`), présence des bibliothèques et commandes dans le
+système de la dernière image (4 nov.), `tools/ci.sh`.
+Pas vérifié : une construction complète de l'ISO (sudo, environ 30 minutes : la liste des
+paquets a changé, `tools/usb.sh` refera tout le système) et un démarrage de l'ISO.

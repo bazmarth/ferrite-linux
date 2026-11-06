@@ -94,6 +94,21 @@ rar
 # Enregistrement vidéo de l'écran (barre de capture, mode vidéo) par screencopy
 wf-recorder
 
+# GStreamer : Lecteur vidéo, Musique et caméra infrarouge de ferrite-visage (v4l2src dans
+# plugins-good). libav décode le H.264 des vidéos courantes et des enregistrements d'écran.
+# Listés explicitement : jusqu'ici, ils n'arrivaient que par les dépendances d'autres paquets.
+libgstreamer1.0-0
+libgstreamer-plugins-base1.0-0
+gstreamer1.0-plugins-base
+gstreamer1.0-plugins-good
+gstreamer1.0-libav
+
+# Réglages transmis aux applications tierces par ferrite-shell (gsettings) : thème clair ou
+# sombre et ordre des boutons de fenêtre (fermer à gauche, agrandir à droite).
+libglib2.0-bin
+gsettings-desktop-schemas
+dconf-gsettings-backend
+
 # Terminal de secours et d'essais (le Terminal du bureau est celui de ferrite-apps)
 foot
 # Shell des terminaux du bureau : complétion par Tab et suggestions (voir ferrite-session)

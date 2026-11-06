@@ -416,6 +416,8 @@ R=$(mktemp -d /tmp/fr.XXXX); XDG_RUNTIME_DIR=$R WAYLAND_DISPLAY=/run/user/1000/w
   dbus-run-session -- target/debug/ferrite-shell --winit --capture /tmp/x.png -- ferrite-apps clock
 ferrite-apps galerie                          # toutes les pièces et couleurs communes
 tools/usb.sh --final                          # ISO à distribuer (sudo, ~30 min la première fois)
+                                              # (ferrite-shell, ferrite-apps, ferrite-visage et
+                                              # les modèles du visage, téléchargés une fois)
 tools/vm-test.sh tools/scenarios/stabilite.txt  # ISO dans QEMU + captures dans build/
 ```
 

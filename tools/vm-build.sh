@@ -1,5 +1,6 @@
 #!/bin/sh
-# Compile ferrite-shell et ferrite-apps dans un Debian 13 compatible avec l'ISO et QEMU.
+# Compile ferrite-shell, ferrite-apps et ferrite-visage dans un Debian 13 compatible avec
+# l'ISO et QEMU.
 #
 #   tools/vm-build.sh
 #   FERRITE_VM_DEV=1 tools/vm.sh
@@ -46,9 +47,10 @@ podman run --rm \
     -w /src \
     localhost/ferrite-build:trixie \
     sh -eu -c '
-        cargo build --release --locked -p ferrite-shell -p ferrite-apps --bins --example faux-lecteur
+        cargo build --release --locked -p ferrite-shell -p ferrite-apps -p ferrite-visage --bins --example faux-lecteur
         install -m 0755 /target/release/ferrite-shell /src/target/release/ferrite-shell
         install -m 0755 /target/release/ferrite-apps /src/target/release/ferrite-apps
+        install -m 0755 /target/release/ferrite-visage /src/target/release/ferrite-visage
         install -m 0755 /target/release/examples/faux-lecteur /src/target/release/faux-lecteur
     '
 

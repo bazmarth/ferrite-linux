@@ -1379,3 +1379,12 @@ Suite du même jour :
 Vérifié : `tools/ci.sh` ; captures de Musique (clair), du Moniteur (clair et sombre), du
 lecteur PDF (sombre), de la Visionneuse (chemin long), du dialogue d'arrêt (clair et
 sombre), de la fenêtre de mot de passe et du centre de contrôle (sombre).
+
+## 2026-11-06 — Veille profonde retirée (l'ordinateur ne se réveillait pas)
+
+Redémarrage non voulu vers 17h55 : à 17h47, la veille automatique (15 min sur batterie)
+est entrée en mode `deep` (`PM: suspend entry (deep)` dans le journal système) et rien
+n'a suivi ; il a fallu forcer le redémarrage. Le micrologiciel du ThinkBook choisit
+lui-même la veille légère (« Low-power S0 idle used by default »), qui se réveillait bien.
+`image/config/includes.chroot/etc/systemd/sleep.conf.d/60-ferrite.conf` est retiré de
+l'image ; sur la machine, le même fichier est à supprimer avec sudo. Voir PASSATION.

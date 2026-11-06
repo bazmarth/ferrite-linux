@@ -243,9 +243,10 @@ arbre commité** pour que la release corresponde au code. Dépôt
   souris ne réinitialisent pas ce délai.
 - **Écran pendant la veille** : le voile noir reste au-dessus de l'écran verrouillé jusqu'au
   signal de reprise de logind ; si la commande de veille échoue, il est retiré immédiatement.
-- **Mode de veille mémoire** : `etc/systemd/sleep.conf.d/60-ferrite.conf` essaie `deep`
-  avant `s2idle`. systemd ne passe au mode suivant que si l'écriture du précédent échoue ;
-  il ne peut pas garantir un repli si le réveil échoue après l'entrée en veille.
+- **Mode de veille mémoire** : celui du noyau (`s2idle` sur le ThinkBook). Ne pas forcer
+  `deep` : le 2026-11-06, la veille automatique est entrée en `deep` et l'ordinateur ne
+  s'est jamais réveillé (redémarrage forcé). systemd ne peut pas se replier si le réveil
+  échoue après l'entrée en veille.
 - **Photo de verrouillage** décodée dans le fil système, une fois par choix, jamais au rendu.
 - **Fenêtres sur l'espace 0** (réservé aux widgets) : une fenêtre qui s'ouvre y est
   déplacée vers l'espace 1 **avant** son premier configure, sinon elle ne s'affiche jamais.

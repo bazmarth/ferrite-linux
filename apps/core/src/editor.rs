@@ -2672,30 +2672,18 @@ impl Row<'_> {
 
 /// Bouton carré à symbole (barre de titre, recherche, aperçu).
 fn icon_button(ui: &mut egui::Ui, icon: Icon, active: bool, hint: &str) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(34.0, 34.0), Sense::click());
-    let back = rect.shrink(1.0);
-    if active {
-        ui.painter().rect_filled(back, 8.0, selected());
-    } else if response.hovered() {
-        ui.painter().rect_filled(back, 8.0, style::tint(10));
-    }
-    let color = if active { style::accent() } else { icon_color() };
-    icons::paint(ui.painter(), rect, icon, color);
-    response.on_hover_text(hint)
+    crate::kit::tool_button(ui, crate::kit::TOOL, active, hint, |painter, rect, ink| {
+        icons::paint(painter, rect, icon, ink);
+    })
 }
 
 /// Bouton de la barre d'activité : plus grand, teinté s'il est actif.
 fn rail_button(ui: &mut egui::Ui, icon: Icon, active: bool, hint: &str) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(40.0, 40.0), Sense::click());
-    if active {
-        ui.painter().rect_filled(rect, 10.0, selected());
-    } else if response.hovered() {
-        ui.painter().rect_filled(rect, 10.0, style::tint(9));
-    }
-    let color = if active { style::accent() } else { icon_color() };
-    icons::paint(ui.painter(), rect, icon, color);
+    let response = crate::kit::tool_button(ui, 40.0, active, hint, |painter, rect, ink| {
+        icons::paint(painter, rect, icon, ink);
+    });
     ui.add_space(6.0);
-    response.on_hover_text(hint)
+    response
 }
 
 /// Onglet de l'aperçu : symbole et titre, soulignés d'un trait bleu s'il est choisi.

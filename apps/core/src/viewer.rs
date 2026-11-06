@@ -1285,17 +1285,9 @@ fn paint_glyph(painter: &egui::Painter, c: Pos2, glyph: Glyph, color: Color32) {
 
 /// Bouton de la barre d'outils, teinté quand il est actif.
 fn icon_button(ui: &mut egui::Ui, glyph: Glyph, active: bool, hint: &str) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(vec2(34.0, 34.0), Sense::click());
-    let (fill, ink) = if active {
-        (style::sidebar_selected(), style::sidebar_selected_text())
-    } else if response.hovered() {
-        (style::tint(12), style::primary_text())
-    } else {
-        (Color32::TRANSPARENT, style::primary_text())
-    };
-    ui.painter().rect_filled(rect, 10.0, fill);
-    paint_glyph(ui.painter(), rect.center(), glyph, ink);
-    response.on_hover_text(hint)
+    crate::kit::tool_button(ui, crate::kit::TOOL, active, hint, |painter, rect, ink| {
+        paint_glyph(painter, rect.center(), glyph, ink);
+    })
 }
 
 /// Bouton rond flottant sur l'image (précédente, suivante).
@@ -1315,14 +1307,9 @@ fn float_button(ui: &mut egui::Ui, rect: Rect, radius: f32, glyph: Glyph, hint: 
 
 /// Bouton de la barre flottante d'affichage.
 fn bar_button(ui: &mut egui::Ui, rect: Rect, glyph: Glyph, hint: &str) -> egui::Response {
-    let response = ui
-        .interact(rect, ui.scope_id().with(hint), Sense::click())
-        .on_hover_text(hint);
-    if response.hovered() {
-        ui.painter().rect_filled(rect, 10.0, style::tint(14));
-    }
-    paint_glyph(ui.painter(), rect.center(), glyph, floating_ink());
-    response
+    crate::kit::tool_button_at(ui, rect, false, hint, |painter, rect, ink| {
+        paint_glyph(painter, rect.center(), glyph, ink);
+    })
 }
 
 #[cfg(test)]

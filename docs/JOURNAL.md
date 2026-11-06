@@ -1409,3 +1409,32 @@ musique ouverts, son et luminosité, notification (elle file dans l'historique, 
 `Center::hide_bubbles`). La fin d'un minuteur reste affichée jusqu'à « Arrêter ». Le clic
 poursuit ensuite son chemin (fenêtre, bureau). Testé : `island_contains` et
 `hide_bubbles` ; pas encore essayé à la souris sur le bureau.
+
+## 2026-11-06 — Audit du socle et de la fluidité, l'îlot ouvre l'application
+
+- Socle : un seul bouton d'outil (`kit::tool_button`, `tool_button_at`) pour la
+  Visionneuse, TextEdit et Fichiers ; les cinq copies avaient chacune leur survol (voile
+  9 à 14), leurs coins (8 ou 10) et leurs couleurs d'état actif.
+- Fluidité mesurée sur le vrai bureau (`ferrite-profil`, écran 90 Hz, 11 ms par image) :
+  au repos 0,2 ms par image (0,9 au pire), aucun panneau redessiné ; les images viennent
+  de l'application Claude (53/s) et de Brave (24/s). En mouvement : 10,3 ms au lancement
+  d'une application, 16,5 ms (image sautée) à l'arrivée d'une notification.
+- Cause de l'image sautée : l'îlot, les bulles, le son et l'enregistrement faisaient
+  partie de la clé des images du bureau et de la barre ; chaque changement de l'îlot (et
+  chaque seconde d'un minuteur ou d'un enregistrement) redessinait tout l'écran et la
+  barre au processeur. Ils en sont retirés (`push_element`) ; l'îlot a ses propres images,
+  maintenant comptées par la mesure (« îlot », 1 à 2 ms). Vérifié en bureau d'essai : une
+  notification ne redessine plus que l'îlot.
+- Îlot : un clic ouvre l'application concernée : l'Horloge pour le minuteur (et
+  « Temps écoulé » l'arrête), le lecteur qui joue pour la musique (`DesktopEntry` de
+  MPRIS), l'expéditeur d'une notification s'il est ouvert. Clic droit : ses boutons.
+  L'enregistrement s'arrête toujours d'un clic.
+
+Correction après essai (« impossible d'ouvrir l'îlot ») : la musique venait de Brave, qui
+ne donne pas son `DesktopEntry` ; sa fenêtre est maintenant retrouvée par le nom du
+lecteur (« brave » → `brave-browser`). Et un clic gauche ouvre l'application **et** déplie
+l'îlot avec ses boutons, pour qu'il réagisse toujours, même si l'application est déjà
+devant.
+
+Pas vérifié : nouvelle mesure en mouvement sur le vrai bureau, clics réels sur l'îlot
+depuis cette correction.

@@ -159,6 +159,57 @@ pub enum Tone {
     Danger,
 }
 
+/// Côté d'un bouton d'outil (barre du haut d'une fenêtre).
+pub const TOOL: f32 = 34.0;
+/// Voile d'un bouton d'outil survolé.
+pub const TOOL_HOVER: u8 = 12;
+
+/// Bouton d'outil carré de `size` à la place courante : fond discret au survol, sélection
+/// teintée quand il est actif. `paint` dessine le symbole dans le rectangle, à l'encre
+/// donnée. Tous les boutons d'icône des applications passent par ici.
+pub fn tool_button(
+    ui: &mut egui::Ui,
+    size: f32,
+    active: bool,
+    hint: &str,
+    paint: impl FnOnce(&egui::Painter, egui::Rect, Color32),
+) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(size, size), Sense::click());
+    paint_tool(ui, rect, &response, active, paint);
+    response.on_hover_text(hint)
+}
+
+/// Comme [`tool_button`], posé sur `rect` (barre flottante, mise en page à la main).
+pub fn tool_button_at(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    active: bool,
+    hint: &str,
+    paint: impl FnOnce(&egui::Painter, egui::Rect, Color32),
+) -> egui::Response {
+    let response = ui.interact(rect, ui.scope_id().with(("outil", hint)), Sense::click());
+    paint_tool(ui, rect, &response, active, paint);
+    response.on_hover_text(hint)
+}
+
+fn paint_tool(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    response: &egui::Response,
+    active: bool,
+    paint: impl FnOnce(&egui::Painter, egui::Rect, Color32),
+) {
+    let (fill, ink) = if active {
+        (style::sidebar_selected(), style::sidebar_selected_text())
+    } else if response.hovered() {
+        (style::tint(TOOL_HOVER), style::primary_text())
+    } else {
+        (Color32::TRANSPARENT, style::text_secondary())
+    };
+    ui.painter().rect_filled(rect, radius::PANEL, fill);
+    paint(ui.painter(), rect, ink);
+}
+
 /// Interrupteur, 44 × 26 px ; vrai s'il vient de changer.
 pub fn switch(ui: &mut egui::Ui, on: &mut bool) -> bool {
     style::switch_sized(ui, on, true, egui::vec2(44.0, 26.0)).changed()

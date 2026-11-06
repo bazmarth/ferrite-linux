@@ -284,7 +284,9 @@ impl Panels {
                     known == kind && *known_clock == clock && *known_scale == scale_milli && *size == to
                 });
             if !fresh {
-                let buffer = self.rasterize_island(kind, &clock, to, scale);
+                let buffer = crate::render::profile::raster("îlot", || {
+                    self.rasterize_island(kind, &clock, to, scale)
+                });
                 motion.content = Some((kind.clone(), clock.clone(), scale_milli, to, buffer));
             }
         }

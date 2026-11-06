@@ -195,16 +195,19 @@ impl Ferrite {
             return;
         };
         match (kind, hit) {
-            (IslandKind::Timer { .. } | IslandKind::Media { .. }, _) => {
-                let until = Instant::now() + OPEN_FOR;
-                self.island_open_until = Some(until);
-                // Il se replie seul : une image de plus à l'échéance.
-                let _ = self
-                    .loop_handle
-                    .insert_source(Timer::from_duration(OPEN_FOR), |_, _, state| {
-                        state.request_redraw();
-                        TimeoutAction::Drop
-                    });
+            // Un clic sur l'activité ouvre son application (clic droit : ses boutons).
+            (IslandKind::Timer { .. } | IslandKind::TimerOpen { .. }, IslandHit::Side | IslandHit::Body) => {
+                self.open_clock();
+                self.island_expand();
+            }
+            (IslandKind::Media { .. } | IslandKind::MediaOpen { .. }, IslandHit::Side | IslandHit::Body) => {
+                self.open_media_player();
+                self.island_expand();
+            }
+            (IslandKind::TimerDone, IslandHit::Body) => {
+                self.island_timer = None;
+                self.send_timer_command("arreter");
+                self.open_clock();
             }
             (IslandKind::TimerDone, _) | (IslandKind::TimerOpen { .. }, IslandHit::Button(1)) => {
                 self.island_timer = None;
@@ -224,12 +227,59 @@ impl Ferrite {
                 self.lock_media(command);
                 self.keep_island_open();
             }
-            (IslandKind::TimerOpen { .. } | IslandKind::MediaOpen { .. }, _) => {
-                self.island_open_until = None;
-            }
             _ => {}
         }
         self.request_redraw();
+    }
+
+    /// Clic droit sur la pastille repliée : elle se déplie avec ses boutons (pause,
+    /// arrêter, morceau précédent ou suivant) pendant [`OPEN_FOR`].
+    pub fn island_expand(&mut self) {
+        let notifications = crate::render::desktop_view(self).notifications;
+        if !matches!(
+            self.island_view(&notifications).kind,
+            Some(IslandKind::Timer { .. } | IslandKind::Media { .. })
+        ) {
+            return;
+        }
+        self.island_open_until = Some(Instant::now() + OPEN_FOR);
+        // Il se replie seul : une image de plus à l'échéance.
+        let _ = self
+            .loop_handle
+            .insert_source(Timer::from_duration(OPEN_FOR), |_, _, state| {
+                state.request_redraw();
+                TimeoutAction::Drop
+            });
+        self.request_redraw();
+    }
+
+    /// L'Horloge, sur son minuteur.
+    fn open_clock(&mut self) {
+        self.open_app(&crate::desktop::apps::AppKey::Builtin(
+            crate::desktop::apps::App::CLOCK,
+        ));
+    }
+
+    /// La fenêtre du lecteur qui joue (Musique, Brave, VLC…), lancée s'il le faut.
+    fn open_media_player(&mut self) {
+        let Some(entry) = self.media.as_ref().map(|media| media.entry.clone()) else {
+            return;
+        };
+        let mut key = crate::desktop::apps::AppKey::for_window(&entry, &self.applications);
+        if matches!(key, crate::desktop::apps::AppKey::Other(_)) && !self.app_running(&key) {
+            // Brave ne donne pas son `DesktopEntry` : sa fenêtre « brave-browser » est
+            // retrouvée par le nom du lecteur (« brave »).
+            let name = entry.to_lowercase();
+            let found = self.space.elements().find_map(|window| {
+                let id = crate::render::app_id(window)?.to_lowercase();
+                id.starts_with(&name).then(|| self.window_app(window)).flatten()
+            });
+            match found {
+                Some(found) => key = found,
+                None => return,
+            }
+        }
+        self.open_app(&key);
     }
 
     /// Clic ailleurs que sur l'îlot déplié : il se replie aussitôt (minuteur ou musique

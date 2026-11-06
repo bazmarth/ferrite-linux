@@ -273,6 +273,7 @@ impl App {
     pub const CALCULATOR: App = App("calculator");
     pub const SETTINGS: App = App("settings");
     pub const MUSIC: App = App("music");
+    pub const CLOCK: App = App("clock");
     pub const TRASH: App = App(TRASH_COMMAND);
 
     /// Applications Ferrite du menu Applications.

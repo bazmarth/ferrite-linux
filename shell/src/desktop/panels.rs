@@ -935,7 +935,9 @@ impl Panels {
         view: &DesktopView,
         out: &mut Vec<super::super::render::OutputElement>,
     ) {
-        // Les widgets ont leur propre image : les retirer évite de tout redessiner pour eux.
+        // Les widgets et l'îlot ont leurs propres images : les retirer évite de tout
+        // redessiner pour eux. L'îlot montre aussi les bulles de notification, le son et
+        // l'enregistrement ; seul l'écran verrouillé dessine encore la bulle du son.
         let state = VisualState {
             width: output_geo.size.w.max(1) as u32,
             height: output_geo.size.h.max(1) as u32,
@@ -944,6 +946,13 @@ impl Panels {
             view: DesktopView {
                 dark_theme: view.dark_theme,
                 dashboard: DashboardView::default(),
+                island: IslandView::default(),
+                recording: None,
+                osd: view.osd.filter(|_| view.lock.is_some()),
+                notifications: NotificationsView {
+                    bubbles: Vec::new(),
+                    ..view.notifications.clone()
+                },
                 ..view.clone()
             },
             battery: self.battery(),
@@ -6159,6 +6168,7 @@ mod tests {
             title: "Ciel étoilé".into(),
             artist: "Nuit Claire".into(),
             cover: None,
+            entry: "ferrite-music".into(),
         });
         assert_eq!(
             at(previous, &desktop),

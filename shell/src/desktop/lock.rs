@@ -193,6 +193,8 @@ pub struct Media {
     pub title: String,
     pub artist: String,
     pub cover: Option<crate::clipboard::Thumbnail>,
+    /// Fichier `.desktop` du lecteur (`DesktopEntry` de MPRIS), pour ouvrir sa fenêtre.
+    pub entry: String,
 }
 
 /// Côté de la pochette réduite pour le widget Musique.
@@ -346,6 +348,11 @@ fn read_media(connection: &zbus::blocking::Connection) -> zbus::Result<Option<Fo
             .and_then(|value| value.downcast_ref::<&str>().ok())
             .and_then(file_url_path);
         let short_name = player.trim_start_matches(MPRIS_PREFIX);
+        let entry =
+            zbus::blocking::Proxy::new(connection, player.as_str(), MPRIS_PATH, "org.mpris.MediaPlayer2")
+                .ok()
+                .and_then(|root| root.get_property::<String>("DesktopEntry").ok())
+                .unwrap_or_else(|| short_name.split('.').next().unwrap_or(short_name).to_owned());
         let media = Media {
             detail: media_detail(artist, title, short_name),
             progress: media_progress(position, length),
@@ -354,6 +361,7 @@ fn read_media(connection: &zbus::blocking::Connection) -> zbus::Result<Option<Fo
             artist: artist.unwrap_or_default().to_owned(),
             // Remplie par `watch_media`, qui garde la dernière pochette décodée.
             cover: None,
+            entry,
         };
         drop(proxy);
         if media.playing {

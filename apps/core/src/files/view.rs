@@ -155,7 +155,8 @@ fn icon_button(
             ui.painter().rect_filled(rect, radius, fill);
         }
         None if response.hovered() => {
-            ui.painter().rect_filled(rect, radius, style::tint(10));
+            ui.painter()
+                .rect_filled(rect, radius, style::tint(crate::kit::TOOL_HOVER));
         }
         None => {}
     }

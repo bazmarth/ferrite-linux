@@ -1284,6 +1284,14 @@ impl Ferrite {
                 return;
             }
             if button.button == BTN_RIGHT
+                && let Some(DesktopAction::Island(_)) = desktop_action
+            {
+                if button.state == ButtonState::Pressed {
+                    self.island_expand();
+                }
+                return;
+            }
+            if button.button == BTN_RIGHT
                 && let Some(DesktopAction::DashboardCyclePriority(index)) = desktop_action
             {
                 self.handle_desktop_action(DesktopAction::DashboardDeleteTask(index));

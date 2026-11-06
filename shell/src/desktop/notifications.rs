@@ -419,7 +419,26 @@ impl Ferrite {
         if self.notifications.has_default(id) {
             self.send_notification_signal(Signal::Action(id, "default".to_owned()));
         }
+        self.show_notification_app(id);
         self.dismiss_notification(id);
+    }
+
+    /// L'application qui a envoyé la notification passe devant, si elle est ouverte (une
+    /// application Wayland ne peut pas se mettre au premier plan seule).
+    fn show_notification_app(&mut self, id: u32) {
+        let Some(entry) = self
+            .notifications
+            .history()
+            .find(|notice| notice.id == id)
+            .map(|notice| notice.entry.clone())
+            .filter(|entry| !entry.is_empty())
+        else {
+            return;
+        };
+        let key = crate::desktop::apps::AppKey::for_window(&entry, &self.applications);
+        if self.app_running(&key) {
+            self.activate_app(&key);
+        }
     }
 
     /// Bouton d'action d'une bannière : l'application est prévenue, puis elle se ferme.

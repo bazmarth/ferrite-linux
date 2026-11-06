@@ -5,5 +5,5 @@ target/
 *.img
 *.log
 
-# Clés API de Continue (DeepSeek) : jamais dans le dépôt
-.continue/.env
+# Réglages personnels de Claude Code (autorisations locales)
+.claude/settings.local.json

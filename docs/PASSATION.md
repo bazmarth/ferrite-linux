@@ -25,9 +25,10 @@ plan quand ils divergent), `docs/ARCHITECTURE.md`, `docs/DEPENDANCES.md`,
 2. **Ne commiter que sur demande explicite de l'utilisateur.** Commits directement sur
    `main`, auteur `Bazteck <marthybazoum@gmail.com>`, message en français : titre
    « Domaine : résumé », puis liste à puces.
-3. **Ne jamais commiter `ferrite-theme/`** : ses ~208 fichiers sont des raccourcis NTFS abîmés
-   (contenu `IntxLNK…`, pas de vrais liens symboliques). `git add` toujours par chemins
-   explicites, jamais `git add -A` / `git add .`.
+3. **`ferrite-theme/` contient 208 liens symboliques** (curseurs, alias d'icônes). Ils
+   s'abîmaient en raccourcis NTFS (`IntxLNK…`) tant que `core.symlinks` valait `false` ;
+   réparés le 2026-11-06 par `git config core.symlinks true` puis `git checkout`. Garder ce
+   réglage. `git add` toujours par chemins explicites, jamais `git add -A` / `git add .`.
 4. **Ne jamais saisir ni demander un mot de passe** : l'utilisateur tape lui-même ses `sudo`
    dans un terminal. Les commandes root se lancent dans un terminal visible par lui.
 5. **Tester sur le vrai bureau par le mode dev** (§2.2) : l'utilisateur travaille *dans*
@@ -330,7 +331,7 @@ Elle prime sur la charte §3.4 de `PLAN.md` (voir `DECISIONS.md`, 2026-11-02).
 | Pas de `persistence` par défaut sur l'ISO | live-boot fouillerait tous les disques |
 | Sécurité de l'image live | l'utilisateur `ferrite` a `sudo` sans mot de passe (live-config) : normal pour un live, à revoir pour l'installateur |
 | Pare-feu | **aucun n'est configuré** : l'image n'installe pas de pare-feu ; sur la machine installée, `nftables` est présent mais désactivé. Aucun service Ferrite n'écoute sur le réseau. Ne pas en ajouter un qui bloque DHCP, mDNS ou Bluetooth sans le tester sur la machine |
-| `ferrite-theme/` | ne pas commiter (fichiers abîmés), ne pas « réparer » par `git checkout` sans avoir vérifié la source des vrais SVG |
+| `ferrite-theme/` | liens symboliques : garder `git config core.symlinks true`, sinon ils redeviennent des raccourcis NTFS abîmés |
 
 Ne jamais : publier une release depuis un arbre non commité ; rendre le dépôt public sans
 accord ; supprimer une release ou un tag sans demande ; lancer `sudo` à la place de
@@ -366,8 +367,8 @@ thème sombre n'a pas été vu en capture.
 
 ### 5.3 Prochaines étapes proposées (ordre recommandé)
 
-1. Réparer `ferrite-theme/` (retrouver les vrais SVG/curseurs, les commiter) ; thème de
-   curseurs réel (aujourd'hui grisé dans Paramètres).
+1. Thème de curseurs réel (aujourd'hui grisé dans Paramètres) : les liens de
+   `ferrite-theme/` sont réparés depuis le 2026-11-06.
 2. Finir la phase 5 : lecteur vidéo (en cours), Horloge (minuteur, chronomètre),
    réglages encore grisés (taille du texte, taille du curseur, pavé tactile).
 3. « Éteindre l'écran après… » (DPMS DRM) avant la veille.
@@ -400,11 +401,8 @@ tools/usb.sh --final                          # ISO à distribuer (sudo, ~30 min
 tools/vm-test.sh tools/scenarios/stabilite.txt  # ISO dans QEMU + captures dans build/
 ```
 
-Outil de travail de la suite : `deepseek-code` (`~/.local/bin`), Claude Code branché sur
-l'API DeepSeek (format Anthropic, `deepseek-v4-pro`, `deepseek-flash` pour les tâches
-légères). Réglages et autorisations à part dans `~/.claude-deepseek/settings.json`
-(modifications acceptées d'office, commandes du projet autorisées ; `sudo`, `git push
---force`, `git add -A` interdits). Consignes du dépôt : `CLAUDE.md`.
+Outil de travail : Claude Code. Consignes du dépôt : `CLAUDE.md` ; contexte détaillé dans
+la skill `.claude/skills/ferrite-contexte`.
 
 Un bureau imbriqué (`--winit`) ne lance ni l'agent polkit ni le verrouillage `FERRITE_LOCK`,
 et ne doit jamais déclencher de vraie mise en veille : mettre `veille_batterie=0` et

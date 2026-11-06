@@ -1209,3 +1209,13 @@ hors du dialogue d'alimentation Ferrite n'enregistre pas l'état.
 
 Le backend DRM actualise les voyants de tous les claviers libinput selon l’état Caps Lock
 géré par XKB. Le témoin physique s’allume quand le verrouillage des majuscules est actif.
+
+## 2026-11-06 — Dépôt remis au propre
+
+- Les 208 liens symboliques de `ferrite-theme/` (curseurs, alias d'icônes) étaient devenus
+  des raccourcis NTFS illisibles parce que Git était réglé sans liens (`core.symlinks=false`).
+  Le disque FICHIERS (ntfs3) les accepte : réglage passé à `true` et fichiers restaurés depuis
+  Git. Aucun lien cassé ne reste.
+- Mis à la corbeille (récupérables) : `FerriteOs.zip`, `CLAUDE.md.ancien`, `.continue/`.
+- Passation mise à jour (liens réparés, mentions de DeepSeek retirées) ;
+  `.claude/settings.local.json` ignoré par Git.

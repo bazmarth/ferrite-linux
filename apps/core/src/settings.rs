@@ -2563,6 +2563,54 @@ impl SettingsState {
                     .map_err(|error| format!("Enregistrement impossible : {error}")),
             );
         }
+
+        heading(ui, "Vitesse de défilement");
+        note(
+            ui,
+            "Pour toutes les applications. 1 × : la vitesse d’origine ; moins pour un défilement plus doux, plus pour aller vite.",
+        );
+        ui.add_space(8.0);
+        let rows = [
+            (
+                "Molette de la souris",
+                "defilement_vitesse_molette",
+                settings.scroll_speed_wheel(),
+            ),
+            (
+                "Pavé tactile",
+                "defilement_vitesse_pave",
+                settings.scroll_speed_touchpad(),
+            ),
+        ];
+        let mut changed = false;
+        card(ui, |ui| {
+            for (index, (label, key, speed)) in rows.into_iter().enumerate() {
+                if index > 0 {
+                    separator(ui);
+                }
+                ui.horizontal(|ui| {
+                    ui.set_min_height(40.0);
+                    ui.label(RichText::new(label).size(14.0));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let mut position = speed_to_slider(speed);
+                        let text = format!("{:.1} ×", f64::from(speed) / 100.0).replace('.', ",");
+                        let response = crate::kit::slider(ui, &mut position, &text);
+                        if response.changed() {
+                            settings.set(key, &slider_to_speed(position).to_string());
+                            changed = true;
+                        }
+                    });
+                });
+            }
+        });
+        if changed {
+            self.message = Some(
+                settings
+                    .save()
+                    .map(|()| "Réglage enregistré".to_owned())
+                    .map_err(|error| format!("Enregistrement impossible : {error}")),
+            );
+        }
     }
 
     // ---- Date et heure ----------------------------------------------------------------
@@ -3034,6 +3082,21 @@ fn current_user() -> (String, String) {
     (full, login)
 }
 
+/// Curseur (0 à 100) et vitesse de défilement en pour cent (25 à 300), par pas de 5.
+fn slider_to_speed(position: u8) -> u32 {
+    use ferrite_system::config::{SCROLL_SPEED_MAX, SCROLL_SPEED_MIN};
+    let span = f64::from(SCROLL_SPEED_MAX - SCROLL_SPEED_MIN);
+    let speed = f64::from(SCROLL_SPEED_MIN) + span * f64::from(position.min(100)) / 100.0;
+    ((speed / 5.0).round() * 5.0) as u32
+}
+
+fn speed_to_slider(speed: u32) -> u8 {
+    use ferrite_system::config::{SCROLL_SPEED_MAX, SCROLL_SPEED_MIN};
+    let span = f64::from(SCROLL_SPEED_MAX - SCROLL_SPEED_MIN);
+    let speed = speed.clamp(SCROLL_SPEED_MIN, SCROLL_SPEED_MAX) - SCROLL_SPEED_MIN;
+    (f64::from(speed) * 100.0 / span).round() as u8
+}
+
 // ---- Mise en page commune (le reste vient de `kit`) -------------------------------------
 
 /// Ligne d'une liste dans une carte.
@@ -3427,6 +3490,15 @@ fn accent_picker(ui: &mut egui::Ui, accent: &mut Accent) {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn curseur_et_vitesse_de_defilement() {
+        assert_eq!(slider_to_speed(0), 25);
+        assert_eq!(slider_to_speed(100), 300);
+        assert_eq!(speed_to_slider(100), 27);
+        assert_eq!(slider_to_speed(speed_to_slider(100)), 100);
+    }
+
     use super::*;
 
     #[test]

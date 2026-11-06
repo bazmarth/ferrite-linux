@@ -772,6 +772,16 @@ impl Settings {
         self.get("defilement_inverse") != Some("non")
     }
 
+    /// Vitesse de défilement de la molette, en pour cent (100 : celle d'origine).
+    pub fn scroll_speed_wheel(&self) -> u32 {
+        parse_speed(self.get("defilement_vitesse_molette"))
+    }
+
+    /// Vitesse de défilement du pavé tactile, en pour cent (100 : celle d'origine).
+    pub fn scroll_speed_touchpad(&self) -> u32 {
+        parse_speed(self.get("defilement_vitesse_pave"))
+    }
+
     /// Fond d'écran : nom d'un fond de Ferrite, ou chemin absolu d'une image (vide : le
     /// fond Ferrite).
     pub fn wallpaper(&self) -> &str {
@@ -1252,6 +1262,17 @@ pub fn split_layout(layout: &str) -> (String, String) {
     }
 }
 
+/// Vitesse de défilement, en pour cent : de 25 (quatre fois plus lent) à 300 (trois fois
+/// plus rapide), 100 par défaut ou si la valeur est illisible.
+pub const SCROLL_SPEED_MIN: u32 = 25;
+pub const SCROLL_SPEED_MAX: u32 = 300;
+
+fn parse_speed(value: Option<&str>) -> u32 {
+    value
+        .and_then(|value| value.trim().parse::<u32>().ok())
+        .map_or(100, |speed| speed.clamp(SCROLL_SPEED_MIN, SCROLL_SPEED_MAX))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1265,6 +1286,10 @@ mod tests {
         assert_eq!(defaults.sidebar_icons(), DockSize::Medium);
         assert_eq!(defaults.scroll_bars(), ScrollBars::Auto);
         assert!(defaults.scroll_inverted());
+        assert_eq!(defaults.scroll_speed_wheel(), 100);
+        assert_eq!(parse_speed(Some("1000")), SCROLL_SPEED_MAX);
+        assert_eq!(parse_speed(Some("5")), SCROLL_SPEED_MIN);
+        assert_eq!(parse_speed(Some("abc")), 100);
         let chosen = Settings::parse(
             "apparence = sombre\naccent = violet\nsurlignage = vert\nbarre_laterale_icones = petit\nbarres_defilement = toujours\ndefilement_inverse = non\n",
         );

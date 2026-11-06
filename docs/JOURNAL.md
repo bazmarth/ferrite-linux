@@ -1584,3 +1584,15 @@ Vérifié : demande `SaveFile` envoyée au service sur un bus d'essai (titre, do
 Documents, nom, filtre PDF, bouton traduit) ; tests (motifs, adresses, demande).
 Pas vérifié : avec Brave sur le vrai bureau (après installation de `ferrite.portal`),
 fermeture d'une demande par l'application (`Request.Close` non géré).
+
+## 2026-11-06 — Vitesse de défilement (molette et pavé tactile)
+
+Paramètres → Souris et pavé tactile → « Vitesse de défilement » : un curseur pour la
+molette (`defilement_vitesse_molette`) et un pour le pavé tactile
+(`defilement_vitesse_pave`), de 0,25 × à 3 × (100 % par défaut, pas de 5 %).
+ferrite-shell applique le facteur selon la source (`scroll_factor` : molette, ou doigts et
+défilement continu) à tout : applications (valeur continue et crans fins v120, qu'un cran
+ralenti garde au moins d'une unité), presse-papiers, menu Applications, widgets. Le
+réglage est relu en direct (`Event::ScrollSpeed`).
+Vérifié : capture de la page, tests (`scroll_factor`, conversion curseur ↔ vitesse,
+lecture du réglage). Pas vérifié : la sensation réelle à la molette et au pavé tactile.

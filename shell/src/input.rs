@@ -271,6 +271,16 @@ fn works_while_locked(action: Action) -> bool {
     matches!(action, Action::SwitchVt(_) | Action::ToggleKeyboardLayout)
 }
 
+/// Facteur de vitesse du défilement selon sa source : la molette (crans) ou le pavé
+/// tactile et les défilements continus (doigts).
+fn scroll_factor(source: AxisSource, (wheel, touchpad): (u32, u32)) -> f64 {
+    let percent = match source {
+        AxisSource::Wheel | AxisSource::WheelTilt => wheel,
+        AxisSource::Finger | AxisSource::Continuous => touchpad,
+    };
+    f64::from(percent) / 100.0
+}
+
 fn scroll_direction(source: AxisSource, inverted: bool) -> i32 {
     if inverted && matches!(source, AxisSource::Wheel | AxisSource::WheelTilt) {
         -1
@@ -2100,7 +2110,10 @@ impl Ferrite {
 
     fn on_axis<I: InputBackend>(&mut self, event: I::PointerAxisEvent) {
         let source = event.source();
-        let direction = scroll_direction(source, self.scroll_inverted) as f64;
+        // Sens (molette inversée) et vitesse choisis dans Paramètres, pour le bureau comme
+        // pour les applications.
+        let speed = scroll_factor(source, self.scroll_speed);
+        let direction = scroll_direction(source, self.scroll_inverted) as f64 * speed;
         // Panneau Super+V : la molette fait défiler la liste.
         if self.popover == Some(Popover::Clipboard) {
             let amount = event
@@ -2149,8 +2162,16 @@ impl Ferrite {
                 * direction;
             if amount != 0.0 {
                 frame = frame.value(axis, amount);
+                // Crans fins (v120) : beaucoup d'applications ne lisent qu'eux. Un cran
+                // ralenti reste au moins d'une unité, dans le bon sens.
                 if let Some(discrete) = event.amount_v120(axis) {
-                    frame = frame.v120(axis, discrete as i32 * direction as i32);
+                    let scaled = (discrete * direction).round() as i32;
+                    let scaled = if scaled == 0 && discrete != 0.0 {
+                        (discrete * direction).signum() as i32
+                    } else {
+                        scaled
+                    };
+                    frame = frame.v120(axis, scaled);
                 }
             }
             if source == AxisSource::Finger && event.amount(axis) == Some(0.0) {
@@ -2168,6 +2189,13 @@ impl Ferrite {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn vitesse_du_defilement_selon_la_source() {
+        assert_eq!(scroll_factor(AxisSource::Wheel, (200, 50)), 2.0);
+        assert_eq!(scroll_factor(AxisSource::Finger, (200, 50)), 0.5);
+        assert_eq!(scroll_factor(AxisSource::Continuous, (100, 150)), 1.5);
+    }
 
     #[test]
     fn inversion_du_defilement_ne_touche_que_la_molette() {

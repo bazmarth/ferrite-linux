@@ -81,6 +81,8 @@ pub enum Event {
     Dock(DockConfig),
     Theme(Appearance, Accent),
     ScrollInverted(bool),
+    /// Vitesses de défilement (molette, pavé tactile), en pour cent.
+    ScrollSpeed(u32, u32),
     Wallpaper(WallpaperChoice),
     /// Applications épinglées dans le Dock, et applications à plusieurs fenêtres.
     DockApps(Option<Vec<String>>, Vec<String>),
@@ -243,6 +245,7 @@ fn worker(receiver: mpsc::Receiver<Change>, events: channel::Sender<Event>, nest
     let mut known_theme = None;
     let mut known_dark = None;
     let mut known_scroll_inverted = None;
+    let mut known_scroll_speed = None;
     let mut known_wallpaper = None;
     let mut known_lock_picture: Option<String> = None;
     let mut wallpaper_generation = 0u64;
@@ -316,6 +319,13 @@ fn worker(receiver: mpsc::Receiver<Change>, events: channel::Sender<Event>, nest
             if known_scroll_inverted != Some(scroll_inverted) {
                 known_scroll_inverted = Some(scroll_inverted);
                 if events.send(Event::ScrollInverted(scroll_inverted)).is_err() {
+                    return;
+                }
+            }
+            let speed = (settings.scroll_speed_wheel(), settings.scroll_speed_touchpad());
+            if known_scroll_speed != Some(speed) {
+                known_scroll_speed = Some(speed);
+                if events.send(Event::ScrollSpeed(speed.0, speed.1)).is_err() {
                     return;
                 }
             }
@@ -465,6 +475,7 @@ impl Ferrite {
                 self.accent = accent;
             }
             Event::ScrollInverted(inverted) => self.scroll_inverted = inverted,
+            Event::ScrollSpeed(wheel, touchpad) => self.scroll_speed = (wheel, touchpad),
             Event::LockPicture(picture) => {
                 self.lock_picture = picture;
                 // Choisie pendant que l'écran est verrouillé : elle s'affiche tout de suite.

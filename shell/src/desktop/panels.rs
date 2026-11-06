@@ -40,12 +40,14 @@ use smithay::{
 
 mod auth;
 mod cards;
+mod island;
 mod lock_screen;
 
 pub use cards::{tasks_scroll_limit, widget_at, widget_edges_at, widgets_areas};
 pub use lock_screen::{LOCK_BLUR_MAX, LOCK_WALLS, LockAction, LockPicture, lock_action_at};
 
 use cards::dashboard_action_at;
+pub use island::{IslandHit, IslandKind, IslandView};
 
 use crate::clipboard::{self, Filter as ClipFilter, Kind as ClipKind, Thumbnail};
 use crate::desktop::svg::{self, IconCache, Style};
@@ -203,12 +205,10 @@ pub enum Popover {
 pub enum DesktopAction {
     TogglePopover(Popover),
     ClosePopover,
-    CaptureMode(crate::render::capture::Mode),
-    ToggleCaptureSave,
-    ToggleCaptureClipboard,
-    ToggleCaptureCursor,
-    CycleCaptureDelay,
-    CaptureNow,
+    /// Pastille rouge d'un enregistrement vidéo : l'arrête.
+    StopRecording,
+    /// Clic dans l'îlot du haut de l'écran.
+    Island(IslandHit),
     /// Application du lanceur : position dans la liste (filtrée) des applications.
     LaunchTile(usize),
     ToggleWifi,
@@ -695,17 +695,44 @@ pub struct DesktopView {
     pub menu_pointer: Option<(i32, i32)>,
     pub osd: Option<Osd>,
     pub capture: CaptureView,
+    /// Enregistrement vidéo en cours : durée écoulée (« 0:07 »).
+    pub recording: Option<String>,
+    /// Îlot du haut de l'écran.
+    pub island: IslandView,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct CaptureView {
     pub mode: crate::render::capture::Mode,
-    pub save: bool,
-    pub clipboard: bool,
     pub cursor: bool,
     /// Délai avant la prise, en secondes (0 : immédiate).
     pub delay: u64,
+    /// Au moins une fenêtre est affichée : le mode Fenêtre est proposé.
+    pub windows: bool,
+    /// Vidéo choisie plutôt que photo.
+    pub video: bool,
 }
+
+/// Ce qui est sous le pointeur dans la barre d'outils de capture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptureHit {
+    Mode(crate::render::capture::Mode),
+    Photo,
+    Video,
+    Shutter,
+    Delay,
+    Pointer,
+    Close,
+    /// Ailleurs sur la barre : le clic ne touche pas la zone dessous.
+    Toolbar,
+}
+
+/// Modes de capture, dans l'ordre de la barre d'outils.
+const CAPTURE_MODES: [(crate::render::capture::Mode, &str); 3] = [
+    (crate::render::capture::Mode::Area, "Sélection"),
+    (crate::render::capture::Mode::Screen, "Écran"),
+    (crate::render::capture::Mode::Window, "Fenêtre"),
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct VisualState {
@@ -810,6 +837,8 @@ pub struct Panels {
     /// après sa fermeture, et sa part d'apparition (0 à 1).
     layer: RefCell<Option<PopoverLayer>>,
     layer_shown: Cell<(f64, Option<Instant>)>,
+    /// Îlot du haut de l'écran, et son mouvement.
+    island: RefCell<island::IslandMotion>,
     /// Verre du lanceur, dernier calculé.
     frost: RefCell<Option<(FrostKey, Arc<Frost>)>>,
     /// Fond du menu Applications (voile, ombre et verre), gardé d'un dessin à l'autre.
@@ -889,6 +918,7 @@ impl Panels {
             drag_layers: RefCell::new(DragLayers::default()),
             layer: RefCell::new(None),
             layer_shown: Cell::new((0.0, None)),
+            island: RefCell::new(island::IslandMotion::default()),
             frost: RefCell::new(None),
             launcher_backdrop: RefCell::new(None),
             lock_wall: RefCell::new(None),
@@ -1012,6 +1042,10 @@ impl Panels {
                 Err(err) => tracing::warn!(?err, output = output.name(), "panneau animé non importé"),
             }
         }
+
+        // Îlot, devant le bureau et la barre.
+        let island_layout = Layout::new(output_geo.size.w as f64, output_geo.size.h as f64, view);
+        self.push_island(renderer, output, &island_layout, scale, view, out);
 
         // L'invitation s'efface pendant la saisie.
         let entry = lock_now
@@ -1568,7 +1602,8 @@ impl Panels {
 
         match view.popover {
             Some(Popover::Launcher) => self.draw_launcher(&mut canvas, &layout, &view.launcher),
-            Some(Popover::Screenshot) => self.draw_capture(&mut canvas, &layout, view.capture),
+            // Dessinée plus bas, au-dessus du voile de la zone ou de la fenêtre.
+            Some(Popover::Screenshot) => {}
             // Dessinés à part, par `rasterize_layer`.
             Some(Popover::Controls) => {}
             Some(Popover::Clipboard) => self.draw_clipboard(&mut canvas, &layout, &view.clipboard),
@@ -1588,24 +1623,7 @@ impl Panels {
             None => {}
         }
 
-        for (notification, bubble) in view
-            .notifications
-            .bubbles
-            .iter()
-            .zip(layout.notification_bubbles(&view.notifications.bubbles))
-        {
-            canvas.glass(bubble, 14.0);
-            self.draw_notification(&mut canvas, bubble, notification);
-            for (index, label) in notification.actions.iter().enumerate() {
-                let button = notification_action(bubble, index);
-                let (fill, ink) = if index == 0 {
-                    (accent(), Color::WHITE)
-                } else {
-                    (control_fill(), primary_text())
-                };
-                canvas.button(button, label, fill, ink);
-            }
-        }
+        // Notifications, son et enregistrement : dans l'îlot (voir `push_island`).
 
         if let Some(overview) = &view.overview {
             self.draw_overview(&mut canvas, &layout, overview);
@@ -1622,8 +1640,8 @@ impl Panels {
         if let Some(rect) = view.region_adjust {
             self.draw_region_adjust(&mut canvas, &layout, rect);
         }
-        if let Some(osd) = view.osd {
-            self.draw_osd(&mut canvas, &layout, osd, view.dock_height);
+        if view.popover == Some(Popover::Screenshot) {
+            self.draw_capture(&mut canvas, &layout, view.capture);
         }
 
         // Confirmation explicite, pour éviter un arrêt accidentel.
@@ -1950,104 +1968,105 @@ impl Panels {
         canvas.fill(Rect::new(caret, field.y + 13.0, 2.0, 22.0), 1.0, accent());
     }
 
+    /// Barre d'outils de capture, toujours sombre : modes, photo ou vidéo, déclencheur,
+    /// délai et pointeur, et la croix pour fermer.
     fn draw_capture(&self, canvas: &mut Canvas, layout: &Layout, capture: CaptureView) {
-        let card = layout.capture_panel();
-        canvas.fill(
-            Rect::new(0.0, 0.0, layout.w, layout.h),
-            0.0,
-            Color::BLACK.with_alpha(110),
-        );
-        canvas.panel_shadow(card, 18.0);
-        canvas.glass(card, 18.0);
-        canvas.label(
-            &self.bold,
-            "Capture d’écran",
-            card.x + 22.0,
-            card.y + 22.0,
-            px(20.0),
-            primary_text(),
-        );
-        canvas.label(
-            &self.regular,
-            "Choisissez quoi capturer, puis copiez ou enregistrez.",
-            card.x + 22.0,
-            card.y + 52.0,
-            px(13.0),
-            text_secondary(),
-        );
-        for (index, (mode, label)) in [
-            (crate::render::capture::Mode::Screen, "Écran"),
-            (crate::render::capture::Mode::Window, "Fenêtre"),
-            (crate::render::capture::Mode::Area, "Zone"),
-        ]
-        .into_iter()
-        .enumerate()
-        {
+        let bar = layout.capture_toolbar();
+        let background = Color::rgb(0x2c2c2e);
+        let white = Color::WHITE;
+        let dim = Color::WHITE.with_alpha(90);
+        canvas.panel_shadow(bar, 24.0);
+        canvas.fill(bar, 24.0, background.with_alpha(245));
+
+        for (index, (mode, label)) in CAPTURE_MODES.into_iter().enumerate() {
+            let rect = layout.capture_mode(index);
+            let enabled = mode != crate::render::capture::Mode::Window || capture.windows;
             let selected = capture.mode == mode;
-            canvas.button(
-                layout.capture_mode(index),
-                label,
-                if selected { accent() } else { control_fill() },
-                if selected { Color::WHITE } else { primary_text() },
-            );
-        }
-        let options = [
-            (capture.save, "Enregistrer dans Images"),
-            (capture.clipboard, "Copier dans le presse-papiers"),
-            (capture.cursor, "Inclure le pointeur"),
-        ];
-        for (index, (enabled, label)) in options.into_iter().enumerate() {
-            let row = layout.capture_option(index);
-            canvas.fill(row, 7.0, control_fill());
-            canvas.label(
-                &self.regular,
-                if enabled { "✓" } else { " " },
-                row.x + 12.0,
-                row.y + 7.0,
-                px(16.0),
-                if enabled { accent() } else { text_secondary() },
-            );
+            let fill = if selected {
+                Color::rgb(0x48484a)
+            } else {
+                background
+            };
+            if selected {
+                canvas.fill(rect, 14.0, fill);
+            }
+            let ink = if enabled { white } else { dim };
+            let center = (rect.x + rect.w / 2.0, rect.y + 25.0);
+            match mode {
+                crate::render::capture::Mode::Area => capture_icon_selection(canvas, center, ink),
+                crate::render::capture::Mode::Screen => capture_icon_screen(canvas, center, ink),
+                crate::render::capture::Mode::Window => capture_icon_window(canvas, center, ink, fill),
+            }
+            let width = canvas.text_width(&self.regular, label, px(12.0));
             canvas.label(
                 &self.regular,
                 label,
-                row.x + 36.0,
-                row.y + 9.0,
-                px(13.0),
-                primary_text(),
+                rect.x + (rect.w - width) / 2.0,
+                rect.y + 44.0,
+                px(12.0),
+                ink,
             );
         }
-        let delay_label = match capture.delay {
-            0 => "Délai : immédiat".to_owned(),
-            seconds => format!("Délai : {seconds} s"),
+
+        // Photo ou vidéo : la moitié choisie est blanche.
+        let photo = layout.capture_kind(false);
+        let video = layout.capture_kind(true);
+        canvas.fill(
+            Rect::new(photo.x, photo.y, photo.w + video.w, photo.h),
+            17.0,
+            Color::WHITE.with_alpha(22),
+        );
+        let (chosen, photo_ink, video_ink) = if capture.video {
+            (video, white, background)
+        } else {
+            (photo, background, white)
         };
-        let delay_row = layout.capture_option(3);
-        canvas.fill(delay_row, 7.0, control_fill());
-        canvas.label(
-            &self.regular,
-            &delay_label,
-            delay_row.x + 12.0,
-            delay_row.y + 9.0,
-            px(13.0),
-            primary_text(),
-        );
-        canvas.label(
-            &self.regular,
-            "cliquer pour changer",
-            delay_row.x + 130.0,
-            delay_row.y + 9.0,
-            px(12.0),
-            text_secondary(),
-        );
-        let active = capture.save || capture.clipboard;
-        canvas.button(
-            layout.capture_button(),
-            match capture.mode {
-                crate::render::capture::Mode::Area => "Sélectionner la zone",
-                _ => "Capturer",
+        canvas.fill(chosen, 17.0, white);
+        capture_icon_camera(canvas, photo.center(), photo_ink);
+        capture_icon_video(canvas, video.center(), video_ink);
+
+        // Déclencheur : anneau blanc, disque blanc (photo) ou rouge (vidéo).
+        let shutter = layout.capture_shutter();
+        canvas.stroke(shutter, (shutter.w / 2.0) as f32, white, 3.0);
+        let disc = shutter.expand(-7.0);
+        canvas.fill(
+            disc,
+            (disc.w / 2.0) as f32,
+            if capture.video {
+                Color::rgb(0xe5_3935)
+            } else {
+                white
             },
-            if active { accent() } else { control_fill() },
-            if active { Color::WHITE } else { text_secondary() },
         );
+
+        let delay = layout.capture_delay();
+        if capture.delay > 0 {
+            canvas.fill(delay, 17.0, Color::WHITE.with_alpha(40));
+            let text = format!("{} s", capture.delay);
+            let width = canvas.text_width(&self.bold, &text, px(12.0));
+            canvas.label(
+                &self.bold,
+                &text,
+                delay.x + (delay.w - width) / 2.0,
+                delay.y + 9.0,
+                px(12.0),
+                white,
+            );
+        } else {
+            capture_icon_timer(canvas, delay.center(), white);
+        }
+
+        let pointer = layout.capture_pointer();
+        if capture.cursor {
+            canvas.fill(pointer, 17.0, Color::WHITE.with_alpha(40));
+        }
+        capture_icon_pointer(canvas, pointer.center(), if capture.cursor { white } else { dim });
+
+        let close = layout.capture_close();
+        canvas.fill(close, (close.w / 2.0) as f32, Color::rgb(0x3a3a3c));
+        let (cx, cy) = close.center();
+        canvas.line((cx - 5.0, cy - 5.0), (cx + 5.0, cy + 5.0), 2.0, white);
+        canvas.line((cx - 5.0, cy + 5.0), (cx + 5.0, cy - 5.0), 2.0, white);
     }
 
     /// Case d'une application : grande icône, nom sur deux lignes au plus, centré.
@@ -3346,53 +3365,21 @@ impl Panels {
         canvas.label(&self.bold, &text, pill.x + 10.0, pill.y + 5.0, 12.0, Color::WHITE);
     }
 
-    /// Surbrillance de la fenêtre survolée pendant la sélection d'une fenêtre à capturer.
+    /// Fenêtre choisie pour la capture : le reste de l'écran est voilé.
     fn draw_window_select(&self, canvas: &mut Canvas, layout: &Layout, frame: (i32, i32, i32, i32)) {
         let (x, y, w, h) = frame;
-        canvas.fill(
-            Rect::new(0.0, 0.0, layout.w, layout.h),
-            0.0,
-            Color::BLACK.with_alpha(60),
-        );
-        canvas.stroke(
-            Rect::new(x as f64, y as f64, w as f64, h as f64),
-            0.0,
-            accent(),
-            2.5,
-        );
-        let text = "Cliquez sur la fenêtre à capturer — Échap pour annuler";
-        let width = canvas.text_width(&self.bold, text, 13.0);
-        let pill = Rect::new(
-            (layout.w - width) / 2.0 - 16.0,
-            layout.bar + 20.0,
-            width + 32.0,
-            34.0,
-        );
-        canvas.fill(pill, 17.0, Color::BLACK.with_alpha(205));
-        canvas.label(&self.bold, text, pill.x + 16.0, pill.y + 9.0, 13.0, Color::WHITE);
+        let zone = Rect::new(x as f64, y as f64, w as f64, h as f64);
+        veil_around(canvas, layout, zone);
+        canvas.stroke(zone.expand(1.0), 10.0, Color::WHITE, 2.0);
     }
 
-    /// Zone sélectionnée, ajustable : voile, contour, poignées, dimensions et bouton.
+    /// Zone sélectionnée, ajustable : voile autour, contour et poignées rondes aux coins.
     fn draw_region_adjust(&self, canvas: &mut Canvas, layout: &Layout, rect: (i32, i32, i32, i32)) {
         let (x, y, w, h) = rect;
-        let veil = Color::BLACK.with_alpha(90);
         let zone = Rect::new(x as f64, y as f64, w as f64, h as f64);
-        canvas.fill(Rect::new(0.0, 0.0, layout.w, zone.y), 0.0, veil);
-        canvas.fill(
-            Rect::new(0.0, zone.bottom(), layout.w, layout.h - zone.bottom()),
-            0.0,
-            veil,
-        );
-        canvas.fill(Rect::new(0.0, zone.y, zone.x, zone.h), 0.0, veil);
-        canvas.fill(
-            Rect::new(zone.right(), zone.y, layout.w - zone.right(), zone.h),
-            0.0,
-            veil,
-        );
+        veil_around(canvas, layout, zone);
         canvas.stroke(zone, 0.0, Color::WHITE, 1.5);
-
-        // Poignées aux quatre coins.
-        let grip = 14.0;
+        let grip = 22.0;
         for (cx, cy) in [
             (zone.x, zone.y),
             (zone.right(), zone.y),
@@ -3400,44 +3387,9 @@ impl Panels {
             (zone.right(), zone.bottom()),
         ] {
             let grip_rect = Rect::new(cx - grip / 2.0, cy - grip / 2.0, grip, grip);
-            canvas.fill(grip_rect, 7.0, accent());
-            canvas.stroke(grip_rect, 7.0, Color::WHITE, 1.0);
+            canvas.fill(grip_rect.expand(1.0), 12.0, Color::BLACK.with_alpha(50));
+            canvas.fill(grip_rect, 11.0, Color::WHITE);
         }
-
-        let text = format!("{w} × {h}");
-        let width = canvas.text_width(&self.bold, &text, 12.0);
-        let pill = Rect::new(
-            zone.x,
-            (zone.bottom() + 8.0).min(layout.h - 34.0),
-            width + 20.0,
-            26.0,
-        );
-        canvas.fill(pill, 13.0, Color::BLACK.with_alpha(205));
-        canvas.label(&self.bold, &text, pill.x + 10.0, pill.y + 5.0, 12.0, Color::WHITE);
-
-        canvas.button(
-            layout.region_capture_button(rect),
-            "Capturer",
-            accent(),
-            Color::WHITE,
-        );
-        let hint = "Entrée pour capturer — Échap pour annuler";
-        let hint_width = canvas.text_width(&self.regular, hint, 12.0);
-        let hint_pill = Rect::new(
-            (layout.w - hint_width) / 2.0 - 12.0,
-            layout.bar + 20.0,
-            hint_width + 24.0,
-            30.0,
-        );
-        canvas.fill(hint_pill, 15.0, Color::BLACK.with_alpha(205));
-        canvas.label(
-            &self.regular,
-            hint,
-            hint_pill.x + 12.0,
-            hint_pill.y + 7.0,
-            12.0,
-            Color::WHITE,
-        );
     }
 
     /// Dialogue système : 420 px, centré, voile de 40 % sur tout l'écran.
@@ -3608,18 +3560,145 @@ impl Panels {
     }
 }
 
-/// Vrai si `pos` est sur le bouton « Capturer » de la zone `rect` en cours d'ajustement.
-pub fn region_capture_button_at(
+/// Partie de la barre d'outils de capture sous `pos`, s'il y en a une.
+pub fn capture_toolbar_at(
     output: Rectangle<i32, Logical>,
     pos: Point<f64, Logical>,
-    rect: (i32, i32, i32, i32),
-) -> bool {
+    windows: bool,
+) -> Option<CaptureHit> {
     let layout = Layout::new(
         output.size.w as f64,
         output.size.h as f64,
         &DesktopView::default(),
     );
-    layout.region_capture_button(rect).contains(pos)
+    if layout.capture_close().contains(pos) {
+        return Some(CaptureHit::Close);
+    }
+    if !layout.capture_toolbar().contains(pos) {
+        return None;
+    }
+    let mode = CAPTURE_MODES
+        .iter()
+        .enumerate()
+        .find(|(index, _)| layout.capture_mode(*index).contains(pos))
+        .map(|(_, (mode, _))| *mode)
+        .filter(|mode| *mode != crate::render::capture::Mode::Window || windows);
+    Some(if let Some(mode) = mode {
+        CaptureHit::Mode(mode)
+    } else if layout.capture_kind(false).contains(pos) {
+        CaptureHit::Photo
+    } else if layout.capture_kind(true).contains(pos) {
+        CaptureHit::Video
+    } else if layout.capture_shutter().contains(pos) {
+        CaptureHit::Shutter
+    } else if layout.capture_delay().contains(pos) {
+        CaptureHit::Delay
+    } else if layout.capture_pointer().contains(pos) {
+        CaptureHit::Pointer
+    } else {
+        CaptureHit::Toolbar
+    })
+}
+
+/// Voile sombre sur tout l'écran sauf `zone`.
+fn veil_around(canvas: &mut Canvas, layout: &Layout, zone: Rect) {
+    let veil = Color::BLACK.with_alpha(140);
+    canvas.fill(Rect::new(0.0, 0.0, layout.w, zone.y.max(0.0)), 0.0, veil);
+    canvas.fill(
+        Rect::new(0.0, zone.bottom(), layout.w, (layout.h - zone.bottom()).max(0.0)),
+        0.0,
+        veil,
+    );
+    canvas.fill(Rect::new(0.0, zone.y, zone.x.max(0.0), zone.h), 0.0, veil);
+    canvas.fill(
+        Rect::new(zone.right(), zone.y, (layout.w - zone.right()).max(0.0), zone.h),
+        0.0,
+        veil,
+    );
+}
+
+/// Rectangle en pointillés, coins marqués : le mode Sélection.
+fn capture_icon_selection(canvas: &mut Canvas, (cx, cy): (f64, f64), ink: Color) {
+    let (left, top, right, bottom) = (cx - 11.0, cy - 9.0, cx + 11.0, cy + 9.0);
+    for (start, end) in [
+        ((left, top), (right, top)),
+        ((left, bottom), (right, bottom)),
+        ((left, top), (left, bottom)),
+        ((right, top), (right, bottom)),
+    ] {
+        let length = (end.0 - start.0).hypot(end.1 - start.1);
+        let mut at = 4.5;
+        while at + 3.0 <= length - 4.0 {
+            let a = at / length;
+            let b = (at + 3.0) / length;
+            canvas.line(
+                (start.0 + (end.0 - start.0) * a, start.1 + (end.1 - start.1) * a),
+                (start.0 + (end.0 - start.0) * b, start.1 + (end.1 - start.1) * b),
+                1.5,
+                ink,
+            );
+            at += 5.0;
+        }
+    }
+    for (x, y) in [(left, top), (right, top), (left, bottom), (right, bottom)] {
+        canvas.stroke(Rect::new(x - 2.5, y - 2.5, 5.0, 5.0), 2.5, ink, 1.4);
+    }
+}
+
+/// Écran sur son pied : le mode Écran.
+fn capture_icon_screen(canvas: &mut Canvas, (cx, cy): (f64, f64), ink: Color) {
+    canvas.stroke(Rect::new(cx - 12.0, cy - 10.0, 24.0, 16.0), 2.0, ink, 1.6);
+    canvas.line((cx, cy + 6.0), (cx, cy + 10.0), 1.6, ink);
+    canvas.line((cx - 6.0, cy + 10.5), (cx + 6.0, cy + 10.5), 1.6, ink);
+}
+
+/// Deux fenêtres superposées : le mode Fenêtre.
+fn capture_icon_window(canvas: &mut Canvas, (cx, cy): (f64, f64), ink: Color, background: Color) {
+    canvas.stroke(Rect::new(cx - 12.0, cy - 10.0, 17.0, 13.0), 2.0, ink, 1.6);
+    let front = Rect::new(cx - 5.0, cy - 3.0, 17.0, 13.0);
+    canvas.fill(front, 2.0, background);
+    canvas.stroke(front, 2.0, ink, 1.6);
+}
+
+fn capture_icon_camera(canvas: &mut Canvas, (cx, cy): (f64, f64), ink: Color) {
+    canvas.stroke(Rect::new(cx - 8.0, cy - 5.0, 16.0, 11.0), 2.5, ink, 1.6);
+    canvas.fill(Rect::new(cx - 3.5, cy - 7.5, 7.0, 3.0), 1.0, ink);
+    canvas.stroke(Rect::new(cx - 3.0, cy - 2.5, 6.0, 6.0), 3.0, ink, 1.5);
+}
+
+fn capture_icon_video(canvas: &mut Canvas, (cx, cy): (f64, f64), ink: Color) {
+    canvas.stroke(Rect::new(cx - 8.0, cy - 5.0, 11.0, 10.0), 2.0, ink, 1.6);
+    canvas.polygon(
+        &[
+            (cx + 4.0, cy - 1.5),
+            (cx + 8.5, cy - 4.5),
+            (cx + 8.5, cy + 4.5),
+            (cx + 4.0, cy + 1.5),
+        ],
+        ink,
+    );
+}
+
+fn capture_icon_timer(canvas: &mut Canvas, (cx, cy): (f64, f64), ink: Color) {
+    canvas.stroke(Rect::new(cx - 7.5, cy - 6.0, 15.0, 15.0), 7.5, ink, 1.6);
+    canvas.line((cx, cy + 1.5), (cx, cy - 2.5), 1.6, ink);
+    canvas.line((cx, cy + 1.5), (cx + 3.0, cy + 3.0), 1.6, ink);
+    canvas.line((cx - 2.5, cy - 9.0), (cx + 2.5, cy - 9.0), 1.6, ink);
+}
+
+fn capture_icon_pointer(canvas: &mut Canvas, (cx, cy): (f64, f64), ink: Color) {
+    canvas.polygon(
+        &[
+            (cx - 4.5, cy - 8.0),
+            (cx - 4.5, cy + 6.0),
+            (cx - 1.0, cy + 2.8),
+            (cx + 1.5, cy + 8.0),
+            (cx + 3.8, cy + 7.0),
+            (cx + 1.3, cy + 2.0),
+            (cx + 5.5, cy + 2.0),
+        ],
+        ink,
+    );
 }
 
 /// Hit-test du bureau ; les panneaux interceptent leurs propres surfaces pour que le clic
@@ -3642,19 +3721,19 @@ pub fn action_at(
     }
     let pos = Point::from((pos.x - output.loc.x as f64, pos.y - output.loc.y as f64));
 
-    if pending_power.is_none() {
-        let bubbles = &view.notifications.bubbles;
-        for (notification, bubble) in bubbles.iter().zip(layout.notification_bubbles(bubbles)) {
-            if !bubble.contains(pos) {
-                continue;
+    if pending_power.is_none()
+        && let Some(hit) = island::island_at(&layout, &view.island, pos)
+    {
+        return Some(match (&view.island.kind, hit) {
+            (Some(IslandKind::Recording(_)), _) => DesktopAction::StopRecording,
+            (Some(IslandKind::Notification { notification, .. }), IslandHit::Button(index)) => {
+                DesktopAction::NotificationAction(notification.id, index)
             }
-            let action = (0..notification.actions.len())
-                .find(|index| notification_action(bubble, *index).contains(pos));
-            return Some(match action {
-                Some(index) => DesktopAction::NotificationAction(notification.id, index),
-                None => DesktopAction::NotificationActivate(notification.id),
-            });
-        }
+            (Some(IslandKind::Notification { notification, .. }), _) => {
+                DesktopAction::NotificationActivate(notification.id)
+            }
+            _ => DesktopAction::Island(hit),
+        });
     }
 
     if popover.is_none()
@@ -3844,32 +3923,7 @@ pub fn action_at(
                 }
             }
         },
-        Popover::Screenshot if layout.capture_panel().contains(pos) => {
-            if let Some((index, mode)) = [
-                crate::render::capture::Mode::Screen,
-                crate::render::capture::Mode::Window,
-                crate::render::capture::Mode::Area,
-            ]
-            .into_iter()
-            .enumerate()
-            .find(|(index, _)| layout.capture_mode(*index).contains(pos))
-            {
-                let _ = index;
-                DesktopAction::CaptureMode(mode)
-            } else if layout.capture_option(0).contains(pos) {
-                DesktopAction::ToggleCaptureSave
-            } else if layout.capture_option(1).contains(pos) {
-                DesktopAction::ToggleCaptureClipboard
-            } else if layout.capture_option(2).contains(pos) {
-                DesktopAction::ToggleCaptureCursor
-            } else if layout.capture_option(3).contains(pos) {
-                DesktopAction::CycleCaptureDelay
-            } else if layout.capture_button().contains(pos) && (view.capture.save || view.capture.clipboard) {
-                DesktopAction::CaptureNow
-            } else {
-                DesktopAction::Consume
-            }
-        }
+        Popover::Screenshot => DesktopAction::Consume,
         Popover::Clipboard if layout.clipboard().contains(pos) => {
             let clipboard = &view.clipboard;
             let filter = ClipFilter::ALL
@@ -4188,52 +4242,52 @@ struct Layout {
 }
 
 impl Layout {
-    fn capture_panel(&self) -> Rect {
-        let (w, h) = (480.0_f64.min(self.w - 32.0).max(320.0), 396.0);
+    /// Barre d'outils de capture, centrée en bas de l'écran.
+    fn capture_toolbar(&self) -> Rect {
+        let (w, h) = (300.0, 168.0);
         Rect::new(
-            ((self.w - w) / 2.0).max(16.0),
-            ((self.h - h) / 2.0).max(self.bar + 12.0),
+            ((self.w - w) / 2.0).max(8.0),
+            (self.h - h - 40.0).max(self.bar + 12.0),
             w,
             h,
         )
     }
 
     fn capture_mode(&self, index: usize) -> Rect {
-        let card = self.capture_panel();
-        let gap = 8.0;
-        let width = (card.w - 44.0 - 2.0 * gap) / 3.0;
-        Rect::new(
-            card.x + 22.0 + index as f64 * (width + gap),
-            card.y + 82.0,
-            width,
-            44.0,
-        )
+        let bar = self.capture_toolbar();
+        Rect::new(bar.x + 18.0 + index as f64 * 90.0, bar.y + 16.0, 84.0, 66.0)
     }
 
-    fn capture_option(&self, index: usize) -> Rect {
-        let card = self.capture_panel();
+    /// Moitié photo (`false`) ou vidéo (`true`) du sélecteur.
+    fn capture_kind(&self, video: bool) -> Rect {
+        let bar = self.capture_toolbar();
         Rect::new(
-            card.x + 22.0,
-            card.y + 142.0 + index as f64 * 40.0,
-            card.w - 44.0,
+            bar.x + 18.0 + if video { 40.0 } else { 0.0 },
+            bar.y + 109.0,
+            40.0,
             34.0,
         )
     }
 
-    fn capture_button(&self) -> Rect {
-        let card = self.capture_panel();
-        Rect::new(card.x + 22.0, card.bottom() - 58.0, card.w - 44.0, 42.0)
+    fn capture_shutter(&self) -> Rect {
+        let bar = self.capture_toolbar();
+        Rect::new(bar.x + bar.w / 2.0 - 28.0, bar.y + 98.0, 56.0, 56.0)
     }
 
-    /// Bouton « Capturer » sous une zone en cours d'ajustement, ramené dans l'écran.
-    fn region_capture_button(&self, rect: (i32, i32, i32, i32)) -> Rect {
-        let (x, y, w, h) = rect;
-        let (bw, bh) = (132.0, 38.0);
-        let bx = (x as f64 + w as f64 / 2.0 - bw / 2.0)
-            .max(8.0)
-            .min(self.w - bw - 8.0);
-        let by = (y as f64 + h as f64 + 8.0).min(self.h - bh - 8.0);
-        Rect::new(bx, by, bw, bh)
+    fn capture_delay(&self) -> Rect {
+        let bar = self.capture_toolbar();
+        Rect::new(bar.right() - 92.0, bar.y + 109.0, 34.0, 34.0)
+    }
+
+    fn capture_pointer(&self) -> Rect {
+        let bar = self.capture_toolbar();
+        Rect::new(bar.right() - 52.0, bar.y + 109.0, 34.0, 34.0)
+    }
+
+    /// Croix ronde à cheval sur le coin haut droit de la barre.
+    fn capture_close(&self) -> Rect {
+        let bar = self.capture_toolbar();
+        Rect::new(bar.right() - 24.0, bar.y - 14.0, 34.0, 34.0)
     }
 
     fn applications_button(&self) -> Rect {
@@ -4298,25 +4352,6 @@ impl Layout {
     /// Horloge au centre de la barre, qui ouvre le calendrier et les notifications.
     fn clock_button(&self) -> Rect {
         Rect::new((self.w - CLOCK_WIDTH) / 2.0, 0.0, CLOCK_WIDTH, self.bar)
-    }
-
-    /// Bannières des notifications, en haut à droite, la plus récente en haut.
-    fn notification_bubbles(&self, notifications: &[NotificationView]) -> Vec<Rect> {
-        let mut y = self.bar + 12.0;
-        notifications
-            .iter()
-            .map(|notification| {
-                let actions = if notification.actions.is_empty() {
-                    0.0
-                } else {
-                    36.0
-                };
-                let height = NOTIFICATION_HEIGHT + actions;
-                let rect = Rect::new(self.w - NOTIFICATION_WIDTH - 16.0, y, NOTIFICATION_WIDTH, height);
-                y += height + 8.0;
-                rect
-            })
-            .collect()
     }
 
     /// Lignes de notifications qui tiennent sous le calendrier.
@@ -5170,34 +5205,54 @@ impl Canvas<'_> {
         }
     }
 
+    /// Débit réseau des dernières mesures : pas fixe, les plus récentes à droite, aire
+    /// douce sous la courbe ; une ligne de base discrète tant qu'il y a peu de mesures.
     fn network_chart(&mut self, rect: Rect, samples: &[(u64, u64)]) {
-        if samples.is_empty() {
+        const CAPACITY: usize = 32;
+        // En dessous de 64 Kio/s, l'échelle ne zoome pas : un réseau au repos reste plat.
+        const FLOOR: u64 = 64;
+        self.line(
+            (rect.x, rect.bottom()),
+            (rect.right(), rect.bottom()),
+            1.0,
+            Color::WHITE.with_alpha(30),
+        );
+        let samples = &samples[samples.len().saturating_sub(CAPACITY)..];
+        if samples.len() < 2 {
             return;
         }
         let max = samples
             .iter()
             .flat_map(|(download, upload)| [*download, *upload])
             .max()
-            .unwrap_or(1)
-            .max(1) as f64;
+            .unwrap_or(0)
+            .max(FLOOR) as f64;
+        let step = rect.w / (CAPACITY - 1) as f64;
+        let first = CAPACITY - samples.len();
         let point = |index: usize, value: u64| {
-            let x = rect.x + rect.w * index as f64 / (samples.len().saturating_sub(1).max(1) as f64);
-            let y = rect.bottom() - (value as f64 / max * (rect.h - 4.0)).clamp(2.0, rect.h - 2.0);
+            let x = rect.x + step * (first + index) as f64;
+            let y = rect.bottom() - (value as f64 / max * (rect.h - 4.0)).clamp(0.0, rect.h - 2.0);
             (x, y)
         };
-        for index in 1..samples.len() {
-            self.line(
-                point(index - 1, samples[index - 1].0),
-                point(index, samples[index].0),
-                1.8,
-                Color::rgb(0x2389FF),
-            );
-            self.line(
-                point(index - 1, samples[index - 1].1),
-                point(index, samples[index].1),
-                1.8,
-                Color::rgb(0x1DBC82),
-            );
+        for (pick, color) in [(0_usize, Color::rgb(0x6CB8FF)), (1_usize, Color::rgb(0x3CC7D1))] {
+            let value = |sample: &(u64, u64)| if pick == 0 { sample.0 } else { sample.1 };
+            let mut area: Vec<(f64, f64)> = samples
+                .iter()
+                .enumerate()
+                .map(|(index, sample)| point(index, value(sample)))
+                .collect();
+            let (last_x, first_x) = (area[area.len() - 1].0, area[0].0);
+            area.push((last_x, rect.bottom()));
+            area.push((first_x, rect.bottom()));
+            self.polygon(&area, color.with_alpha(40));
+            for index in 1..samples.len() {
+                self.line(
+                    point(index - 1, value(&samples[index - 1])),
+                    point(index, value(&samples[index])),
+                    1.6,
+                    color,
+                );
+            }
         }
     }
 
@@ -5609,7 +5664,6 @@ fn format_file_timestamp(now: SystemTime, offset: i64) -> String {
 }
 
 /// Mesures des notifications, du calendrier et de la zone cliquable de l'horloge.
-const NOTIFICATION_WIDTH: f64 = 380.0;
 const NOTIFICATION_HEIGHT: f64 = 84.0;
 const NOTIFICATION_HEADER: f64 = 48.0;
 const CLOCK_WIDTH: f64 = 170.0;
@@ -5617,16 +5671,6 @@ const CALENDAR_WIDTH: f64 = 400.0;
 const CALENDAR_ROW: f64 = 36.0;
 /// Haut du panneau jusqu'au filet des notifications : titre, jours, six semaines.
 const CALENDAR_BODY: f64 = 52.0 + 22.0 + 6.0 * CALENDAR_ROW + 12.0;
-
-/// Bouton d'action `index` d'une bannière, sous son texte.
-fn notification_action(bubble: Rect, index: usize) -> Rect {
-    Rect::new(
-        bubble.x + 58.0 + index as f64 * 88.0,
-        bubble.bottom() - 14.0 - 28.0,
-        80.0,
-        28.0,
-    )
-}
 
 /// Marge intérieure du sélecteur Alt+Tab, écart et taille maximale d'une case (icône de 96 px).
 const SWITCHER_PADDING: f64 = 18.0;
@@ -6418,41 +6462,23 @@ mod tests {
     }
 
     #[test]
-    fn le_panneau_capture_regle_le_mode_et_les_options() {
-        let mut capture = view(Some(Popover::Screenshot));
-        capture.capture.save = true;
-        capture.capture.clipboard = true;
-        let layout = Layout::new(1280.0, 720.0, &capture);
-        for (index, mode) in [
-            crate::render::capture::Mode::Screen,
-            crate::render::capture::Mode::Window,
-            crate::render::capture::Mode::Area,
-        ]
-        .into_iter()
-        .enumerate()
-        {
-            let center = layout.capture_mode(index).center();
-            assert_eq!(
-                action_at(output(), point(center.0, center.1), &capture),
-                Some(DesktopAction::CaptureMode(mode))
-            );
+    fn la_barre_de_capture_repere_ses_boutons() {
+        let layout = Layout::new(1280.0, 720.0, &view(Some(Popover::Screenshot)));
+        let at = |rect: Rect, windows| {
+            let (x, y) = rect.center();
+            capture_toolbar_at(output(), point(x, y), windows)
+        };
+        for (index, (mode, _)) in CAPTURE_MODES.into_iter().enumerate() {
+            assert_eq!(at(layout.capture_mode(index), true), Some(CaptureHit::Mode(mode)));
         }
-        let copy = layout.capture_option(1).center();
-        assert_eq!(
-            action_at(output(), point(copy.0, copy.1), &capture),
-            Some(DesktopAction::ToggleCaptureClipboard)
-        );
-        let button = layout.capture_button().center();
-        assert_eq!(
-            action_at(output(), point(button.0, button.1), &capture),
-            Some(DesktopAction::CaptureNow)
-        );
-        capture.capture.save = false;
-        capture.capture.clipboard = false;
-        assert_eq!(
-            action_at(output(), point(button.0, button.1), &capture),
-            Some(DesktopAction::Consume)
-        );
+        // Sans fenêtre, le mode Fenêtre n'est pas proposé.
+        assert_eq!(at(layout.capture_mode(2), false), Some(CaptureHit::Toolbar));
+        assert_eq!(at(layout.capture_shutter(), true), Some(CaptureHit::Shutter));
+        assert_eq!(at(layout.capture_kind(true), true), Some(CaptureHit::Video));
+        assert_eq!(at(layout.capture_delay(), true), Some(CaptureHit::Delay));
+        assert_eq!(at(layout.capture_pointer(), true), Some(CaptureHit::Pointer));
+        assert_eq!(at(layout.capture_close(), true), Some(CaptureHit::Close));
+        assert_eq!(capture_toolbar_at(output(), point(100.0, 100.0), true), None);
         assert_eq!(
             click(point(400.0, 15.0), Some(Popover::Launcher)),
             Some(DesktopAction::ClosePopover)
@@ -6747,17 +6773,24 @@ mod tests {
             },
             ..DesktopView::default()
         };
+        view.island = IslandView {
+            kind: Some(IslandKind::Notification {
+                notification: notification.clone(),
+                more: 0,
+            }),
+        };
         let layout = Layout::new(1440.0, 900.0, &view);
-        let bubble = layout.notification_bubbles(&view.notifications.bubbles)[0];
+        let bubble = layout.island(&view.island).expect("îlot affiché");
         let at = |rect: Rect| Point::from(rect.center());
         assert_eq!(
             action_at(output, Point::from((bubble.x + 10.0, bubble.y + 10.0)), &view),
             Some(DesktopAction::NotificationActivate(7))
         );
         assert_eq!(
-            action_at(output, at(notification_action(bubble, 0)), &view),
+            action_at(output, at(layout.island_buttons(&view.island)[0]), &view),
             Some(DesktopAction::NotificationAction(7, 0))
         );
+        view.island = IslandView::default();
         assert_eq!(
             action_at(output, at(layout.clock_button()), &view),
             Some(DesktopAction::TogglePopover(Popover::Notifications))

@@ -98,6 +98,8 @@ pub fn init(
         LibSeatSession::new().map_err(|err| format!("ouverture de la session (libseat) : {err}"))?;
     let seat = session.seat();
     info!(seat, "session ouverte");
+    // Bouton d'alimentation physique : géré par le bureau tant que cette fonction tourne.
+    let _power_key = crate::desktop::lock::take_power_key();
 
     // Carte graphique principale.
     let path = primary_gpu(&seat)?

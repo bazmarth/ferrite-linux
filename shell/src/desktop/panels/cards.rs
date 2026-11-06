@@ -511,7 +511,8 @@ pub(super) fn dashboard_action_at(
 }
 
 impl Canvas<'_> {
-    /// Verre sombre : le fond flouté vu au travers, teinté à 55 %, liseré blanc à 10 %.
+    /// Verre sombre : le fond flouté vu au travers, teinté à 66 % (un fond très coloré
+    /// reste lisible), couleurs à peine ravivées, liseré blanc à 10 %.
     fn frosted(&mut self, rect: Rect, radius: f32, backdrop: Option<&Image>, placement: Option<Placement>) {
         let s = self.scale;
         let (x, y, w, h) = (
@@ -549,8 +550,8 @@ impl Canvas<'_> {
                         );
                         let luma = 0.3 * behind[0] + 0.59 * behind[1] + 0.11 * behind[2];
                         let [r, g, b] = [0, 1, 2].map(|c| {
-                            let vivid = (luma + (behind[c] - luma) * 1.5).clamp(0.0, 255.0);
-                            (vivid + (tone[c] - vivid) * 0.55).round() as u8
+                            let vivid = (luma + (behind[c] - luma) * 1.15).clamp(0.0, 255.0);
+                            (vivid + (tone[c] - vivid) * 0.66).round() as u8
                         });
                         self.blend(px, py, Color { r, g, b, a: 255 }, coverage);
                     }
@@ -789,6 +790,7 @@ impl Panels {
         let size = (card.h * 64.0 / 170.0).clamp(48.0, (card.w - 170.0) / 2.6);
         let top = card.y + (card.h - size) / 2.0 - size * 0.08;
         canvas.tracked(&self.light, &time, x, top, size, -0.03, INK);
+        let time_right = x + canvas.css_width(&self.light, &time, size) * 0.97;
         canvas.text(&self.regular, &date, x, card.bottom() - 37.0, 14.0, SOFT);
 
         let symbol = (right - 23.0, card.y + 43.0);
@@ -832,9 +834,11 @@ impl Panels {
             12.0,
             DIM,
         );
-        if card.w >= CLOCK_FORECAST {
-            // Assez large : les prévisions s'ajoutent.
-            let (start, cell) = (card.x + 270.0, (card.w - 270.0 - 150.0) / 4.0);
+        // Assez large : les prévisions s'ajoutent entre l'heure et la météo du jour, sans
+        // jamais les toucher ; chaque jour a sa colonne, maximum au-dessus du minimum.
+        let start = time_right + 28.0;
+        let cell = (right - 110.0 - start) / 4.0;
+        if card.w >= CLOCK_FORECAST && cell >= 46.0 {
             for (index, day) in weather.days.iter().take(4).enumerate() {
                 let center = start + cell * (index as f64 + 0.5);
                 let name = weekday_for(day.date.0, day.date.1, day.date.2);
@@ -847,16 +851,19 @@ impl Panels {
                     12.0,
                     DIM,
                 );
-                self.weather_symbol(canvas, (center, card.y + 82.0), day.sky, 1.0);
-                let range = format!("{}° / {}°", day.max, day.min);
-                let width = canvas.css_width(&self.regular, &range, 12.0);
+                self.weather_symbol(canvas, (center, card.y + 80.0), day.sky, 1.0);
+                let high = format!("{}°", day.max);
+                let width = canvas.css_width(&self.bold, &high, 13.0);
+                canvas.text(&self.bold, &high, center - width / 2.0, card.y + 104.0, 13.0, INK);
+                let low = format!("{}°", day.min);
+                let width = canvas.css_width(&self.regular, &low, 12.0);
                 canvas.text(
                     &self.regular,
-                    &range,
+                    &low,
                     center - width / 2.0,
-                    card.y + 112.0,
+                    card.y + 122.0,
                     12.0,
-                    SOFT,
+                    DIM,
                 );
             }
         }

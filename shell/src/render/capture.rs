@@ -39,8 +39,8 @@ pub fn region_between(a: Point<f64, Logical>, b: Point<f64, Logical>) -> Rectang
     Rectangle::new((left, top).into(), (right - left, bottom - top).into())
 }
 
-/// Ce qu'on saisit d'une zone à ajuster : un de ses coins pour la redimensionner, ou son
-/// intérieur pour la déplacer.
+/// Ce qu'on saisit d'une zone à ajuster : un coin ou un bord pour la redimensionner, ou
+/// son intérieur pour la déplacer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RegionGrip {
     Move,
@@ -48,16 +48,41 @@ pub enum RegionGrip {
     NorthEast,
     SouthWest,
     SouthEast,
+    North,
+    South,
+    West,
+    East,
+}
+
+impl RegionGrip {
+    /// Bords déplacés : gauche, haut, droite, bas.
+    const fn edges(self) -> (bool, bool, bool, bool) {
+        match self {
+            RegionGrip::Move => (true, true, true, true),
+            RegionGrip::NorthWest => (true, true, false, false),
+            RegionGrip::NorthEast => (false, true, true, false),
+            RegionGrip::SouthWest => (true, false, false, true),
+            RegionGrip::SouthEast => (false, false, true, true),
+            RegionGrip::North => (false, true, false, false),
+            RegionGrip::South => (false, false, false, true),
+            RegionGrip::West => (true, false, false, false),
+            RegionGrip::East => (false, false, true, false),
+        }
+    }
 }
 
 /// Zone sélectionnée, en cours d'ajustement avant la prise : on peut la déplacer ou la
-/// redimensionner par les coins, puis valider (Entrée) ou annuler (Échap).
+/// redimensionner par les coins et les bords, puis capturer (Entrée) ou fermer (Échap).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RegionAdjust {
     pub rect: Rectangle<i32, Logical>,
-    /// Poignée tenue, et position du pointeur à l'appui.
-    pub grip: Option<(RegionGrip, Point<f64, Logical>)>,
+    /// Poignée tenue, position du pointeur à l'appui et zone à cet instant : chaque
+    /// mouvement repart de cette zone, pour que le bord suive exactement la souris.
+    pub grip: Option<HeldGrip>,
 }
+
+/// Poignée tenue, pointeur à l'appui, zone à l'appui.
+pub type HeldGrip = (RegionGrip, Point<f64, Logical>, Rectangle<i32, Logical>);
 
 impl RegionAdjust {
     pub const fn new(rect: Rectangle<i32, Logical>) -> Self {
@@ -65,28 +90,41 @@ impl RegionAdjust {
     }
 }
 
-/// Taille des poignées de coin, en pixels logiques.
-const GRIP: i32 = 14;
+/// Zone de prise d'un coin (carré centré sur le coin), en pixels logiques : plus large
+/// que la poignée dessinée, pour l'attraper sans viser au pixel près.
+const CORNER: f64 = 36.0;
+/// Demi-épaisseur de la bande de prise d'un bord.
+const EDGE: f64 = 10.0;
 
-/// Poignée sous `pos` : un coin d'abord, puis l'intérieur (déplacement).
+/// Poignée sous `pos` : un coin d'abord, puis un bord, puis l'intérieur (déplacement).
 pub fn region_grip(rect: Rectangle<i32, Logical>, pos: Point<f64, Logical>) -> Option<RegionGrip> {
-    let left = rect.loc.x;
-    let top = rect.loc.y;
-    let right = rect.loc.x + rect.size.w;
-    let bottom = rect.loc.y + rect.size.h;
-    for (corner, grip) in [
+    let left = rect.loc.x as f64;
+    let top = rect.loc.y as f64;
+    let right = left + rect.size.w as f64;
+    let bottom = top + rect.size.h as f64;
+    for ((x, y), grip) in [
         ((left, top), RegionGrip::NorthWest),
         ((right, top), RegionGrip::NorthEast),
         ((left, bottom), RegionGrip::SouthWest),
         ((right, bottom), RegionGrip::SouthEast),
     ] {
-        let zone = Rectangle::new(
-            (corner.0 - GRIP / 2, corner.1 - GRIP / 2).into(),
-            (GRIP, GRIP).into(),
-        );
-        if zone.to_f64().contains(pos) {
+        if (pos.x - x).abs() <= CORNER / 2.0 && (pos.y - y).abs() <= CORNER / 2.0 {
             return Some(grip);
         }
+    }
+    let across = pos.y >= top && pos.y <= bottom;
+    let along = pos.x >= left && pos.x <= right;
+    if across && (pos.x - left).abs() <= EDGE {
+        return Some(RegionGrip::West);
+    }
+    if across && (pos.x - right).abs() <= EDGE {
+        return Some(RegionGrip::East);
+    }
+    if along && (pos.y - top).abs() <= EDGE {
+        return Some(RegionGrip::North);
+    }
+    if along && (pos.y - bottom).abs() <= EDGE {
+        return Some(RegionGrip::South);
     }
     rect.to_f64().contains(pos).then_some(RegionGrip::Move)
 }
@@ -106,41 +144,34 @@ pub fn adjust_region(
     let top = rect.loc.y;
     let right = rect.loc.x + rect.size.w;
     let bottom = rect.loc.y + rect.size.h;
-    match grip {
-        RegionGrip::Move => Rectangle::new((left + dx, top + dy).into(), (right - left, bottom - top).into()),
-        RegionGrip::NorthWest => Rectangle::new(
-            ((left + dx).min(right - MIN), (top + dy).min(bottom - MIN)).into(),
-            (
-                right - (left + dx).min(right - MIN),
-                bottom - (top + dy).min(bottom - MIN),
-            )
-                .into(),
-        ),
-        RegionGrip::NorthEast => Rectangle::new(
-            (left, (top + dy).min(bottom - MIN)).into(),
-            (
-                (right + dx).max(left + MIN) - left,
-                bottom - (top + dy).min(bottom - MIN),
-            )
-                .into(),
-        ),
-        RegionGrip::SouthWest => Rectangle::new(
-            ((left + dx).min(right - MIN), top).into(),
-            (
-                right - (left + dx).min(right - MIN),
-                (bottom + dy).max(top + MIN) - top,
-            )
-                .into(),
-        ),
-        RegionGrip::SouthEast => Rectangle::new(
-            (left, top).into(),
-            (
-                (right + dx).max(left + MIN) - left,
-                (bottom + dy).max(top + MIN) - top,
-            )
-                .into(),
-        ),
+    if grip == RegionGrip::Move {
+        return Rectangle::new((left + dx, top + dy).into(), rect.size);
     }
+    let (moves_left, moves_top, moves_right, moves_bottom) = grip.edges();
+    let new_left = if moves_left {
+        (left + dx).min(right - MIN)
+    } else {
+        left
+    };
+    let new_top = if moves_top {
+        (top + dy).min(bottom - MIN)
+    } else {
+        top
+    };
+    let new_right = if moves_right {
+        (right + dx).max(left + MIN)
+    } else {
+        right
+    };
+    let new_bottom = if moves_bottom {
+        (bottom + dy).max(top + MIN)
+    } else {
+        bottom
+    };
+    Rectangle::new(
+        (new_left, new_top).into(),
+        (new_right - new_left, new_bottom - new_top).into(),
+    )
 }
 
 /// Découpe `(x, y, largeur, hauteur)` dans une image RVBA, de haut en bas et opaque (la
@@ -168,18 +199,23 @@ pub fn crop(
 
 /// Dossier Images de l'utilisateur (`XDG_PICTURES_DIR`, sinon `~/Images`).
 pub fn pictures_dir() -> PathBuf {
+    user_dir("XDG_PICTURES_DIR", "Images")
+}
+
+/// Dossier utilisateur `key` de `user-dirs.dirs` (`XDG_VIDEOS_DIR`…), sinon `~/fallback`.
+pub fn user_dir(key: &str, fallback: &str) -> PathBuf {
     let home = std::env::var_os("HOME").map_or_else(|| PathBuf::from("/tmp"), PathBuf::from);
     let config = std::env::var_os("XDG_CONFIG_HOME").map_or_else(|| home.join(".config"), PathBuf::from);
     std::fs::read_to_string(config.join("user-dirs.dirs"))
         .ok()
-        .and_then(|text| parse_pictures_dir(&text, &home))
-        .unwrap_or_else(|| home.join("Images"))
+        .and_then(|text| parse_user_dir(&text, key, &home))
+        .unwrap_or_else(|| home.join(fallback))
 }
 
-fn parse_pictures_dir(text: &str, home: &Path) -> Option<PathBuf> {
+fn parse_user_dir(text: &str, key: &str, home: &Path) -> Option<PathBuf> {
     let value = text
         .lines()
-        .find_map(|line| line.trim().strip_prefix("XDG_PICTURES_DIR="))?
+        .find_map(|line| line.trim().strip_prefix(key)?.strip_prefix('='))?
         .trim()
         .trim_matches('"');
     match value.strip_prefix("$HOME") {
@@ -300,14 +336,21 @@ mod tests {
     fn dossier_images() {
         let home = Path::new("/home/moi");
         assert_eq!(
-            parse_pictures_dir("# x\nXDG_PICTURES_DIR=\"$HOME/Photos\"\n", home),
+            parse_user_dir(
+                "# x\nXDG_PICTURES_DIR=\"$HOME/Photos\"\n",
+                "XDG_PICTURES_DIR",
+                home
+            ),
             Some(PathBuf::from("/home/moi/Photos"))
         );
         assert_eq!(
-            parse_pictures_dir("XDG_PICTURES_DIR=\"/data/img\"", home),
+            parse_user_dir("XDG_PICTURES_DIR=\"/data/img\"", "XDG_PICTURES_DIR", home),
             Some(PathBuf::from("/data/img"))
         );
-        assert_eq!(parse_pictures_dir("XDG_MUSIC_DIR=\"$HOME/M\"", home), None);
+        assert_eq!(
+            parse_user_dir("XDG_MUSIC_DIR=\"$HOME/M\"", "XDG_PICTURES_DIR", home),
+            None
+        );
     }
 
     #[test]
@@ -343,8 +386,29 @@ mod tests {
             region_grip(rect, point(300.0, 150.0)),
             Some(RegionGrip::SouthEast)
         );
+        // Un coin s'attrape sans viser au pixel près.
+        assert_eq!(region_grip(rect, point(114.0, 64.0)), Some(RegionGrip::NorthWest));
+        // Les bords redimensionnent dans un seul sens, de part et d'autre du trait.
+        assert_eq!(region_grip(rect, point(200.0, 44.0)), Some(RegionGrip::North));
+        assert_eq!(region_grip(rect, point(200.0, 156.0)), Some(RegionGrip::South));
+        assert_eq!(region_grip(rect, point(94.0, 100.0)), Some(RegionGrip::West));
+        assert_eq!(region_grip(rect, point(306.0, 100.0)), Some(RegionGrip::East));
         assert_eq!(region_grip(rect, point(200.0, 100.0)), Some(RegionGrip::Move));
         assert_eq!(region_grip(rect, point(400.0, 200.0)), None);
+        let start = point(300.0, 100.0);
+        assert_eq!(
+            adjust_region(rect, RegionGrip::East, start, point(340.0, 130.0)),
+            Rectangle::new((100, 50).into(), (240, 100).into())
+        );
+        // Plusieurs mouvements : chacun repart de la zone d'origine, le bord suit la souris
+        // sans emballement (40 px de plus, pas 10 + 20 + 30 + 40).
+        let mut adjust = RegionAdjust::new(rect);
+        adjust.grip = Some((RegionGrip::East, start, rect));
+        for x in [310.0, 320.0, 330.0, 340.0] {
+            let (grip, from, origin) = adjust.grip.unwrap();
+            adjust.rect = adjust_region(origin, grip, from, point(x, 100.0));
+        }
+        assert_eq!(adjust.rect.size.w, 240);
     }
 
     #[test]

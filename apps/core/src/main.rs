@@ -6,6 +6,7 @@ mod clock;
 mod details;
 mod editor;
 mod files;
+mod island;
 mod markdown;
 mod monitor;
 mod music;
@@ -110,7 +111,7 @@ impl AppKind {
             Self::Viewer => ([1180.0, 760.0], [640.0, 440.0]),
             Self::PdfViewer => ([1180.0, 760.0], [640.0, 440.0]),
             Self::Music => ([1240.0, 800.0], [760.0, 520.0]),
-            Self::Video => ([1180.0, 760.0], [640.0, 420.0]),
+            Self::Video => ([1100.0, 660.0], [640.0, 400.0]),
         }
     }
 }
@@ -228,6 +229,13 @@ impl FerriteApp {
         let music = (kind == AppKind::Music).then(|| MusicState::new(initial_file.clone()));
         let video = (kind == AppKind::Video)
             .then(|| video::VideoState::new(initial_file.clone(), context.egui_ctx.clone()));
+        // `ferrite-apps clock minuteur` : l'Horloge ouvre directement cet onglet.
+        let clock = ClockState::with_tab(
+            initial_file
+                .as_deref()
+                .filter(|_| kind == AppKind::Clock)
+                .and_then(|path| path.to_str()),
+        );
         let mut files = (kind == AppKind::Files).then(FilesState::default);
         let mut settings = (kind == AppKind::Settings).then(SettingsState::default);
         if let Some(path) = initial_file {
@@ -247,7 +255,7 @@ impl FerriteApp {
             files,
             editor,
             calculator: CalculatorState::default(),
-            clock: ClockState::default(),
+            clock,
             settings,
             monitor: (kind == AppKind::Monitor).then(MonitorState::default),
             terminal: (kind == AppKind::Terminal).then(|| TerminalState::new(&context.egui_ctx, launch)),

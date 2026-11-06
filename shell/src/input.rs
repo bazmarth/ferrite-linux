@@ -159,10 +159,12 @@ pub(crate) enum Action {
     ScreenshotFull,
     /// Maj+Impr. écran : zone choisie à la souris.
     ScreenshotRegion,
-    /// Zone à capturer en cours d'ajustement : Entrée valide la prise.
-    ConfirmRegionCapture,
+    /// Barre de capture ouverte : Entrée ou Espace déclenche la prise.
+    CaptureShoot,
     /// Super+Échap : dialogue d'arrêt ; dans le dialogue, Entrée et ← →.
     PowerDialog,
+    /// Bouton d'alimentation physique.
+    PowerButton,
     PowerConfirm,
     PowerStep(i32),
     /// Touche de fonction : son, micro, luminosité, mode avion, calculatrice…
@@ -382,6 +384,10 @@ impl Ferrite {
                 if state.screen_fade.is_some() {
                     return FilterResult::Intercept(Action::LockIgnore);
                 }
+                // Bouton d'alimentation physique : veille ou dialogue selon Paramètres → Énergie.
+                if pressed && sym == Keysym::XF86_PowerOff {
+                    return FilterResult::Intercept(Action::PowerButton);
+                }
                 // Touches de fonction : réglages même verrouillé, applications sinon.
                 if pressed
                     && let Some(key) = crate::desktop::function_keys::FunctionKey::from_keysym(sym)
@@ -401,15 +407,13 @@ impl Ferrite {
                         _ => {}
                     }
                 }
-                // Zone à capturer en cours d'ajustement : Entrée valide, Échap annule.
-                if pressed && state.region_adjust.is_some() {
-                    match sym {
-                        Keysym::Return | Keysym::KP_Enter => {
-                            return FilterResult::Intercept(Action::ConfirmRegionCapture);
-                        }
-                        Keysym::Escape => return FilterResult::Intercept(Action::CloseOverlay),
-                        _ => {}
-                    }
+                // Barre de capture : Entrée ou Espace capture, Échap ferme, le reste est gardé.
+                if pressed && state.popover == Some(crate::desktop::panels::Popover::Screenshot) {
+                    return FilterResult::Intercept(match sym {
+                        Keysym::Return | Keysym::KP_Enter | Keysym::space => Action::CaptureShoot,
+                        Keysym::Escape => Action::CloseOverlay,
+                        _ => Action::LockIgnore,
+                    });
                 }
                 // Verrouillé : tout reste ici, sauf le changement de terminal virtuel.
                 if state.lock.is_some() {
@@ -499,10 +503,6 @@ impl Ferrite {
                 // Touche de capture d'une zone (Lenovo) : comme Maj+Impr. écran.
                 if pressed && sym == Keysym::XF86_SelectiveScreenshot {
                     return FilterResult::Intercept(Action::ScreenshotRegion);
-                }
-                if pressed && sym == Keysym::Escape && (state.region_select.is_some() || state.window_select)
-                {
-                    return FilterResult::Intercept(Action::CloseOverlay);
                 }
                 if pressed
                     && sym == Keysym::Escape
@@ -648,6 +648,7 @@ impl Ferrite {
                 }
             }
             Some(Action::CloseOverlay) => {
+                self.close_capture();
                 self.popover = None;
                 self.pending_power = None;
                 self.region_select = None;
@@ -817,27 +818,16 @@ impl Ferrite {
                 self.pending_power = None;
                 self.handle_desktop_action(DesktopAction::TogglePopover(Popover::Notifications));
             }
-            Some(Action::ScreenshotFull) => {
-                self.region_select = None;
-                self.region_adjust = None;
-                self.window_select = false;
-                self.window_select_hover = None;
-                self.popover = Some(Popover::Screenshot);
+            // Pendant un enregistrement, la touche de capture l'arrête.
+            Some(Action::ScreenshotFull | Action::ScreenshotRegion) if self.recording.is_some() => {
+                self.stop_recording();
             }
-            Some(Action::ScreenshotRegion) => {
-                self.popover = None;
-                self.region_adjust = None;
-                self.window_select = false;
-                self.window_select_hover = None;
-                self.region_select = Some(crate::render::capture::RegionSelect::default());
-            }
-            Some(Action::ConfirmRegionCapture) => {
-                if let Some(adjust) = self.region_adjust.take() {
-                    self.schedule_screenshot(Some(adjust.rect));
-                }
-            }
+            Some(Action::ScreenshotFull) => self.open_capture(self.screenshot_mode),
+            Some(Action::ScreenshotRegion) => self.open_capture(crate::render::capture::Mode::Area),
+            Some(Action::CaptureShoot) => self.capture_shoot(),
             Some(Action::Function(key)) => self.on_function_key(key),
             Some(Action::PowerDialog) => self.open_power_dialog(crate::state::PowerAction::Sleep),
+            Some(Action::PowerButton) => self.handle_power_button(),
             Some(Action::PowerConfirm) => {
                 if let Some(power) = self.pending_power {
                     self.handle_desktop_action(DesktopAction::ConfirmPower(power));
@@ -1037,14 +1027,10 @@ impl Ferrite {
         self.drag_widget(location);
         self.dock_drag_motion(location);
         self.file_drag_motion(location);
-        if self.window_select {
-            self.window_select_hover = self.window_under(location);
-            self.request_redraw();
-        }
         if let Some(adjust) = self.region_adjust.as_mut()
-            && let Some((grip, start)) = adjust.grip
+            && let Some((grip, start, origin)) = adjust.grip
         {
-            adjust.rect = crate::render::capture::adjust_region(adjust.rect, grip, start, location);
+            adjust.rect = crate::render::capture::adjust_region(origin, grip, start, location);
             self.request_redraw();
         }
         let under = if self.slider_drag.is_some() {
@@ -1137,85 +1123,8 @@ impl Ferrite {
             self.save_dashboard();
             return;
         }
-        if self.region_adjust.is_some() {
-            if button.state == ButtonState::Pressed && button.button == BTN_LEFT {
-                let rect = self.region_adjust.map(|adjust| adjust.rect);
-                let on_capture_button = rect.is_some_and(|rect| {
-                    self.space
-                        .outputs()
-                        .next()
-                        .and_then(|output| self.space.output_geometry(output))
-                        .is_some_and(|output| {
-                            panels::region_capture_button_at(
-                                output,
-                                location,
-                                (rect.loc.x, rect.loc.y, rect.size.w, rect.size.h),
-                            )
-                        })
-                });
-                if on_capture_button {
-                    if let Some(rect) = rect {
-                        self.region_adjust = None;
-                        self.schedule_screenshot(Some(rect));
-                    }
-                } else if let Some(adjust) = self.region_adjust.as_mut() {
-                    let grip = crate::render::capture::region_grip(adjust.rect, location);
-                    adjust.grip = grip.map(|grip| (grip, location));
-                }
-            } else if button.state == ButtonState::Released {
-                if let Some(adjust) = self.region_adjust.as_mut() {
-                    adjust.grip = None;
-                }
-            }
-            return;
-        }
-        if self.window_select {
-            match (button.button, button.state) {
-                (BTN_LEFT, ButtonState::Released) => {
-                    self.window_select = false;
-                    let hovered = self.window_select_hover.take();
-                    let region = hovered.and_then(|window| {
-                        let output = self
-                            .space
-                            .outputs()
-                            .next()
-                            .and_then(|output| self.space.output_geometry(output))?;
-                        let rect = self.window_frame(&window)?;
-                        Some(smithay::utils::Rectangle::new(
-                            (rect.loc.x - output.loc.x, rect.loc.y - output.loc.y).into(),
-                            rect.size,
-                        ))
-                    });
-                    match region {
-                        Some(region) => self.schedule_screenshot(Some(region)),
-                        None => self.system_error = Some("Aucune fenêtre à cet endroit".to_owned()),
-                    }
-                }
-                (BTN_RIGHT, ButtonState::Pressed) => {
-                    self.window_select = false;
-                    self.window_select_hover = None;
-                }
-                _ => {}
-            }
-            return;
-        }
-        if let Some(select) = self.region_select.as_mut() {
-            match (button.button, button.state) {
-                (BTN_LEFT, ButtonState::Pressed) => select.start = Some(location),
-                (BTN_LEFT, ButtonState::Released) => {
-                    let start = select.start;
-                    self.region_select = None;
-                    if let Some(region) = start
-                        .map(|start| crate::render::capture::region_between(start, location))
-                        .filter(|region| region.size.w >= 4 && region.size.h >= 4)
-                    {
-                        self.region_adjust = Some(crate::render::capture::RegionAdjust::new(region));
-                        self.request_redraw();
-                    }
-                }
-                (_, ButtonState::Pressed) => self.region_select = None,
-                _ => {}
-            }
+        if self.popover == Some(Popover::Screenshot) {
+            self.capture_click(button.button, button.state, location);
             return;
         }
 
@@ -1433,31 +1342,6 @@ impl Ferrite {
                     self.place_clipboard_near_pointer();
                 }
             }
-            DesktopAction::CaptureMode(mode) => self.screenshot_mode = mode,
-            DesktopAction::ToggleCaptureSave => self.screenshot_save = !self.screenshot_save,
-            DesktopAction::ToggleCaptureClipboard => {
-                self.screenshot_clipboard = !self.screenshot_clipboard;
-            }
-            DesktopAction::ToggleCaptureCursor => self.screenshot_cursor = !self.screenshot_cursor,
-            DesktopAction::CycleCaptureDelay => self.cycle_capture_delay(),
-            DesktopAction::CaptureNow => {
-                self.popover = None;
-                match self.screenshot_mode {
-                    crate::render::capture::Mode::Screen => {
-                        self.schedule_screenshot(None);
-                    }
-                    crate::render::capture::Mode::Window => {
-                        self.window_select = true;
-                        self.window_select_hover = self
-                            .pointer_location()
-                            .and_then(|location| self.window_under(location));
-                        self.request_redraw();
-                    }
-                    crate::render::capture::Mode::Area => {
-                        self.region_select = Some(crate::render::capture::RegionSelect::default());
-                    }
-                }
-            }
             DesktopAction::ClipboardDragStart(offset_x, offset_y) => {
                 self.clipboard_drag_offset = Some((offset_x, offset_y));
             }
@@ -1619,6 +1503,8 @@ impl Ferrite {
                 }
             }
             DesktopAction::ClosePopover => self.popover = None,
+            DesktopAction::StopRecording => self.stop_recording(),
+            DesktopAction::Island(hit) => self.island_press(hit),
             DesktopAction::DockMenu(index) => {
                 if let Some((key, actions, _)) = self.dock_menu.clone()
                     && let Some(action) = actions.get(index)
@@ -1772,6 +1658,225 @@ impl Ferrite {
         if let Err(error) = inserted {
             tracing::warn!(%error, "délai de capture indisponible ; capture immédiate");
             self.screenshot_request = Some(request);
+        }
+    }
+
+    /// Ouvre l'écran de capture dans le mode `mode`.
+    pub(crate) fn open_capture(&mut self, mode: crate::render::capture::Mode) {
+        self.pending_power = None;
+        self.close_overview();
+        self.popover = Some(Popover::Screenshot);
+        self.set_capture_mode(mode);
+        self.request_redraw();
+    }
+
+    /// Change de mode : la zone est retrouvée telle qu'on l'a laissée, et la fenêtre
+    /// proposée est celle sous le pointeur, sinon celle du dessus.
+    fn set_capture_mode(&mut self, mode: crate::render::capture::Mode) {
+        use crate::render::capture::{Mode, RegionAdjust};
+        let mode = if mode == Mode::Window && self.space.elements().next().is_none() {
+            Mode::Screen
+        } else {
+            mode
+        };
+        self.keep_capture_area();
+        self.screenshot_mode = mode;
+        self.region_select = None;
+        self.region_adjust = None;
+        self.window_select = false;
+        self.window_select_hover = None;
+        match mode {
+            Mode::Screen => {}
+            Mode::Area => {
+                let area = self.screenshot_area.or_else(|| {
+                    let output = self.capture_output()?;
+                    let (w, h) = (output.size.w / 2, output.size.h / 2);
+                    Some(smithay::utils::Rectangle::new(
+                        ((output.size.w - w) / 2, (output.size.h - h) / 2 - 40).into(),
+                        (w, h).into(),
+                    ))
+                });
+                self.region_adjust = area.map(RegionAdjust::new);
+            }
+            Mode::Window => {
+                self.window_select = true;
+                self.window_select_hover = self
+                    .pointer_location()
+                    .and_then(|location| self.window_under(location))
+                    .or_else(|| self.space.elements().last().cloned());
+            }
+        }
+    }
+
+    /// Ferme l'écran de capture en gardant la zone pour la prochaine fois.
+    fn close_capture(&mut self) {
+        self.keep_capture_area();
+        self.region_select = None;
+        self.region_adjust = None;
+        self.window_select = false;
+        self.window_select_hover = None;
+        if self.popover == Some(Popover::Screenshot) {
+            self.popover = None;
+        }
+    }
+
+    fn keep_capture_area(&mut self) {
+        if let Some(adjust) = self.region_adjust {
+            self.screenshot_area = Some(adjust.rect);
+        }
+    }
+
+    fn capture_output(&self) -> Option<smithay::utils::Rectangle<i32, smithay::utils::Logical>> {
+        let output = self.space.outputs().next()?;
+        self.space.output_geometry(output)
+    }
+
+    /// Déclencheur : ferme l'écran de capture, puis prend l'image choisie.
+    fn capture_shoot(&mut self) {
+        use crate::render::capture::Mode;
+        let region = match self.screenshot_mode {
+            Mode::Screen => None,
+            Mode::Area => match self.region_adjust {
+                Some(adjust) => Some(adjust.rect),
+                None => return,
+            },
+            Mode::Window => {
+                let frame = self
+                    .window_select_hover
+                    .as_ref()
+                    .and_then(|window| self.window_frame(window))
+                    .zip(self.capture_output());
+                match frame {
+                    Some((rect, output)) => Some(smithay::utils::Rectangle::new(
+                        (rect.loc.x - output.loc.x, rect.loc.y - output.loc.y).into(),
+                        rect.size,
+                    )),
+                    // Aucune fenêtre choisie : l'écran de capture reste ouvert.
+                    None => return,
+                }
+            }
+        };
+        self.close_capture();
+        if self.screenshot_video {
+            self.start_recording(region);
+        } else {
+            self.schedule_screenshot(region);
+        }
+        self.request_redraw();
+    }
+
+    /// Lance l'enregistrement de `region` (relative à l'écran), ou de tout l'écran, et une
+    /// minuterie qui fait avancer la durée affichée et repère un arrêt inattendu.
+    fn start_recording(&mut self, region: Option<smithay::utils::Rectangle<i32, smithay::utils::Logical>>) {
+        if self.recording.is_some() {
+            return;
+        }
+        let origin = self.capture_output().map(|output| output.loc).unwrap_or_default();
+        let region = region.map(|region| smithay::utils::Rectangle::new(region.loc + origin, region.size));
+        match crate::desktop::recording::Recording::start(region, &self.client_environment()) {
+            Ok(recording) => self.recording = Some(recording),
+            Err(error) => {
+                tracing::warn!(%error, "enregistrement vidéo impossible");
+                self.notify_locally("Enregistrement impossible", &error);
+                return;
+            }
+        }
+        let timer = Timer::from_duration(Duration::from_secs(1));
+        let inserted = self.loop_handle.insert_source(timer, |_, _, state| {
+            let Some(recording) = state.recording.as_mut() else {
+                return TimeoutAction::Drop;
+            };
+            if recording.ended() {
+                state.stop_recording();
+                return TimeoutAction::Drop;
+            }
+            state.request_redraw();
+            TimeoutAction::ToDuration(Duration::from_secs(1))
+        });
+        if let Err(error) = inserted {
+            tracing::warn!(%error, "durée d'enregistrement non actualisée");
+        }
+    }
+
+    pub(crate) fn stop_recording(&mut self) {
+        if let Some(recording) = self.recording.take() {
+            let events = self.notification_link.as_ref().map(|link| link.events.clone());
+            recording.stop(events);
+            self.request_redraw();
+        }
+    }
+
+    /// Notification du bureau lui-même (pas d'une application).
+    fn notify_locally(&self, summary: &str, body: &str) {
+        use crate::desktop::notifications::{Event, local_notice};
+        if let Some(link) = self.notification_link.as_ref() {
+            let _ = link.events.send(Event::Notify(local_notice(summary, body)));
+        }
+    }
+
+    /// Clic pendant la capture : barre d'outils d'abord, puis la zone ou la fenêtre.
+    fn capture_click(
+        &mut self,
+        button: u32,
+        state: ButtonState,
+        location: Point<f64, smithay::utils::Logical>,
+    ) {
+        use crate::desktop::panels::CaptureHit;
+        use crate::render::capture::{Mode, RegionAdjust, RegionSelect};
+        self.request_redraw();
+        if state == ButtonState::Released {
+            if let Some(adjust) = self.region_adjust.as_mut() {
+                adjust.grip = None;
+            }
+            if let Some(start) = self.region_select.take().and_then(|select| select.start) {
+                let region = crate::render::capture::region_between(start, location);
+                if region.size.w >= 4 && region.size.h >= 4 {
+                    self.screenshot_area = Some(region);
+                }
+                self.region_adjust = self.screenshot_area.map(RegionAdjust::new);
+            }
+            return;
+        }
+        if button != BTN_LEFT {
+            return;
+        }
+        let windows = self.space.elements().next().is_some();
+        let hit = self
+            .capture_output()
+            .and_then(|output| panels::capture_toolbar_at(output, location, windows));
+        match hit {
+            Some(CaptureHit::Mode(mode)) => self.set_capture_mode(mode),
+            Some(CaptureHit::Shutter) => self.capture_shoot(),
+            Some(CaptureHit::Delay) => self.cycle_capture_delay(),
+            Some(CaptureHit::Pointer) => self.screenshot_cursor = !self.screenshot_cursor,
+            Some(CaptureHit::Close) => self.close_capture(),
+            Some(CaptureHit::Photo) => self.screenshot_video = false,
+            Some(CaptureHit::Video) => self.screenshot_video = true,
+            Some(CaptureHit::Toolbar) => {}
+            None => match self.screenshot_mode {
+                Mode::Screen => {}
+                Mode::Window => {
+                    if let Some(window) = self.window_under(location) {
+                        self.window_select_hover = Some(window);
+                    }
+                }
+                Mode::Area => {
+                    let grip = self
+                        .region_adjust
+                        .and_then(|adjust| crate::render::capture::region_grip(adjust.rect, location));
+                    match (grip, self.region_adjust.as_mut()) {
+                        (Some(grip), Some(adjust)) => adjust.grip = Some((grip, location, adjust.rect)),
+                        _ => {
+                            // Hors de la zone : on en trace une nouvelle.
+                            self.keep_capture_area();
+                            self.region_adjust = None;
+                            self.region_select = Some(RegionSelect {
+                                start: Some(location),
+                            });
+                        }
+                    }
+                }
+            },
         }
     }
 

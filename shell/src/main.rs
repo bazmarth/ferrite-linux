@@ -71,11 +71,22 @@ fn run(options: Options) -> Result<u8, Box<dyn std::error::Error>> {
     }
     state.demo_switcher = options.demo_switcher;
     state.demo_screenshot = options.demo_screenshot;
-    if options.demo_capture {
-        state.popover = Some(desktop::panels::Popover::Screenshot);
+    // Après la création de l'écran : la zone proposée en dépend.
+    state.screenshot_video = options.demo_video;
+    if options.demo_island {
+        state.island_open_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(3600));
     }
-    if options.demo_region {
-        state.region_select = Some(render::capture::RegionSelect::default());
+    let demo_capture = if options.demo_region || options.demo_video {
+        Some(render::capture::Mode::Area)
+    } else if options.demo_capture {
+        Some(render::capture::Mode::Screen)
+    } else {
+        None
+    };
+    if let Some(mode) = demo_capture {
+        event_loop
+            .handle()
+            .insert_idle(move |state| state.open_capture(mode));
     }
     state.genie_demo = options.genie_demo.map(|fraction| (fraction, None));
     match system::start(&event_loop.handle()) {

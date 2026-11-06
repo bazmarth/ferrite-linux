@@ -377,6 +377,15 @@ pub(crate) fn font_definitions() -> FontDefinitions {
     fonts
         .families
         .insert(FontFamily::Name("mono-bold".into()), mono_bold);
+    fonts.font_data.insert(
+        "ferrite-inter-light".into(),
+        Arc::new(FontData::from_static(include_bytes!(
+            "../../../assets/fonts/InterDisplay-Light.ttf"
+        ))),
+    );
+    let mut light = vec!["ferrite-inter-light".to_owned()];
+    light.extend(fonts.families[&FontFamily::Proportional].iter().cloned());
+    fonts.families.insert(FontFamily::Name("light".into()), light);
     let mut strong = vec!["ferrite-inter-semibold".to_owned()];
     strong.extend(fonts.families[&FontFamily::Proportional].iter().cloned());
     fonts.families.insert(FontFamily::Name("strong".into()), strong);
@@ -447,6 +456,11 @@ fn apply_theme(context: &egui::Context) {
 /// Police à chasse fixe en gras, pour le terminal.
 pub fn mono_bold_family() -> FontFamily {
     FontFamily::Name("mono-bold".into())
+}
+
+/// Inter Display Light : grands chiffres fins (Horloge).
+pub fn light_family() -> FontFamily {
+    FontFamily::Name("light".into())
 }
 
 pub fn strong_family() -> FontFamily {
@@ -639,14 +653,14 @@ fn window_button(ui: &mut egui::Ui, center: egui::Pos2, close: bool) -> egui::Re
 }
 
 /// Bouton « fermer », à gauche de la barre de la fenêtre.
-fn close_button(ui: &mut egui::Ui, center: egui::Pos2) {
+pub fn close_button(ui: &mut egui::Ui, center: egui::Pos2) {
     if window_button(ui, center, true).clicked() {
         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
     }
 }
 
 /// Bouton « agrandir », à droite de la barre de la fenêtre.
-fn zoom_button(ui: &mut egui::Ui, center: egui::Pos2) {
+pub fn zoom_button(ui: &mut egui::Ui, center: egui::Pos2) {
     if window_button(ui, center, false).clicked() {
         let maximized = ui.input(|input| input.viewport().maximized.unwrap_or(false));
         ui.ctx()

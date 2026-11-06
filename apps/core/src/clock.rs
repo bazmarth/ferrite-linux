@@ -2,7 +2,7 @@
 
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use eframe::egui::{self, CornerRadius, FontId, Frame, Margin, RichText};
+use eframe::egui::{self, Color32, CornerRadius, FontId, Frame, Margin, RichText};
 
 use crate::style;
 
@@ -211,6 +211,8 @@ pub struct ClockState {
     offset_checked: Option<Instant>,
     timer: Timer,
     stopwatch: Stopwatch,
+    /// Îlot du haut de l'écran, ouvert au premier dessin.
+    island: Option<crate::island::IslandLink>,
 }
 
 impl Default for ClockState {
@@ -221,11 +223,25 @@ impl Default for ClockState {
             offset_checked: None,
             timer: Timer::default(),
             stopwatch: Stopwatch::default(),
+            island: None,
         }
     }
 }
 
 impl ClockState {
+    /// Horloge ouverte sur l'onglet nommé (« minuteur », « chronometre »), sinon l'heure.
+    pub fn with_tab(name: Option<&str>) -> Self {
+        let tab = match name.map(str::to_lowercase).as_deref() {
+            Some("minuteur") => Tab::Minuteur,
+            Some("chronometre" | "chronomètre") => Tab::Chronomètre,
+            _ => Tab::Horloge,
+        };
+        Self {
+            tab,
+            ..Self::default()
+        }
+    }
+
     /// Rafraîchit le décalage local toutes les minutes (l'heure d'été peut basculer).
     fn refresh_offset(&mut self) {
         if self
@@ -241,292 +257,624 @@ impl ClockState {
         self.offset_checked = Some(Instant::now());
     }
 
-    /// Intervalle au bout duquel redemander un dessin, selon ce qui doit avancer.
+    /// Prochain dessin utile : la seconde suivante pour l'heure et le minuteur, un
+    /// centième affiché sur deux pour le chronomètre, rien quand tout est à l'arrêt.
     fn refresh_interval(&self) -> Option<Duration> {
-        if self.stopwatch.running {
-            Some(Duration::from_millis(40))
-        } else if self.timer.phase == Phase::Running || self.tab == Tab::Horloge {
-            Some(Duration::from_millis(200))
-        } else {
-            None
+        if self.stopwatch.running && self.tab == Tab::Chronomètre {
+            return Some(Duration::from_millis(50));
         }
+        let to_next_second = || {
+            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+            Duration::from_millis(1000 - u64::from(now.subsec_millis()) + 5)
+        };
+        if self.timer.phase == Phase::Running {
+            return Some(Duration::from_millis(250));
+        }
+        if self.tab == Tab::Horloge {
+            return Some(to_next_second());
+        }
+        // Chronomètre en marche sur un autre onglet : pas besoin de dessiner.
+        None
     }
 
     pub fn update(&mut self, ui: &mut egui::Ui) {
         self.refresh_offset();
+        self.island_commands(ui.ctx());
         self.timer.advance();
         if let Some(interval) = self.refresh_interval() {
             ui.ctx().request_repaint_after(interval);
         }
 
-        style::header(ui, |_| {});
+        style::header(ui, |ui| self.tabs(ui));
         egui::CentralPanel::no_frame()
             .frame(
                 Frame::new()
                     .fill(style::background())
-                    .inner_margin(Margin::same(18)),
+                    .inner_margin(Margin::symmetric(22, 18)),
             )
-            .show(ui, |ui| {
-                self.tabs(ui);
-                ui.add_space(18.0);
-                match self.tab {
-                    Tab::Horloge => self.clock(ui),
-                    Tab::Minuteur => self.timer(ui),
-                    Tab::Chronomètre => self.stopwatch(ui),
-                }
+            .show(ui, |ui| match self.tab {
+                Tab::Horloge => self.clock(ui),
+                Tab::Minuteur => self.timer(ui),
+                Tab::Chronomètre => self.stopwatch(ui),
             });
+        self.report_to_island();
     }
 
-    fn tabs(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            for (tab, label) in [
-                (Tab::Horloge, "Horloge"),
-                (Tab::Minuteur, "Minuteur"),
-                (Tab::Chronomètre, "Chronomètre"),
-            ] {
-                let selected = self.tab == tab;
-                let ink = if selected {
-                    style::accent_text()
-                } else {
-                    style::primary_text()
-                };
-                let fill = if selected {
-                    style::accent()
-                } else {
-                    style::control_background()
-                };
-                let button = egui::Button::new(RichText::new(label).size(14.0).color(ink))
-                    .fill(fill)
-                    .corner_radius(CornerRadius::same(10));
-                if ui.add(button).clicked() {
-                    self.tab = tab;
-                }
+    /// Boutons touchés dans l'îlot depuis le dernier dessin.
+    fn island_commands(&mut self, ctx: &egui::Context) {
+        let island = self
+            .island
+            .get_or_insert_with(|| crate::island::IslandLink::start(ctx.clone()));
+        let commands: Vec<_> = island.commands.try_iter().collect();
+        for command in commands {
+            match command {
+                crate::island::Command::Pause => self.timer.pause(),
+                crate::island::Command::Resume => self.timer.resume(),
+                crate::island::Command::Stop if self.timer.phase == Phase::Ended => self.timer.stop_alert(),
+                crate::island::Command::Stop => self.timer.reset(),
             }
-        });
+        }
+    }
+
+    /// Annonce le minuteur à l'îlot quand il change de phase.
+    fn report_to_island(&mut self) {
+        let Some(island) = self.island.as_mut() else {
+            return;
+        };
+        let phase = match self.timer.phase {
+            Phase::Idle => "arret",
+            Phase::Running => "marche",
+            Phase::Paused => "pause",
+            Phase::Ended => "fini",
+        };
+        let millis = |duration: Duration| duration.as_millis().min(u128::from(u64::MAX)) as u64;
+        island.report(phase, millis(self.timer.remaining), millis(self.timer.total()));
+    }
+
+    /// Onglets en segments, au milieu de la barre de la fenêtre.
+    fn tabs(&mut self, ui: &mut egui::Ui) {
+        let tabs = [
+            (Tab::Horloge, "Horloge"),
+            (Tab::Minuteur, "Minuteur"),
+            (Tab::Chronomètre, "Chronomètre"),
+        ];
+        let segment = 104.0;
+        let width = segment * tabs.len() as f32 + 4.0;
+        let bar = ui.max_rect();
+        let track = egui::Rect::from_center_size(
+            egui::pos2(bar.center().x, bar.center().y),
+            egui::vec2(width, 30.0),
+        );
+        ui.painter().rect_filled(track, 8.0, style::control_background());
+        for (index, (tab, label)) in tabs.into_iter().enumerate() {
+            let rect = egui::Rect::from_min_size(
+                track.min + egui::vec2(2.0 + index as f32 * segment, 2.0),
+                egui::vec2(segment, 26.0),
+            );
+            let response = ui.interact(rect, ui.scope_id().with(("onglet", index)), egui::Sense::click());
+            style::segment_background(ui, rect, self.tab == tab, response.hovered());
+            ui.painter().text(
+                rect.center(),
+                egui::Align2::CENTER_CENTER,
+                label,
+                FontId::new(13.0, style::strong_family()),
+                if self.tab == tab {
+                    style::primary_text()
+                } else {
+                    style::text_secondary()
+                },
+            );
+            if response.clicked() {
+                self.tab = tab;
+            }
+        }
     }
 
     fn clock(&mut self, ui: &mut egui::Ui) {
-        let local = unix_seconds() + self.offset;
-        let (year, month, day) = civil_from_days(local.div_euclid(86_400));
+        let now = unix_seconds();
+        let local = now + self.offset;
+        let local_days = local.div_euclid(86_400);
+        let (year, month, day) = civil_from_days(local_days);
         let second_of_day = local.rem_euclid(86_400);
-        let time = format!(
-            "{:02}:{:02}:{:02}",
-            second_of_day / 3600,
-            (second_of_day % 3600) / 60,
-            second_of_day % 60
-        );
         let date = format!(
             "{} {} {} {}",
-            WEEKDAYS[weekday(local.div_euclid(86_400)) as usize],
+            WEEKDAYS[weekday(local_days) as usize],
             day,
             MONTHS[month as usize - 1],
             year
         );
 
-        ui.vertical_centered(|ui| {
-            ui.label(
-                RichText::new(time)
-                    .font(FontId::new(58.0, style::mono_bold_family()))
-                    .color(style::primary_text()),
-            );
-            ui.label(RichText::new(date).size(16.0).color(style::text_secondary()));
-        });
+        // Heure : heures et minutes en grand, secondes plus petites à côté.
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 132.0), egui::Sense::hover());
+        let painter = ui.painter();
+        section_label(
+            painter,
+            rect.left_top(),
+            &format!("Heure locale · UTC{}", format_offset(self.offset)),
+        );
+        let hours_minutes = format!("{:02}:{:02}", second_of_day / 3600, (second_of_day % 3600) / 60);
+        let top = rect.top() + 22.0;
+        let big = tabular_text(
+            painter,
+            egui::pos2(rect.left() - 3.0, top),
+            egui::Align2::LEFT_TOP,
+            &hours_minutes,
+            light_font(76.0),
+            style::primary_text(),
+        );
+        let seconds_height = painter
+            .layout_no_wrap("00".to_owned(), light_font(30.0), style::text_secondary())
+            .size()
+            .y;
+        tabular_text(
+            painter,
+            egui::pos2(big.right() + 8.0, big.bottom() - seconds_height - 12.0),
+            egui::Align2::LEFT_TOP,
+            &format!("{:02}", second_of_day % 60),
+            light_font(30.0),
+            style::text_secondary(),
+        );
+        painter.text(
+            egui::pos2(rect.left(), rect.bottom() - 4.0),
+            egui::Align2::LEFT_BOTTOM,
+            capitalize(&date),
+            FontId::proportional(15.0),
+            style::text_secondary(),
+        );
 
-        ui.add_space(18.0);
-        ui.separator();
-        ui.add_space(10.0);
-
-        let local_days = local.div_euclid(86_400);
-        Frame::new()
-            .fill(style::content_gray())
-            .corner_radius(CornerRadius::same(12))
-            .inner_margin(Margin::same(14))
+        ui.add_space(22.0);
+        let (heading, _) =
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), 18.0), egui::Sense::hover());
+        section_label(ui.painter(), heading.left_top(), "Horloges du monde");
+        ui.add_space(8.0);
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
             .show(ui, |ui| {
-                for (name, offset) in WORLD {
-                    let city = unix_seconds() + offset;
-                    let city_days = city.div_euclid(86_400);
-                    let day_shift = city_days - local_days;
-                    let second_of_day = city.rem_euclid(86_400);
-                    let hour = format!("{:02}:{:02}", second_of_day / 3600, (second_of_day % 3600) / 60);
-                    let detail = match day_shift {
-                        0 => format_offset(offset),
-                        -1 => format!("{} · hier", format_offset(offset)),
-                        1 => format!("{} · demain", format_offset(offset)),
-                        _ => format_offset(offset),
-                    };
-                    ui.horizontal(|ui| {
-                        ui.add_sized(
-                            [140.0, 20.0],
-                            egui::Label::new(RichText::new(name).color(style::primary_text())),
+                card(ui, |ui| {
+                    for (index, (name, offset)) in WORLD.into_iter().enumerate() {
+                        if index > 0 {
+                            hairline(ui);
+                        }
+                        let city = now + offset;
+                        let shift = city.div_euclid(86_400) - local_days;
+                        let hours = (offset - self.offset) as f64 / 3600.0;
+                        let day = match shift {
+                            -1 => "Hier",
+                            1 => "Demain",
+                            _ => "Aujourd’hui",
+                        };
+                        let detail = format!("{day}, {}", format_hours(hours));
+                        let second_of_day = city.rem_euclid(86_400);
+                        let time = format!("{:02}:{:02}", second_of_day / 3600, (second_of_day % 3600) / 60);
+                        let (row, _) = ui.allocate_exact_size(
+                            egui::vec2(ui.available_width(), 50.0),
+                            egui::Sense::hover(),
                         );
-                        ui.add_sized(
-                            [72.0, 26.0],
-                            egui::Label::new(
-                                RichText::new(hour)
-                                    .font(FontId::new(20.0, style::mono_bold_family()))
-                                    .color(style::primary_text()),
-                            ),
+                        let painter = ui.painter();
+                        painter.text(
+                            egui::pos2(row.left(), row.top() + 15.0),
+                            egui::Align2::LEFT_CENTER,
+                            name,
+                            FontId::new(14.0, style::strong_family()),
+                            style::primary_text(),
                         );
-                        ui.label(RichText::new(detail).size(13.0).color(style::text_secondary()));
-                    });
-                    ui.add_space(6.0);
-                }
+                        painter.text(
+                            egui::pos2(row.left(), row.top() + 34.0),
+                            egui::Align2::LEFT_CENTER,
+                            detail,
+                            FontId::proportional(12.0),
+                            style::text_secondary(),
+                        );
+                        painter.text(
+                            egui::pos2(row.right(), row.center().y),
+                            egui::Align2::RIGHT_CENTER,
+                            time,
+                            light_font(28.0),
+                            style::primary_text(),
+                        );
+                    }
+                });
             });
     }
 
     fn timer(&mut self, ui: &mut egui::Ui) {
         let displayed = self.timer.displayed();
+        let ended = self.timer.phase == Phase::Ended;
         let fraction = if self.timer.total().is_zero() {
             0.0
         } else {
-            (displayed.as_secs_f64() / self.timer.total().as_secs_f64()).clamp(0.0, 1.0)
+            (displayed.as_secs_f64() / self.timer.total().as_secs_f64()).clamp(0.0, 1.0) as f32
         };
 
-        ui.vertical_centered(|ui| {
-            let (text, color) = if self.timer.phase == Phase::Ended {
-                ("Temps écoulé".to_owned(), style::error())
+        // Anneau de progression, temps restant au centre.
+        let (area, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 250.0), egui::Sense::hover());
+        let center = area.center();
+        let radius = 108.0;
+        let painter = ui.painter();
+        painter.circle_stroke(
+            center,
+            radius,
+            egui::Stroke::new(8.0, style::control_background()),
+        );
+        let color = if ended { style::error() } else { style::accent() };
+        if self.timer.phase != Phase::Idle {
+            arc(painter, center, radius, fraction, egui::Stroke::new(8.0, color));
+        }
+        let text = if ended {
+            "Temps écoulé".to_owned()
+        } else if self.timer.phase == Phase::Idle {
+            format_hms(self.timer.total().as_secs())
+        } else {
+            format_hms(displayed.as_secs())
+        };
+        tabular_text(
+            painter,
+            center,
+            egui::Align2::CENTER_CENTER,
+            &text,
+            if ended {
+                FontId::new(24.0, style::strong_family())
             } else {
-                (format_hms(displayed.as_secs()), style::primary_text())
-            };
-            ui.label(
-                RichText::new(text)
-                    .font(FontId::new(52.0, style::mono_bold_family()))
-                    .color(color),
+                light_font(46.0)
+            },
+            if ended {
+                style::error()
+            } else {
+                style::primary_text()
+            },
+        );
+        if self.timer.phase == Phase::Paused {
+            painter.text(
+                center + egui::vec2(0.0, 40.0),
+                egui::Align2::CENTER_CENTER,
+                "En pause",
+                FontId::proportional(13.0),
+                style::text_secondary(),
             );
-            ui.add(egui::ProgressBar::new(fraction as f32).desired_width(260.0).fill(
-                if self.timer.phase == Phase::Ended {
-                    style::error()
-                } else {
-                    style::accent()
-                },
-            ));
-        });
+        }
 
-        ui.add_space(18.0);
-
+        ui.add_space(12.0);
         if self.timer.phase == Phase::Idle {
+            // Réglage : trois colonnes, et des durées toutes prêtes.
             ui.horizontal(|ui| {
-                for (label, value, range) in [
-                    ("h", &mut self.timer.hours, 0..=99),
-                    ("min", &mut self.timer.minutes, 0..=59),
-                    ("s", &mut self.timer.seconds, 0..=59),
+                let column = (ui.available_width() - 16.0) / 3.0;
+                for (label, value, max) in [
+                    ("heures", &mut self.timer.hours, 99),
+                    ("minutes", &mut self.timer.minutes, 59),
+                    ("secondes", &mut self.timer.seconds, 59),
                 ] {
-                    ui.label(RichText::new(label).color(style::text_secondary()));
-                    ui.add(egui::DragValue::new(value).range(range).speed(1));
-                    ui.add_space(10.0);
+                    stepper(ui, column, label, value, max);
+                }
+            });
+            ui.add_space(10.0);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                for minutes in [1, 3, 5, 10, 15, 30] {
+                    let chip = egui::Button::new(
+                        RichText::new(format!("{minutes} min"))
+                            .size(13.0)
+                            .color(style::primary_text()),
+                    )
+                    .fill(style::control_background())
+                    .corner_radius(CornerRadius::same(14))
+                    .min_size(egui::vec2(0.0, 28.0));
+                    if ui.add(chip).clicked() {
+                        self.timer.hours = minutes / 60;
+                        self.timer.minutes = minutes % 60;
+                        self.timer.seconds = 0;
+                    }
                 }
             });
         }
 
-        ui.add_space(14.0);
-        ui.horizontal(|ui| {
-            let primary = match self.timer.phase {
-                Phase::Idle => ("Démarrer", !self.timer.total().is_zero()),
-                Phase::Running => ("Pause", true),
-                Phase::Paused => ("Reprendre", true),
-                Phase::Ended => ("Arrêter", true),
-            };
-            let (label, enabled) = primary;
-            let button = egui::Button::new(RichText::new(label).size(15.0).color(style::accent_text()))
-                .fill(style::accent())
-                .corner_radius(CornerRadius::same(10))
-                .min_size(egui::vec2(120.0, 36.0));
-            if ui.add_enabled(enabled, button).clicked() {
-                match self.timer.phase {
-                    Phase::Idle => self.timer.start(),
-                    Phase::Running => self.timer.pause(),
-                    Phase::Paused => self.timer.resume(),
-                    Phase::Ended => self.timer.stop_alert(),
-                }
+        ui.add_space(16.0);
+        let (label, enabled) = match self.timer.phase {
+            Phase::Idle => ("Démarrer", !self.timer.total().is_zero()),
+            Phase::Running => ("Pause", true),
+            Phase::Paused => ("Reprendre", true),
+            Phase::Ended => ("Arrêter", true),
+        };
+        let reset_enabled = self.timer.phase != Phase::Idle;
+        let (secondary, primary) = button_pair(ui, "Réinitialiser", reset_enabled, label, enabled, ended);
+        if secondary {
+            self.timer.reset();
+        }
+        if primary {
+            match self.timer.phase {
+                Phase::Idle => self.timer.start(),
+                Phase::Running => self.timer.pause(),
+                Phase::Paused => self.timer.resume(),
+                Phase::Ended => self.timer.stop_alert(),
             }
-            let reset = egui::Button::new(
-                RichText::new("Réinitialiser")
-                    .size(15.0)
-                    .color(style::primary_text()),
-            )
-            .fill(style::control_background())
-            .corner_radius(CornerRadius::same(10))
-            .min_size(egui::vec2(120.0, 36.0));
-            if ui.add(reset).clicked() {
-                self.timer.reset();
-            }
-        });
+        }
     }
 
     fn stopwatch(&mut self, ui: &mut egui::Ui) {
         let current = self.stopwatch.current();
-        ui.vertical_centered(|ui| {
-            ui.label(
-                RichText::new(format_centis(current))
-                    .font(FontId::new(52.0, style::mono_bold_family()))
-                    .color(style::primary_text()),
-            );
-        });
+        let (area, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 120.0), egui::Sense::hover());
+        tabular_text(
+            ui.painter(),
+            area.center(),
+            egui::Align2::CENTER_CENTER,
+            &format_centis(current),
+            light_font(60.0),
+            style::primary_text(),
+        );
 
-        ui.add_space(18.0);
-        ui.horizontal(|ui| {
-            let (label, running) = if self.stopwatch.running {
-                ("Arrêter", true)
-            } else {
-                ("Démarrer", true)
-            };
-            let start_stop = egui::Button::new(RichText::new(label).size(15.0).color(style::accent_text()))
-                .fill(style::accent())
-                .corner_radius(CornerRadius::same(10))
-                .min_size(egui::vec2(110.0, 36.0));
-            if ui.add(start_stop).clicked() {
-                if self.stopwatch.running {
-                    self.stopwatch.stop();
-                } else {
-                    self.stopwatch.start();
-                }
-            }
-            let lap = egui::Button::new(RichText::new("Tour").size(15.0).color(style::primary_text()))
-                .fill(style::control_background())
-                .corner_radius(CornerRadius::same(10))
-                .min_size(egui::vec2(90.0, 36.0));
-            if ui.add_enabled(running, lap).clicked() {
+        let running = self.stopwatch.running;
+        let started = running || !current.is_zero();
+        let (secondary_label, secondary_enabled) = if running {
+            ("Tour", true)
+        } else {
+            ("Réinitialiser", started)
+        };
+        let primary_label = match (running, started) {
+            (true, _) => "Arrêter",
+            (false, true) => "Reprendre",
+            (false, false) => "Démarrer",
+        };
+        let (secondary, primary) = button_pair(
+            ui,
+            secondary_label,
+            secondary_enabled,
+            primary_label,
+            true,
+            running,
+        );
+        if secondary {
+            if running {
                 self.stopwatch.lap();
-            }
-            let reset = egui::Button::new(
-                RichText::new("Réinitialiser")
-                    .size(15.0)
-                    .color(style::primary_text()),
-            )
-            .fill(style::control_background())
-            .corner_radius(CornerRadius::same(10))
-            .min_size(egui::vec2(110.0, 36.0));
-            if ui.add(reset).clicked() {
+            } else {
                 self.stopwatch.reset();
             }
-        });
+        }
+        if primary {
+            if running {
+                self.stopwatch.stop();
+            } else {
+                self.stopwatch.start();
+            }
+        }
 
-        if !self.stopwatch.laps.is_empty() {
-            ui.add_space(16.0);
-            ui.separator();
-            ui.add_space(8.0);
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, true])
-                .show(ui, |ui| {
-                    for (index, lap) in lap_durations(&self.stopwatch.laps).iter().rev().enumerate() {
-                        let number = self.stopwatch.laps.len() - index;
-                        ui.horizontal(|ui| {
-                            ui.add_sized(
-                                [60.0, 20.0],
-                                egui::Label::new(
-                                    RichText::new(format!("Tour {number}")).color(style::text_secondary()),
-                                ),
-                            );
-                            ui.label(
-                                RichText::new(format_centis(*lap))
-                                    .font(FontId::new(15.0, style::mono_bold_family()))
-                                    .color(style::primary_text()),
-                            );
-                        });
+        if self.stopwatch.laps.is_empty() {
+            return;
+        }
+        ui.add_space(18.0);
+        let (heading, _) =
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), 18.0), egui::Sense::hover());
+        section_label(ui.painter(), heading.left_top(), "Tours");
+        ui.add_space(8.0);
+        let laps = lap_durations(&self.stopwatch.laps);
+        // Au moins trois tours : le plus rapide en vert, le plus lent en rouge.
+        let (fastest, slowest) = if laps.len() >= 3 {
+            (laps.iter().min().copied(), laps.iter().max().copied())
+        } else {
+            (None, None)
+        };
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                card(ui, |ui| {
+                    for (index, lap) in laps.iter().enumerate().rev() {
+                        if index + 1 < laps.len() {
+                            hairline(ui);
+                        }
+                        let color = if Some(*lap) == fastest {
+                            Color32::from_rgb(0x2E, 0xA0, 0x5B)
+                        } else if Some(*lap) == slowest {
+                            style::error()
+                        } else {
+                            style::primary_text()
+                        };
+                        let (row, _) = ui.allocate_exact_size(
+                            egui::vec2(ui.available_width(), 36.0),
+                            egui::Sense::hover(),
+                        );
+                        let painter = ui.painter();
+                        painter.text(
+                            egui::pos2(row.left(), row.center().y),
+                            egui::Align2::LEFT_CENTER,
+                            format!("Tour {}", index + 1),
+                            FontId::proportional(14.0),
+                            color,
+                        );
+                        painter.text(
+                            egui::pos2(row.right(), row.center().y),
+                            egui::Align2::RIGHT_CENTER,
+                            format_centis(*lap),
+                            FontId::monospace(14.0),
+                            color,
+                        );
                     }
                 });
-        }
+            });
     }
+}
+
+/// Écrit `text` en chiffres de largeur égale (comme des chiffres tabulaires) : un « 1 »
+/// prend la place d'un « 0 », et un nombre centré ne bouge plus quand il change.
+/// Renvoie le rectangle occupé.
+fn tabular_text(
+    painter: &egui::Painter,
+    at: egui::Pos2,
+    align: egui::Align2,
+    text: &str,
+    font: FontId,
+    color: egui::Color32,
+) -> egui::Rect {
+    let galley = |text: String| painter.layout_no_wrap(text, font.clone(), color);
+    let cell = ('0'..='9')
+        .map(|digit| galley(digit.to_string()).size().x)
+        .fold(0.0_f32, f32::max);
+    let parts: Vec<_> = text
+        .chars()
+        .map(|character| {
+            let piece = galley(character.to_string());
+            let width = if character.is_ascii_digit() {
+                cell
+            } else {
+                piece.size().x
+            };
+            (piece, width)
+        })
+        .collect();
+    let width: f32 = parts.iter().map(|(_, width)| width).sum();
+    let height = parts
+        .iter()
+        .map(|(piece, _)| piece.size().y)
+        .fold(0.0_f32, f32::max);
+    let rect = align.anchor_size(at, egui::vec2(width, height));
+    let mut x = rect.left();
+    for (piece, advance) in parts {
+        let offset = (advance - piece.size().x) / 2.0;
+        painter.galley(egui::pos2(x + offset, rect.top()), piece, color);
+        x += advance;
+    }
+    rect
+}
+
+/// Grands chiffres fins (Inter Display Light, comme le widget Horloge du bureau).
+fn light_font(size: f32) -> FontId {
+    FontId::new(size, style::light_family())
+}
+
+/// Titre de section : petites capitales espacées, gris.
+fn section_label(painter: &egui::Painter, at: egui::Pos2, text: &str) {
+    let mut x = at.x;
+    for character in text.to_uppercase().chars() {
+        let galley = painter.layout_no_wrap(
+            character.to_string(),
+            FontId::new(11.0, style::strong_family()),
+            style::text_secondary(),
+        );
+        let width = galley.size().x;
+        painter.galley(egui::pos2(x, at.y), galley, style::text_secondary());
+        x += width + 0.9;
+    }
+}
+
+/// Carte arrondie, fond gris léger.
+fn card(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
+    Frame::new()
+        .fill(style::content_gray())
+        .corner_radius(CornerRadius::same(14))
+        .inner_margin(Margin::symmetric(16, 4))
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            ui.set_width(ui.available_width());
+            add(ui);
+        });
+}
+
+fn hairline(ui: &mut egui::Ui) {
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
+    ui.painter().hline(
+        rect.x_range(),
+        rect.center().y,
+        egui::Stroke::new(1.0, style::separator()),
+    );
+}
+
+/// Arc de cercle partant du haut, dans le sens des aiguilles d'une montre.
+fn arc(painter: &egui::Painter, center: egui::Pos2, radius: f32, fraction: f32, stroke: egui::Stroke) {
+    if fraction <= 0.0 {
+        return;
+    }
+    let steps = ((fraction * 120.0).ceil() as usize).max(2);
+    let points: Vec<egui::Pos2> = (0..=steps)
+        .map(|step| {
+            let angle =
+                std::f32::consts::TAU * fraction * step as f32 / steps as f32 - std::f32::consts::FRAC_PI_2;
+            center + egui::vec2(angle.cos(), angle.sin()) * radius
+        })
+        .collect();
+    painter.add(egui::Shape::line(points, stroke));
+}
+
+/// Valeur du minuteur : − nombre + et son unité dessous.
+fn stepper(ui: &mut egui::Ui, width: f32, label: &str, value: &mut u32, max: u32) {
+    ui.allocate_ui_with_layout(
+        egui::vec2(width, 70.0),
+        egui::Layout::top_down(egui::Align::Center),
+        |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                let small = |text: &str| {
+                    egui::Button::new(RichText::new(text).size(16.0).color(style::primary_text()))
+                        .fill(style::control_background())
+                        .corner_radius(CornerRadius::same(14))
+                        .min_size(egui::vec2(28.0, 28.0))
+                };
+                if ui.add(small("−")).clicked() {
+                    *value = if *value == 0 { max } else { *value - 1 };
+                }
+                ui.add(
+                    egui::DragValue::new(value)
+                        .range(0..=max)
+                        .speed(0.2)
+                        .custom_formatter(|number, _| format!("{number:02}")),
+                );
+                if ui.add(small("+")).clicked() {
+                    *value = if *value >= max { 0 } else { *value + 1 };
+                }
+            });
+            ui.label(RichText::new(label).size(12.0).color(style::text_secondary()));
+        },
+    );
+}
+
+/// Deux boutons côte à côte : secondaire à gauche, principal (bleu, ou rouge s'il
+/// arrête quelque chose) à droite. Renvoie les clics.
+fn button_pair(
+    ui: &mut egui::Ui,
+    secondary: &str,
+    secondary_enabled: bool,
+    primary: &str,
+    primary_enabled: bool,
+    primary_stops: bool,
+) -> (bool, bool) {
+    let mut clicks = (false, false);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 12.0;
+        let width = (ui.available_width() - 12.0) / 2.0;
+        let left = egui::Button::new(RichText::new(secondary).size(15.0).color(style::primary_text()))
+            .fill(style::control_background())
+            .corner_radius(CornerRadius::same(12))
+            .min_size(egui::vec2(width, 42.0));
+        clicks.0 = ui.add_enabled(secondary_enabled, left).clicked();
+        let fill = if primary_stops {
+            style::error()
+        } else {
+            style::accent()
+        };
+        let right = egui::Button::new(RichText::new(primary).size(15.0).color(Color32::WHITE))
+            .fill(fill)
+            .corner_radius(CornerRadius::same(12))
+            .min_size(egui::vec2(width, 42.0));
+        clicks.1 = ui.add_enabled(primary_enabled, right).clicked();
+    });
+    clicks
+}
+
+/// Écart avec l'heure locale : « même heure », « +1 h », « −5 h 30 ».
+fn format_hours(hours: f64) -> String {
+    if hours == 0.0 {
+        return "même heure".to_owned();
+    }
+    let sign = if hours > 0.0 { "+" } else { "−" };
+    let minutes = (hours.abs() * 60.0).round() as i64;
+    match minutes % 60 {
+        0 => format!("{sign}{} h", minutes / 60),
+        rest => format!("{sign}{} h {rest:02}", minutes / 60),
+    }
+}
+
+fn capitalize(text: &str) -> String {
+    let mut characters = text.chars();
+    characters
+        .next()
+        .map(|first| first.to_uppercase().collect::<String>() + characters.as_str())
+        .unwrap_or_default()
 }
 
 /// Secondes écoulées depuis le 1er janvier 1970 (UTC).
@@ -699,6 +1047,14 @@ mod tests {
         assert_eq!(timer.remaining, frozen);
         timer.resume();
         assert_eq!(timer.phase, Phase::Running);
+    }
+
+    #[test]
+    fn ecart_avec_l_heure_locale() {
+        assert_eq!(format_hours(0.0), "même heure");
+        assert_eq!(format_hours(1.0), "+1 h");
+        assert_eq!(format_hours(-5.5), "−5 h 30");
+        assert_eq!(capitalize("vendredi 6"), "Vendredi 6");
     }
 
     #[test]

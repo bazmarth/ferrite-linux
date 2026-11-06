@@ -29,6 +29,8 @@ Options :
   --demo-osd            affiche la bulle du volume au démarrage (pour les captures)
   --demo-region         ouvre la sélection d'une zone à capturer au démarrage
   --demo-capture        ouvre le panneau de capture au démarrage
+  --demo-video          ouvre le panneau de capture en mode vidéo, avec la pastille d'arrêt
+  --demo-island         garde l'îlot du haut déplié (minuteur ou musique en cours)
   --demo-screenshot     enregistre une capture dans le dossier Images dès qu'une fenêtre existe
   --demo-page POSITION  fige l'affichage à cette position entre les bureaux (0 : le premier,
                         0.5 : à mi-chemin), pour les captures
@@ -86,6 +88,10 @@ pub struct Options {
     pub demo_screenshot: bool,
     /// Ouvre le panneau de capture au démarrage (`--demo-capture`).
     pub demo_capture: bool,
+    /// Panneau de capture en mode vidéo et pastille d'enregistrement (`--demo-video`).
+    pub demo_video: bool,
+    /// Îlot du haut gardé déplié (`--demo-island`).
+    pub demo_island: bool,
     pub command: Vec<String>,
 }
 
@@ -109,6 +115,8 @@ impl Default for Options {
             demo_controls: None,
             demo_screenshot: false,
             demo_capture: false,
+            demo_video: false,
+            demo_island: false,
             command: Vec::new(),
         }
     }
@@ -168,6 +176,8 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
             "--demo-switcher" => options.demo_switcher = true,
             "--demo-region" => options.demo_region = true,
             "--demo-capture" => options.demo_capture = true,
+            "--demo-video" => options.demo_video = true,
+            "--demo-island" => options.demo_island = true,
             "--demo-lock" => options.demo_lock = true,
             "--demo-power" => options.demo_power = true,
             "--demo-auth" => options.demo_auth = true,

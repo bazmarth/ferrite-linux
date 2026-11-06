@@ -1219,3 +1219,118 @@ géré par XKB. Le témoin physique s’allume quand le verrouillage des majuscu
 - Mis à la corbeille (récupérables) : `FerriteOs.zip`, `CLAUDE.md.ancien`, `.continue/`.
 - Passation mise à jour (liens réparés, mentions de DeepSeek retirées) ;
   `.claude/settings.local.json` ignoré par Git.
+
+## 2026-11-06 — Bouton d'alimentation physique géré par le bureau
+
+Sur la vraie machine, le bouton physique éteignait le PC : seuls les boutons dessinés
+(centre de contrôle, écran verrouillé) suivaient le réglage. En session DRM, le bureau prend
+maintenant le verrou logind `handle-power-key` (mode `block`) et traite la touche
+`XF86PowerOff` comme ces boutons : veille directe ou dialogue d'arrêt selon Paramètres →
+Énergie. Si le bureau s'arrête ou plante, le verrou se ferme et logind reprend la main
+(extinction). Pas pris en bureau imbriqué, pour ne pas priver le bureau hôte du bouton.
+
+## 2026-11-06 — Écran de capture d'un seul tenant
+
+La capture passait par une boîte de dialogue, puis par une sélection séparée. Impr. écran
+ouvre maintenant un écran unique : une barre d'outils sombre en bas (Sélection, Écran,
+Fenêtre ; photo ou vidéo ; déclencheur rond ; délai 0/3/5/10 s ; pointeur inclus ou non ;
+croix pour fermer) au-dessus de ce qui sera capturé.
+- Sélection : la dernière zone est reproposée (au début, la moitié de l'écran, centrée) ;
+  poignées rondes aux coins, glisser l'intérieur la déplace, glisser ailleurs en trace une
+  nouvelle.
+- Fenêtre : la fenêtre sous le pointeur (sinon celle du dessus) est proposée, un clic en
+  choisit une autre ; mode grisé s'il n'y a aucune fenêtre.
+- Entrée ou Espace capture, Échap ferme. Le Dock se cache pendant la capture.
+- Enregistrement dans Images et copie dans le presse-papiers : toujours les deux.
+
+Vérifié : `tools/ci.sh`, test des boutons de la barre, captures `--demo-region` (zone et
+barre). Pas vu en image : le mode Fenêtre (il faut cliquer), à essayer sur la machine.
+
+## 2026-11-06 — Capture : bords de la zone et touche Lenovo sans Fn
+
+- Zone de capture : coins attrapables dans un carré de 36 px (poignée dessinée : 22 px),
+  les quatre bords redimensionnent dans un seul sens, et le curseur annonce coin, bord,
+  déplacement ou nouveau tracé.
+- La touche de capture du ThinkBook envoie Super+Maj+S sans Fn (relevé sur la machine :
+  Super, puis Maj et S) et Impr. écran avec Fn. Super+Maj+S ouvre maintenant la capture en
+  mode Sélection, comme Maj+Impr. écran.
+
+## 2026-11-06 — Enregistrement vidéo de l'écran
+
+- La barre de capture bascule entre photo et vidéo ; en vidéo, le déclencheur est rouge.
+  Il lance `wf-recorder` (nouveau paquet de l'image) sur l'écran, la zone ou la fenêtre
+  choisie ; le fichier MP4 va dans Vidéos (`XDG_VIDEOS_DIR`), nommé « Enregistrement du … ».
+- Pendant l'enregistrement, une pastille rouge sous la barre affiche la durée et
+  « Arrêter » ; la touche de capture l'arrête aussi. Arrêt par SIGINT pour que le MP4 soit
+  bien fermé ; une notification annonce la fin (ou l'interruption si `wf-recorder` s'arrête
+  seul, vérifié chaque seconde).
+- `wf-recorder` lit les images par le protocole screencopy déjà servi par le compositeur.
+- Option `--demo-video` : barre de capture en mode vidéo, pour les captures.
+
+Vérifié : `tools/ci.sh`, capture `--demo-video` (bouton vidéo choisi, déclencheur rouge).
+Pas vérifié : un vrai enregistrement (`wf-recorder` n'est pas encore installé sur la
+machine), la pastille d'arrêt en image, la fluidité à 2880×1800 (chaque image est
+redessinée puis relue par le processeur).
+Limites : pas de son ; le pointeur et le délai ne s'appliquent qu'aux photos ; en mode
+Écran, la pastille rouge apparaît dans la vidéo.
+
+## 2026-11-06 — Lecteur vidéo, Horloge et widgets selon les maquettes
+
+Maquettes « Lecteur vidéo » et « Widgets — refonte » du projet de design Ferrite (pas de
+maquette pour l'Horloge : même langage visuel).
+- Lecteur vidéo : image plein cadre sur fond noir ; en haut, dégradé avec fermer, Ouvrir…,
+  titre et fichier centrés, liste et agrandir ; en bas, panneau de verre (temps, barre de
+  progression à pastille, ±10 s, grand bouton lecture blanc, suivante, son et réglette,
+  vitesse 1×/1,25×/1,5×/2×/0,75×, plein écran) ; grand bouton lecture au centre en pause ;
+  bulle centrale (« + 10 s », « Volume 70 % ») ; colonne « À suivre » (vignette de la
+  vidéo en cours, progression, « En lecture »/« En pause ») et interrupteur « Lecture
+  automatique » (vidéo suivante à la fin). Les commandes se masquent après 2,5 s sans
+  mouvement pendant la lecture. Touches : Espace/K, ←/→ ou J/L, ↑/↓, M, N, F, Échap,
+  Ctrl+O. Fenêtre par défaut 1100 × 660 (l'ancienne dépassait l'écran).
+- Horloge : onglets en segments dans la barre ; heure en Inter Display Light avec les
+  secondes à côté, date, titres en petites capitales ; horloges du monde en carte
+  (« Aujourd'hui, +1 h ») ; minuteur avec anneau de progression, réglages −/+ et durées
+  toutes prêtes ; chronomètre avec tours en carte (le plus rapide en vert, le plus lent en
+  rouge). `ferrite-apps clock minuteur|chronometre` ouvre l'onglet. Léger : un dessin par
+  seconde pour l'heure, rien quand le chronomètre tourne sur un autre onglet.
+- Widgets : verre plus sobre (teinte 66 %, couleurs du fond à peine ravivées, flou plus
+  large) pour rester propre sur un fond très coloré ; prévisions en colonnes (maximum
+  au-dessus du minimum) placées après l'heure, sans chevauchement ; graphique réseau à pas
+  fixe calé à droite, aire douce, échelle minimale de 64 Kio/s.
+
+Vérifié : `tools/ci.sh`, captures du lecteur (lecture, commandes, liste), des trois onglets
+de l'Horloge, et des widgets avec les réglages réels (fond « fall foliage »).
+Pas vérifié : les clics réels (vitesse, volume, glisser la progression), le thème sombre
+de l'Horloge, le graphique réseau rempli.
+
+## 2026-11-06 — Îlot du haut de l'écran, chiffres stables de l'Horloge
+
+- Îlot (`shell/src/desktop/island.rs`, dessin dans `panels/island.rs`) : pastille noire
+  autour de l'heure de la barre. Repliée, elle montre l'activité de part et d'autre de
+  l'heure : enregistrement vidéo (point rouge et durée, clic : arrêter), minuteur de
+  l'Horloge (anneau et reste en orange), musique (icône et égaliseur). Un clic sur un côté
+  la déplie 6 s avec ses boutons (minuteur : pause/reprendre, arrêter ; musique :
+  précédent, lecture, suivant) ; le milieu reste l'heure et ouvre le calendrier.
+  Dépliée un instant : son, luminosité, micro et mode avion (à la place de la bulle du
+  bas), notifications (à la place des bulles en haut à droite, boutons d'action compris,
+  « +2 » s'il en attend d'autres), fin du minuteur (« Temps écoulé », Arrêter).
+  Elle change de forme avec un léger ressort (380 ms) ; forme et contenu ont leurs propres
+  petites images, le reste du bureau n'est pas redessiné. Elle s'efface quand un panneau
+  est ouvert, à l'écran verrouillé, et (repliée seulement) en plein écran.
+- Minuteur : l'Horloge l'annonce à chaque changement de phase par `org.ferrite.Ilot`
+  (méthode `Minuteur`, servie avec les notifications) ; l'îlot compte les secondes
+  lui-même et renvoie ses boutons par le signal `Commande` (`apps/core/src/island.rs`).
+- Le lecteur multimédia est désormais suivi en permanence (MPRIS lu toutes les 2 s) pour
+  que l'îlot montre la musique.
+- Horloge : les chiffres ont tous la même largeur (comme des chiffres tabulaires) ; le
+  chronomètre centré tremblait à chaque centième parce qu'un « 1 » est plus étroit qu'un
+  « 0 » (vidéo de l'utilisateur).
+- `--demo-island` garde l'îlot déplié pour les captures.
+
+Vérifié : `tools/ci.sh` ; captures sur un bus isolé (`dbus-run-session`, appels `gdbus`)
+du minuteur replié, déplié en marche et en pause, de la fin du minuteur, d'une
+notification avec bouton et du volume ; capture du chronomètre aux chiffres fixes.
+Pas vérifié : l'animation à l'œil, la musique (aucun lecteur sur le bus d'essai),
+l'enregistrement dans l'îlot (wf-recorder absent), les clics réels, le lien avec la vraie
+Horloge (annonce et boutons). Pour une capture avec une application déjà ouverte sur le
+vrai bureau : `XDG_RUNTIME_DIR` court et à part, sinon l'instance unique lui passe la main.

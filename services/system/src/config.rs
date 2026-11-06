@@ -117,7 +117,12 @@ const OPEN_TERMINAL: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new
 const QUIT_SHELL: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(22, CTRL_ALT)];
 const RESTORE_MINIMIZED: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(58, CTRL_ALT)];
 const SCREENSHOT: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(107, 0)];
-const SCREENSHOT_REGION: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(107, SHORTCUT_SHIFT)];
+/// Maj+Impr. écran, et Super+Maj+S : ce que la touche de capture des claviers Lenovo
+/// envoie sans Fn (le raccourci de capture de Windows).
+const SCREENSHOT_REGION: &[KeyboardShortcutBinding] = &[
+    KeyboardShortcutBinding::new(107, SHORTCUT_SHIFT),
+    KeyboardShortcutBinding::new(39, SUPER_SHIFT),
+];
 
 pub const KEYBOARD_SHORTCUTS: &[KeyboardShortcutDefinition] = &[
     KeyboardShortcutDefinition {

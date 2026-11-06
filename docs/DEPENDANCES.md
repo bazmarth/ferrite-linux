@@ -37,6 +37,7 @@ Liste : `image/config/package-lists/ferrite.list.chroot`. Points notables :
 | `curl` | relevé de la météo (widget Horloge, écran de verrouillage) |
 | `libarchive-tools` | `bsdtar` : création ZIP/TAR.GZ et extraction ZIP/TAR/RAR dans Fichiers |
 | `rar` | création d’archives RAR ; outil propriétaire fourni par les dépôts non libres |
+| `wf-recorder` | enregistrement vidéo de l’écran (MP4) depuis la barre de capture ; lit les images par le protocole screencopy du compositeur, encode avec FFmpeg |
 | `dbus-bin` | `dbus-update-activation-environment` : transmet `WAYLAND_DISPLAY` et `DISPLAY` aux services D-Bus |
 | `foot`, `tmux` | terminal de secours ; le Terminal Ferrite ne les utilise pas |
 | `fonts-jetbrains-mono` | police du terminal `foot` (`/etc/xdg/foot/foot.ini`) |

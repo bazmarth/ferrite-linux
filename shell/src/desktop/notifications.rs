@@ -69,6 +69,8 @@ pub struct Notice {
 pub enum Event {
     Notify(Notice),
     Close(u32),
+    /// Minuteur de l'Horloge : phase, reste et durée totale.
+    Timer(String, Duration, Duration),
 }
 
 /// Signal à émettre sur le bus.
@@ -76,6 +78,8 @@ pub enum Event {
 enum Signal {
     Closed(u32, Closed),
     Action(u32, String),
+    /// Bouton de l'îlot pour le minuteur de l'Horloge.
+    Timer(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -204,6 +208,27 @@ struct Server {
     events: channel::Sender<Event>,
 }
 
+const ISLAND_PATH: &str = "/org/ferrite/Ilot";
+const ISLAND_INTERFACE: &str = "org.ferrite.Ilot";
+
+/// Îlot du haut de l'écran, pour les applications du bureau.
+struct Island {
+    events: channel::Sender<Event>,
+}
+
+#[interface(name = "org.ferrite.Ilot")]
+impl Island {
+    /// Minuteur de l'Horloge : « marche », « pause », « fini » ou « arret », reste et durée
+    /// totale en millisecondes.
+    fn minuteur(&self, phase: String, restant_ms: u64, total_ms: u64) {
+        let _ = self.events.send(Event::Timer(
+            limited(&phase, 16),
+            Duration::from_millis(restant_ms),
+            Duration::from_millis(total_ms),
+        ));
+    }
+}
+
 #[interface(name = "org.freedesktop.Notifications")]
 impl Server {
     fn get_capabilities(&self) -> Vec<String> {
@@ -294,10 +319,13 @@ pub fn start(handle: &LoopHandle<'static, Ferrite>) -> Result<Link, String> {
     let server = Server {
         events: events.clone(),
     };
+    let island = Island {
+        events: events.clone(),
+    };
     std::thread::Builder::new()
         .name("notifications".to_owned())
         .spawn(move || {
-            if let Err(err) = serve(server, outgoing) {
+            if let Err(err) = serve(server, island, outgoing) {
                 tracing::warn!(%err, "service de notifications non publié");
             }
         })
@@ -305,10 +333,11 @@ pub fn start(handle: &LoopHandle<'static, Ferrite>) -> Result<Link, String> {
     Ok(Link { signals, events })
 }
 
-fn serve(server: Server, outgoing: mpsc::Receiver<Signal>) -> zbus::Result<()> {
+fn serve(server: Server, island: Island, outgoing: mpsc::Receiver<Signal>) -> zbus::Result<()> {
     let connection = zbus::blocking::connection::Builder::session()?
         .name(BUS_NAME)?
         .serve_at(BUS_PATH, server)?
+        .serve_at(ISLAND_PATH, island)?
         .build()?;
     tracing::info!("service de notifications publié");
     for signal in outgoing {
@@ -322,6 +351,9 @@ fn serve(server: Server, outgoing: mpsc::Receiver<Signal>) -> zbus::Result<()> {
             ),
             Signal::Action(id, action) => {
                 connection.emit_signal(None::<()>, BUS_PATH, BUS_NAME, "ActionInvoked", &(id, action))
+            }
+            Signal::Timer(command) => {
+                connection.emit_signal(None::<()>, ISLAND_PATH, ISLAND_INTERFACE, "Commande", &(command,))
             }
         };
         if let Err(err) = sent {
@@ -356,7 +388,13 @@ impl Ferrite {
                     self.send_notification_signal(Signal::Closed(id, Closed::Requested));
                 }
             }
+            Event::Timer(phase, remaining, total) => self.on_timer_report(&phase, remaining, total),
         }
+    }
+
+    /// Bouton de l'îlot pour le minuteur : « pause », « reprendre » ou « arreter ».
+    pub fn send_timer_command(&self, command: &str) {
+        self.send_notification_signal(Signal::Timer(command.to_owned()));
     }
 
     /// À chaque tour de boucle : les bulles arrivées à leur fin disparaissent.

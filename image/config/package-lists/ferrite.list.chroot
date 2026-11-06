@@ -91,6 +91,9 @@ ntfs-3g
 libarchive-tools
 rar
 
+# Enregistrement vidéo de l'écran (barre de capture, mode vidéo) par screencopy
+wf-recorder
+
 # Terminal de secours et d'essais (le Terminal du bureau est celui de ferrite-apps)
 foot
 # Shell des terminaux du bureau : complétion par Tab et suggestions (voir ferrite-session)

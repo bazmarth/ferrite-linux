@@ -600,6 +600,37 @@ fn watch_sleep(events: &channel::Sender<Event>) -> zbus::Result<()> {
     Ok(())
 }
 
+/// Prend en charge le bouton d'alimentation physique à la place de logind (qui éteindrait).
+/// Le verrou dure tant que le descripteur rendu est gardé ; si le bureau s'arrête ou plante,
+/// il se ferme et logind reprend son comportement habituel.
+pub fn take_power_key() -> Option<zbus::zvariant::OwnedFd> {
+    let result = (|| -> zbus::Result<zbus::zvariant::OwnedFd> {
+        let connection = zbus::blocking::Connection::system()?;
+        let manager = zbus::blocking::Proxy::new(
+            &connection,
+            "org.freedesktop.login1",
+            "/org/freedesktop/login1",
+            "org.freedesktop.login1.Manager",
+        )?;
+        manager.call(
+            "Inhibit",
+            &(
+                "handle-power-key",
+                "Ferrite",
+                "Le bureau gère le bouton d'alimentation",
+                "block",
+            ),
+        )
+    })();
+    match result {
+        Ok(inhibitor) => Some(inhibitor),
+        Err(error) => {
+            tracing::warn!(%error, "bouton d'alimentation laissé à logind");
+            None
+        }
+    }
+}
+
 fn acquire_sleep_delay_inhibitor(manager: &zbus::blocking::Proxy<'_>) -> Option<zbus::zvariant::OwnedFd> {
     if !ferrite_system::display::keyboard_light().is_some_and(|(level, _)| level > 0) {
         return None;
@@ -860,14 +891,10 @@ impl Ferrite {
         }
     }
 
-    /// Le lecteur est suivi pendant le verrouillage, et tant que le widget Musique est posé.
+    /// Le lecteur est toujours suivi : l'îlot du haut de l'écran montre la musique en
+    /// cours (une lecture des propriétés MPRIS toutes les deux secondes).
     pub fn refresh_media_watching(&self) {
-        let widget = self
-            .dashboard
-            .layout
-            .iter()
-            .any(|slot| slot.kind == crate::desktop::widgets::WidgetKind::Music);
-        self.set_media_watching(self.lock.is_some() || widget);
+        self.set_media_watching(true);
     }
 
     pub fn set_media_watching(&self, watching: bool) {

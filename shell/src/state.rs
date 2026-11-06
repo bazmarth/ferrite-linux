@@ -225,6 +225,16 @@ pub struct Ferrite {
     pub screenshot_cursor: bool,
     /// Délai avant la prise, en secondes (0 : immédiate).
     pub screenshot_delay: u64,
+    /// Dernière zone choisie, proposée à la prochaine capture en mode Sélection.
+    pub screenshot_area: Option<smithay::utils::Rectangle<i32, Logical>>,
+    /// Barre de capture réglée sur la vidéo plutôt que la photo.
+    pub screenshot_video: bool,
+    /// Enregistrement vidéo en cours.
+    pub recording: Option<crate::desktop::recording::Recording>,
+    /// Minuteur de l'Horloge suivi par l'îlot, îlot déplié par un clic, et seconde suivie.
+    pub island_timer: Option<crate::desktop::island::TimerActivity>,
+    pub island_open_until: Option<std::time::Instant>,
+    pub island_ticking: bool,
     /// Sélection d'une fenêtre à capturer : mode actif, et fenêtre survolée.
     pub window_select: bool,
     pub window_select_hover: Option<Window>,
@@ -460,6 +470,12 @@ impl Ferrite {
             screenshot_clipboard: true,
             screenshot_cursor: false,
             screenshot_delay: 0,
+            screenshot_area: None,
+            screenshot_video: false,
+            recording: None,
+            island_timer: None,
+            island_open_until: None,
+            island_ticking: false,
             window_select: false,
             window_select_hover: None,
             overview_order: Vec::new(),

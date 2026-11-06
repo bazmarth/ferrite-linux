@@ -488,6 +488,7 @@ impl Ferrite {
             || self.region_select.is_some()
             || self.region_adjust.is_some()
             || self.window_select
+            || self.popover == Some(crate::desktop::panels::Popover::Screenshot)
             || self.lock.is_some()
         {
             return None;

@@ -134,7 +134,8 @@ impl WallpaperChoice {
         };
         let bar_dark = preview.top_is_dark(24);
         let backdrop = Some(Arc::new(wallpaper::blur(&preview, 10)));
-        let glass = Some(Arc::new(wallpaper::blur(&preview, 3)));
+        // Flou du verre des widgets : assez large pour ne garder que des teintes douces.
+        let glass = Some(Arc::new(wallpaper::blur(&preview, 6)));
         Self {
             source,
             image,

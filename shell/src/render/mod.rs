@@ -941,6 +941,9 @@ impl Ferrite {
     /// Forme du curseur : double flèche pendant un redimensionnement ou sur le bord d'une
     /// fenêtre, flèche sinon.
     pub fn cursor_shape(&self) -> CursorShape {
+        if self.popover == Some(Popover::Screenshot) {
+            return self.capture_cursor();
+        }
         if let Some(edges) = self.resizing {
             return resize_shape(edges);
         }
@@ -958,6 +961,42 @@ impl Ferrite {
             // Sur une application : la forme qu'elle a demandée par son nom.
             Some(wm::Hit::Surface(..)) => named_shape(&self.cursor_status),
             _ => CursorShape::Arrow,
+        }
+    }
+
+    /// Écran de capture : le curseur annonce le coin ou le bord qu'on va saisir.
+    fn capture_cursor(&self) -> CursorShape {
+        use crate::render::capture::{Mode, RegionGrip};
+        let Some(pointer) = self.pointer_location() else {
+            return CursorShape::Arrow;
+        };
+        let on_toolbar = self
+            .space
+            .outputs()
+            .next()
+            .and_then(|output| self.space.output_geometry(output))
+            .is_some_and(|output| {
+                crate::desktop::panels::capture_toolbar_at(output, pointer, true).is_some()
+            });
+        if self.region_select.is_some() {
+            return CursorShape::Crosshair;
+        }
+        if on_toolbar || self.screenshot_mode != Mode::Area {
+            return CursorShape::Arrow;
+        }
+        let grip = self.region_adjust.and_then(|adjust| {
+            adjust
+                .grip
+                .map(|(grip, _, _)| grip)
+                .or_else(|| capture::region_grip(adjust.rect, pointer))
+        });
+        match grip {
+            Some(RegionGrip::NorthWest | RegionGrip::SouthEast) => CursorShape::DiagonalDown,
+            Some(RegionGrip::NorthEast | RegionGrip::SouthWest) => CursorShape::DiagonalUp,
+            Some(RegionGrip::North | RegionGrip::South) => CursorShape::Vertical,
+            Some(RegionGrip::West | RegionGrip::East) => CursorShape::Horizontal,
+            Some(RegionGrip::Move) => CursorShape::Move,
+            None => CursorShape::Crosshair,
         }
     }
 
@@ -1040,6 +1079,10 @@ impl Ferrite {
     }
 
     pub fn dock_shown(&self, output: Rectangle<i32, Logical>) -> bool {
+        // La barre de capture occupe le bas de l'écran.
+        if self.popover == Some(Popover::Screenshot) {
+            return false;
+        }
         if self.overview {
             return true;
         }
@@ -1124,6 +1167,12 @@ impl Ferrite {
 
 /// État du bureau affiché par les panneaux (et utilisé pour leurs clics).
 pub fn desktop_view(state: &Ferrite) -> DesktopView {
+    let notifications = notifications_view(state);
+    let mut island = state.island_view(&notifications);
+    // Plein écran : la pastille repliée se cache avec la barre ; les annonces passent.
+    if !state.bar_visible() && island.kind.as_ref().is_some_and(|kind| kind.compact()) {
+        island.kind = None;
+    }
     let system = &state.system;
     let dark_theme = state.appearance.is_dark();
     Panels::set_theme(dark_theme, state.accent);
@@ -1263,11 +1312,15 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
         osd: state.osd_view(),
         capture: crate::desktop::panels::CaptureView {
             mode: state.screenshot_mode,
-            save: state.screenshot_save,
-            clipboard: state.screenshot_clipboard,
             cursor: state.screenshot_cursor,
             delay: state.screenshot_delay,
+            windows: state.space.elements().next().is_some(),
+            video: state.screenshot_video,
         },
+        recording: state
+            .recording
+            .as_ref()
+            .map(|recording| crate::desktop::recording::elapsed_label(recording.elapsed())),
         overview: overview_view(state),
         switcher: switcher_view(state),
         lock: state.lock.as_ref().map(|lock| {
@@ -1334,7 +1387,8 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
                 media: lock.media.clone(),
             }
         }),
-        notifications: notifications_view(state),
+        notifications,
+        island,
         region: state.region_select.map(|select| RegionView {
             rect: select
                 .start

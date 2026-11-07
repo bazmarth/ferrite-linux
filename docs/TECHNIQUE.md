@@ -176,13 +176,18 @@ redémarrage). Clés en français, valeurs en français. Clés actuelles :
 `barre_hauteur`, `barre_laterale_icones`, `barre_masquage`, `barre_pourcentage`,
 `barre_translucide`, `barres_defilement`, `bouton_alimentation` (veille, rien, dialogue :
 bouton physique seulement), `cadre_propre` (applications qui gardent leur barre de titre),
-`clavier`, `coin_hg`/`coin_hd`/`coin_bg`/`coin_bd` (coins actifs), `defilement_inverse`,
+`clavier`, `coin_hg`/`coin_hd`/`coin_bg`/`coin_bd` (coins actifs), `curseur_theme`
+(`ferrite` vectoriel par défaut, `Ferrite-Cursors` embarqué, ou dossier d'un thème installé),
+`curseur_taille` (24, 32, 48), `defilement_inverse`,
 `defilement_vitesse_molette`, `defilement_vitesse_pave`, `dock_agrandissement`,
 `dock_epingles`, `dock_hauteur`, `dock_icones`, `dock_masquage`, `dock_points`,
-`dock_recentes`, `dock_taille`, `double_clic`, `fenetres_multiples`, `fond_ecran`,
+`dock_recentes`, `dock_taille`, `double_clic`, `ecran_eteint` (minutes, 10 par défaut),
+`fenetres_multiples`, `fond_ecran`,
 `horloge`, `meteo_ville`, `meteo_latitude`, `meteo_longitude`, `mode_nuit`,
 `mode_nuit_debut`, `mode_nuit_fin`, `mode_nuit_temperature`, `reduire_animations`,
-`surlignage`, `tableau_*` (widgets Notes et Tâches), `tuilage`, `veille_batterie`,
+`son_alerte` (goutte, cloche, verre, douce, aucun), `son_demarrage`, `sons_actions`,
+`sons_volume`, `surlignage`, `tableau_*` (widgets Notes et Tâches), `texte_taille` (90 à 150 %),
+`tuilage`, `veille_batterie`,
 `veille_secteur`, `verrouillage_auto`, `verrouillage_flou`, `verrouillage_fond` (nom d'un
 fond dessiné ou chemin absolu d'une photo), `verrouillage_theme`, `visage_deverrouillage`,
 `widgets_applications`, `widgets_disposition`, `widgets_nombre`, et les raccourcis
@@ -280,6 +285,11 @@ arbre commité** pour que la release corresponde au code. Dépôt
   jamais abîmer Windows/Fedora ; partitions techniques (EFI, réservée, récupération, swap) et
   < 4 Gio cachées ; montage dans un fil (la fenêtre ne gèle pas pendant le mot de passe).
 - **Ouvrir en administrateur** : `pkexec env WAYLAND_DISPLAY=… XDG_RUNTIME_DIR=… ferrite-apps files DIR`.
+- **Écran éteint pour inactivité** (`ecran_eteint`, une minute sur l'écran verrouillé) :
+  `DrmCompositor::clear()` coupe l'affichage (DPMS) ; plus d'image ni de rappel d'image aux
+  applications, plus d'essai au repos. La première entrée remet `idle.screen_off` à faux ;
+  l'image suivante rallume l'écran (`reset_buffers`, gamma réappliqué). Le réveil de veille
+  (`Resumed`) compte comme une entrée, sinon un capot ouvert laisserait l'écran noir.
 - **Inactivité** : vidéo (`zwp_idle_inhibit_v1`) = présence ; son en cours (`wpctl status`,
   flux `[active]`, casques Bluetooth compris ; ALSA en secours) reporte la veille ;
   `Instant` monotone (ne compte pas la durée de veille → pas de re-veille immédiate au réveil).
@@ -447,17 +457,14 @@ Reste :
 
 1. Reconstruire l'ISO (liste des paquets changée, dont `poppler-utils` ajouté le
    2026-11-07), l'essayer en VM, et publier une release depuis un arbre commité.
-2. Finir la phase 5 : réglages encore grisés dans Paramètres (thème et taille du curseur,
-   taille du texte, position du Dock, mode des espaces de travail, niveau d'entrée et sons
-   d'alerte, réception Bluetooth) et rubriques en maquette (Notifications, Imprimantes,
-   Accessibilité, Mises à jour).
-3. « Éteindre l'écran après… » (DPMS DRM) avant la veille.
-4. Logithèque (phase 7) : PackageKit + Flatpak, notification des mises à jour (polkit est prêt).
-5. Batterie et fiabilité (phase 10) : moins d'images au repos (l'appli Claude soumet ~50
+2. Finir la phase 5 : réglages encore grisés dans Paramètres (position du Dock, mode des
+   espaces de travail, réception Bluetooth) et rubriques en maquette (Notifications, Imprimantes, Accessibilité, Mises à jour).
+3. Logithèque (phase 7) : PackageKit + Flatpak, notification des mises à jour (polkit est prêt).
+4. Batterie et fiabilité (phase 10) : moins d'images au repos (l'appli Claude soumet ~50
    images/s), démarrage < 20 s, tests automatiques des écrans par captures de référence.
-6. Phases 8–9 : écran de connexion (greetd), paquets `.deb`, dépôt apt signé, installateur
+5. Phases 8–9 : écran de connexion (greetd), paquets `.deb`, dépôt apt signé, installateur
    graphique (tests en VM d'abord, Windows intact).
-7. Phase 6 en dernier : navigateur maison (Brave couvre le besoin).
+6. Phase 6 en dernier : navigateur maison (Brave couvre le besoin).
 
 ### 5.4 Défauts connus
 

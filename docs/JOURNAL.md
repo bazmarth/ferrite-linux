@@ -2114,6 +2114,95 @@ ces commandes ; CI.
 Pas vérifié : une ISO reconstruite (`tools/usb.sh`, sudo, environ 30 minutes, la liste des
 paquets ayant changé) et le Lecteur PDF dedans.
 
+## 2026-11-07 — Paramètres : thème et taille du curseur, taille du texte
+
+Demande de l'utilisateur : « Curseurs et texte » (trois réglages grisés d'Apparence).
+- `ferrite_system::cursors` : thèmes proposés (Ferrite vectoriel, Ferrite Cursors, puis les
+  thèmes X installés avec un dossier `cursors`, nom lu dans `index.theme`), tailles 24/32/48
+  (Normale, Grande, Très grande), tailles du texte 90 à 150 %. Réglages `curseur_theme`,
+  `curseur_taille`, `texte_taille`.
+- Bureau (`render/cursor.rs`) : le pack `Ferrite-Cursors` est embarqué (9 formes) ; un thème
+  installé est lu par `xcursor` dans le fil système (`ThemeCursors::load`), envoyé par
+  `Event::CursorSize`. L'image la plus proche au-dessus de la taille voulue est affichée à
+  la taille exacte ; forme absente du thème : la forme vectorielle. Les formes vectorielles
+  suivent aussi la taille.
+- Applications Ferrite : `zoom_factor` d'egui selon la taille du texte, appliqué seulement
+  quand le réglage change. Applications GTK : `text-scaling-factor` (gsettings). Le bureau
+  lui-même garde sa taille (voir DECISIONS).
+- Paramètres : les trois lignes actives (listes déroulantes). Vignettes de « Style » qui
+  passent à la ligne quand la place manque (elles sortaient de la fenêtre à 125 %).
+Vérifié : CI (sans shellcheck) ; tests (choix des tailles, liste des thèmes, pack embarqué
+complet et prémultiplié, choix de l'image, formes vectorielles agrandies) ; images des neuf
+formes écrites par un test temporaire (retiré) pour les trois thèmes, à 24 et 48 : formes
+justes, point actif au bon endroit (« déplacer » d'Adwaita corrigé : il donnait une flèche
+simple) ; captures de Paramètres en clair (Ferrite Cursors, Grande, 100 %), en sombre
+(Adwaita, Très grande, 125 %) et à 150 % (code d'essai temporaire pour montrer le groupe en
+haut, retiré).
+Vérifié ensuite par l'utilisateur sur le vrai bureau (`tools/dev-on.sh`) : changement de
+thème en direct (Ferrite Cursors, Adwaita), formes sur texte, lien et bord de fenêtre, taille
+Très grande, texte à 125 % dans Paramètres et Fichiers : tout est bon.
+Pas vérifié : le texte agrandi dans une application GTK ; les autres pages des applications à
+150 % (une mise en page à mesures fixes peut déborder).
+
+## 2026-11-07 — Énergie : « Éteindre l'écran après… »
+
+Demande de l'utilisateur : « continuer 2 » (point 2 de la liste : éteindre l'écran avant la
+veille, pour la batterie).
+- Réglage `ecran_eteint` (minutes ; Jamais, 1, 2, 5, 10, 15, 30 ; 10 par défaut) dans
+  `IdleSettings`, et ligne « Éteindre l'écran après » en tête de Paramètres → Énergie.
+- Bureau (`desktop/idle.rs`) : `Idle::screen_off_due`, une minute seulement sur l'écran
+  verrouillé ; une vidéo affichée l'empêche, du son non. Toute entrée, et le réveil de
+  veille, rallument.
+- Backend DRM : `DrmCompositor::clear()` coupe l'affichage ; plus d'image, de rappel
+  d'image ni d'essai au repos tant qu'il est coupé ; au réveil, image entière
+  (`reset_buffers`) et mode nuit réappliqué.
+Vérifié : CI (sans shellcheck) ; tests (délais, écran verrouillé, « Jamais », réveil par une
+entrée, réglage enregistré) ; captures de la page Énergie en clair et en sombre.
+Vérifié ensuite par l'utilisateur sur le vrai bureau (`tools/dev-on.sh`) : écran éteint après
+une minute, rallumé par une touche tel qu'il était ; sur l'écran verrouillé, éteint après une
+minute puis rallumé : tout est bon.
+Pas vérifié : la consommation gagnée.
+
+## 2026-11-07 — Son : sons système et jauge du micro
+
+Demande de l'utilisateur : « continuer sur 3 » (réglages encore grisés de Paramètres).
+Inventaire : sons système, jauge « Niveau d'entrée », position du Dock, mode des espaces de
+travail, réception Bluetooth. Faits ici : les deux premiers.
+- `ferrite_system::sounds` : sept sons synthétisés (alertes Goutte, Cloche, Verre, Douce ;
+  Corbeille, capture d'écran, démarrage), WAV écrits une fois, joués par `pw-play` dans un
+  fil (`play`, `play_at`). Réglages `son_alerte`, `sons_volume` (50 %), `sons_actions` (oui),
+  `son_demarrage` (non).
+- Bureau : son d'alerte pour une nouvelle notification en bulle (`Notice::sound`, faux pour
+  celles du bureau et avec `suppress-sound`) ; déclic à la capture d'écran ; son de démarrage
+  à l'ouverture de session. Fichiers et Visionneuse : son de Corbeille (un seul pour
+  plusieurs éléments jetés ensemble ; muet dans les tests).
+- Paramètres → Son → Sons système : volume (enregistré au lâcher du curseur), son d'alerte
+  (dont « Aucun »), sons des actions, son au démarrage ; chaque choix fait entendre le son.
+- Jauge « Niveau d'entrée » : `settings/meter.rs`, GStreamer `pulsesrc ! level`, micro
+  ouvert seulement sur la page Son.
+Vérifié : CI (sans shellcheck) ; tests (durée, crête et fin silencieuse de chaque son, WAV
+valide, réglages, son seulement pour une nouvelle bulle qui le veut, décibels en cases) ;
+les sept WAV lus par `pw-play` à volume nul (code d'essai retiré) ; jauge ouverte sur le vrai
+micro par un test temporaire (retiré) : 11 cases sur 16 en une seconde.
+Pas vérifié : à l'oreille (aucun son entendu par Claude) ; la page Son en capture (l'écran du
+PC était éteint et verrouillé : le bureau d'essai ne reçoit plus d'images) ; sur le vrai
+bureau.
+
+
+## 2026-11-07 — Verrouillage : passage zoomé sans cadre noir
+
+Demande de l'utilisateur (vidéo) : l'animation de verrouillage montrait trop le cadre du
+bureau (le bureau rétrécissait avec un bord noir autour, l'écran verrouillé arrivait tard).
+- Le bureau est toujours dessiné par-dessus l'écran verrouillé, qui reste plein (zoom 1,08
+  → 1) : autour du bureau qui recule, on voit le fond de l'écran verrouillé, plus de noir.
+  Au déverrouillage, même ordre : le bureau apparaît par-dessus.
+- Le bureau recule moins (0,95 au lieu de 0,9) et disparaît dans les deux premiers tiers
+  du passage.
+Vérifié : CI (sans shellcheck) ; test (écran verrouillé plein et couvrant tout l'écran à
+chaque instant, seule l'image qui part au début, seule celle qui arrive à la fin).
+Pas vérifié : à l'œil (le bureau d'essai ne recevait plus d'images, écran du PC éteint ou
+verrouillé) ; sur le vrai bureau.
+
 ## 2026-11-07 — Fichiers : chaque extension à la bonne application
 
 Demande de l'utilisateur : chaque extension doit correspondre à son application d'ouverture
@@ -2154,3 +2243,17 @@ Vérifié : CI (sans shellcheck) ; tests (dossiers Flatpak, icônes, filtre Docu
 capture de Fichiers avec les nouvelles icônes.
 Pas vérifié : sur le vrai bureau (il faut le relancer) ; la fenêtre noire n'apparaît pas
 dans l'enregistrement, elle venait sans doute du démarrage de ChatGPT.
+
+## 2026-11-07 — Fenêtres : WordCraft agrandi sans barre de titre
+
+Demande de l'utilisateur (capture) : WordCraft n'avait pas de barre d'action (ni fermer ni
+agrandir) ; son ruban, lui, était bien là.
+- Cause : WordCraft demande à être agrandi avant sa première configuration. Le mode de
+  décoration choisi par Ferrite (barre de Ferrite) n'était pas encore confirmé, donc la
+  fenêtre recevait tout l'écran et la barre de titre était dessinée hors de l'écran.
+- `wm::will_be_server_decorated` : lit le mode déjà décidé (en attente) ; utilisé pour la
+  taille d'une fenêtre agrandie.
+Vérifié : CI (sans shellcheck) ; échanges Wayland (1280×800 avant, 1280×754 après, 1280×720
+avec la barre du haut toujours visible) ; capture du bureau imbriqué : barre « Document1 -
+WordCraft » avec fermer et agrandir.
+Pas vérifié : sur le vrai bureau (il faut le relancer).

@@ -39,7 +39,7 @@ use tracing::warn;
 
 use self::rounded::RoundedSurface;
 pub use self::{
-    cursor::{Cursor, CursorShape},
+    cursor::{Cursor, CursorShape, ThemeCursors},
     decorations::Decorations,
     wallpaper::Wallpaper,
 };
@@ -84,21 +84,25 @@ pub struct RenderAssets {
     pub ghost: ghost::Ghost,
     pub dock: Dock,
     pub panels: Panels,
-    overview_overlay: MemoryRenderBuffer,
+    /// Fond de la vue d'ensemble : clair puis sombre, selon le thème.
+    overview_overlay: [MemoryRenderBuffer; 2],
     screen_fade_overlay: MemoryRenderBuffer,
 }
 
 impl RenderAssets {
     pub fn new(renderer: &mut GlesRenderer) -> Result<RenderAssets, String> {
-        let overview_overlay = MemoryRenderBuffer::from_slice(
-            // Fond de la vue d'ensemble, #0F1620 opaque.
-            &[0x20, 0x16, 0x0F, 255],
-            Fourcc::Argb8888,
-            (1, 1),
-            1,
-            smithay::utils::Transform::Normal,
-            None,
-        );
+        // Fond de la vue d'ensemble, opaque : #E8ECF1 en thème clair, #0F1620 en sombre.
+        let flat = |bgra: [u8; 4]| {
+            MemoryRenderBuffer::from_slice(
+                &bgra,
+                Fourcc::Argb8888,
+                (1, 1),
+                1,
+                smithay::utils::Transform::Normal,
+                None,
+            )
+        };
+        let overview_overlay = [flat([0xF1, 0xEC, 0xE8, 255]), flat([0x20, 0x16, 0x0F, 255])];
         let screen_fade_overlay = MemoryRenderBuffer::from_slice(
             &[0, 0, 0, 255],
             Fourcc::Argb8888,
@@ -153,7 +157,11 @@ fn build_output_elements(
             let location = pointer.current_location() - output_geo.loc.to_f64();
             if Rectangle::from_size(output_geo.size).to_f64().contains(location) {
                 let shape = state.cursor_shape();
-                push_cursor(renderer, &assets.cursor, shape, location, scale, &mut elements);
+                let image =
+                    assets
+                        .cursor
+                        .image(shape, scale, state.cursor_size, state.cursor_theme.as_deref());
+                push_cursor(renderer, &image, location, scale, &mut elements);
             }
         }
     }
@@ -547,25 +555,34 @@ fn push_screen_swap(
     };
     let program = assets.decorations.shaders.genie.clone();
     let leaving = state.screen_fade_shots.borrow().get(&output.name()).cloned();
-    if let Some(leaving) = leaving
-        && frame.leaving_alpha > 0.0
-    {
-        elements.push(OutputElement::Genie(genie::GenieElement::new(
-            leaving,
+    let leaving = leaving.filter(|_| frame.leaving_alpha > 0.0).map(|texture| {
+        OutputElement::Genie(genie::GenieElement::new(
+            texture,
             program.clone(),
             &zoomed(frame.leaving_zoom, frame.leaving_alpha),
             scale,
             0.0,
-        )));
-    }
-    elements.push(OutputElement::Genie(genie::GenieElement::new(
-        arriving,
-        program,
-        &zoomed(frame.arriving_zoom, frame.arriving_alpha),
-        scale,
-        0.0,
-    )));
-    // Fond noir autour de la scène qui recule.
+        ))
+    });
+    let arriving = (frame.arriving_alpha > 0.0).then(|| {
+        OutputElement::Genie(genie::GenieElement::new(
+            arriving,
+            program,
+            &zoomed(frame.arriving_zoom, frame.arriving_alpha),
+            scale,
+            0.0,
+        ))
+    });
+    // Le premier élément est dessiné au-dessus : le bureau, qui recule, passe devant
+    // l'écran verrouillé, plein.
+    let (top, below) = if frame.leaving_on_top {
+        (leaving, arriving)
+    } else {
+        (arriving, leaving)
+    };
+    elements.extend(top);
+    elements.extend(below);
+    // Fond noir sous le passage (si la photo de l'ancien écran manque).
     match MemoryRenderBufferRenderElement::from_buffer(
         renderer,
         Point::from((0.0, 0.0)),
@@ -852,7 +869,7 @@ fn push_overview(
     match MemoryRenderBufferRenderElement::from_buffer(
         renderer,
         Point::from((0.0, 0.0)),
-        &assets.overview_overlay,
+        &assets.overview_overlay[usize::from(dark_theme)],
         Some(shown as f32),
         Some(Rectangle::from_size((1.0, 1.0).into())),
         Some(output_geo.size),
@@ -997,23 +1014,22 @@ fn push_decorated(
 /// Curseur Ferrite, pointe en `location` (logique, repère de l'écran).
 fn push_cursor(
     renderer: &mut GlesRenderer,
-    cursor: &Cursor,
-    shape: CursorShape,
+    image: &cursor::CursorImage,
     location: Point<f64, Logical>,
     scale: f64,
     out: &mut Vec<OutputElement>,
 ) {
-    let image = cursor.image(shape, scale);
     let tip = location.to_physical(scale);
     let position = Point::from((
         (tip.x - image.hotspot.0 as f64).round(),
         (tip.y - image.hotspot.1 as f64).round(),
     ));
-    // Image en pixels physiques : sa taille logique est divisée par l'échelle.
+    // Image entière, affichée à sa taille logique (agrandie ou réduite par le GPU pour un
+    // thème dont aucune image n'a la taille exacte).
     let src = Rectangle::from_size((image.size.0 as f64, image.size.1 as f64).into());
     let size = (
-        (image.size.0 as f64 / scale).round() as i32,
-        (image.size.1 as f64 / scale).round() as i32,
+        image.logical.0.round().max(1.0) as i32,
+        image.logical.1.round().max(1.0) as i32,
     );
     match MemoryRenderBufferRenderElement::from_buffer(
         renderer,
@@ -1628,6 +1644,7 @@ pub fn take_screenshot(
     let Some(request) = state.screenshot_request.take() else {
         return;
     };
+    ferrite_system::sounds::play(ferrite_system::sounds::Sound::Screenshot);
     if let Err(err) = render_screenshot(renderer, state, assets, output, request) {
         warn!("capture d'écran impossible : {err}");
     }

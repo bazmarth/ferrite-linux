@@ -64,6 +64,8 @@ pub struct Notice {
     pub received: std::time::SystemTime,
     /// Fichier à ouvrir au clic (capture, enregistrement) ; sinon le clic ouvre l'application.
     pub file: Option<PathBuf>,
+    /// Son d'alerte à l'arrivée (une application peut le refuser : `suppress-sound`).
+    pub sound: bool,
 }
 
 /// Message vers la boucle du compositeur.
@@ -100,8 +102,9 @@ pub struct Center {
 }
 
 impl Center {
-    /// Ajoute une notification, ou remplace à sa place celle de même identifiant.
-    pub fn notify(&mut self, notice: Notice, now: Instant) {
+    /// Ajoute une notification, ou remplace à sa place celle de même identifiant. Renvoie
+    /// vrai si elle mérite un son : nouvelle, montrée en bulle, et l'application le veut.
+    pub fn notify(&mut self, notice: Notice, now: Instant) -> bool {
         let bubble = !self.do_not_disturb || notice.critical;
         let until = notice.timeout.filter(|_| bubble).map(|timeout| now + timeout);
         let item = Item {
@@ -109,17 +112,25 @@ impl Center {
             bubble,
             until,
         };
-        match self
+        let sound = bubble && item.notice.sound;
+        let new = match self
             .items
             .iter_mut()
             .find(|known| known.notice.id == item.notice.id)
         {
-            Some(known) => *known = item,
-            None => self.items.push(item),
-        }
+            Some(known) => {
+                *known = item;
+                false
+            }
+            None => {
+                self.items.push(item);
+                true
+            }
+        };
         if self.items.len() > MAX_HISTORY {
             self.items.remove(0);
         }
+        new && sound
     }
 
     /// Retire une notification ; renvoie si elle existait.
@@ -214,6 +225,8 @@ pub fn local_notice(summary: &str, body: &str) -> Notice {
         actions: Vec::new(),
         received: std::time::SystemTime::now(),
         file: None,
+        // Le bureau a ses propres sons (capture, Corbeille) : pas d'alerte en plus.
+        sound: false,
     }
 }
 
@@ -297,6 +310,10 @@ impl Server {
                 .collect(),
             received: std::time::SystemTime::now(),
             file: None,
+            sound: !hints
+                .get("suppress-sound")
+                .and_then(|value| value.downcast_ref::<bool>().ok())
+                .unwrap_or(false),
         };
         if self.events.send(Event::Notify(notice)).is_err() {
             tracing::warn!("notification perdue : le bureau ne répond plus");
@@ -404,7 +421,13 @@ impl Ferrite {
 
     pub fn on_notification_event(&mut self, event: Event) {
         match event {
-            Event::Notify(notice) => self.notifications.notify(notice, Instant::now()),
+            Event::Notify(notice) => {
+                if self.notifications.notify(notice, Instant::now()) {
+                    ferrite_system::sounds::play(ferrite_system::sounds::Sound::Alert(
+                        ferrite_system::sounds::Alert::Drop,
+                    ));
+                }
+            }
             Event::Close(id) => {
                 if self.notifications.remove(id) {
                     self.send_notification_signal(Signal::Closed(id, Closed::Requested));
@@ -538,6 +561,31 @@ mod tests {
         );
         assert_eq!(center.history().count(), 2);
         assert_eq!(center.history().last().unwrap().summary, "Nouveau");
+    }
+
+    #[test]
+    fn son_seulement_pour_une_nouvelle_bulle_qui_le_veut() {
+        let now = Instant::now();
+        let mut center = Center::default();
+        let sonore = |id| Notice {
+            sound: true,
+            ..notice(id)
+        };
+        assert!(center.notify(sonore(1), now));
+        // Mise à jour de la même notification : silencieuse.
+        assert!(!center.notify(sonore(1), now));
+        // Notification du bureau, ou `suppress-sound` : silencieuse.
+        assert!(!center.notify(notice(2), now));
+        // Ne pas déranger : silencieuse, sauf l'urgente.
+        center.do_not_disturb = true;
+        assert!(!center.notify(sonore(3), now));
+        assert!(center.notify(
+            Notice {
+                critical: true,
+                ..sonore(4)
+            },
+            now
+        ));
     }
 
     #[test]

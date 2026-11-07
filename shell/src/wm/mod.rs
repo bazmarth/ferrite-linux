@@ -348,6 +348,27 @@ pub fn is_server_decorated(window: &Window) -> bool {
     })
 }
 
+/// Comme `is_server_decorated`, mais d'après le mode déjà décidé par ferrite-shell, même si
+/// le client ne l'a pas encore confirmé. Une application qui demande à être agrandie dès son
+/// ouverture (WordCraft) le fait avant d'avoir reçu sa première configuration : l'état
+/// confirmé ne dit pas encore qu'elle aura la barre de Ferrite, et la fenêtre prenait tout
+/// l'écran, barre de titre (et ses boutons) hors de l'écran.
+pub fn will_be_server_decorated(window: &Window) -> bool {
+    if window.x11_surface().is_some() {
+        return is_server_decorated(window);
+    }
+    window.toplevel().is_some_and(|toplevel| {
+        let pending = toplevel.with_pending_state(|state| {
+            (
+                state.decoration_mode,
+                state.states.contains(xdg_toplevel::State::Fullscreen),
+            )
+        });
+        let mode = pending.0.or(toplevel.current_state().decoration_mode);
+        mode == Some(DecorationMode::ServerSide) && !pending.1
+    })
+}
+
 /// Cadre complet utilisé par les animations, barre de titre serveur comprise.
 pub fn animation_frame(window: &Window, content: Rectangle<i32, Logical>) -> Rectangle<f64, Logical> {
     let frame = if is_server_decorated(window) {

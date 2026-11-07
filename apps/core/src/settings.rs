@@ -18,6 +18,7 @@ const HOLD: Duration = Duration::from_secs(2);
 
 mod defaults;
 mod face;
+mod meter;
 mod rows;
 
 use self::rows::{Lead, Row, group, hero};
@@ -297,6 +298,14 @@ pub struct SettingsState {
     thumbnails: HashMap<Source, Option<egui::TextureHandle>>,
     requested: HashSet<PathBuf>,
     wallpaper_path: String,
+    /// Thèmes de curseurs installés, cherchés une fois à l'ouverture de la page Apparence.
+    cursor_themes: Option<Vec<ferrite_system::cursors::CursorTheme>>,
+    /// Volume des alertes pendant qu'on fait glisser son curseur (enregistré au lâcher).
+    alert_volume: Option<u8>,
+    /// Niveau du micro, mesuré tant que la page Son est affichée.
+    input_meter: Option<meter::InputMeter>,
+    /// Le micro n'a pas pu être ouvert : pas de nouvel essai avant de revenir sur la page.
+    input_meter_failed: bool,
     /// Confidentialité : enregistrement du visage.
     face: face::FaceState,
     /// Applications installées, lues à l'ouverture de « Applications par défaut ».
@@ -360,6 +369,10 @@ impl Default for SettingsState {
             thumbnails: HashMap::new(),
             requested: HashSet::new(),
             wallpaper_path: String::new(),
+            cursor_themes: None,
+            alert_volume: None,
+            input_meter: None,
+            input_meter_failed: false,
             face: face::FaceState::default(),
             installed_apps: None,
         }
@@ -625,6 +638,11 @@ impl SettingsState {
 
     fn page_body(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let ctx = ctx.clone();
+        // Hors de la page Son, le micro est relâché.
+        if self.page != Page::Sound {
+            self.input_meter = None;
+            self.input_meter_failed = false;
+        }
         match self.page {
             Page::About => self.about_page(ui),
             Page::Network => self.network_page(ui, &ctx),
@@ -1551,6 +1569,15 @@ impl SettingsState {
         let mut input = self.input_volume;
         let mut streams = self.streams.clone();
         let mut touched = false;
+        // Micro ouvert seulement ici (voir `meter`) ; la jauge se redessine régulièrement.
+        if self.input_meter.is_none() && !self.input_meter_failed {
+            self.input_meter = meter::InputMeter::start();
+            self.input_meter_failed = self.input_meter.is_none();
+        }
+        let input_level = self.input_meter.as_ref().map(meter::InputMeter::level);
+        if input_level.is_some() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(80));
+        }
         // Un curseur agit à la fin du glissement, ou au simple clic.
         let done = |response: &egui::Response| {
             response.drag_stopped() || (response.changed() && !response.dragged())
@@ -1592,9 +1619,14 @@ impl SettingsState {
                     choice = Some(Choice::Source(source.id));
                 }
             }
-            rows.row(Row::new("Niveau d’entrée").unavailable(), |ui| {
-                rows::meter(ui, 0)
-            });
+            let row = if input_level.is_some() {
+                Row::new("Niveau d’entrée")
+            } else {
+                Row::new("Niveau d’entrée")
+                    .hint("Micro indisponible")
+                    .unavailable()
+            };
+            rows.row(row, |ui| rows::meter(ui, input_level.unwrap_or(0)));
             let text = format!("{input} %");
             let (response, _) = rows.row(Row::new("Volume d’entrée"), |ui| {
                 rows::slider(ui, &mut input, &text)
@@ -1623,27 +1655,73 @@ impl SettingsState {
                 }
             }
         });
+        // Sons système : réglages du fichier ; un essai à chaque choix pour entendre.
+        let mut settings = Settings::load();
+        let before = settings.clone();
+        let mut dragged_volume = self.alert_volume;
         group(ui, &mut self.icons, "Sons système", |rows| {
-            rows.row(Row::new("Volume des alertes").unavailable(), |ui| {
-                let mut value = 40;
-                rows::slider(ui, &mut value, "40 %");
+            use ferrite_system::sounds::{self, Alert, Sound};
+            let mut alert_volume = dragged_volume.unwrap_or(settings.sounds_volume().min(100) as u8);
+            let text = format!("{alert_volume} %");
+            let (response, _) = rows.row(Row::new("Volume des alertes"), |ui| {
+                rows::slider(ui, &mut alert_volume, &text)
             });
-            rows.row(Row::new("Son d’alerte").unavailable(), |ui| {
-                let mut sound = 0;
-                rows::pick(ui, "son-alerte", &mut sound, &[(0, "Goutte")]);
-            });
-            let row = Row::new("Sons des actions")
-                .hint("Corbeille, capture d’écran")
-                .unavailable();
-            rows.row(row, |ui| {
-                let mut off = false;
-                rows::switch(ui, &mut off);
-            });
-            rows.row(Row::new("Son au démarrage").unavailable(), |ui| {
-                let mut off = false;
-                rows::switch(ui, &mut off);
-            });
+            if response.dragged() {
+                dragged_volume = Some(alert_volume);
+            }
+            if done(&response) {
+                dragged_volume = None;
+                settings.set("sons_volume", &alert_volume.to_string());
+                let alert = settings.alert_sound().unwrap_or(Alert::Drop);
+                sounds::play_at(Sound::Alert(alert), u32::from(alert_volume));
+            }
+
+            let mut alert = settings.alert_sound();
+            let mut options: Vec<(Option<Alert>, &str)> = Alert::ALL
+                .iter()
+                .map(|alert| (Some(*alert), alert.label()))
+                .collect();
+            options.push((None, "Aucun"));
+            if rows
+                .row(
+                    Row::new("Son d’alerte").hint("À l’arrivée d’une notification"),
+                    |ui| rows::pick(ui, "son-alerte", &mut alert, &options),
+                )
+                .0
+            {
+                settings.set("son_alerte", alert.map_or("aucun", Alert::key));
+                if let Some(alert) = alert {
+                    sounds::play_at(Sound::Alert(alert), settings.sounds_volume());
+                }
+            }
+
+            let mut actions = settings.action_sounds();
+            let row = Row::new("Sons des actions").hint("Corbeille, capture d’écran");
+            if rows.row(row, |ui| rows::switch(ui, &mut actions)).0 {
+                settings.set_flag("sons_actions", actions);
+                if actions {
+                    sounds::play_at(Sound::Trash, settings.sounds_volume());
+                }
+            }
+
+            let mut startup = settings.startup_sound();
+            if rows
+                .row(
+                    Row::new("Son au démarrage").hint("À l’ouverture de la session"),
+                    |ui| rows::switch(ui, &mut startup),
+                )
+                .0
+            {
+                settings.set_flag("son_demarrage", startup);
+                if startup {
+                    sounds::play_at(Sound::Startup, settings.sounds_volume());
+                }
+            }
         });
+        self.alert_volume = dragged_volume;
+        if settings != before {
+            self.save(&settings);
+        }
         self.volume = volume;
         self.balance = balance;
         self.input_volume = input;
@@ -1843,6 +1921,14 @@ impl SettingsState {
             rows.row(row, |ui| rows::pick(ui, id, value, &options)).0
         };
         group(ui, icons, "Inactivité", |rows| {
+            pick(
+                rows,
+                Row::new("Éteindre l’écran après")
+                    .hint("Une minute sur l’écran verrouillé ; une touche le rallume"),
+                "ecran-eteint",
+                &mut idle.screen_off,
+                &idle::SCREEN_OFF_CHOICES,
+            );
             pick(
                 rows,
                 Row::new("Verrouiller l’écran après").hint("Sans toucher au clavier, à la souris ni au pavé"),
@@ -2150,8 +2236,9 @@ impl SettingsState {
 
         let appearance = settings.appearance();
         rows::card(ui, "Style", |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 16.0;
+            // Passe à la ligne quand la place manque (grande taille du texte).
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(16.0, 12.0);
                 for mode in Appearance::ALL {
                     if appearance_choice(ui, mode, appearance == mode).clicked() {
                         settings.set("apparence", mode.key());
@@ -2239,23 +2326,15 @@ impl SettingsState {
         });
 
         let icons = &mut self.icons;
+        let cursor_themes = self
+            .cursor_themes
+            .get_or_insert_with(ferrite_system::cursors::themes);
         group(ui, icons, "Thèmes et affichage", |rows| {
             rows.row(Row::new("Thème d’icônes"), |ui| {
                 let mut theme = 0;
                 rows::pick(ui, "theme-icones", &mut theme, &[(0, "Ferrite")]);
             });
-            rows.row(Row::new("Thème de curseurs").unavailable(), |ui| {
-                let mut theme = 0;
-                rows::pick(ui, "theme-curseurs", &mut theme, &[(0, "Ferrite-Cursors")]);
-            });
-            rows.row(Row::new("Taille du curseur").unavailable(), |ui| {
-                let mut size = 24;
-                rows::pick(ui, "taille-curseur", &mut size, &[(24, "24 px")]);
-            });
-            rows.row(Row::new("Taille du texte").hint("100 %").unavailable(), |ui| {
-                let mut size = 40;
-                rows::slider(ui, &mut size, "100 %");
-            });
+            cursor_rows(rows, &mut settings, cursor_themes);
             flag_row(
                 rows,
                 &mut settings,
@@ -2891,6 +2970,70 @@ fn flag_row(rows: &mut rows::Group<'_>, settings: &mut Settings, row: Row<'_>, k
     };
     if rows.row(row, |ui| rows::switch(ui, &mut on)).0 {
         settings.set_flag(key, on);
+    }
+}
+
+/// Thème et taille du curseur, taille du texte (Apparence).
+fn cursor_rows(
+    rows: &mut rows::Group<'_>,
+    settings: &mut Settings,
+    themes: &[ferrite_system::cursors::CursorTheme],
+) {
+    use ferrite_system::cursors;
+    // Un thème enregistré puis désinstallé reste affiché, pour qu'on voie ce qui est choisi.
+    let current = settings.cursor_theme().to_owned();
+    let mut options: Vec<(usize, &str)> = themes
+        .iter()
+        .enumerate()
+        .map(|(index, theme)| (index, theme.name.as_str()))
+        .collect();
+    let mut chosen = themes.iter().position(|theme| theme.id == current);
+    if chosen.is_none() {
+        options.push((themes.len(), current.as_str()));
+        chosen = Some(themes.len());
+    }
+    let mut chosen = chosen.unwrap_or(0);
+    if rows
+        .row(Row::new("Thème de curseurs"), |ui| {
+            rows::pick(ui, "theme-curseurs", &mut chosen, &options)
+        })
+        .0
+        && let Some(theme) = themes.get(chosen)
+    {
+        settings.set("curseur_theme", &theme.id);
+    }
+
+    let mut size = settings.cursor_size();
+    if rows
+        .row(Row::new("Taille du curseur"), |ui| {
+            rows::pick(ui, "taille-curseur", &mut size, &cursors::SIZES)
+        })
+        .0
+    {
+        settings.set("curseur_taille", &size.to_string());
+    }
+
+    let labels = cursors::TEXT_SIZES.map(|percent| {
+        if percent == 100 {
+            "100 % (normale)".to_owned()
+        } else {
+            format!("{percent} %")
+        }
+    });
+    let options: Vec<(u32, &str)> = cursors::TEXT_SIZES
+        .iter()
+        .zip(&labels)
+        .map(|(percent, label)| (*percent, label.as_str()))
+        .collect();
+    let mut text = settings.text_size();
+    if rows
+        .row(
+            Row::new("Taille du texte").hint("Applications Ferrite et GTK ; le bureau garde la sienne"),
+            |ui| rows::pick(ui, "taille-texte", &mut text, &options),
+        )
+        .0
+    {
+        settings.set("texte_taille", &text.to_string());
     }
 }
 

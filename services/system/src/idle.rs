@@ -1,7 +1,7 @@
 //! Inactivité : verrouillage et mise en veille automatiques.
 //!
-//! Réglages, en minutes (0 : jamais) : `verrouillage_auto`, `veille_batterie` et
-//! `veille_secteur`. Le bureau compte depuis la dernière entrée (clavier, souris, geste) ;
+//! Réglages, en minutes (0 : jamais) : `ecran_eteint`, `verrouillage_auto`,
+//! `veille_batterie` et `veille_secteur`. Le bureau compte depuis la dernière entrée (clavier, souris, geste) ;
 //! une vidéo affichée (`zwp_idle_inhibit_v1`) ou du son en cours retient la mise en veille.
 
 use std::{fs, path::Path, time::Duration};
@@ -9,11 +9,14 @@ use std::{fs, path::Path, time::Duration};
 use crate::config::Settings;
 
 /// Délais proposés dans Paramètres, en minutes (0 : jamais).
+pub const SCREEN_OFF_CHOICES: [u32; 7] = [0, 1, 2, 5, 10, 15, 30];
 pub const LOCK_CHOICES: [u32; 7] = [0, 1, 2, 5, 10, 15, 30];
 pub const SLEEP_CHOICES: [u32; 7] = [0, 5, 10, 15, 30, 60, 120];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IdleSettings {
+    /// Minutes avant d'éteindre l'écran (la session continue, rien ne s'endort).
+    pub screen_off: u32,
     /// Minutes avant de verrouiller, puis de mettre en veille sur batterie et sur secteur.
     pub lock_after: u32,
     pub sleep_battery: u32,
@@ -23,6 +26,7 @@ pub struct IdleSettings {
 impl Default for IdleSettings {
     fn default() -> Self {
         Self {
+            screen_off: 10,
             lock_after: 5,
             sleep_battery: 15,
             sleep_ac: 30,
@@ -40,6 +44,7 @@ impl IdleSettings {
                 .unwrap_or(default)
         };
         Self {
+            screen_off: minutes("ecran_eteint", defaults.screen_off),
             lock_after: minutes("verrouillage_auto", defaults.lock_after),
             sleep_battery: minutes("veille_batterie", defaults.sleep_battery),
             sleep_ac: minutes("veille_secteur", defaults.sleep_ac),
@@ -47,9 +52,14 @@ impl IdleSettings {
     }
 
     pub fn save(&self, settings: &mut Settings) {
+        settings.set("ecran_eteint", &self.screen_off.to_string());
         settings.set("verrouillage_auto", &self.lock_after.to_string());
         settings.set("veille_batterie", &self.sleep_battery.to_string());
         settings.set("veille_secteur", &self.sleep_ac.to_string());
+    }
+
+    pub fn screen_off_delay(&self) -> Option<Duration> {
+        delay(self.screen_off)
     }
 
     pub fn lock_delay(&self) -> Option<Duration> {
@@ -161,6 +171,7 @@ mod tests {
     fn reglages_et_valeurs_d_origine() {
         let settings = Settings::parse("verrouillage_auto=2\nveille_secteur=0\n");
         let idle = IdleSettings::load(&settings);
+        assert_eq!(idle.screen_off_delay(), Some(Duration::from_secs(10 * 60)));
         assert_eq!(idle.lock_delay(), Some(Duration::from_secs(120)));
         assert_eq!(idle.sleep_delay(true), Some(Duration::from_secs(15 * 60)));
         assert_eq!(idle.sleep_delay(false), None);

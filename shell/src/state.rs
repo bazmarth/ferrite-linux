@@ -180,6 +180,10 @@ pub struct Ferrite {
     pub scroll_inverted: bool,
     /// Vitesses de défilement (molette, pavé tactile), en pour cent.
     pub scroll_speed: (u32, u32),
+    /// Thème de curseurs (lu par le fil système ; `None` : formes vectorielles) et taille
+    /// du curseur en pixels logiques.
+    pub cursor_theme: Option<std::sync::Arc<crate::render::ThemeCursors>>,
+    pub cursor_size: u32,
     pub wallpaper: WallpaperChoice,
 
     /// Plan 2D sur lequel sont posées les fenêtres et les écrans.
@@ -466,6 +470,8 @@ impl Ferrite {
             accent: settings.accent(),
             scroll_inverted: settings.scroll_inverted(),
             scroll_speed: (settings.scroll_speed_wheel(), settings.scroll_speed_touchpad()),
+            cursor_theme: None,
+            cursor_size: settings.cursor_size(),
             wallpaper: WallpaperChoice::default(),
             space: Space::default(),
             workspaces: Default::default(),

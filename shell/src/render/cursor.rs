@@ -4,7 +4,11 @@
 //! main, déplacement, viseur). Utilisé quand ferrite-shell affiche lui-même le pointeur (backend
 //! DRM) ; en fenêtre, c'est le curseur du système hôte qui sert.
 
-use std::{cell::RefCell, collections::HashMap};
+use std::{
+    cell::{Cell, RefCell},
+    collections::HashMap,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use smithay::backend::{allocator::Fourcc, renderer::element::memory::MemoryRenderBuffer};
 use smithay::utils::Transform;
@@ -165,45 +169,255 @@ impl CursorShape {
 #[derive(Debug, Clone)]
 pub struct CursorImage {
     pub buffer: MemoryRenderBuffer,
-    /// Taille en pixels physiques.
+    /// Taille de l'image, en pixels.
     pub size: (i32, i32),
-    /// Position du point actif dans l'image, en pixels physiques.
+    /// Taille affichée, en pixels logiques (l'image d'un thème est agrandie ou réduite à la
+    /// taille demandée).
+    pub logical: (f64, f64),
+    /// Position du point actif dans l'image affichée, en pixels physiques de l'écran.
     pub hotspot: (i32, i32),
 }
 
+/// Taille de référence des formes vectorielles (la taille « Normale »).
+const BUILTIN_SIZE: f64 = 24.0;
+
+/// Noms cherchés dans un thème pour chaque forme : celui de la spécification CSS, puis les
+/// anciens noms X11.
+fn xcursor_names(shape: CursorShape) -> &'static [&'static str] {
+    match shape {
+        CursorShape::Arrow => &["default", "left_ptr"],
+        CursorShape::Horizontal => &["ew-resize", "sb_h_double_arrow", "h_double_arrow"],
+        CursorShape::Vertical => &["ns-resize", "sb_v_double_arrow", "v_double_arrow"],
+        CursorShape::DiagonalDown => &["nwse-resize", "bd_double_arrow", "size_fdiag"],
+        CursorShape::DiagonalUp => &["nesw-resize", "fd_double_arrow", "size_bdiag"],
+        CursorShape::Text => &["text", "xterm"],
+        CursorShape::Pointer => &["pointer", "hand2", "hand1"],
+        // « move » est une simple flèche dans certains thèmes (Adwaita) : les quatre
+        // flèches d'abord.
+        CursorShape::Move => &["all-scroll", "fleur", "move"],
+        CursorShape::Crosshair => &["crosshair", "cross", "tcross"],
+    }
+}
+
+/// Pack `Ferrite-Cursors` de `ferrite-theme`, embarqué : rien à installer.
+const FERRITE_PACK: [(CursorShape, &[u8]); 9] = [
+    (
+        CursorShape::Arrow,
+        include_bytes!("../../../ferrite-theme/cursors/Ferrite-Cursors/cursors/default"),
+    ),
+    (
+        CursorShape::Horizontal,
+        include_bytes!("../../../ferrite-theme/cursors/Ferrite-Cursors/cursors/ew-resize"),
+    ),
+    (
+        CursorShape::Vertical,
+        include_bytes!("../../../ferrite-theme/cursors/Ferrite-Cursors/cursors/ns-resize"),
+    ),
+    (
+        CursorShape::DiagonalDown,
+        include_bytes!("../../../ferrite-theme/cursors/Ferrite-Cursors/cursors/nwse-resize"),
+    ),
+    (
+        CursorShape::DiagonalUp,
+        include_bytes!("../../../ferrite-theme/cursors/Ferrite-Cursors/cursors/nesw-resize"),
+    ),
+    (
+        CursorShape::Text,
+        include_bytes!("../../../ferrite-theme/cursors/Ferrite-Cursors/cursors/text"),
+    ),
+    (
+        CursorShape::Pointer,
+        include_bytes!("../../../ferrite-theme/cursors/Ferrite-Cursors/cursors/pointer"),
+    ),
+    (
+        CursorShape::Move,
+        include_bytes!("../../../ferrite-theme/cursors/Ferrite-Cursors/cursors/move"),
+    ),
+    (
+        CursorShape::Crosshair,
+        include_bytes!("../../../ferrite-theme/cursors/Ferrite-Cursors/cursors/crosshair"),
+    ),
+];
+
+/// Une image d'un fichier Xcursor, à une taille nominale.
+#[derive(Debug)]
+struct ThemeImage {
+    nominal: u32,
+    width: u32,
+    height: u32,
+    hotspot: (u32, u32),
+    /// `ARGB8888` prémultiplié petit-boutiste, tel que dans le fichier.
+    pixels: Vec<u8>,
+}
+
+/// Formes d'un thème de curseurs, lues une fois (dans le fil système, jamais au rendu).
+#[derive(Debug)]
+pub struct ThemeCursors {
+    /// Numéro unique de ce chargement : change le cache des images.
+    generation: u64,
+    shapes: HashMap<CursorShape, Vec<ThemeImage>>,
+}
+
+const ALL_SHAPES: [CursorShape; 9] = [
+    CursorShape::Arrow,
+    CursorShape::Horizontal,
+    CursorShape::Vertical,
+    CursorShape::DiagonalDown,
+    CursorShape::DiagonalUp,
+    CursorShape::Text,
+    CursorShape::Pointer,
+    CursorShape::Move,
+    CursorShape::Crosshair,
+];
+
+impl ThemeCursors {
+    /// Thème `id` : le pack Ferrite embarqué, ou un thème installé. `None` pour les formes
+    /// vectorielles, ou si le thème ne donne aucune forme lisible.
+    pub fn load(id: &str) -> Option<ThemeCursors> {
+        use ferrite_system::cursors;
+        let mut shapes = HashMap::new();
+        if id == cursors::BUILTIN {
+            return None;
+        } else if id == cursors::FERRITE_PACK {
+            for (shape, bytes) in FERRITE_PACK {
+                if let Some(images) = parse(bytes) {
+                    shapes.insert(shape, images);
+                }
+            }
+        } else {
+            let theme = xcursor::CursorTheme::load(id);
+            for shape in ALL_SHAPES {
+                let images = xcursor_names(shape).iter().find_map(|name| {
+                    let path = theme.load_icon(name)?;
+                    parse(&std::fs::read(path).ok()?)
+                });
+                if let Some(images) = images {
+                    shapes.insert(shape, images);
+                }
+            }
+        }
+        if shapes.is_empty() {
+            return None;
+        }
+        static GENERATION: AtomicU64 = AtomicU64::new(1);
+        Some(ThemeCursors {
+            generation: GENERATION.fetch_add(1, Ordering::Relaxed),
+            shapes,
+        })
+    }
+
+    /// Image la plus proche au-dessus de `pixels` (sinon la plus grande) : réduire garde le
+    /// dessin net, agrandir le floute.
+    fn pick(&self, shape: CursorShape, pixels: f64) -> Option<&ThemeImage> {
+        let images = self.shapes.get(&shape)?;
+        images
+            .iter()
+            .filter(|image| f64::from(image.nominal) >= pixels - 0.5)
+            .min_by_key(|image| image.nominal)
+            .or_else(|| images.iter().max_by_key(|image| image.nominal))
+    }
+}
+
+/// Images d'un fichier Xcursor : la première de chaque taille (un curseur animé n'est pas
+/// animé ici).
+fn parse(bytes: &[u8]) -> Option<Vec<ThemeImage>> {
+    let mut images: Vec<ThemeImage> = Vec::new();
+    for image in xcursor::parser::parse_xcursor(bytes)? {
+        let expected = (image.width * image.height * 4) as usize;
+        if image.width == 0
+            || image.height == 0
+            || image.pixels_rgba.len() != expected
+            || images.iter().any(|known| known.nominal == image.size)
+        {
+            continue;
+        }
+        images.push(ThemeImage {
+            nominal: image.size,
+            width: image.width,
+            height: image.height,
+            hotspot: (image.xhot.min(image.width), image.yhot.min(image.height)),
+            pixels: image.pixels_rgba,
+        });
+    }
+    (!images.is_empty()).then_some(images)
+}
+
+/// Clé du cache : forme, échelle et taille (en millièmes), chargement du thème (0 : formes
+/// vectorielles).
+type CacheKey = (CursorShape, u32, u32, u64);
+
 #[derive(Debug, Default)]
 pub struct Cursor {
-    /// Images déjà dessinées, par forme et échelle (en millièmes).
-    cache: RefCell<HashMap<(CursorShape, u32), CursorImage>>,
+    /// Images déjà préparées.
+    cache: RefCell<HashMap<CacheKey, CursorImage>>,
+    /// Thème des images du cache : un autre thème vide le cache.
+    generation: Cell<u64>,
 }
 
 impl Cursor {
-    /// Image de `shape` pour l'échelle `scale` (dessinée une seule fois).
-    pub fn image(&self, shape: CursorShape, scale: f64) -> CursorImage {
-        let key = (shape, (scale * 1000.0).round() as u32);
+    /// Image de `shape` pour l'échelle `scale`, à la taille `size` (pixels logiques), prise
+    /// dans `theme` s'il a cette forme, sinon dessinée (une seule fois dans les deux cas).
+    pub fn image(
+        &self,
+        shape: CursorShape,
+        scale: f64,
+        size: u32,
+        theme: Option<&ThemeCursors>,
+    ) -> CursorImage {
+        let theme = theme.filter(|theme| theme.shapes.contains_key(&shape));
+        let generation = theme.map_or(0, |theme| theme.generation);
+        if theme.is_some() && self.generation.replace(generation) != generation {
+            self.cache.borrow_mut().clear();
+        }
+        let key = (shape, (scale * 1000.0).round() as u32, size, generation);
         self.cache
             .borrow_mut()
             .entry(key)
-            .or_insert_with(|| {
-                let shape = Outline::new(shape);
-                let (width, height, pixels) = shape.rasterize(scale);
-                let buffer = MemoryRenderBuffer::from_slice(
-                    &pixels,
-                    Fourcc::Argb8888,
-                    (width as i32, height as i32),
-                    1,
-                    Transform::Normal,
-                    None,
-                );
-                let hotspot = shape.hotspot(scale);
-                CursorImage {
-                    buffer,
-                    size: (width as i32, height as i32),
-                    hotspot,
-                }
-            })
+            .or_insert_with(
+                || match theme.and_then(|theme| theme.pick(shape, f64::from(size) * scale)) {
+                    Some(image) => themed_image(image, scale, size),
+                    None => vector_image(shape, scale, size),
+                },
+            )
             .clone()
     }
+}
+
+fn vector_image(shape: CursorShape, scale: f64, size: u32) -> CursorImage {
+    let factor = scale * f64::from(size) / BUILTIN_SIZE;
+    let shape = Outline::new(shape);
+    let (width, height, pixels) = shape.rasterize(factor);
+    CursorImage {
+        buffer: buffer(&pixels, width, height),
+        size: (width as i32, height as i32),
+        logical: (f64::from(width) / scale, f64::from(height) / scale),
+        hotspot: shape.hotspot(factor),
+    }
+}
+
+/// Image d'un thème ramenée à `size` : sa taille nominale correspond à `size` pixels logiques.
+fn themed_image(image: &ThemeImage, scale: f64, size: u32) -> CursorImage {
+    let factor = f64::from(size) / f64::from(image.nominal.max(1));
+    CursorImage {
+        buffer: buffer(&image.pixels, image.width, image.height),
+        size: (image.width as i32, image.height as i32),
+        logical: (f64::from(image.width) * factor, f64::from(image.height) * factor),
+        hotspot: (
+            (f64::from(image.hotspot.0) * factor * scale).round() as i32,
+            (f64::from(image.hotspot.1) * factor * scale).round() as i32,
+        ),
+    }
+}
+
+fn buffer(pixels: &[u8], width: u32, height: u32) -> MemoryRenderBuffer {
+    MemoryRenderBuffer::from_slice(
+        pixels,
+        Fourcc::Argb8888,
+        (width as i32, height as i32),
+        1,
+        Transform::Normal,
+        None,
+    )
 }
 
 /// Contour tourné, prêt à être dessiné.
@@ -339,7 +553,7 @@ mod tests {
             CursorShape::Move,
             CursorShape::Crosshair,
         ] {
-            let image = Cursor::default().image(shape, 2.0);
+            let image = Cursor::default().image(shape, 2.0, 24, None);
             let outline = Outline::new(shape);
             let (width, height, pixels) = outline.rasterize(2.0);
             assert!(pixels.chunks(4).any(|pixel| pixel[3] == 255), "{shape:?} vide");
@@ -354,9 +568,84 @@ mod tests {
     #[test]
     fn echelle_deux() {
         let cursor = Cursor::default();
-        let image = cursor.image(CursorShape::Arrow, 2.0);
+        let image = cursor.image(CursorShape::Arrow, 2.0, 24, None);
         assert_eq!(image.hotspot, (2, 2));
         assert_eq!(image.size, (28, 41));
+        assert_eq!(image.logical, (14.0, 20.5));
+    }
+
+    #[test]
+    fn grande_taille_vectorielle() {
+        let image = Cursor::default().image(CursorShape::Arrow, 2.0, 48, None);
+        assert_eq!(image.hotspot, (4, 4));
+        // Deux fois la taille Normale : point actif et hauteur doublés.
+        assert_eq!(image.size, (55, 82));
+        assert_eq!(image.logical, (27.5, 41.0));
+    }
+
+    #[test]
+    fn pack_ferrite_embarque() {
+        let theme = ThemeCursors::load(ferrite_system::cursors::FERRITE_PACK).expect("pack lisible");
+        for shape in ALL_SHAPES {
+            assert!(theme.shapes.contains_key(&shape), "{shape:?} absent du pack");
+        }
+        // Écran ×2, taille Normale : l'image de 48 px, affichée sur 24 points.
+        let image = Cursor::default().image(CursorShape::Arrow, 2.0, 24, Some(&theme));
+        assert_eq!(image.size.0 as f64, image.logical.0 * 2.0);
+        // Couleurs prémultipliées, comme le veut `Argb8888` ici : jamais plus que l'opacité.
+        let pixels = &theme.shapes[&CursorShape::Arrow][0].pixels;
+        assert!(
+            pixels
+                .chunks(4)
+                .all(|p| p[0] <= p[3] && p[1] <= p[3] && p[2] <= p[3])
+        );
+        assert!(pixels.chunks(4).any(|p| p[3] == 255));
+        // Très grande sur ×2 : 96 px, l'image la plus grande du pack.
+        let image = Cursor::default().image(CursorShape::Arrow, 2.0, 48, Some(&theme));
+        assert_eq!(image.size.0 as f64, image.logical.0 * 2.0);
+        assert!(ThemeCursors::load(ferrite_system::cursors::BUILTIN).is_none());
+    }
+
+    #[test]
+    fn choix_de_l_image_du_theme() {
+        let theme = ThemeCursors {
+            generation: 99,
+            shapes: HashMap::from([(
+                CursorShape::Arrow,
+                [24, 48, 96]
+                    .map(|nominal| ThemeImage {
+                        nominal,
+                        width: nominal,
+                        height: nominal,
+                        hotspot: (nominal / 8, nominal / 8),
+                        pixels: vec![0; (nominal * nominal * 4) as usize],
+                    })
+                    .into(),
+            )]),
+        };
+        assert_eq!(
+            theme.pick(CursorShape::Arrow, 30.0).map(|image| image.nominal),
+            Some(48)
+        );
+        assert_eq!(
+            theme.pick(CursorShape::Arrow, 48.0).map(|image| image.nominal),
+            Some(48)
+        );
+        assert_eq!(
+            theme.pick(CursorShape::Arrow, 200.0).map(|image| image.nominal),
+            Some(96)
+        );
+        assert!(theme.pick(CursorShape::Text, 24.0).is_none());
+        // Forme absente du thème : la forme vectorielle, à la même taille.
+        let cursor = Cursor::default();
+        let text = cursor.image(CursorShape::Text, 1.0, 24, Some(&theme));
+        let vector = cursor.image(CursorShape::Text, 1.0, 24, None);
+        assert_eq!(text.size, vector.size);
+        // Échelle 1, taille Grande (32) : image de 48 réduite à 32 points, point actif suivi.
+        let arrow = cursor.image(CursorShape::Arrow, 1.0, 32, Some(&theme));
+        assert_eq!(arrow.size, (48, 48));
+        assert_eq!(arrow.logical, (32.0, 32.0));
+        assert_eq!(arrow.hotspot, (4, 4));
     }
 
     #[test]

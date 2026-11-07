@@ -3010,29 +3010,25 @@ impl Panels {
     /// contour, le titre et le bouton de fermeture.
     fn draw_overview(&self, canvas: &mut Canvas, layout: &Layout, overview: &OverviewView) {
         const ICON: f64 = 56.0;
+        // Le fond suit le thème (voir `RenderAssets::overview_overlay`) : écritures et
+        // miniatures aussi.
+        let text = themed(Color::rgb(0x1C1C1E), Color::WHITE);
+        let soft = themed(Color::rgb(0x4A5563), Color::rgb(0xC9D4E3));
+        let thumb_fill = themed(Color::rgb(0xCDD5DF), Color::rgb(0x16202D));
+        let ring = themed(Color::rgb(0x2F7FDB), Color::rgb(0x6CB8FF));
         // Bande des espaces de travail ; le dernier, vide, est le « nouvel espace ».
         for (index, space) in overview.spaces.iter().enumerate() {
             let thumb = overview_space_rect(layout.w, layout.bar, overview.spaces.len(), index);
             if space.windows == 0 && index + 1 == overview.spaces.len() {
-                canvas.stroke(thumb, 8.0, Color::WHITE.with_alpha(90), 1.5);
+                canvas.stroke(thumb, 8.0, tint(90), 1.5);
                 let center = thumb.center();
-                canvas.line(
-                    (center.0 - 6.0, center.1),
-                    (center.0 + 6.0, center.1),
-                    2.0,
-                    Color::rgb(0xC9D4E3),
-                );
-                canvas.line(
-                    (center.0, center.1 - 6.0),
-                    (center.0, center.1 + 6.0),
-                    2.0,
-                    Color::rgb(0xC9D4E3),
-                );
+                canvas.line((center.0 - 6.0, center.1), (center.0 + 6.0, center.1), 2.0, soft);
+                canvas.line((center.0, center.1 - 6.0), (center.0, center.1 + 6.0), 2.0, soft);
                 continue;
             }
-            canvas.fill(thumb, 8.0, Color::rgb(0x16202D));
+            canvas.fill(thumb, 8.0, thumb_fill);
             if space.current {
-                canvas.stroke(thumb.expand(2.0), 10.0, Color::rgb(0x6CB8FF), 2.0);
+                canvas.stroke(thumb.expand(2.0), 10.0, ring, 2.0);
             }
             let shown = space.windows.min(3);
             for slot in 0..shown {
@@ -3053,19 +3049,19 @@ impl Panels {
                 thumb.x + (thumb.w - width) / 2.0,
                 thumb.bottom() + 4.0,
                 px(11.0),
-                Color::rgb(0xC9D4E3),
+                soft,
             );
         }
         if overview.tiles.is_empty() {
-            let text = "Aucune fenêtre ouverte sur ce bureau";
-            let width = canvas.text_width(&self.regular, text, 15.0);
+            let message = "Aucune fenêtre ouverte sur ce bureau";
+            let width = canvas.text_width(&self.regular, message, 15.0);
             canvas.label(
                 &self.regular,
-                text,
+                message,
                 (layout.w - width) / 2.0,
                 layout.h / 2.0 - 10.0,
                 15.0,
-                Color::WHITE,
+                text,
             );
             return;
         }
@@ -3074,19 +3070,19 @@ impl Panels {
             let frame = Rect::new(x as f64, y as f64, w as f64, h as f64);
             let center = (frame.x + frame.w / 2.0, frame.bottom() - ICON / 6.0);
             if tile.hovered {
-                canvas.stroke(frame.expand(3.0), 11.0, Color::rgb(0x6CB8FF), 3.0);
+                canvas.stroke(frame.expand(3.0), 11.0, ring, 3.0);
             }
             canvas.app_icon(&tile.icon, center, ICON);
             if !tile.title.is_empty() {
-                let text = canvas.fit_text(&self.bold, &tile.title, px(12.0), frame.w.max(120.0));
-                let width = canvas.text_width(&self.bold, &text, px(12.0));
+                let title = canvas.fit_text(&self.bold, &tile.title, px(12.0), frame.w.max(120.0));
+                let width = canvas.text_width(&self.bold, &title, px(12.0));
                 canvas.label(
                     &self.bold,
-                    &text,
+                    &title,
                     center.0 - width / 2.0,
                     center.1 + ICON / 2.0 + 8.0,
                     px(12.0),
-                    Color::WHITE,
+                    text,
                 );
             }
             if !tile.hovered {

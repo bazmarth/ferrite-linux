@@ -361,6 +361,9 @@ pub fn wants_dark(settings: &Settings) -> bool {
     ALWAYS_DARK.load(Ordering::Relaxed) == 1 || settings.appearance().is_dark()
 }
 
+/// Dernière taille du texte appliquée, en pour cent (0 : aucune encore).
+static TEXT_SIZE: AtomicU32 = AtomicU32::new(0);
+
 /// Applique les préférences d'apparence de Paramètres : accentuation, surlignage du
 /// texte, taille des icônes des barres latérales et barres de défilement.
 pub fn apply_preferences(context: &egui::Context, settings: &Settings) {
@@ -394,6 +397,13 @@ pub fn apply_preferences(context: &egui::Context, settings: &Settings) {
         ScrollBars::WhenScrolling => egui::style::ScrollStyle::floating(),
         ScrollBars::Always => egui::style::ScrollStyle::solid(),
     };
+    // Taille du texte (Paramètres → Apparence) : tout le contenu de la fenêtre grandit,
+    // texte et commandes ensemble, pour que rien ne déborde. Appliquée seulement quand le
+    // réglage change, pour ne pas défaire un zoom au clavier propre à l'application.
+    let text_size = settings.text_size();
+    if TEXT_SIZE.swap(text_size, Ordering::Relaxed) != text_size {
+        context.set_zoom_factor(text_size as f32 / 100.0);
+    }
     let reduce_motion = settings.flag("reduire_animations", false);
     context.all_styles_mut(|style| {
         style.animation_time = if reduce_motion { 0.0 } else { 1.0 / 12.0 };

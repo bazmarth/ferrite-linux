@@ -782,6 +782,25 @@ impl Settings {
         parse_speed(self.get("defilement_vitesse_pave"))
     }
 
+    /// Thème de curseurs : `ferrite` (formes vectorielles, par défaut), `Ferrite-Cursors`, ou
+    /// le dossier d'un thème installé (voir `cursors::themes`).
+    pub fn cursor_theme(&self) -> &str {
+        self.get("curseur_theme")
+            .map(str::trim)
+            .filter(|theme| !theme.is_empty() && !theme.contains('/'))
+            .unwrap_or(crate::cursors::BUILTIN)
+    }
+
+    /// Taille du curseur en pixels logiques (24, 32 ou 48).
+    pub fn cursor_size(&self) -> u32 {
+        crate::cursors::parse_size(self.get("curseur_taille"))
+    }
+
+    /// Taille du texte des applications, en pour cent (100 : celle d'origine).
+    pub fn text_size(&self) -> u32 {
+        crate::cursors::parse_text_size(self.get("texte_taille"))
+    }
+
     /// Fond d'écran : nom d'un fond de Ferrite, ou chemin absolu d'une image (vide : le
     /// fond Ferrite).
     pub fn wallpaper(&self) -> &str {

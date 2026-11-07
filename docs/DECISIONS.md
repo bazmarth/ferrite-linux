@@ -300,3 +300,38 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
 - **2026-11-07 — `PASSATION.md` devient `TECHNIQUE.md`.** Personne ne reprend le projet :
   Claude le développe à chaque séance. Le document reste la référence technique relue avant
   de toucher au code.
+
+- **2026-11-07 — Curseurs : le bureau dessine tout, pack Ferrite embarqué.** Le bureau dessine
+  déjà lui-même chaque pointeur (y compris sur les applications, d'après le nom de forme
+  qu'elles demandent). Le thème choisi dans Paramètres est donc lu par le bureau seul, dans
+  son fil système (`xcursor`), jamais au rendu. Le pack `Ferrite-Cursors` est compilé dans
+  le binaire, comme les icônes du pack : rien à installer dans l'ISO ni sur le PC. Les
+  formes vectorielles d'origine restent le choix par défaut. Taille : l'image du thème la
+  plus proche au-dessus, réduite par le GPU à la taille voulue (24, 32 ou 48 points).
+
+- **2026-11-07 — « Taille du texte » = zoom des applications, pas du bureau.** Les applis
+  Ferrite fixent 130 tailles de police à la main : agrandir le seul texte casserait leurs
+  mises en page. Le réglage agrandit tout le contenu de leurs fenêtres (`zoom_factor`
+  d'egui), et passe aux applis GTK par `text-scaling-factor`. Barre, Dock et panneaux du
+  bureau gardent leur taille (dessinés à des mesures fixes) ; la ligne de Paramètres le dit.
+
+- **2026-11-07 — Écran éteint par le bureau, avant la veille.** Après `ecran_eteint` minutes
+  sans entrée (10 par défaut, une minute sur l'écran verrouillé), le bureau coupe l'affichage
+  par `DrmCompositor::clear()` (DPMS) et cesse de dessiner : la session continue (musique,
+  téléchargements), seule la dalle s'éteint. Pas d'assombrissement avant, pour rester simple
+  (une vidéo affichée empêche toujours l'extinction). La touche qui rallume l'écran est
+  transmise à l'application, comme sous GNOME.
+
+- **2026-11-07 — Sons système fabriqués par le code.** Aucun thème de sons n'est installé, et
+  ceux de freedesktop ont des licences mêlées. Les sept sons de Ferrite (alertes Goutte,
+  Cloche, Verre, Douce ; Corbeille, capture, démarrage) sont synthétisés par
+  `ferrite_system::sounds` (sinusoïdes et bruit mis en forme), écrits une fois en WAV dans
+  `$XDG_RUNTIME_DIR/ferrite-sons`, joués par `pw-play` dans un fil : rien à installer, rien
+  qui bloque le bureau. Une notification sonne si elle est nouvelle, montrée en bulle (donc
+  pas en « Ne pas déranger », sauf urgente) et sans `suppress-sound` ; les notifications du
+  bureau lui-même ne sonnent pas (la capture a déjà son déclic). Le son de démarrage ne
+  sonne qu'à l'ouverture de session (`FERRITE_LOCK=1`), pas à une relance du bureau.
+
+- **2026-11-07 — Jauge du micro par GStreamer, seulement sur la page Son.** `pulsesrc ! level`
+  (PipeWire répond par sa couche PulseAudio) : le micro est ouvert à l'affichage de la page
+  Son et relâché dès qu'on la quitte.

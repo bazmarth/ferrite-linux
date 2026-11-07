@@ -68,7 +68,24 @@ pub fn trash(path: &Path) -> Result<PathBuf, String> {
             return Err(error);
         }
     }
+    trash_sound();
     Ok(target)
+}
+
+/// Son de la Corbeille : un seul pour plusieurs éléments jetés ensemble.
+fn trash_sound() {
+    use std::sync::Mutex;
+    // Les tests de la Corbeille ne doivent pas faire de bruit.
+    if cfg!(test) {
+        return;
+    }
+    static LAST: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+    let Ok(mut last) = LAST.lock() else { return };
+    let now = std::time::Instant::now();
+    if last.is_none_or(|last| now.duration_since(last) > std::time::Duration::from_millis(500)) {
+        ferrite_system::sounds::play(ferrite_system::sounds::Sound::Trash);
+    }
+    *last = Some(now);
 }
 
 /// Éléments de la Corbeille, les plus récents d'abord.

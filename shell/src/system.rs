@@ -83,6 +83,9 @@ pub enum Event {
     ScrollInverted(bool),
     /// Vitesses de défilement (molette, pavé tactile), en pour cent.
     ScrollSpeed(u32, u32),
+    /// Taille du curseur, et thème de curseurs s'il a changé (déjà lu ; `Some(None)` :
+    /// formes vectorielles).
+    CursorSize(u32, Option<Option<Arc<crate::render::ThemeCursors>>>),
     Wallpaper(WallpaperChoice),
     /// Applications épinglées dans le Dock, et applications à plusieurs fenêtres.
     DockApps(Option<Vec<String>>, Vec<String>),
@@ -236,6 +239,21 @@ fn publish_window_buttons() {
     }
 }
 
+/// Taille du texte des applications GTK (et de celles qui suivent GTK), comme la clé
+/// `text-scaling-factor` de GNOME ; les applications Ferrite lisent le réglage elles-mêmes.
+fn publish_text_size(percent: u32) {
+    let factor = format!("{:.2}", f64::from(percent) / 100.0);
+    let args = [
+        "set",
+        "org.gnome.desktop.interface",
+        "text-scaling-factor",
+        &factor,
+    ];
+    if let Err(err) = command::run("gsettings", &args) {
+        warn!("taille du texte des applications tierces non transmise : {err}");
+    }
+}
+
 fn worker(receiver: mpsc::Receiver<Change>, events: channel::Sender<Event>, nested: bool) {
     if !nested {
         publish_window_buttons();
@@ -246,6 +264,8 @@ fn worker(receiver: mpsc::Receiver<Change>, events: channel::Sender<Event>, nest
     let mut known_dark = None;
     let mut known_scroll_inverted = None;
     let mut known_scroll_speed = None;
+    let mut known_cursor: Option<(String, u32)> = None;
+    let mut known_text_size = None;
     let mut known_wallpaper = None;
     let mut known_lock_picture: Option<String> = None;
     let mut wallpaper_generation = 0u64;
@@ -327,6 +347,31 @@ fn worker(receiver: mpsc::Receiver<Change>, events: channel::Sender<Event>, nest
                 known_scroll_speed = Some(speed);
                 if events.send(Event::ScrollSpeed(speed.0, speed.1)).is_err() {
                     return;
+                }
+            }
+            let cursor = (settings.cursor_theme().to_owned(), settings.cursor_size());
+            if known_cursor.as_ref() != Some(&cursor) {
+                // Le thème n'est relu que s'il change (pas pour une nouvelle taille).
+                let reload = known_cursor.as_ref().is_none_or(|(theme, _)| *theme != cursor.0);
+                let theme = if reload {
+                    let theme = crate::render::ThemeCursors::load(&cursor.0).map(Arc::new);
+                    if theme.is_none() && cursor.0 != ferrite_system::cursors::BUILTIN {
+                        warn!(theme = %cursor.0, "thème de curseurs illisible : formes Ferrite");
+                    }
+                    Some(theme)
+                } else {
+                    None
+                };
+                known_cursor = Some(cursor.clone());
+                if events.send(Event::CursorSize(cursor.1, theme)).is_err() {
+                    return;
+                }
+            }
+            let text_size = settings.text_size();
+            if known_text_size != Some(text_size) {
+                known_text_size = Some(text_size);
+                if !nested {
+                    publish_text_size(text_size);
                 }
             }
             let wallpaper_key = Source::parse(settings.wallpaper()).key();
@@ -472,6 +517,12 @@ impl Ferrite {
             }
             Event::ScrollInverted(inverted) => self.scroll_inverted = inverted,
             Event::ScrollSpeed(wheel, touchpad) => self.scroll_speed = (wheel, touchpad),
+            Event::CursorSize(size, theme) => {
+                self.cursor_size = size;
+                if let Some(theme) = theme {
+                    self.cursor_theme = theme;
+                }
+            }
             Event::LockPicture(picture) => {
                 self.lock_picture = picture;
                 // Choisie pendant que l'écran est verrouillé : elle s'affiche tout de suite.

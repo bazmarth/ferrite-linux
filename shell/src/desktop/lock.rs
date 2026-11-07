@@ -28,7 +28,7 @@ const TRANSITION: Duration = ferrite_ui::tokens::motion::LONG;
 /// Fondu enchaîné zoomé entre le bureau et l'écran verrouillé.
 const SWAP: Duration = Duration::from_millis(560);
 /// Zoom du bureau quand il est derrière l'écran verrouillé (il recule).
-const DESKTOP_ZOOM: f32 = 0.9;
+const DESKTOP_ZOOM: f32 = 0.95;
 /// Zoom de l'écran verrouillé quand il est hors de l'écran (devant, tout proche).
 const LOCK_ZOOM: f32 = 1.08;
 /// Attente maximale de la photo de l'écran avant le passage.
@@ -482,6 +482,8 @@ pub struct SwapFrame {
     pub leaving_alpha: f32,
     pub arriving_zoom: f32,
     pub arriving_alpha: f32,
+    /// L'image qui part est dessinée par-dessus celle qui arrive.
+    pub leaving_on_top: bool,
 }
 
 /// Passages de l'écran : verrouillage, déverrouillage, mise en veille et réveil.
@@ -517,18 +519,27 @@ impl ScreenFade {
     }
 
     /// Zoom et opacités d'un passage arrivé à `t` (de 0 à 1).
+    ///
+    /// Le bureau, plus petit que l'écran pendant le passage, est toujours dessiné
+    /// par-dessus l'écran verrouillé, qui reste plein et couvre tout l'écran : autour du
+    /// bureau qui recule on voit le fond d'écran verrouillé, jamais un cadre noir.
     pub fn swap_frame(to: Scene, t: f32) -> SwapFrame {
         use ferrite_ui::theme::Easing;
         // Le zoom file vite puis ralentit : le mouvement se pose sans à-coup.
         let motion = Easing::EaseOut.apply(t);
-        let fade = Easing::EaseInOut.apply(t);
+        // Le bureau s'efface (ou apparaît) dans les deux premiers tiers : son bord ne
+        // traîne pas à l'écran.
+        let shown = (Easing::EaseInOut.apply(t) * 1.6).min(1.0);
+        let (leaving_alpha, arriving_alpha) = match to {
+            Scene::Lock => (1.0 - shown, 1.0),
+            Scene::Unlock => (1.0, shown),
+        };
         SwapFrame {
             leaving_zoom: 1.0 + (to.leaving_zoom() - 1.0) * motion,
-            leaving_alpha: 1.0 - fade,
+            leaving_alpha,
             arriving_zoom: to.arriving_zoom() + (1.0 - to.arriving_zoom()) * motion,
-            // La nouvelle scène est pleine avant que l'ancienne soit partie : pas de creux
-            // sombre au milieu du passage.
-            arriving_alpha: (fade * 1.6).min(1.0),
+            arriving_alpha,
+            leaving_on_top: to == Scene::Lock,
         }
     }
 
@@ -731,6 +742,8 @@ impl Ferrite {
                 self.screen_fade = Some(ScreenFade::Dark);
             }
             Event::Resumed => {
+                // Réveil (capot ouvert…) sans entrée : l'écran doit se rallumer.
+                self.idle.activity();
                 self.reveal_screen();
                 // Retour de veille : la personne est devant l'écran.
                 self.try_face_unlock();
@@ -969,17 +982,32 @@ mod tests {
     #[test]
     fn le_passage_part_et_arrive_sans_saut() {
         for to in [Scene::Lock, Scene::Unlock] {
+            // Opacité de l'image du dessus (le bureau) et de celle du dessous (l'écran
+            // verrouillé), et zoom de l'image du dessous.
+            let layers = |t: f32| {
+                let f = ScreenFade::swap_frame(to, t);
+                if f.leaving_on_top {
+                    (f.leaving_alpha, f.arriving_alpha, f.arriving_zoom)
+                } else {
+                    (f.arriving_alpha, f.leaving_alpha, f.leaving_zoom)
+                }
+            };
             let start = ScreenFade::swap_frame(to, 0.0);
             assert_eq!(start.leaving_zoom, 1.0);
-            assert_eq!(start.leaving_alpha, 1.0);
-            assert_eq!(start.arriving_alpha, 0.0);
             let end = ScreenFade::swap_frame(to, 1.0);
             assert_eq!(end.arriving_zoom, 1.0);
-            assert_eq!(end.arriving_alpha, 1.0);
-            assert_eq!(end.leaving_alpha, 0.0);
-            // Au milieu, la nouvelle scène est presque pleine : pas de creux sombre.
-            let middle = ScreenFade::swap_frame(to, 0.5);
-            assert!(middle.arriving_alpha > 0.75);
+            // Seule l'image qui part se voit au début, seule celle qui arrive à la fin.
+            let (top, _, _) = layers(0.0);
+            assert_eq!(top, if to == Scene::Lock { 1.0 } else { 0.0 });
+            let (top, _, _) = layers(1.0);
+            assert_eq!(top, if to == Scene::Lock { 0.0 } else { 1.0 });
+            for i in 0..=20 {
+                let (_, below, zoom) = layers(i as f32 / 20.0);
+                // Dessous, l'écran verrouillé reste plein et couvre tout l'écran : jamais
+                // de cadre noir autour du bureau qui recule.
+                assert_eq!(below, 1.0);
+                assert!(zoom >= 1.0);
+            }
         }
         // Le bureau recule en partant et revient de derrière.
         assert!(ScreenFade::swap_frame(Scene::Lock, 0.5).leaving_zoom < 1.0);

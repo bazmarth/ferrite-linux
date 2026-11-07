@@ -25,6 +25,7 @@ Chaque dépendance avec sa licence et la raison de sa présence. Les versions ex
 | `gstreamer`, `gstreamer-app`, `gstreamer-video` 0.25 | ferrite-apps, ferrite-visage | MIT/Apache-2.0 (GStreamer : LGPL, liaison dynamique) | Lecteur vidéo, vignettes des vidéos dans Fichiers, lecture de la caméra infrarouge |
 | `symphonia` 0.5 (mp3, aac, isomp4, alac) | ferrite-apps | MPL-2.0 | Musique : décodage et lecture des métadonnées des morceaux |
 | `tract-onnx` 0.21 | ferrite-visage | MIT/Apache-2.0 | exécution des modèles YuNet et SFace (visage) en Rust pur, sans OpenCV |
+| `xcursor` 0.3 | ferrite-shell | MIT | lecture des thèmes de curseurs X (pack Ferrite embarqué, Adwaita…) ; déjà présent par winit |
 | `blocking` 1 | xdg-desktop-portal-ferrite | MIT/Apache-2.0 | fenêtre du sélecteur (`ferrite-apps choisir`) attendue dans un fil à part, sans bloquer les autres demandes |
 
 ## Paquets de l'image live

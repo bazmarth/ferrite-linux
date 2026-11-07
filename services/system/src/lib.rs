@@ -15,6 +15,7 @@ pub mod bluetooth;
 pub mod catalog;
 pub mod command;
 pub mod config;
+pub mod cursors;
 pub mod defaults;
 pub mod display;
 pub mod drag;
@@ -24,6 +25,7 @@ pub mod network;
 pub mod night;
 pub mod power;
 pub mod rfkill;
+pub mod sounds;
 pub mod time;
 pub mod weather;
 

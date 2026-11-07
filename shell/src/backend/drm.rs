@@ -73,6 +73,8 @@ struct Drm {
     active: bool,
     /// Une image a été envoyée et attend d'être affichée (VBlank).
     frame_pending: bool,
+    /// Affichage coupé (écran éteint pour inactivité) : plus aucune image jusqu'au réveil.
+    blanked: bool,
     /// Rendu déjà programmé, et s'il s'agit d'un essai au repos (`IDLE_REDRAW`), qu'un
     /// changement à l'écran peut avancer.
     render_scheduled: Option<(RegistrationToken, bool)>,
@@ -198,6 +200,7 @@ pub fn init(
         assets,
         active: true,
         frame_pending: false,
+        blanked: false,
         render_scheduled: None,
         idle_streak: 0,
     }));
@@ -303,6 +306,7 @@ pub fn init(
                     }
                     drm.active = true;
                     drm.frame_pending = false;
+                    drm.blanked = false;
                     // Un autre terminal a pu changer la table de gamma : on la réapplique.
                     drm.gamma_applied = None;
                 }
@@ -402,7 +406,8 @@ fn schedule_render(drm: &Rc<RefCell<Drm>>, handle: &LoopHandle<'static, Ferrite>
             } else {
                 0
             };
-            idle.then_some(drm.idle_streak)
+            // Écran éteint : pas d'essai au repos ; la première entrée relance le rendu.
+            (idle && !drm.blanked).then_some(drm.idle_streak)
         };
         // Rien n'a changé : on réessaie un peu plus tard (de moins en moins souvent). Sinon
         // le VBlank relancera.
@@ -447,6 +452,27 @@ fn apply_night(drm: &mut Drm, gains: (f64, f64, f64)) {
 
 /// Dessine l'écran ; renvoie vrai si une nouvelle image a été envoyée.
 fn render(drm: &mut Drm, state: &mut Ferrite) -> bool {
+    if state.idle.screen_off {
+        if !drm.blanked {
+            // Coupe l'affichage (DPMS) ; la prochaine image le rallume.
+            match drm.compositor.clear() {
+                Ok(()) => info!("affichage coupé"),
+                Err(err) => warn!("coupure de l'affichage impossible : {err:?}"),
+            }
+            drm.blanked = true;
+            drm.frame_pending = false;
+        }
+        // Ni image ni rappel d'image : les applications cessent de dessiner.
+        return false;
+    }
+    if drm.blanked {
+        drm.blanked = false;
+        // Image entière : rien de l'écran précédent n'est plus affiché.
+        drm.compositor.reset_buffers();
+        // L'écran a pu oublier sa table de gamma : le mode nuit est réappliqué.
+        drm.gamma_applied = None;
+        info!("affichage rallumé");
+    }
     apply_night(drm, state.night.gains);
     let Drm {
         renderer,

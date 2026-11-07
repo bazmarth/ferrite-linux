@@ -161,6 +161,8 @@ fn run(options: Options) -> Result<u8, Box<dyn std::error::Error>> {
     // ne se verrouille pas.
     if !has_display && std::env::var_os("FERRITE_LOCK").is_some_and(|value| value == "1") {
         state.lock_session();
+        // Son d'ouverture (s'il est activé) : pas à une simple relance du bureau.
+        ferrite_system::sounds::play(ferrite_system::sounds::Sound::Startup);
     }
     // Un seul agent polkit par session : pas pour un bureau imbriqué.
     if !has_display {

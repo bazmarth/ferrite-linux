@@ -1,4 +1,4 @@
-//! Inactivité du bureau : verrouillage puis mise en veille automatiques (réglages de
+//! Inactivité du bureau : écran éteint, verrouillage puis mise en veille automatiques (réglages de
 //! `ferrite_system::idle`). Vérifiée toutes les [`CHECK`] par une minuterie : la boucle
 //! peut dormir longtemps quand rien ne bouge.
 
@@ -14,6 +14,8 @@ use crate::state::Ferrite;
 
 const CHECK: Duration = Duration::from_secs(5);
 const KEYBOARD_LIGHT_IDLE: Duration = Duration::from_secs(60);
+/// Sur l'écran verrouillé, l'écran s'éteint plus tôt : personne n'y travaille.
+const LOCKED_SCREEN_OFF: Duration = Duration::from_secs(60);
 
 #[derive(Debug)]
 pub struct Idle {
@@ -27,6 +29,9 @@ pub struct Idle {
     /// Départ du compte avant la mise en veille : la dernière entrée, ou le dernier report
     /// (son en cours, veille demandée).
     sleep_from: Instant,
+    /// Écran éteint pour inactivité (le backend DRM coupe l'affichage) ; la moindre entrée
+    /// le rallume.
+    pub screen_off: bool,
 }
 
 impl Default for Idle {
@@ -38,6 +43,7 @@ impl Default for Idle {
             last_keyboard_input: now,
             keyboard_light_restore: None,
             sleep_from: now,
+            screen_off: false,
         }
     }
 }
@@ -47,6 +53,21 @@ impl Idle {
         let now = Instant::now();
         self.last_input = now;
         self.sleep_from = now;
+        self.screen_off = false;
+    }
+
+    /// L'écran doit-il s'éteindre ? Après le délai réglé, ou une minute sur l'écran
+    /// verrouillé ; jamais si le réglage vaut « Jamais ».
+    fn screen_off_due(&self, now: Instant, locked: bool) -> bool {
+        let Some(delay) = self.settings.screen_off_delay() else {
+            return false;
+        };
+        let delay = if locked {
+            delay.min(LOCKED_SCREEN_OFF)
+        } else {
+            delay
+        };
+        !self.screen_off && now.duration_since(self.last_input) >= delay
     }
 
     pub fn keyboard_activity(&mut self, now: Instant) -> Option<u8> {
@@ -94,6 +115,11 @@ impl Ferrite {
         if !self.idle_inhibitors.is_empty() {
             self.idle.activity();
             return;
+        }
+        if self.idle.screen_off_due(now, self.lock.is_some()) {
+            tracing::info!("écran éteint après inactivité");
+            self.idle.screen_off = true;
+            self.request_redraw();
         }
         if let Some(delay) = self.idle.settings.lock_delay()
             && now.duration_since(self.idle.last_input) >= delay
@@ -155,6 +181,33 @@ mod tests {
             ),
             Some(2)
         );
+    }
+
+    #[test]
+    fn l_ecran_s_eteint_apres_le_delai_et_plus_tot_verrouille() {
+        let start = Instant::now();
+        let mut idle = Idle {
+            last_input: start,
+            ..Idle::default()
+        };
+        // Par défaut : 10 minutes, une seule sur l'écran verrouillé.
+        assert!(!idle.screen_off_due(start + Duration::from_secs(9 * 60), false));
+        assert!(idle.screen_off_due(start + Duration::from_secs(10 * 60), false));
+        assert!(!idle.screen_off_due(start + Duration::from_secs(59), true));
+        assert!(idle.screen_off_due(start + LOCKED_SCREEN_OFF, true));
+        // Déjà éteint : rien à refaire ; une entrée le rallume.
+        idle.screen_off = true;
+        assert!(!idle.screen_off_due(start + Duration::from_secs(3600), false));
+        idle.activity();
+        assert!(!idle.screen_off);
+        // « Jamais » : pas même sur l'écran verrouillé.
+        idle.settings.screen_off = 0;
+        assert!(!idle.screen_off_due(Instant::now() + Duration::from_secs(3600), true));
+        // Un délai plus court que la minute de l'écran verrouillé est gardé.
+        idle.settings.screen_off = 1;
+        let now = Instant::now();
+        idle.last_input = now;
+        assert!(idle.screen_off_due(now + Duration::from_secs(60), false));
     }
 
     #[test]

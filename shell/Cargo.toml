@@ -17,6 +17,8 @@ png = "0.18"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 resvg = { version = "0.49.0", default-features = false }
+# Thèmes de curseurs X (Paramètres → Apparence) ; déjà présent par winit.
+xcursor = "0.3"
 zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
 
 [dependencies.smithay]

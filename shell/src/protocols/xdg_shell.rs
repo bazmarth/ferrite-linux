@@ -321,7 +321,7 @@ impl Ferrite {
             if let Some(pending) = window.user_data().get::<PendingPlacement>() {
                 pending.waiting.set(false);
             }
-            let area = wm::maximized_content(area, wm::is_server_decorated(&window));
+            let area = wm::maximized_content(area, wm::will_be_server_decorated(&window));
             if let Some(location) = self.space.element_location(&window) {
                 let previous = Rectangle::new(location, window.geometry().size);
                 with_restore_geometry(surface.wl_surface(), |saved| *saved = Some(previous));

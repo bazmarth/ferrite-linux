@@ -15,6 +15,7 @@
 
 mod highlight;
 mod icons;
+mod remote;
 
 use std::{
     cell::RefCell,
@@ -298,7 +299,7 @@ pub struct EditorState {
     favorites_open: bool,
     preview_tab: PreviewTab,
     /// Images de l'aperçu, par chemin (rien : illisible).
-    images: HashMap<PathBuf, Option<egui::TextureHandle>>,
+    images: HashMap<PathBuf, Option<(egui::TextureHandle, f32)>>,
 }
 
 impl std::fmt::Debug for EditorState {
@@ -876,7 +877,7 @@ impl EditorState {
                 self.explorer_visible = true;
             }
             Command::ShowInFiles(path) => {
-                let result = std::env::current_exe().and_then(|exe| {
+                let result = ferrite_system::command::current_exe().and_then(|exe| {
                     let mut command = std::process::Command::new(exe);
                     command.arg("files").arg(&path);
                     ferrite_system::command::spawn_detached(command)
@@ -2068,8 +2069,20 @@ impl EditorState {
                         if let Some(title) = meta("title") {
                             hero(ui, title, meta("description"));
                         }
-                        for block in &preview.blocks {
-                            render_markdown_block(ui, block, &mut images);
+                        let mut index = 0;
+                        while index < preview.blocks.len() {
+                            // Images à la suite (badges d'un README) : côte à côte.
+                            let run = preview.blocks[index..]
+                                .iter()
+                                .take_while(|block| matches!(block, markdown::Block::Image { .. }))
+                                .count();
+                            if run > 1 {
+                                image_row(ui, &preview.blocks[index..index + run], &mut images);
+                                index += run;
+                            } else {
+                                render_markdown_block(ui, &preview.blocks[index], &mut images);
+                                index += 1;
+                            }
                         }
                     });
                 });
@@ -2330,7 +2343,8 @@ fn rule(ui: &mut egui::Ui) {
 
 /// Images de l'aperçu : textures chargées une fois, chemins relatifs au document.
 struct Images<'a> {
-    textures: &'a mut HashMap<PathBuf, Option<egui::TextureHandle>>,
+    /// Texture et nombre de pixels par point (2 pour un SVG dessiné en double).
+    textures: &'a mut HashMap<PathBuf, Option<(egui::TextureHandle, f32)>>,
     base: Option<PathBuf>,
     /// Lien cliqué pendant cette image de l'aperçu.
     clicked: Option<String>,
@@ -2359,31 +2373,41 @@ impl Images<'_> {
         base.join(path)
     }
 
-    fn get(&mut self, ctx: &egui::Context, path: &str) -> Option<egui::TextureHandle> {
-        if path.contains("://") {
-            return None;
-        }
-        let path = self.resolve(path);
-        self.textures
+    fn get(&mut self, ctx: &egui::Context, path: &str) -> Shown {
+        let path = if remote::is_remote(path) {
+            match remote::fetch(ctx, path) {
+                remote::Remote::Ready(file) => file,
+                remote::Remote::Loading => return Shown::Loading,
+                remote::Remote::Failed => return Shown::Missing,
+            }
+        } else if path.contains("://") {
+            return Shown::Missing;
+        } else {
+            self.resolve(path)
+        };
+        let texture = self
+            .textures
             .entry(path.clone())
             .or_insert_with(|| {
-                let image = load_image(&path)?;
-                Some(ctx.load_texture(path.display().to_string(), image, egui::TextureOptions::LINEAR))
+                let (image, scale) = remote::decode(&path)?;
+                let texture =
+                    ctx.load_texture(path.display().to_string(), image, egui::TextureOptions::LINEAR);
+                Some((texture, scale))
             })
-            .clone()
+            .clone();
+        match texture {
+            Some((texture, scale)) => Shown::Ready(texture, scale),
+            None => Shown::Missing,
+        }
     }
 }
 
-/// Image PNG ou JPEG en RVBA ; rien si le fichier manque, est illisible ou démesuré.
-fn load_image(path: &Path) -> Option<egui::ColorImage> {
-    let image = ferrite_ui::wallpaper::decode(path).ok()?;
-    if image.width as usize * image.height as usize > 4096 * 4096 {
-        return None;
-    }
-    Some(egui::ColorImage::from_rgba_unmultiplied(
-        [image.width as usize, image.height as usize],
-        &image.rgba,
-    ))
+/// État d'une image de l'aperçu.
+enum Shown {
+    /// Texture et nombre de pixels par point.
+    Ready(egui::TextureHandle, f32),
+    Loading,
+    Missing,
 }
 
 fn render_markdown_block(ui: &mut egui::Ui, block: &markdown::Block, images: &mut Images) {
@@ -2425,17 +2449,9 @@ fn render_markdown_block(ui: &mut egui::Ui, block: &markdown::Block, images: &mu
             ui.add_space(14.0);
         }
         Block::Image { alt, path, link } => {
-            let texture = images.get(ui.ctx(), path);
-            let response = image_card(ui, alt, path, texture.as_ref());
-            if !link.is_empty() {
-                let response = response
-                    .interact(Sense::click())
-                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                    .on_hover_text(link);
-                if response.clicked() {
-                    images.clicked = Some(link.clone());
-                }
-            }
+            let shown = images.get(ui.ctx(), path);
+            let response = image_card(ui, alt, path, &shown, false);
+            image_link(response, link, images);
             ui.add_space(14.0);
         }
         Block::Quote(blocks) => {
@@ -2754,55 +2770,95 @@ fn kind_title(kind: FileKind, language: &str) -> String {
     }
 }
 
-/// Image de l'aperçu, à sa taille (réduite pour tenir) ; un cadre si elle manque.
-fn image_card(
-    ui: &mut egui::Ui,
-    alt: &str,
-    path: &str,
-    texture: Option<&egui::TextureHandle>,
-) -> egui::Response {
+/// Image de l'aperçu, à sa taille (réduite pour tenir). Une grande image a un cadre
+/// arrondi ; une petite (badge) est posée telle quelle. Si elle manque ou se télécharge :
+/// un cadre (`inline` faux) ou une simple étiquette (`inline`, badges côte à côte).
+fn image_card(ui: &mut egui::Ui, alt: &str, path: &str, shown: &Shown, inline: bool) -> egui::Response {
     let width = ui.available_width();
-    match texture {
-        Some(texture) => {
-            let size = texture.size_vec2();
+    let status = match shown {
+        Shown::Ready(texture, pixels) => {
+            let size = texture.size_vec2() / pixels.max(1.0);
             let scale = (width / size.x).min(1.0);
-            let image = egui::Image::new(egui::load::SizedTexture::new(texture.id(), size * scale))
-                .corner_radius(10.0);
+            let small = size.y <= 48.0;
+            let mut image = egui::Image::new(egui::load::SizedTexture::new(texture.id(), size * scale));
+            if !small {
+                image = image.corner_radius(10.0);
+            }
             let mut response = ui.add(image);
-            ui.painter().rect_stroke(
-                response.rect,
-                10.0,
-                Stroke::new(1.0, border()),
-                egui::StrokeKind::Inside,
-            );
+            if !small {
+                ui.painter().rect_stroke(
+                    response.rect,
+                    10.0,
+                    Stroke::new(1.0, border()),
+                    egui::StrokeKind::Inside,
+                );
+            }
             if !alt.is_empty() {
                 response = response.on_hover_text(alt);
             }
-            response
+            return response;
         }
-        None => {
-            egui::Frame::new()
-                .fill(code_block())
-                .stroke(Stroke::new(1.0, border()))
-                .corner_radius(10.0)
-                .inner_margin(Margin::symmetric(16, 22))
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.vertical_centered(|ui| {
-                        let (rect, _) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), Sense::hover());
-                        icons::paint_file(ui.painter(), rect.shrink(4.0), FileKind::Image);
-                        if !alt.is_empty() {
-                            ui.label(RichText::new(alt).color(style::primary_text()));
-                        }
-                        ui.label(
-                            RichText::new(format!("Image introuvable ou illisible : {path}"))
-                                .size(11.5)
-                                .color(style::text_secondary()),
-                        );
-                    });
-                })
-                .response
+        Shown::Loading => "Chargement de l'image…".to_owned(),
+        Shown::Missing => format!("Image introuvable ou illisible : {path}"),
+    };
+    if inline {
+        let text = if alt.is_empty() { "image" } else { alt };
+        return egui::Frame::new()
+            .fill(code_block())
+            .stroke(Stroke::new(1.0, border()))
+            .corner_radius(5.0)
+            .inner_margin(Margin::symmetric(8, 3))
+            .show(ui, |ui| {
+                ui.label(RichText::new(text).size(12.0).color(style::text_secondary()));
+            })
+            .response
+            .on_hover_text(status);
+    }
+    egui::Frame::new()
+        .fill(code_block())
+        .stroke(Stroke::new(1.0, border()))
+        .corner_radius(10.0)
+        .inner_margin(Margin::symmetric(16, 22))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.vertical_centered(|ui| {
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), Sense::hover());
+                icons::paint_file(ui.painter(), rect.shrink(4.0), FileKind::Image);
+                if !alt.is_empty() {
+                    ui.label(RichText::new(alt).color(style::primary_text()));
+                }
+                ui.label(RichText::new(status).size(11.5).color(style::text_secondary()));
+            });
+        })
+        .response
+}
+
+/// Images qui se suivent, posées côte à côte et renvoyées à la ligne si besoin.
+fn image_row(ui: &mut egui::Ui, blocks: &[markdown::Block], images: &mut Images) {
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+        for block in blocks {
+            if let markdown::Block::Image { alt, path, link } = block {
+                let shown = images.get(ui.ctx(), path);
+                let response = image_card(ui, alt, path, &shown, true);
+                image_link(response, link, images);
+            }
         }
+    });
+    ui.add_space(14.0);
+}
+
+/// Rend une image cliquable vers `link` (main et adresse au survol).
+fn image_link(response: egui::Response, link: &str, images: &mut Images) {
+    if link.is_empty() {
+        return;
+    }
+    let response = response
+        .interact(Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(link);
+    if response.clicked() {
+        images.clicked = Some(link.to_owned());
     }
 }
 

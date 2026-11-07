@@ -2297,3 +2297,20 @@ Fichiers ouvertes pointait bien vers « (deleted) » ; `ferrite-apps textedit` l
 ouvre le fichier.
 Pas vérifié : dans le vrai bureau (les fenêtres Fichiers déjà ouvertes gardent l'ancien
 code : les fermer et les rouvrir après installation).
+
+## 2026-11-07 — TextEdit : images en ligne dans l'aperçu Markdown (badges)
+
+Demande de l'utilisateur (capture du README de Security-101) : les badges
+`https://img.shields.io/…` restaient « Image introuvable ».
+- Nouveau module `apps/core/src/editor/remote.rs` : une image `http(s)://` est téléchargée
+  par `curl` dans un fil à part (20 s, 16 Mo au plus), gardée dans
+  `~/.cache/ferrite/textedit-images` ; un échec n'est pas réessayé avant le prochain
+  lancement. Rien n'est téléchargé tant que l'aperçu ne montre pas l'image.
+- Images lues : PNG, JPEG et SVG (format reconnu au contenu) ; un SVG est dessiné en double
+  pour rester net. `resvg` reçoit `text` et `system-fonts` (le texte des badges).
+- Images qui se suivent : posées côte à côte ; une petite image (≤ 48 px) sans cadre.
+  En attente : « Chargement de l'image… » (cadre) ou une étiquette au nom de l'image.
+Vérifié : CI (sans shellcheck), deux tests (SVG reconnu, badge dessiné) ; capture du bureau
+imbriqué sur le README : les six badges s'affichent sur deux lignes, texte compris.
+Pas vérifié : sans réseau (doit afficher l'étiquette), le clic sur un badge.
+Reste : les commentaires HTML (`<!-- … -->`) du README s'affichent en texte.

@@ -14,7 +14,7 @@ Chaque dépendance avec sa licence et la raison de sa présence. Les versions ex
 | `fontdue` 0.9 | ferrite-shell | MIT/Apache-2.0/Zlib | rendu du titre des fenêtres (police Inter) ; prévu par le plan |
 | `png` 0.18 | ferrite-shell | MIT/Apache-2.0 | écriture des captures (`--capture`) |
 | `tracing`, `tracing-subscriber` | ferrite-shell | MIT | journal (celui de Smithay) ; niveau réglable par `RUST_LOG` |
-| `resvg` 0.49 (sans fonctions par défaut) | ferrite-shell, ferrite-apps | Apache-2.0/MIT | rendu des icônes SVG de `ferrite-theme` et `icons/SVG` (Dock, barre du haut, menus, Fichiers) ; sans `text` : les icônes n'utilisent que des tracés |
+| `resvg` 0.49 (sans fonctions par défaut) | ferrite-shell, ferrite-apps | Apache-2.0/MIT | rendu des icônes SVG de `ferrite-theme` et `icons/SVG` (Dock, barre du haut, menus, Fichiers) ; sans `text` dans ferrite-shell (les icônes n'utilisent que des tracés). ferrite-apps active `text` et `system-fonts` pour les badges SVG de l'aperçu Markdown (ajoute `fontdb`, `fontconfig-parser`, `roxmltree`, `unicode-bidi`, `unicode-script`, `unicode-vo`, `xmlwriter`, `base64`, tous MIT/Apache) |
 | `ferrite-system` (interne) | ferrite-shell, ferrite-apps | MIT | services du système avec délai maximal ; aucune dépendance externe |
 | `zbus` 5 (`blocking-api`) | ferrite-shell, ferrite-apps, xdg-desktop-portal-ferrite | MIT | serveur `org.freedesktop.Notifications`, logind (veille, bouton d'alimentation), agent polkit, MPRIS (îlot, Musique), portail `FileChooser` ; imposé par le plan |
 | `alacritty_terminal` 0.26 | ferrite-apps | Apache-2.0 | émulation du Terminal ; imposé par le plan |

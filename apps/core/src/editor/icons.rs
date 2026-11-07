@@ -216,6 +216,8 @@ pub enum Icon {
     Close,
     Up,
     Down,
+    /// Flèche vers le haut avec sa tige : dossier parent.
+    Parent,
 }
 
 /// Symbole `icon` centré dans `rect`, au trait de couleur `color`.
@@ -359,6 +361,10 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
         }
         Icon::Down => {
             painter.line(vec![p(-5.0, -2.5), p(0.0, 3.0), p(5.0, -2.5)], stroke);
+        }
+        Icon::Parent => {
+            painter.line_segment([p(0.0, -6.0), p(0.0, 6.5)], stroke);
+            painter.line(vec![p(-5.0, -1.0), p(0.0, -6.0), p(5.0, -1.0)], stroke);
         }
     }
 }

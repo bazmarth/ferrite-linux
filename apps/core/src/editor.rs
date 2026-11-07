@@ -17,6 +17,7 @@ mod highlight;
 mod icons;
 
 use std::{
+    cell::RefCell,
     collections::{HashMap, HashSet},
     ops::Range,
     path::{Path, PathBuf},
@@ -219,6 +220,12 @@ enum Command {
     ToggleFavorites,
     /// Affiche ce dossier dans l'explorateur.
     SetRoot(PathBuf),
+    /// Montre ce chemin dans l'application Fichiers.
+    ShowInFiles(PathBuf),
+    /// Copie ce chemin dans le presse-papiers.
+    CopyPath(PathBuf),
+    /// Referme tous les dossiers de l'arborescence.
+    CollapseAll,
     FocusSearch,
     ClearSearch,
     SetPreviewTab(PreviewTab),
@@ -285,6 +292,9 @@ pub struct EditorState {
     root: Option<PathBuf>,
     /// Dossiers ouverts dans l'arborescence.
     expanded: HashSet<PathBuf>,
+    /// Contenu des dossiers déjà lus, relu au bout de deux secondes : l'arborescence ne
+    /// relit pas le disque à chaque image.
+    listings: RefCell<HashMap<PathBuf, Listing>>,
     favorites_open: bool,
     preview_tab: PreviewTab,
     /// Images de l'aperçu, par chemin (rien : illisible).
@@ -326,6 +336,7 @@ impl Default for EditorState {
             explorer_visible: true,
             root: None,
             expanded: HashSet::new(),
+            listings: RefCell::default(),
             favorites_open: true,
             preview_tab: PreviewTab::Preview,
             images: HashMap::new(),
@@ -421,6 +432,7 @@ impl EditorState {
         match std::fs::write(&path, &document.contents) {
             Ok(()) => {
                 document.saved = document.contents.clone();
+                self.listings.get_mut().clear();
                 self.report(format!("« {} » enregistré", display_name(&path)), false);
                 self.after_save(then);
                 true
@@ -438,7 +450,9 @@ impl EditorState {
             .path
             .as_deref()
             .and_then(Path::parent)
-            .map(Path::to_path_buf);
+            .map(Path::to_path_buf)
+            // Nouveau document : il s'enregistre d'abord dans le dossier de l'explorateur.
+            .or_else(|| Some(self.root()));
         let name = match &document.path {
             Some(_) => document.name(),
             None => "Sans titre.txt".to_owned(),
@@ -861,6 +875,21 @@ impl EditorState {
                 self.workspace_search.clear();
                 self.explorer_visible = true;
             }
+            Command::ShowInFiles(path) => {
+                let result = std::env::current_exe().and_then(|exe| {
+                    let mut command = std::process::Command::new(exe);
+                    command.arg("files").arg(&path);
+                    ferrite_system::command::spawn_detached(command)
+                });
+                if let Err(error) = result {
+                    self.report(format!("Ouverture de Fichiers impossible : {error}"), true);
+                }
+            }
+            Command::CopyPath(path) => {
+                ctx.copy_text(path.display().to_string());
+                self.report("Chemin copié", false);
+            }
+            Command::CollapseAll => self.expanded.clear(),
             Command::FocusSearch => {
                 self.explorer_visible = true;
                 self.focus_search = true;
@@ -1216,8 +1245,9 @@ impl EditorState {
                 let full = ui.max_rect();
                 ui.painter()
                     .vline(full.right() - 0.5, full.y_range(), Stroke::new(1.0, border()));
-                ui.add_space(14.0);
+                ui.add_space(10.0);
                 ui.horizontal(|ui| {
+                    ui.set_height(30.0);
                     ui.add_space(20.0);
                     let title = if query.is_empty() {
                         "Explorateur"
@@ -1230,8 +1260,39 @@ impl EditorState {
                             .family(style::strong_family())
                             .color(style::primary_text()),
                     );
+                    if query.is_empty() {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.add_space(10.0);
+                            ui.spacing_mut().item_spacing.x = 2.0;
+                            let can_collapse = !self.expanded.is_empty();
+                            let collapse = ui
+                                .add_enabled_ui(can_collapse, |ui| {
+                                    small_button(ui, Icon::Collapse, "Replier tous les dossiers")
+                                })
+                                .inner;
+                            if collapse.clicked() {
+                                commands.push(Command::CollapseAll);
+                            }
+                            if small_button(ui, Icon::Plus, "Nouveau fichier (enregistré dans ce dossier)")
+                                .clicked()
+                            {
+                                commands.push(Command::New);
+                            }
+                            let parent = root.parent().map(Path::to_path_buf);
+                            let up = ui
+                                .add_enabled_ui(parent.is_some(), |ui| {
+                                    small_button(ui, Icon::Parent, "Dossier parent")
+                                })
+                                .inner;
+                            if up.clicked()
+                                && let Some(parent) = parent
+                            {
+                                commands.push(Command::SetRoot(parent));
+                            }
+                        });
+                    }
                 });
-                ui.add_space(8.0);
+                ui.add_space(4.0);
                 self.favorites(ui, &root, commands);
                 egui::ScrollArea::vertical()
                     .id_salt("textedit-arborescence")
@@ -1239,14 +1300,15 @@ impl EditorState {
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing.y = 0.0;
                         if query.is_empty() {
-                            Row {
-                                chevron: Some(true),
-                                icon: RowIcon::None,
+                            let response = Row {
+                                icon: RowIcon::Symbol(Icon::FolderOutline),
                                 text: &display_name(&root),
                                 strong: true,
                                 ..Row::default()
                             }
-                            .show(ui);
+                            .show(ui)
+                            .on_hover_text(root.display().to_string());
+                            folder_menu(&response, &root, false, commands);
                             self.tree(ui, &root, 1, commands);
                         } else {
                             self.search_results(ui, &root, commands);
@@ -1256,35 +1318,69 @@ impl EditorState {
             });
     }
 
+    /// Contenu de `directory`, lu sur le disque au plus toutes les deux secondes.
+    fn listing(&self, directory: &Path) -> std::rc::Rc<Vec<Entry>> {
+        let mut listings = self.listings.borrow_mut();
+        if let Some((read, entries)) = listings.get(directory)
+            && read.elapsed() < std::time::Duration::from_secs(2)
+        {
+            return entries.clone();
+        }
+        let entries = std::rc::Rc::new(list_directory(directory));
+        listings.insert(
+            directory.to_path_buf(),
+            (std::time::Instant::now(), entries.clone()),
+        );
+        entries
+    }
+
     fn tree(&self, ui: &mut egui::Ui, directory: &Path, depth: usize, commands: &mut Vec<Command>) {
         let active = self.document().path.as_deref();
-        for (path, name, is_dir) in list_directory(directory) {
-            if is_dir {
-                let open = self.expanded.contains(&path);
+        let entries = self.listing(directory);
+        if entries.is_empty() {
+            Row {
+                depth,
+                guides: true,
+                text: "Dossier vide",
+                muted: true,
+                ..Row::default()
+            }
+            .show(ui);
+            return;
+        }
+        for (path, name, is_dir) in entries.iter() {
+            if *is_dir {
+                let open = self.expanded.contains(path);
                 let row = Row {
                     depth,
+                    guides: true,
                     chevron: Some(open),
                     icon: RowIcon::File(FileKind::Folder),
-                    text: &name,
+                    text: name,
                     ..Row::default()
                 };
-                if row.show(ui).clicked() {
+                let response = row.show(ui);
+                if response.clicked() {
                     commands.push(Command::ToggleFolder(path.clone()));
                 }
+                folder_menu(&response, path, true, commands);
                 if open && depth < 12 {
-                    self.tree(ui, &path, depth + 1, commands);
+                    self.tree(ui, path, depth + 1, commands);
                 }
             } else {
                 let row = Row {
                     depth,
-                    icon: RowIcon::File(FileKind::of(&path)),
-                    text: &name,
+                    guides: true,
+                    icon: RowIcon::File(FileKind::of(path)),
+                    text: name,
                     selected: active == Some(path.as_path()),
                     ..Row::default()
                 };
-                if row.show(ui).clicked() {
-                    commands.push(Command::OpenPath(path));
+                let response = row.show(ui);
+                if response.clicked() {
+                    commands.push(Command::OpenPath(path.clone()));
                 }
+                file_menu(&response, path, commands);
             }
         }
     }
@@ -1310,10 +1406,12 @@ impl EditorState {
                 selected: self.document().path.as_deref() == Some(path.as_path()),
                 ..Row::default()
             };
-            if row.show(ui).clicked() {
+            let response = row.show(ui);
+            if response.clicked() {
                 commands.push(Command::OpenPath(path.clone()));
                 commands.push(Command::ClearSearch);
             }
+            file_menu(&response, path, commands);
         }
     }
 
@@ -2390,53 +2488,174 @@ fn render_markdown_block(ui: &mut egui::Ui, block: &markdown::Block, images: &mu
             ui.add_space(14.0);
         }
         Block::Table { align, header, rows } => {
-            egui::Frame::new()
-                .stroke(Stroke::new(1.0, border()))
-                .corner_radius(8.0)
-                .inner_margin(Margin::symmetric(12, 8))
-                .show(ui, |ui| {
-                    egui::Grid::new(ui.next_auto_id())
-                        .striped(true)
-                        .min_col_width(90.0)
-                        .spacing(egui::vec2(16.0, 8.0))
-                        .show(ui, |ui| {
-                            for (column, cell) in header.iter().enumerate() {
-                                render_table_cell(ui, cell, align.get(column), true);
-                            }
-                            ui.end_row();
-                            for row in rows {
-                                for (column, cell) in row.iter().enumerate() {
-                                    render_table_cell(ui, cell, align.get(column), false);
-                                }
-                                ui.end_row();
-                            }
-                        });
-                });
+            table(ui, align, header, rows);
             ui.add_space(12.0);
         }
     }
+}
 
-    fn render_table_cell(ui: &mut egui::Ui, spans: &[markdown::Span], align: Option<&Align>, heading: bool) {
-        let layout = match align {
-            Some(Align::Center) => egui::Layout::top_down(egui::Align::Center),
-            Some(Align::Right) => egui::Layout::top_down(egui::Align::RIGHT),
-            _ => egui::Layout::top_down(egui::Align::LEFT),
-        };
-        ui.with_layout(layout, |ui| {
-            let mut job = markdown_job(
-                ui,
-                spans,
-                13.5,
-                if heading { style::primary_text() } else { body() },
-            );
-            if heading {
-                for section in &mut job.sections {
-                    section.format.font_id.family = style::strong_family();
-                }
+/// Tableau Markdown : colonnes à la largeur de leur contenu, resserrées (texte renvoyé à
+/// la ligne) quand la place manque ; en-tête sur fond, traits entre rangées et colonnes.
+/// Trop de colonnes même resserrées : le tableau défile de côté.
+fn table(
+    ui: &mut egui::Ui,
+    align: &[markdown::Align],
+    header: &[Vec<markdown::Span>],
+    rows: &[Vec<Vec<markdown::Span>>],
+) {
+    const PAD_X: f32 = 12.0;
+    const PAD_Y: f32 = 8.0;
+    const SIZE: f32 = 13.5;
+    let columns = header.len().max(1);
+    use markdown::Align;
+    let job = |ui: &egui::Ui, spans: &[markdown::Span], heading: bool, width: f32, align: Align| {
+        let mut job = markdown_job(
+            ui,
+            spans,
+            SIZE,
+            if heading { style::primary_text() } else { body() },
+        );
+        if heading {
+            for section in &mut job.sections {
+                section.format.font_id.family = style::strong_family();
             }
-            ui.label(job);
-        });
+        }
+        job.wrap.max_width = width;
+        job.halign = match align {
+            Align::Center => egui::Align::Center,
+            Align::Right => egui::Align::RIGHT,
+            Align::Left => egui::Align::LEFT,
+        };
+        job
+    };
+    let all_rows = || std::iter::once((true, header)).chain(rows.iter().map(|row| (false, row.as_slice())));
+    // Largeur naturelle (sans retour à la ligne) et largeur du mot le plus long.
+    let mut natural = vec![0.0f32; columns];
+    let mut narrow = vec![0.0f32; columns];
+    for (heading, row) in all_rows() {
+        for (column, cell) in row.iter().enumerate().take(columns) {
+            let full =
+                ui.fonts_mut(|fonts| fonts.layout_job(job(ui, cell, heading, f32::INFINITY, Align::Left)));
+            natural[column] = natural[column].max(full.size().x);
+            // Mot le plus long, mesuré seul : une colonne ne coupe jamais un mot en deux
+            // (au-delà de 160 points, il passe quand même à la ligne).
+            let font = if heading {
+                FontId::new(SIZE, style::strong_family())
+            } else {
+                FontId::proportional(SIZE)
+            };
+            let text: String = cell.iter().map(|span| span.text.as_str()).collect();
+            for word in text.split_whitespace() {
+                let width = ui.fonts_mut(|fonts| {
+                    fonts
+                        .layout_no_wrap(word.to_owned(), font.clone(), body())
+                        .size()
+                        .x
+                });
+                // Un rien de marge pour l'arrondi des mesures.
+                narrow[column] = narrow[column].max((width + 1.0).min(160.0).min(natural[column]));
+            }
+        }
     }
+    let available = ui.available_width() - 2.0 * PAD_X * columns as f32 - 1.0;
+    let widths = column_widths(&natural, &narrow, available);
+    let galleys: Vec<(bool, Vec<std::sync::Arc<egui::Galley>>)> = all_rows()
+        .map(|(heading, row)| {
+            let cells = (0..columns)
+                .map(|column| {
+                    let spans = row.get(column).map_or(&[][..], Vec::as_slice);
+                    let align = align.get(column).copied().unwrap_or(Align::Left);
+                    ui.fonts_mut(|fonts| fonts.layout_job(job(ui, spans, heading, widths[column], align)))
+                })
+                .collect();
+            (heading, cells)
+        })
+        .collect();
+    let heights: Vec<f32> = galleys
+        .iter()
+        .map(|(_, cells)| cells.iter().map(|g| g.size().y).fold(0.0, f32::max) + 2.0 * PAD_Y)
+        .collect();
+    let width = widths.iter().map(|w| w + 2.0 * PAD_X).sum::<f32>() + 1.0;
+    let height = heights.iter().sum::<f32>() + 1.0;
+    egui::ScrollArea::horizontal()
+        .id_salt(ui.next_auto_id())
+        .auto_shrink([false, true])
+        .show(ui, |ui| {
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), Sense::hover());
+            let painter = ui.painter();
+            let outer = rect.shrink(0.5);
+            let radius = 8.0;
+            let first = heights.first().copied().unwrap_or(0.0);
+            painter.rect_filled(
+                egui::Rect::from_min_size(outer.min, egui::vec2(outer.width(), first)),
+                egui::CornerRadius {
+                    nw: radius as u8,
+                    ne: radius as u8,
+                    sw: 0,
+                    se: 0,
+                },
+                code_block(),
+            );
+            let line = Stroke::new(1.0, border());
+            let mut y = outer.top();
+            for (index, ((_, cells), row_height)) in galleys.iter().zip(&heights).enumerate() {
+                if index > 0 {
+                    painter.hline(outer.x_range(), y, line);
+                }
+                let mut x = outer.left();
+                for (column, galley) in cells.iter().enumerate() {
+                    if column > 0 && index == 0 {
+                        painter.vline(x, outer.y_range(), line);
+                    }
+                    let cell_width = widths[column];
+                    let anchor = match align.get(column).copied().unwrap_or(Align::Left) {
+                        Align::Left => x + PAD_X,
+                        Align::Center => x + PAD_X + cell_width / 2.0,
+                        Align::Right => x + PAD_X + cell_width,
+                    };
+                    painter.galley(egui::pos2(anchor, y + PAD_Y), galley.clone(), body());
+                    x += cell_width + 2.0 * PAD_X;
+                }
+                y += row_height;
+            }
+            painter.rect_stroke(outer, radius, line, egui::StrokeKind::Middle);
+        });
+}
+
+/// Largeur de chaque colonne d'un tableau. Tout tient : chacune à sa largeur naturelle.
+/// Sinon les colonnes plus étroites que leur part égale gardent leur largeur, et les
+/// autres se partagent le reste, sans descendre sous leur mot le plus long (`narrow`).
+fn column_widths(natural: &[f32], narrow: &[f32], available: f32) -> Vec<f32> {
+    if natural.iter().sum::<f32>() <= available {
+        return natural.to_vec();
+    }
+    let mut widths = natural.to_vec();
+    let mut squeezed: Vec<usize> = (0..natural.len()).collect();
+    let mut room = available;
+    loop {
+        let share = room / squeezed.len().max(1) as f32;
+        let (keep, rest): (Vec<usize>, Vec<usize>) =
+            squeezed.iter().partition(|&&column| natural[column] <= share);
+        if keep.is_empty() {
+            break;
+        }
+        room -= keep.iter().map(|&column| natural[column]).sum::<f32>();
+        squeezed = rest;
+        if squeezed.is_empty() {
+            return widths;
+        }
+    }
+    let floor: f32 = squeezed.iter().map(|&column| narrow[column]).sum();
+    let extra = (room - floor).max(0.0);
+    let wanted: f32 = squeezed
+        .iter()
+        .map(|&column| natural[column] - narrow[column])
+        .sum::<f32>()
+        .max(1.0);
+    for &column in &squeezed {
+        widths[column] = narrow[column] + (natural[column] - narrow[column]) * extra / wanted;
+    }
+    widths
 }
 
 /// Bloc de code en carte : bandeau avec la langue (ou le commentaire de première ligne
@@ -2599,12 +2818,20 @@ struct Row<'a> {
     detail: &'a str,
     selected: bool,
     strong: bool,
+    /// Texte en gris (« Dossier vide »).
+    muted: bool,
+    /// Traits verticaux qui relient la ligne aux dossiers qui la contiennent.
+    guides: bool,
 }
 
 impl Row<'_> {
     fn show(self, ui: &mut egui::Ui) -> egui::Response {
         let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 30.0), Sense::click());
-        let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+        let response = if self.muted {
+            response
+        } else {
+            response.on_hover_cursor(egui::CursorIcon::PointingHand)
+        };
         let back = egui::Rect::from_min_max(
             egui::pos2(rect.left() + 8.0, rect.top() + 1.0),
             egui::pos2(rect.right() - 8.0, rect.bottom() - 1.0),
@@ -2612,10 +2839,17 @@ impl Row<'_> {
         let painter = ui.painter();
         if self.selected {
             painter.rect_filled(back, 7.0, selected());
-        } else if response.hovered() {
+        } else if response.hovered() && !self.muted {
             painter.rect_filled(back, 7.0, style::tint(8));
         }
         let y = rect.center().y;
+        if self.guides {
+            // Un trait sous la flèche de chaque dossier parent.
+            for level in 1..self.depth {
+                let gx = (rect.left() + 19.0 + level as f32 * 14.0).round() + 0.5;
+                painter.vline(gx, rect.y_range(), Stroke::new(1.0, border()));
+            }
+        }
         let mut x = rect.left() + 14.0 + self.depth as f32 * 14.0;
         if let Some(open) = self.chevron {
             let chevron = if open {
@@ -2661,6 +2895,8 @@ impl Row<'_> {
         };
         let color = if self.selected {
             style::accent()
+        } else if self.muted {
+            style::text_secondary()
         } else {
             style::primary_text()
         };
@@ -2684,6 +2920,52 @@ fn rail_button(ui: &mut egui::Ui, icon: Icon, active: bool, hint: &str) -> egui:
     });
     ui.add_space(6.0);
     response
+}
+
+/// Petit bouton à symbole de l'en-tête de l'explorateur.
+fn small_button(ui: &mut egui::Ui, icon: Icon, hint: &str) -> egui::Response {
+    crate::kit::tool_button(ui, 28.0, false, hint, |painter, rect, ink| {
+        icons::paint(painter, rect, icon, ink);
+    })
+}
+
+/// Menu du clic droit sur un fichier de l'explorateur.
+fn file_menu(response: &egui::Response, path: &Path, commands: &mut Vec<Command>) {
+    response.context_menu(|ui| {
+        ui.set_min_width(200.0);
+        let parent = path.parent().unwrap_or(path).to_path_buf();
+        for (text, command) in [
+            ("Ouvrir", Command::OpenPath(path.to_path_buf())),
+            ("Afficher dans Fichiers", Command::ShowInFiles(parent)),
+            ("Copier le chemin", Command::CopyPath(path.to_path_buf())),
+        ] {
+            if ui.button(text).clicked() {
+                commands.push(command);
+                ui.close();
+            }
+        }
+    });
+}
+
+/// Menu du clic droit sur un dossier de l'explorateur ; `as_root` propose d'en faire
+/// le dossier affiché.
+fn folder_menu(response: &egui::Response, path: &Path, as_root: bool, commands: &mut Vec<Command>) {
+    response.context_menu(|ui| {
+        ui.set_min_width(200.0);
+        if as_root && ui.button("Afficher ce dossier seul").clicked() {
+            commands.push(Command::SetRoot(path.to_path_buf()));
+            ui.close();
+        }
+        for (text, command) in [
+            ("Ouvrir dans Fichiers", Command::ShowInFiles(path.to_path_buf())),
+            ("Copier le chemin", Command::CopyPath(path.to_path_buf())),
+        ] {
+            if ui.button(text).clicked() {
+                commands.push(command);
+                ui.close();
+            }
+        }
+    });
 }
 
 /// Onglet de l'aperçu : symbole et titre, soulignés d'un trait bleu s'il est choisi.
@@ -2733,10 +3015,16 @@ fn status_separator(ui: &mut egui::Ui) {
         .vline(rect.center().x, rect.y_range(), Stroke::new(1.0, border()));
 }
 
+/// Élément d'un dossier : chemin, nom, dossier ou non.
+type Entry = (PathBuf, String, bool);
+
+/// Contenu d'un dossier et l'heure de sa lecture.
+type Listing = (std::time::Instant, std::rc::Rc<Vec<Entry>>);
+
 /// Fichiers et dossiers visibles de `directory` : dossiers d'abord, par nom, sans les
 /// fichiers cachés ni les dossiers de compilation.
-fn list_directory(directory: &Path) -> Vec<(PathBuf, String, bool)> {
-    let mut entries: Vec<(PathBuf, String, bool)> = std::fs::read_dir(directory)
+fn list_directory(directory: &Path) -> Vec<Entry> {
+    let mut entries: Vec<Entry> = std::fs::read_dir(directory)
         .into_iter()
         .flatten()
         .filter_map(Result::ok)
@@ -2785,7 +3073,7 @@ fn search_files(root: &Path, query: &str) -> Vec<PathBuf> {
     found
 }
 
-/// Dossiers favoris qui existent : Bureau, Documents, Téléchargements.
+/// Dossiers favoris qui existent : dossier personnel, Bureau, Documents, Téléchargements.
 fn favorite_places() -> Vec<(&'static str, PathBuf)> {
     let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
         return Vec::new();
@@ -2797,6 +3085,7 @@ fn favorite_places() -> Vec<(&'static str, PathBuf)> {
             .find(|path| path.is_dir())
     };
     [
+        ("Dossier personnel", Some(home.clone())),
         ("Bureau", first(&["Bureau", "Desktop"])),
         ("Documents", first(&["Documents"])),
         ("Téléchargements", first(&["Téléchargements", "Downloads"])),
@@ -2950,6 +3239,39 @@ mod tests {
         editor.open(path);
         assert_eq!((editor.documents.len(), editor.active), (2, 0));
         fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn l_explorateur_garde_le_contenu_des_dossiers_lu() {
+        let dir = scratch();
+        std::fs::write(dir.join("a.txt"), "a").unwrap();
+        let mut editor = EditorState::default();
+        let first = editor.listing(&dir);
+        assert_eq!(first.len(), 1);
+        // Un nouveau fichier n'apparaît qu'à la relecture : pas de lecture à chaque image.
+        std::fs::write(dir.join("b.txt"), "b").unwrap();
+        assert!(std::rc::Rc::ptr_eq(&first, &editor.listing(&dir)));
+        // Un enregistrement fait relire les dossiers.
+        editor.open(dir.join("a.txt"));
+        assert!(editor.save(editor.active, Then::Nothing));
+        assert_eq!(editor.listing(&dir).len(), 2);
+    }
+
+    #[test]
+    fn colonnes_d_un_tableau() {
+        // Tout tient : largeurs naturelles.
+        assert_eq!(
+            column_widths(&[40.0, 60.0], &[40.0, 30.0], 200.0),
+            vec![40.0, 60.0]
+        );
+        // Trop large : la colonne courte garde sa largeur, la longue prend le reste.
+        let widths = column_widths(&[40.0, 400.0, 30.0], &[40.0, 80.0, 30.0], 200.0);
+        assert_eq!(widths[0], 40.0);
+        assert_eq!(widths[2], 30.0);
+        assert!((widths[1] - 130.0).abs() < 0.01);
+        // Même resserrées, les colonnes gardent leur mot le plus long.
+        let widths = column_widths(&[300.0, 300.0], &[120.0, 120.0], 100.0);
+        assert_eq!(widths, vec![120.0, 120.0]);
     }
 
     #[test]

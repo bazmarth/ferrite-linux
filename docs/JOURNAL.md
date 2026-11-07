@@ -2029,3 +2029,40 @@ captures en clair et en sombre avec trois onglets et la recherche « rapport » 
 par un code d'essai temporaire, retiré ensuite).
 Pas vérifié : les clics et les raccourcis au clavier sur le bureau réel (onglets, taper pour
 chercher), et la vitesse sur un très gros dossier.
+
+## 2026-11-07 — TextEdit : explorateur revu
+
+Demande de l'utilisateur : « son explorateur n'est pas bien ». On ne pouvait pas sortir du
+dossier du fichier ouvert, la ligne du dossier racine avait une flèche qui ne faisait rien,
+et l'arborescence relisait le disque à chaque image.
+- En-tête : trois petits boutons à droite de « Explorateur » : Dossier parent (flèche),
+  Nouveau fichier (enregistré d'abord dans le dossier de l'explorateur), Replier tous les
+  dossiers (grisé si rien n'est ouvert).
+- Ligne du dossier racine : icône de dossier, sans flèche ; chemin complet en info-bulle.
+- Traits verticaux qui relient chaque ligne aux dossiers qui la contiennent ; « Dossier
+  vide » en gris dans un dossier ouvert sans contenu.
+- Clic droit : sur un fichier, Ouvrir / Afficher dans Fichiers / Copier le chemin ; sur un
+  dossier, Afficher ce dossier seul / Ouvrir dans Fichiers / Copier le chemin.
+- Favoris : « Dossier personnel » ajouté en tête.
+- Contenu des dossiers gardé en mémoire et relu au plus toutes les deux secondes (et après
+  chaque enregistrement) ; « Enregistrer sous » d'un nouveau document part du dossier de
+  l'explorateur.
+Vérifié : CI (sans shellcheck) ; test du cache des dossiers ; captures en clair et en sombre
+(arborescence ouverte sur apps/core/src/editor).
+Pas vérifié : les clics (boutons, clic droit, « Afficher dans Fichiers ») sur le bureau réel.
+
+## 2026-11-07 — TextEdit : tableaux Markdown refaits dans l'aperçu
+
+Demande de l'utilisateur : « l'interpréteur md n'affiche pas bien les tableaux ». Le tableau
+(grille egui, colonnes de 90 points au moins) débordait à droite de l'aperçu, et seules des
+rayures distinguaient les rangées.
+- Nouvelle fonction `table` : tableau dessiné à la main. Colonnes à la largeur de leur
+  contenu ; si la place manque, les colonnes courtes gardent leur largeur et les longues se
+  partagent le reste (`column_widths`), le texte passe à la ligne sans couper un mot.
+- En-tête sur fond (rôle `code_block`), traits entre les rangées et les colonnes, cadre
+  arrondi ; alignements gauche / centre / droite de la ligne `|:---:|` respectés.
+- Trop de colonnes même resserrées : le tableau défile de côté.
+Vérifié : CI (sans shellcheck) ; test de `column_widths` ; captures en clair et en sombre
+(tableau à texte long, tableau sans barres au bord, tableau de 7 colonnes).
+Pas vérifié : le défilement de côté à la souris ; on ne voit pas d'indice qu'il faut faire
+défiler (le tableau est coupé net au bord).

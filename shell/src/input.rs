@@ -837,7 +837,14 @@ impl Ferrite {
             Some(Action::CaptureShoot) => self.capture_shoot(),
             Some(Action::Function(key)) => self.on_function_key(key),
             Some(Action::PowerDialog) => self.open_power_dialog(crate::state::PowerAction::Sleep),
-            Some(Action::PowerButton) => self.handle_power_button(),
+            Some(Action::PowerButton) => {
+                // Bouton physique réglé sur « Ne rien faire » : ignoré.
+                if self.keyboard_shortcuts.power_button_action()
+                    != ferrite_system::config::PowerButtonAction::Nothing
+                {
+                    self.handle_power_button();
+                }
+            }
             Some(Action::PowerConfirm) => {
                 if let Some(power) = self.pending_power {
                     self.handle_desktop_action(DesktopAction::ConfirmPower(power));
@@ -1634,7 +1641,10 @@ impl Ferrite {
     fn handle_power_button(&mut self) {
         match self.keyboard_shortcuts.power_button_action() {
             ferrite_system::config::PowerButtonAction::Sleep => self.lock_and_sleep(),
-            ferrite_system::config::PowerButtonAction::Dialog => {
+            // « Ne rien faire » ne vise que le bouton physique : les boutons dessinés
+            // ouvrent alors le dialogue.
+            ferrite_system::config::PowerButtonAction::Dialog
+            | ferrite_system::config::PowerButtonAction::Nothing => {
                 self.open_power_dialog(crate::state::PowerAction::Sleep);
             }
         }

@@ -211,6 +211,9 @@ pub struct Ferrite {
     pub keyboard_label: String,
     /// Réglages des raccourcis du bureau, rechargés à chaque changement de configuration.
     pub keyboard_shortcuts: Settings,
+    /// Verrou logind sur le bouton d'alimentation physique (session DRM) : gardé tant que le
+    /// bureau tourne, sinon logind éteindrait l'ordinateur à chaque appui.
+    pub power_key_inhibitor: Option<zbus::zvariant::OwnedFd>,
     /// Notifications reçues, et lien avec le service du bus de session.
     pub notifications: crate::desktop::notifications::Center,
     pub notification_link: Option<crate::desktop::notifications::Link>,
@@ -472,6 +475,7 @@ impl Ferrite {
             power_saver: false,
             keyboard_label: keyboard_label(&layout),
             keyboard_shortcuts: settings.clone(),
+            power_key_inhibitor: None,
             notifications: Default::default(),
             notification_link: None,
             switcher: None,

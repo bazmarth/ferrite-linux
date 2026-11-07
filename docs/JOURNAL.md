@@ -1768,3 +1768,17 @@ recherche surlignée (33 résultats), thème sombre avec un PDF en paysage.
 Pas vérifié : sélection et copie du texte (non prises en charge), liens cliquables (non pris
 en charge), très gros documents (plusieurs centaines de pages) sur le vrai bureau, pincement
 du pavé tactile sur le ThinkBook. Les récents ne vont pas dans `recently-used.xbel` (Fichiers).
+
+## 2026-11-07 — Bouton d'alimentation physique : le verrou tenait une fraction de seconde
+
+Le bouton physique éteignait toujours le PC sans rien demander. Cause : le verrou logind
+`handle-power-key` était pris dans la fonction de démarrage DRM, qui se termine avant la
+boucle du bureau ; le verrou était relâché aussitôt et logind gardait la main (vu avec
+`systemd-inhibit --list` : aucun verrou « handle-power-key » pendant la session).
+- Le verrou est rangé dans l'état du bureau (`power_key_inhibitor`) et dure toute la session.
+- Paramètres → Énergie → Bouton d'alimentation : nouveau choix « Ne rien faire » (clé
+  `rien`). Il ne vise que le bouton physique ; les boutons dessinés (centre de contrôle,
+  écran verrouillé) ouvrent alors le dialogue.
+- Par défaut : veille. « Afficher le dialogue » : dialogue d'arrêt.
+Vérifié : CI (sans shellcheck) ; cause constatée sur la machine.
+Pas vérifié : l'appui réel sur le bouton avec le nouveau bureau (à copier par `tools/dev-on.sh`).

@@ -1220,10 +1220,16 @@ pub enum PowerButtonAction {
     #[default]
     Sleep,
     Dialog,
+    /// Le bouton physique est ignoré ; les boutons dessinés ouvrent le dialogue.
+    Nothing,
 }
 
 impl PowerButtonAction {
-    pub const ALL: [PowerButtonAction; 2] = [PowerButtonAction::Sleep, PowerButtonAction::Dialog];
+    pub const ALL: [PowerButtonAction; 3] = [
+        PowerButtonAction::Sleep,
+        PowerButtonAction::Dialog,
+        PowerButtonAction::Nothing,
+    ];
 
     fn parse(value: &str) -> Self {
         Self::ALL
@@ -1236,6 +1242,7 @@ impl PowerButtonAction {
         match self {
             PowerButtonAction::Sleep => "veille",
             PowerButtonAction::Dialog => "dialogue",
+            PowerButtonAction::Nothing => "rien",
         }
     }
 
@@ -1243,6 +1250,7 @@ impl PowerButtonAction {
         match self {
             PowerButtonAction::Sleep => "Mettre en veille",
             PowerButtonAction::Dialog => "Afficher le dialogue",
+            PowerButtonAction::Nothing => "Ne rien faire",
         }
     }
 }
@@ -1367,6 +1375,10 @@ dock_agrandissement = non
         assert_eq!(
             Settings::parse("bouton_alimentation = dialogue\n").power_button_action(),
             PowerButtonAction::Dialog
+        );
+        assert_eq!(
+            Settings::parse("bouton_alimentation = rien\n").power_button_action(),
+            PowerButtonAction::Nothing
         );
         for action in PowerButtonAction::ALL {
             assert_eq!(PowerButtonAction::parse(action.key()), action);

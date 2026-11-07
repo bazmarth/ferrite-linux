@@ -1,7 +1,9 @@
 //! Fichiers : gestionnaire de fichiers de Ferrite.
 //!
 //! - affichage en liste (colonnes triables) ou en grille d'icônes, fichiers cachés à la
-//!   demande, recherche dans le dossier ;
+//!   demande, recherche dans le dossier et ses sous-dossiers (voir `search`), lancée dès
+//!   qu'on tape une lettre ;
+//! - onglets : plusieurs emplacements dans la même fenêtre (Ctrl+T, Ctrl+W, Ctrl+Tab) ;
 //! - navigation : précédent, suivant, dossier parent, chemin cliquable ou saisi (Ctrl+L),
 //!   barre latérale (Favoris, Corbeille, clés USB) ;
 //! - sélection multiple (Ctrl, Maj, Ctrl+A), menu contextuel, raccourcis habituels ;
@@ -24,6 +26,7 @@ mod look;
 mod open_with;
 mod ops;
 mod places;
+mod search;
 mod thumbs;
 pub(crate) mod trash;
 mod view;
@@ -288,6 +291,10 @@ enum Action {
     OpenWith(PathBuf),
     LaunchWith(PathBuf, DesktopEntry),
     TerminalHere,
+    /// Nouvel onglet sur ce dossier (l'emplacement affiché si `None`).
+    NewTab(Option<PathBuf>),
+    SwitchTab(usize),
+    CloseTab(usize),
     ToggleHidden,
     SetView(View),
     SetFilter(Filter),
@@ -305,8 +312,37 @@ enum Action {
     CancelPicker,
 }
 
+/// Onglet : un emplacement et son historique. Celui qui est affiché vit dans les champs de
+/// `FilesState` (sa place dans `tabs` n'est mise à jour qu'en changeant d'onglet).
+#[derive(Debug, Clone)]
+struct Tab {
+    location: Location,
+    back: Vec<Location>,
+    forward: Vec<Location>,
+    search: String,
+    filter: Filter,
+    selected: BTreeSet<PathBuf>,
+}
+
+impl Tab {
+    fn at(location: Location) -> Self {
+        Self {
+            location,
+            back: Vec::new(),
+            forward: Vec::new(),
+            search: String::new(),
+            filter: Filter::All,
+            selected: BTreeSet::new(),
+        }
+    }
+}
+
 pub struct FilesState {
     location: Location,
+    tabs: Vec<Tab>,
+    active_tab: usize,
+    /// Recherche en cours dans les sous-dossiers du dossier affiché.
+    deep: Option<search::DeepSearch>,
     entries: Vec<FileEntry>,
     selected: BTreeSet<PathBuf>,
     /// Dernier élément cliqué, point de départ d'une sélection avec Maj.
@@ -376,6 +412,9 @@ impl Default for FilesState {
         let (sender, receiver) = mpsc::channel();
         let mut state = Self {
             location: Location::Folder(home()),
+            tabs: vec![Tab::at(Location::Folder(home()))],
+            active_tab: 0,
+            deep: None,
             entries: Vec::new(),
             selected: BTreeSet::new(),
             anchor: None,
@@ -436,6 +475,8 @@ fn preferences_path() -> PathBuf {
 const ANALYSIS_LARGEST: usize = 100;
 /// Fichiers récents montrés en tête du dossier personnel.
 const RECENT_STRIP: usize = 6;
+/// Identifiant du champ « Rechercher » de la barre d'outils.
+const SEARCH_FIELD: &str = "fichiers-recherche";
 /// Au-delà, le contenu des sous-dossiers n'est pas compté.
 const MAX_COUNTED_FOLDERS: usize = 400;
 const MAX_COUNTED_CHILDREN: usize = 10_000;
@@ -625,6 +666,7 @@ panneau={}
         self.forward.clear();
         self.search.clear();
         self.filter = Filter::All;
+        self.deep = None;
         self.refresh();
     }
 
@@ -642,6 +684,123 @@ panneau={}
             self.back.push(previous);
             self.refresh();
         }
+    }
+
+    // ----- Onglets -----
+
+    /// Range l'état affiché dans sa place de `tabs`.
+    fn save_tab(&mut self) {
+        self.tabs[self.active_tab] = Tab {
+            location: self.location.clone(),
+            back: self.back.clone(),
+            forward: self.forward.clone(),
+            search: self.search.clone(),
+            filter: self.filter,
+            selected: self.selected.clone(),
+        };
+    }
+
+    /// Affiche l'onglet `index` (sans ranger l'état affiché : voir `save_tab`).
+    fn load_tab(&mut self, index: usize) {
+        let tab = self.tabs[index].clone();
+        self.active_tab = index;
+        self.location = tab.location;
+        self.back = tab.back;
+        self.forward = tab.forward;
+        self.search = tab.search;
+        self.filter = tab.filter;
+        self.deep = None;
+        self.path_edit = None;
+        self.quick = None;
+        self.refresh();
+        self.selected = tab.selected;
+        let paths: BTreeSet<&PathBuf> = self.entries.iter().map(|entry| &entry.path).collect();
+        self.selected.retain(|path| paths.contains(path));
+    }
+
+    fn new_tab(&mut self, location: Location) {
+        self.save_tab();
+        let index = self.active_tab + 1;
+        self.tabs.insert(index, Tab::at(location));
+        self.load_tab(index);
+    }
+
+    fn switch_tab(&mut self, index: usize) {
+        if index < self.tabs.len() && index != self.active_tab {
+            self.save_tab();
+            self.load_tab(index);
+        }
+    }
+
+    fn close_tab(&mut self, index: usize) {
+        if self.tabs.len() <= 1 || index >= self.tabs.len() {
+            return;
+        }
+        if index != self.active_tab {
+            self.tabs.remove(index);
+            if index < self.active_tab {
+                self.active_tab -= 1;
+            }
+            return;
+        }
+        self.tabs.remove(index);
+        self.load_tab(index.min(self.tabs.len() - 1));
+    }
+
+    /// Titre d'un onglet : le nom de son emplacement.
+    fn tab_title(&self, index: usize) -> String {
+        let location = if index == self.active_tab {
+            &self.location
+        } else {
+            &self.tabs[index].location
+        };
+        match location {
+            Location::Folder(path) if *path == home() => "Dossier personnel".into(),
+            Location::Folder(path) if path.parent().is_none() => "Système".into(),
+            Location::Folder(path) => file_name(path),
+            Location::Archive { archive, .. } => file_name(archive),
+            Location::Trash => "Corbeille".into(),
+            Location::Recent => "Récents".into(),
+            Location::Tag(tag) => tag.clone(),
+            Location::Analysis { dir, .. } => format!("Analyse de {}", file_name(dir)),
+        }
+    }
+
+    // ----- Recherche dans les sous-dossiers -----
+
+    /// Lance, relance ou arrête la recherche dans les sous-dossiers selon le texte cherché,
+    /// et ajoute ses nouveaux résultats à la liste affichée.
+    fn sync_deep_search(&mut self, ctx: &egui::Context) {
+        let query = self.search.trim().to_lowercase();
+        let wanted = match &self.location {
+            Location::Folder(dir) if query.chars().count() >= 2 => Some(dir.clone()),
+            _ => None,
+        };
+        let current = self.deep.as_ref().is_some_and(|deep| {
+            Some(&deep.root) == wanted.as_ref() && deep.query == query && deep.hidden == self.show_hidden
+        });
+        if current {
+            if let Some(deep) = &mut self.deep {
+                let new = deep.take_new();
+                if !new.is_empty() {
+                    self.entries.extend(new);
+                }
+            }
+            return;
+        }
+        let had = self.deep.take().is_some();
+        if let Some(root) = wanted {
+            self.deep = Some(search::DeepSearch::start(root, query, self.show_hidden, ctx));
+        }
+        if had {
+            // Les résultats de la recherche précédente quittent la liste.
+            self.refresh();
+        }
+    }
+
+    /// Dossier (relatif au dossier affiché) d'un élément trouvé plus bas, sinon `None`.
+    fn found_in(&self, entry: &FileEntry) -> Option<String> {
+        self.deep.as_ref()?.place_of(&entry.path)
     }
 
     fn error(&mut self, message: impl Into<String>) {
@@ -762,6 +921,12 @@ panneau={}
         }
         if !matches!(self.location, Location::Analysis { .. }) {
             self.count_children();
+        }
+        // Après le comptage : les résultats des sous-dossiers viennent à la suite.
+        if let (Some(deep), Location::Folder(dir)) = (&self.deep, &self.location)
+            && deep.root == *dir
+        {
+            self.entries.extend(deep.found.iter().cloned());
         }
         self.recent_strip = if self.location == Location::Folder(home()) && self.picker.is_none() {
             places::recent()
@@ -988,6 +1153,12 @@ panneau={}
         }
         match action {
             Action::Navigate(path) => self.go(Location::Folder(path)),
+            Action::NewTab(path) => {
+                let location = path.map_or_else(|| self.location.clone(), Location::Folder);
+                self.new_tab(location);
+            }
+            Action::SwitchTab(index) => self.switch_tab(index),
+            Action::CloseTab(index) => self.close_tab(index),
             Action::Show(location) => self.go(location),
             Action::ShowTrash => self.go(Location::Trash),
             Action::ToggleTheme => {
@@ -1623,6 +1794,19 @@ panneau={}
             return;
         }
         let typing = ui.ctx().memory(|memory| memory.focused().is_some());
+        if !typing {
+            self.type_to_search(ui);
+        }
+        let searching = ui
+            .ctx()
+            .memory(|memory| memory.has_focus(egui::Id::unique(SEARCH_FIELD)));
+        if searching && ui.input(|input| input.key_pressed(Key::Escape)) {
+            // Échap dans la recherche : on l'efface et on revient aux fichiers.
+            self.search.clear();
+            ui.ctx()
+                .memory_mut(|memory| memory.surrender_focus(egui::Id::unique(SEARCH_FIELD)));
+            return;
+        }
         ui.input(|input| {
             let (ctrl, shift, alt) = (
                 input.modifiers.command,
@@ -1647,6 +1831,23 @@ panneau={}
             }
             if alt && pressed(Key::ArrowUp) {
                 actions.push(Action::Up);
+            }
+            if self.picker.is_none() {
+                let count = self.tabs.len();
+                if ctrl && pressed(Key::T) {
+                    actions.push(Action::NewTab(None));
+                }
+                if ctrl && pressed(Key::W) && count > 1 {
+                    actions.push(Action::CloseTab(self.active_tab));
+                }
+                if ctrl && pressed(Key::Tab) && count > 1 {
+                    let next = if shift {
+                        (self.active_tab + count - 1) % count
+                    } else {
+                        (self.active_tab + 1) % count
+                    };
+                    actions.push(Action::SwitchTab(next));
+                }
             }
             if typing {
                 return;
@@ -1705,6 +1906,46 @@ panneau={}
                 self.loaded = None;
             }
         });
+    }
+
+    /// Taper une lettre hors de tout champ commence une recherche : le texte va dans le champ
+    /// « Rechercher », qui prend la main (l'Espace reste l'aperçu rapide).
+    fn type_to_search(&mut self, ui: &egui::Ui) {
+        if self.quick.is_some() {
+            return;
+        }
+        let typed: String = ui.input(|input| {
+            if input.modifiers.command || input.modifiers.alt {
+                return String::new();
+            }
+            input
+                .events
+                .iter()
+                .filter_map(|event| match event {
+                    egui::Event::Text(text) => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect()
+        });
+        if typed.trim().is_empty() || typed.starts_with(' ') {
+            return;
+        }
+        let ctx = ui.ctx();
+        // Le champ ne doit pas recevoir une seconde fois ces lettres.
+        ctx.input_mut(|input| {
+            input
+                .events
+                .retain(|event| !matches!(event, egui::Event::Text(_)))
+        });
+        self.search.push_str(&typed);
+        let id = egui::Id::unique(SEARCH_FIELD);
+        let mut state = egui::TextEdit::load_state(ctx, id).unwrap_or_default();
+        let end = egui::text::CCursor::new(self.search.chars().count());
+        state
+            .cursor
+            .set_char_range(Some(egui::text::CCursorRange::one(end)));
+        state.store(ctx, id);
+        ctx.memory_mut(|memory| memory.request_focus(id));
     }
 
     /// Barre du bas du sélecteur : nom du fichier (enregistrement), Annuler, Ouvrir ou Enregistrer.
@@ -1809,6 +2050,15 @@ panneau={}
         );
         if self.in_archive() {
             return;
+        }
+        if entry.directory && self.picker.is_none() {
+            item(
+                ui,
+                "Ouvrir dans un nouvel onglet",
+                "",
+                single,
+                Action::NewTab(Some(entry.path.clone())),
+            );
         }
         if !entry.directory {
             item(

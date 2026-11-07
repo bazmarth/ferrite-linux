@@ -39,6 +39,7 @@ const SORT_KEYS: [(&str, SortKey); 4] = [
     ("Type", SortKey::Kind),
 ];
 /// Colonnes Taille, Modifié et Type de la liste.
+const TAB_BAR_HEIGHT: f32 = 40.0;
 const LIST_COLUMNS: [f32; 3] = [120.0, 190.0, 150.0];
 
 /// Où l'on peut lâcher des fichiers glissés.
@@ -290,6 +291,7 @@ impl FilesState {
     pub fn update(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         self.poll(&ctx);
+        self.sync_deep_search(&ctx);
         let look = look();
         let mut actions = Vec::new();
         let mut targets = Targets::new();
@@ -302,6 +304,9 @@ impl FilesState {
         style::toolbar_with(ui, false, look.win, look.line, |ui| {
             self.toolbar(ui, &look, &mut actions, &mut targets)
         });
+        if !picker && self.tabs.len() > 1 {
+            self.tab_bar(ui, &look, &mut actions);
+        }
         if picker {
             self.picker_bar(ui, &mut actions);
         } else {
@@ -751,6 +756,25 @@ impl FilesState {
             {
                 actions.push(Action::ToggleTheme);
             }
+            // Nouvel onglet (pas dans le sélecteur).
+            if self.picker.is_none()
+                && icon_button(
+                    ui,
+                    egui::vec2(34.0, 34.0),
+                    10,
+                    Some(look.chip),
+                    "Nouvel onglet (Ctrl+T)",
+                    |p, r| {
+                        let c = r.center();
+                        let stroke = Stroke::new(1.6, look.icon);
+                        p.line_segment([c - egui::vec2(6.0, 0.0), c + egui::vec2(6.0, 0.0)], stroke);
+                        p.line_segment([c - egui::vec2(0.0, 6.0), c + egui::vec2(0.0, 6.0)], stroke);
+                    },
+                )
+                .clicked()
+            {
+                actions.push(Action::NewTab(None));
+            }
             // Recherche : 220 × 34, moins quand la fenêtre est étroite (le chemin d'abord).
             let search_width = (ui.available_width() * 0.3 - 40.0).clamp(150.0, 220.0);
             let (field, _) = ui.allocate_exact_size(egui::vec2(search_width, 34.0), Sense::hover());
@@ -772,6 +796,7 @@ impl FilesState {
             );
             child.add(
                 egui::TextEdit::singleline(&mut self.search)
+                    .id(egui::Id::unique(super::SEARCH_FIELD))
                     // Même police que le texte tapé : sinon l'invitation, plus grande, remonte.
                     .hint_text(RichText::new("Rechercher").font(font(14.0, false)))
                     .font(font(14.0, false))
@@ -823,6 +848,80 @@ impl FilesState {
                 self.crumbs(ui, look, actions, targets);
             });
         });
+    }
+
+    /// Rangée d'onglets sous la barre d'outils, affichée dès qu'il y en a deux.
+    fn tab_bar(&mut self, ui: &mut egui::Ui, look: &Look, actions: &mut Vec<Action>) {
+        let titles: Vec<String> = (0..self.tabs.len()).map(|index| self.tab_title(index)).collect();
+        let active = self.active_tab;
+        egui::Panel::top(ui.scope_id().with("onglets"))
+            .resizable(false)
+            .exact_size(TAB_BAR_HEIGHT)
+            .frame(
+                Frame::new()
+                    .fill(look.side)
+                    .inner_margin(Margin::symmetric(10, 0)),
+            )
+            .show(ui, |ui| {
+                let bar = ui.max_rect();
+                let full = bar.expand2(egui::vec2(10.0, 0.0));
+                ui.painter()
+                    .hline(full.x_range(), full.bottom() - 0.5, Stroke::new(1.0, look.line));
+                let count = titles.len() as f32;
+                let gap = 4.0;
+                let width = ((bar.width() - gap * (count - 1.0)) / count).min(240.0);
+                for (index, title) in titles.iter().enumerate() {
+                    let rect = egui::Rect::from_min_size(
+                        egui::pos2(bar.left() + index as f32 * (width + gap), bar.top() + 5.0),
+                        egui::vec2(width, bar.height() - 10.0),
+                    );
+                    let id = ui.scope_id().with(("onglet", index));
+                    let response = ui.interact(rect, id, Sense::click());
+                    let on = index == active;
+                    if on {
+                        ui.painter()
+                            .rect_filled(rect.translate(egui::vec2(0.0, 1.0)), 8.0, style::tint(20));
+                        ui.painter().rect_filled(rect, 8.0, look.win);
+                    } else if response.hovered() {
+                        ui.painter().rect_filled(rect, 8.0, style::tint(8));
+                    }
+                    // Croix de fermeture, à droite, sur l'onglet actif ou survolé.
+                    let close = egui::Rect::from_center_size(
+                        egui::pos2(rect.right() - 14.0, rect.center().y),
+                        egui::vec2(20.0, 20.0),
+                    );
+                    let close_response = ui
+                        .interact(close, id.with("fermer"), Sense::click())
+                        .on_hover_text("Fermer l’onglet (Ctrl+W)");
+                    let show_close = on || response.hovered() || close_response.hovered();
+                    if show_close {
+                        if close_response.hovered() {
+                            ui.painter().rect_filled(close, 6.0, style::tint(14));
+                        }
+                        let c = close.center();
+                        let stroke = Stroke::new(1.4, look.fg2);
+                        ui.painter()
+                            .line_segment([c - egui::vec2(4.0, 4.0), c + egui::vec2(4.0, 4.0)], stroke);
+                        ui.painter()
+                            .line_segment([c + egui::vec2(-4.0, 4.0), c + egui::vec2(4.0, -4.0)], stroke);
+                    }
+                    text(
+                        ui,
+                        title,
+                        rect.center() - egui::vec2(6.0, 0.0),
+                        egui::Align2::CENTER_CENTER,
+                        font(13.0, on),
+                        if on { look.fg } else { look.fg2 },
+                        width - 44.0,
+                    );
+                    // La croix ou un clic du milieu ferment l'onglet.
+                    if close_response.clicked() || response.middle_clicked() {
+                        actions.push(Action::CloseTab(index));
+                    } else if response.clicked() {
+                        actions.push(Action::SwitchTab(index));
+                    }
+                }
+            });
     }
 
     fn crumbs(&mut self, ui: &mut egui::Ui, look: &Look, actions: &mut Vec<Action>, targets: &mut Targets) {
@@ -1265,6 +1364,7 @@ impl FilesState {
         let in_trash = self.location == Location::Trash;
         let in_archive = self.in_archive();
         let query = self.search.trim().to_owned();
+        let deep = self.deep.as_ref().map(|deep| (deep.done, deep.truncated));
         let single = (selected == 1)
             .then(|| {
                 self.entries
@@ -1354,8 +1454,14 @@ impl FilesState {
                             }
                         }
                         if !query.is_empty() {
-                            summary.push_str(&format!(" · filtre « {query} »"));
+                            summary.push_str(&format!(" · recherche « {query} »"));
                         }
+                        summary.push_str(match deep {
+                            Some((false, _)) => " · sous-dossiers en cours…",
+                            Some((true, true)) => " · sous-dossiers : 2 000 premiers résultats",
+                            Some((true, false)) => " · sous-dossiers compris",
+                            None => "",
+                        });
                         ui.label(summary);
                     }
                     if let Some((text, error)) = &message
@@ -1425,6 +1531,8 @@ impl FilesState {
                 "Dossier réservé à l’administrateur",
                 "Son contenu n’est lisible qu’avec le mot de passe administrateur.",
             )
+        } else if searching && self.deep.as_ref().is_some_and(|deep| !deep.done) {
+            ("Recherche en cours…", "Les sous-dossiers sont parcourus.")
         } else if searching {
             ("Aucun résultat", "Essayez un autre nom.")
         } else if matches!(self.location, Location::Analysis { .. })
@@ -1592,8 +1700,13 @@ impl FilesState {
                                 ink,
                                 112.0 - 14.0,
                             );
-                            // Sous le nom : taille du fichier ou contenu du dossier.
-                            if let Some(detail) = self.cell_detail(&entry) {
+                            // Sous le nom : taille du fichier ou contenu du dossier, ou le
+                            // sous-dossier où la recherche l'a trouvé.
+                            let detail = self
+                                .found_in(&entry)
+                                .map(|place| format!("dans {place}"))
+                                .or_else(|| self.cell_detail(&entry));
+                            if let Some(detail) = detail {
                                 text(
                                     ui,
                                     &detail,
@@ -1801,7 +1914,10 @@ impl FilesState {
                             String::new()
                         }
                     }
-                    None => kind_label(&entry),
+                    // Trouvé plus bas par la recherche : le sous-dossier plutôt que la nature.
+                    None => self
+                        .found_in(&entry)
+                        .map_or_else(|| kind_label(&entry), |place| format!("dans {place}")),
                 };
                 for (column, value) in [size, date, fourth].into_iter().enumerate() {
                     let left = if column == 2 && analyzing {
@@ -1821,7 +1937,9 @@ impl FilesState {
                 }
                 let response = response.on_hover_text_at_pointer(match &entry.trash {
                     Some(item) => format!("Origine : {}", item.original.display()),
-                    None if largest => format!("{} — dans {}", entry.name, display_location(&entry.path)),
+                    None if largest || self.found_in(&entry).is_some() => {
+                        format!("{} — dans {}", entry.name, display_location(&entry.path))
+                    }
                     None => entry.name.clone(),
                 });
                 self.item_response(&response, index, ui, actions);

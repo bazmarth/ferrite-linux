@@ -2006,3 +2006,26 @@ Vérifié : CI (sans shellcheck) ; tests de lecture des profils ; capture en som
 marche sans mot de passe (intel_pstate + platform_profile), et capture avec le profil
 économie actif (tuile « Activée », en couleur).
 Pas vérifié : le clic sur la tuile dans le bureau réel ; l'image ISO.
+
+## 2026-11-07 — Fichiers : recherche dans les sous-dossiers, onglets, taper pour chercher
+
+Demande de l'utilisateur : « recherche récursive dans le gestionnaire de fichiers et multi
+fenêtre dans la même page », puis « quand on appuie sur une touche, commencer à chercher ».
+- Nouveau module `apps/core/src/files/search.rs` : dès 2 lettres dans « Rechercher », un fil à
+  part parcourt les sous-dossiers (en largeur, sans suivre les liens, fichiers cachés selon le
+  réglage, 2 000 résultats au plus) ; annulé dès que le texte ou le dossier change. Les
+  résultats s'ajoutent à la suite de ceux du dossier, avec « dans Documents/… » sous le nom
+  (grille) ou dans la colonne Nature (liste). Barre d'état : « sous-dossiers en cours… » puis
+  « sous-dossiers compris ».
+- Onglets : bouton « + » dans la barre d'outils, Ctrl+T, « Ouvrir dans un nouvel onglet »
+  (menu d'un dossier), Ctrl+W ou croix ou clic du milieu pour fermer, Ctrl+Tab /
+  Ctrl+Maj+Tab pour passer de l'un à l'autre. Chaque onglet garde son emplacement, son
+  historique, sa recherche, son filtre et sa sélection. La rangée d'onglets n'apparaît qu'à
+  partir de deux. Pas dans le sélecteur de fichiers.
+- Taper une lettre hors d'un champ la met dans « Rechercher » et y place le curseur
+  (l'Espace reste l'aperçu rapide) ; Échap dans le champ efface la recherche.
+Vérifié : CI (sans shellcheck) ; test du parcours (sous-dossiers, casse, fichiers cachés) ;
+captures en clair et en sombre avec trois onglets et la recherche « rapport » (état préparé
+par un code d'essai temporaire, retiré ensuite).
+Pas vérifié : les clics et les raccourcis au clavier sur le bureau réel (onglets, taper pour
+chercher), et la vitesse sur un très gros dossier.

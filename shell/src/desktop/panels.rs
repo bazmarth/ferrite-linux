@@ -244,7 +244,9 @@ pub enum DesktopAction {
     OpenSettings,
     OpenSettingsPage(&'static str),
     Lock,
-    RequestPower(PowerAction),
+    /// Bouton rouge du centre de contrôle : toujours le dialogue d'arrêt, quel que soit le
+    /// réglage du bouton physique.
+    OpenPowerDialog,
     /// Dialogue d'arrêt : tuile choisie (Éteindre, Redémarrer, Veille).
     PowerChoose(PowerAction),
     ConfirmPower(PowerAction),
@@ -2395,17 +2397,10 @@ impl Panels {
             px(13.0),
             palette().heading,
         );
-        let link = layout.control_row(Control::Settings);
-        let width = canvas.text_width(&self.bold, "Paramètres…", px(13.0));
-        canvas.label(
-            &self.bold,
-            "Paramètres…",
-            link.right() - width,
-            footer.y + 23.0,
-            px(13.0),
-            accent(),
-        );
+        // Boutons ronds, de gauche à droite : compte, Paramètres, verrouiller, éteindre.
         let round = [
+            (Control::Account, "cc-account", control_fill()),
+            (Control::Settings, "glyph-gear", control_fill()),
             (Control::Lock, "cc-lock", control_fill()),
             (Control::Power, "cc-power", destructive()),
         ];
@@ -3887,12 +3882,14 @@ pub fn action_at(
                     DesktopAction::ToggleAirplane
                 } else if on(Control::KeyboardLight) && view.keyboard_light.is_some() {
                     DesktopAction::CycleKeyboardLight
+                } else if on(Control::Account) {
+                    DesktopAction::OpenSettingsPage("comptes")
                 } else if on(Control::Settings) {
                     DesktopAction::OpenSettings
                 } else if on(Control::Lock) {
                     DesktopAction::Lock
                 } else if on(Control::Power) {
-                    DesktopAction::RequestPower(PowerAction::Sleep)
+                    DesktopAction::OpenPowerDialog
                 } else if on(Control::Volume) && view.volume.is_some() {
                     DesktopAction::SetVolume(percent(Control::Volume))
                 } else if on(Control::Brightness) && view.brightness.is_some() {
@@ -4257,6 +4254,8 @@ enum Control {
     /// Chevrons des tuiles Wi-Fi et Bluetooth.
     WifiMore,
     BluetoothMore,
+    /// Pied : compte (Paramètres → Comptes), Paramètres, verrouiller, éteindre.
+    Account,
     Settings,
     Lock,
     Power,
@@ -4694,8 +4693,8 @@ impl Layout {
             Control::Volume | Control::Brightness => Rect::new(card.x, card.y, 0.0, 0.0),
             Control::WifiMore => chevron(tile(0.0, 0.0)),
             Control::BluetoothMore => chevron(tile(1.0, 0.0)),
-            // Le lien « Paramètres… », à gauche des deux boutons ronds.
-            Control::Settings => Rect::new(footer.right() - 80.0 - 116.0, footer.y + 15.0, 108.0, 32.0),
+            Control::Account => round(4.0),
+            Control::Settings => round(3.0),
             Control::Lock => round(2.0),
             Control::Power => round(1.0),
         }
@@ -6199,6 +6198,10 @@ mod tests {
             artist: "Nuit Claire".into(),
             cover: None,
             entry: "ferrite-music".into(),
+            player: "org.mpris.MediaPlayer2.ferrite-music".into(),
+            position: Duration::from_secs(30),
+            read_at: Instant::now(),
+            length: Duration::from_secs(100),
         });
         assert_eq!(
             at(previous, &desktop),
@@ -6656,12 +6659,20 @@ mod tests {
             at(Control::BluetoothMore),
             Some(DesktopAction::ControlsPage(ControlsPage::Bluetooth))
         );
+        assert_eq!(
+            at(Control::Account),
+            Some(DesktopAction::OpenSettingsPage("comptes"))
+        );
         assert_eq!(at(Control::Settings), Some(DesktopAction::OpenSettings));
         assert_eq!(at(Control::Lock), Some(DesktopAction::Lock));
-        assert_eq!(
-            at(Control::Power),
-            Some(DesktopAction::RequestPower(PowerAction::Sleep))
-        );
+        assert_eq!(at(Control::Power), Some(DesktopAction::OpenPowerDialog));
+        // Les quatre boutons ronds du pied ne se touchent pas et restent dans le panneau.
+        let footer = [Control::Account, Control::Settings, Control::Lock, Control::Power]
+            .map(|control| layout.control_row(control));
+        for pair in footer.windows(2) {
+            assert!(pair[0].right() < pair[1].x);
+        }
+        assert!(footer[3].right() <= layout.controls_footer().right());
         // Le bouton reste dans la piste : sa course s'arrête à un demi-bouton des bords.
         let volume = layout.slider_track(Control::Volume);
         let quarter = volume.x + volume.h / 2.0 + (volume.w - volume.h) / 4.0;

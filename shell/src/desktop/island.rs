@@ -11,7 +11,7 @@ use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 
 use crate::{
     desktop::{
-        lock::MediaCommand,
+        media::MediaCommand,
         panels::{IslandHit, IslandKind, IslandView, NotificationsView},
     },
     state::Ferrite,
@@ -82,6 +82,21 @@ pub fn timer_label(left: Duration) -> String {
     }
 }
 
+/// Temps écoulé ou restant d'un morceau, à la seconde : « 1:05 », « 1:02:03 ».
+pub fn track_label(seconds: u32) -> String {
+    let (hours, minutes, seconds) = (seconds / 3600, seconds / 60 % 60, seconds % 60);
+    if hours > 0 {
+        format!("{hours}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{minutes}:{seconds:02}")
+    }
+}
+
+/// Temps jusqu'à la prochaine seconde entière d'un morceau qui avance.
+fn until_next_whole_second(position: Duration) -> Duration {
+    Duration::from_nanos(1_000_000_000 - u64::from(position.subsec_nanos())) + Duration::from_millis(5)
+}
+
 /// Temps jusqu'au prochain changement de la seconde affichée.
 fn until_next_second(left: Duration) -> Duration {
     let fraction = left.subsec_nanos();
@@ -110,7 +125,7 @@ impl Ferrite {
             )
         });
         let opened = self.island_open_until.is_some_and(|until| now < until);
-        let media = self.media.as_ref();
+        let media = self.media.current(now);
         // Activités en cours, de la plus pressante à la plus discrète.
         let mut live: Vec<IslandKind> = Vec::new();
         if let Some(recording) = &self.recording {
@@ -121,15 +136,20 @@ impl Ferrite {
         if let Some((left, paused, done, false)) = timer.clone() {
             live.push(IslandKind::Timer { left, paused, done });
         }
-        if let Some(media) = media.filter(|media| media.playing) {
-            live.push(IslandKind::Media {
-                playing: media.playing,
-            });
-        }
-        // Activité dépliée : celle choisie (une bulle), sinon la première qui se déplie.
+        // Lecteurs qui jouent : le suivi d'abord, puis chacun des autres dans sa bulle.
+        let playing = media
+            .filter(|media| media.playing)
+            .into_iter()
+            .chain(self.media.others_playing(now));
+        live.extend(playing.map(|media| IslandKind::Media {
+            playing: true,
+            player: media.player.clone(),
+        }));
+        // Activité dépliée : celle choisie (une bulle), sinon la première qui se déplie. Le
+        // lecteur déplié le reste une fois en pause, avec son bouton de lecture.
         let focus = self
             .island_focus
-            .filter(|focus| focus.matches(&live))
+            .filter(|focus| focus.matches(&live) || (*focus == IslandFocus::Media && media.is_some()))
             .or_else(|| live.iter().find_map(IslandFocus::of));
         let kind = if let Some(osd) = self.osd_view() {
             Some(IslandKind::Osd(osd))
@@ -150,6 +170,8 @@ impl Ferrite {
                 artist: media.artist.clone(),
                 playing: media.playing,
                 cover: media.cover.clone(),
+                position: media.position_at(now).as_secs() as u32,
+                length: media.length.as_secs() as u32,
             })
         } else if !live.is_empty() {
             // Repliée : la première activité dans la pastille, les autres en bulles.
@@ -244,6 +266,11 @@ impl Ferrite {
         if let IslandHit::Other(index) = hit {
             match view.others.get(index) {
                 Some(IslandKind::Recording(_)) => self.stop_recording(),
+                Some(IslandKind::Media { player, .. }) => {
+                    // Un autre lecteur : c'est lui que l'îlot déplie et que ses boutons visent.
+                    self.media.follow(player, Instant::now());
+                    self.island_open(Some(IslandFocus::Media));
+                }
                 Some(other) => self.island_open(IslandFocus::of(other)),
                 None => {}
             }
@@ -284,7 +311,7 @@ impl Ferrite {
                     1 => MediaCommand::PlayPause,
                     _ => MediaCommand::Next,
                 };
-                self.lock_media(command);
+                self.press_media(command);
                 self.keep_island_open();
             }
             _ => {}
@@ -306,6 +333,11 @@ impl Ferrite {
     fn island_open(&mut self, focus: Option<IslandFocus>) {
         self.island_focus = focus;
         self.island_open_until = Some(Instant::now() + OPEN_FOR);
+        if focus == Some(IslandFocus::Media) {
+            // Ses boutons visent le lecteur montré, même si un autre se met à jouer.
+            self.media.hold(Instant::now());
+        }
+        self.island_media_tick();
         // Il se replie seul : une image de plus à l'échéance.
         let _ = self
             .loop_handle
@@ -325,7 +357,7 @@ impl Ferrite {
 
     /// La fenêtre du lecteur qui joue (Musique, Brave, VLC…), lancée s'il le faut.
     fn open_media_player(&mut self) {
-        let Some(entry) = self.media.as_ref().map(|media| media.entry.clone()) else {
+        let Some(entry) = self.media().map(|media| media.entry.clone()) else {
             return;
         };
         let mut key = crate::desktop::apps::AppKey::for_window(&entry, &self.applications);
@@ -347,8 +379,10 @@ impl Ferrite {
 
     /// Clic ailleurs que sur l'îlot déplié : il se replie aussitôt (minuteur ou musique
     /// ouverts, son, notification qui file dans l'historique). La fin d'un minuteur, elle,
-    /// attend qu'on l'arrête. Le clic poursuit ensuite son chemin.
+    /// attend qu'on l'arrête. Le clic poursuit ensuite son chemin, sauf vers l'îlot replié
+    /// (ses bulles n'étaient pas visibles).
     pub fn island_click_outside(&mut self, location: smithay::utils::Point<f64, smithay::utils::Logical>) {
+        self.island_click_folded = false;
         let view = crate::render::desktop_view(self);
         let Some(kind) = view.island.kind.as_ref() else {
             return;
@@ -369,12 +403,51 @@ impl Ferrite {
             }
             _ => self.island_open_until = None,
         }
+        self.island_click_folded = true;
         self.request_redraw();
     }
 
     /// Un bouton touché : l'îlot reste déplié encore un moment.
     fn keep_island_open(&mut self) {
         self.island_open_until = Some(Instant::now() + OPEN_FOR);
+        self.island_media_tick();
+    }
+
+    /// L'îlot déplié montre un morceau qui avance : sa barre bouge à chaque seconde.
+    fn island_media_moving(&self) -> Option<Duration> {
+        let now = Instant::now();
+        if !self.island_open_until.is_some_and(|until| now < until) {
+            return None;
+        }
+        let media = self.media.current(now).filter(|media| media.playing)?;
+        (!media.length.is_zero()).then(|| media.position_at(now))
+    }
+
+    /// Une image à chaque seconde du morceau, tant que l'îlot déplié le montre.
+    pub(crate) fn island_media_tick(&mut self) {
+        if self.media.ticking {
+            return;
+        }
+        let Some(position) = self.island_media_moving() else {
+            return;
+        };
+        self.media.ticking = true;
+        let inserted = self.loop_handle.insert_source(
+            Timer::from_duration(until_next_whole_second(position)),
+            |_, _, state| {
+                state.request_redraw();
+                match state.island_media_moving() {
+                    Some(position) => TimeoutAction::ToDuration(until_next_whole_second(position)),
+                    None => {
+                        state.media.ticking = false;
+                        TimeoutAction::Drop
+                    }
+                }
+            },
+        );
+        if inserted.is_err() {
+            self.media.ticking = false;
+        }
     }
 }
 
@@ -400,6 +473,17 @@ mod tests {
             ended: false,
         };
         assert_eq!(timer.done(now), 750);
+    }
+
+    #[test]
+    fn temps_d_un_morceau() {
+        assert_eq!(track_label(0), "0:00");
+        assert_eq!(track_label(65), "1:05");
+        assert_eq!(track_label(3723), "1:02:03");
+        assert_eq!(
+            until_next_whole_second(Duration::from_millis(4_300)),
+            Duration::from_millis(705)
+        );
     }
 
     #[test]

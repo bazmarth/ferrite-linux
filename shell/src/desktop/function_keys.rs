@@ -162,7 +162,7 @@ impl Ferrite {
                     Popover::Launcher,
                 ));
             }
-            FunctionKey::Media(command) => self.lock_media(command),
+            FunctionKey::Media(command) => self.press_media(command),
         }
     }
 

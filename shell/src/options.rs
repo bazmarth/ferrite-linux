@@ -24,7 +24,7 @@ Options :
                         glissement à cette fraction (0 à 1), pour les captures
   --demo-overview       ouvre la vue d'ensemble au démarrage (pour les captures)
   --demo-switcher       ouvre le sélecteur Alt+Tab dès qu'une fenêtre existe (pour les captures)
-  --demo-controls LISTE ouvre le centre de contrôle sur sa liste (wifi ou bluetooth)
+  --demo-controls LISTE ouvre le centre de contrôle sur sa liste (principal, wifi ou bluetooth)
   --demo-lock           affiche l'écran de verrouillage au démarrage (pour les captures)
   --demo-face ÉTAT      avec --demo-lock : visage en cours (scan), reconnu ou echec
   --demo-power          ouvre le dialogue d'arrêt au démarrage (pour les captures)
@@ -34,6 +34,7 @@ Options :
   --demo-capture        ouvre le panneau de capture au démarrage
   --demo-video          ouvre le panneau de capture en mode vidéo, avec la pastille d'arrêt
   --demo-island         garde l'îlot du haut déplié (minuteur ou musique en cours)
+  --demo-island-press S avec --demo-island : appuie sur lecture/pause de l'îlot après S secondes
   --demo-screenshot     enregistre une capture dans le dossier Images dès qu'une fenêtre existe
   --demo-page POSITION  fige l'affichage à cette position entre les bureaux (0 : le premier,
                         0.5 : à mi-chemin), pour les captures
@@ -99,6 +100,8 @@ pub struct Options {
     pub demo_video: bool,
     /// Îlot du haut gardé déplié (`--demo-island`).
     pub demo_island: bool,
+    /// Appui sur lecture/pause de l'îlot déplié après ce délai (`--demo-island-press`).
+    pub demo_island_press: Option<f64>,
     pub command: Vec<String>,
 }
 
@@ -126,6 +129,7 @@ impl Default for Options {
             demo_capture: false,
             demo_video: false,
             demo_island: false,
+            demo_island_press: None,
             command: Vec::new(),
         }
     }
@@ -212,12 +216,22 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
             "--demo-osd" => options.demo_osd = true,
             "--demo-controls" => {
                 options.demo_controls = Some(match value("--demo-controls")?.as_str() {
+                    "principal" => ControlsPage::Main,
                     "wifi" => ControlsPage::Wifi,
                     "bluetooth" => ControlsPage::Bluetooth,
                     other => return Err(format!("liste inconnue : {other}")),
                 });
             }
             "--demo-screenshot" => options.demo_screenshot = true,
+            "--demo-island-press" => {
+                let text = value("--demo-island-press")?;
+                options.demo_island_press = Some(
+                    text.parse::<f64>()
+                        .ok()
+                        .filter(|delay| (0.0..=60.0).contains(delay))
+                        .ok_or_else(|| format!("délai invalide : {text} (entre 0 et 60 s)"))?,
+                );
+            }
             "--demo-page" => {
                 let text = value("--demo-page")?;
                 options.demo_page = Some(

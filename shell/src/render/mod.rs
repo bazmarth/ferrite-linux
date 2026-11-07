@@ -172,6 +172,8 @@ fn build_output_elements(
             &mut elements,
         );
     }
+    // Tout ce qui précède reste net pendant les passages ; le reste est la scène zoomée.
+    let overlays = elements.len();
 
     // Verrouillé par un client : ses surfaces seules, sur le fond noir de l'écran.
     if let Some(lock) = &state.session_lock {
@@ -468,7 +470,114 @@ fn build_output_elements(
         Err(err) => warn!("fond d'écran non importé : {err:?}"),
     }
     push_screen_fade(renderer, state, assets, output_geo, &mut elements);
+    push_screen_swap(
+        renderer,
+        state,
+        assets,
+        output,
+        output_geo,
+        scale,
+        overlays,
+        &mut elements,
+    );
     elements
+}
+
+/// Passage entre le bureau et l'écran verrouillé : la scène (tout sauf le pointeur) est
+/// dessinée dans une image, posée zoomée sur fond noir, sous la photo de l'ancien écran qui
+/// s'efface en zoomant.
+#[allow(clippy::too_many_arguments)]
+fn push_screen_swap(
+    renderer: &mut GlesRenderer,
+    state: &Ferrite,
+    assets: &RenderAssets,
+    output: &Output,
+    output_geo: Rectangle<i32, Logical>,
+    scale: f64,
+    overlays: usize,
+    elements: &mut Vec<OutputElement>,
+) {
+    use crate::desktop::lock::ScreenFade;
+    let Some(fade) = state.screen_fade else {
+        return;
+    };
+    let physical = output_geo.size.to_f64().to_physical(scale);
+    let size = smithay::utils::Size::from((physical.w.round() as i32, physical.h.round() as i32));
+    if let ScreenFade::Capture { .. } = fade {
+        // L'écran présent, tel quel : sa photo servira d'image qui part.
+        let mut shots = state.screen_fade_shots.borrow_mut();
+        if let std::collections::hash_map::Entry::Vacant(slot) = shots.entry(output.name()) {
+            match genie::snapshot(renderer, &elements[overlays..], size, scale) {
+                Ok(texture) => {
+                    slot.insert(texture);
+                }
+                Err(err) => warn!(?err, "photo de l'écran avant le passage indisponible"),
+            }
+        }
+        return;
+    }
+    let Some(frame) = fade.frame() else {
+        return;
+    };
+    let scene = elements.split_off(overlays);
+    let arriving = match genie::snapshot(renderer, &scene, size, scale) {
+        Ok(texture) => texture,
+        Err(err) => {
+            warn!(?err, "image de la scène pendant le passage indisponible");
+            elements.extend(scene);
+            return;
+        }
+    };
+    let screen = output_geo.size.to_f64();
+    let zoomed = |zoom: f32, alpha: f32| {
+        let zoom = f64::from(zoom);
+        let size = smithay::utils::Size::<f64, Logical>::from((screen.w * zoom, screen.h * zoom));
+        let rect = Rectangle::new(
+            Point::from(((screen.w - size.w) / 2.0, (screen.h - size.h) / 2.0)),
+            size,
+        );
+        Genie {
+            window: rect,
+            icon: rect,
+            top: rect.loc.y,
+            bottom: rect.loc.y + rect.size.h,
+            squeeze: 0.0,
+            alpha: f64::from(alpha),
+        }
+    };
+    let program = assets.decorations.shaders.genie.clone();
+    let leaving = state.screen_fade_shots.borrow().get(&output.name()).cloned();
+    if let Some(leaving) = leaving
+        && frame.leaving_alpha > 0.0
+    {
+        elements.push(OutputElement::Genie(genie::GenieElement::new(
+            leaving,
+            program.clone(),
+            &zoomed(frame.leaving_zoom, frame.leaving_alpha),
+            scale,
+            0.0,
+        )));
+    }
+    elements.push(OutputElement::Genie(genie::GenieElement::new(
+        arriving,
+        program,
+        &zoomed(frame.arriving_zoom, frame.arriving_alpha),
+        scale,
+        0.0,
+    )));
+    // Fond noir autour de la scène qui recule.
+    match MemoryRenderBufferRenderElement::from_buffer(
+        renderer,
+        Point::from((0.0, 0.0)),
+        &assets.screen_fade_overlay,
+        None,
+        Some(Rectangle::from_size((1.0, 1.0).into())),
+        Some(output_geo.size),
+        Kind::Unspecified,
+    ) {
+        Ok(element) => elements.push(OutputElement::Memory(element)),
+        Err(err) => warn!("fond noir du passage indisponible : {err:?}"),
+    }
 }
 
 fn push_screen_fade(
@@ -478,13 +587,11 @@ fn push_screen_fade(
     output_geo: Rectangle<i32, Logical>,
     elements: &mut Vec<OutputElement>,
 ) {
-    let Some(fade) = state.screen_fade else {
-        return;
-    };
-    let alpha = fade.alpha();
-    if alpha <= 0.0 {
+    // Écran éteint jusqu'au réveil : noir complet.
+    if state.screen_fade != Some(crate::desktop::lock::ScreenFade::Dark) {
         return;
     }
+    let alpha = 1.0;
     match MemoryRenderBufferRenderElement::from_buffer(
         renderer,
         Point::from((0.0, 0.0)),
@@ -1296,7 +1403,7 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
                     state.dock_config.bar_height as i32,
                 )
             }),
-            media: state.media.clone(),
+            media: state.media().cloned(),
             apps: state
                 .recent_app_keys()
                 .into_iter()

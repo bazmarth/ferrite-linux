@@ -21,6 +21,10 @@ const BUBBLE_GAP: f64 = 8.0;
 /// Haut de l'îlot déplié, et marge autour de sa forme pour son ombre.
 const OPEN_TOP: f64 = 6.0;
 const SHADOW: f64 = 6.0;
+/// Lecteur déplié : milieu de la ligne de la pochette et des boutons, depuis le haut, et
+/// hauteur avec la barre d'avancement en dessous.
+const MEDIA_ROW: f64 = 48.0;
+const MEDIA_WITH_BAR_H: f64 = 124.0;
 
 const ISLAND_BG: Color = Color::rgb(0x050506);
 const INK: Color = Color::WHITE;
@@ -37,8 +41,8 @@ pub enum IslandKind {
     Recording(String),
     /// Replié : minuteur (reste, en pause, part écoulée sur 1000).
     Timer { left: String, paused: bool, done: u16 },
-    /// Replié : musique.
-    Media { playing: bool },
+    /// Replié : un lecteur qui joue (son nom sur le bus, pour la bulle qui le déplie).
+    Media { playing: bool, player: String },
     /// Déplié : touche de son, de luminosité, de micro.
     Osd(Osd),
     /// Déplié : dernière notification, et nombre d'autres en attente.
@@ -50,12 +54,15 @@ pub enum IslandKind {
     TimerDone,
     /// Déplié au clic : minuteur avec ses boutons.
     TimerOpen { left: String, paused: bool, done: u16 },
-    /// Déplié au clic : lecteur avec ses boutons.
+    /// Déplié au clic : lecteur avec ses boutons, et l'avancement du morceau en secondes
+    /// (durée nulle quand le lecteur ne la donne pas : pas de barre).
     MediaOpen {
         title: String,
         artist: String,
         playing: bool,
         cover: Option<Thumbnail>,
+        position: u32,
+        length: u32,
     },
 }
 
@@ -141,6 +148,7 @@ impl Layout {
             ),
             IslandKind::TimerDone => (400.0, 72.0),
             IslandKind::TimerOpen { .. } => (420.0, 88.0),
+            IslandKind::MediaOpen { length, .. } if *length > 0 => (440.0, MEDIA_WITH_BAR_H),
             _ => (440.0, 96.0),
         };
         Some(Rect::new(((self.w - w) / 2.0).round(), OPEN_TOP, w, h))
@@ -150,10 +158,6 @@ impl Layout {
     pub(super) fn island_buttons(&self, island: &IslandView) -> Vec<Rect> {
         let (Some(kind), Some(rect)) = (island.kind.as_ref(), self.island(island)) else {
             return Vec::new();
-        };
-        let round = |index: usize, count: usize, side: f64| {
-            let right = rect.right() - 18.0 - (count - 1 - index) as f64 * (side + 12.0);
-            Rect::new(right - side, rect.center().1 - side / 2.0, side, side)
         };
         match kind {
             IslandKind::Notification { notification, .. } => (0..notification.actions.len())
@@ -172,11 +176,21 @@ impl Layout {
                 104.0,
                 36.0,
             )],
-            IslandKind::TimerOpen { .. } => (0..2).map(|index| round(index, 2, 46.0)).collect(),
-            IslandKind::MediaOpen { .. } => (0..3).map(|index| round(index, 3, 40.0)).collect(),
+            IslandKind::TimerOpen { .. } => round_buttons(rect, rect.center().1, 2, 46.0),
+            IslandKind::MediaOpen { .. } => round_buttons(rect, rect.y + MEDIA_ROW, 3, 40.0),
             _ => Vec::new(),
         }
     }
+}
+
+/// Boutons ronds de l'îlot déplié, alignés à droite sur la ligne `cy`.
+fn round_buttons(rect: Rect, cy: f64, count: usize, side: f64) -> Vec<Rect> {
+    (0..count)
+        .map(|index| {
+            let right = rect.right() - 18.0 - (count - 1 - index) as f64 * (side + 12.0);
+            Rect::new(right - side, cy - side / 2.0, side, side)
+        })
+        .collect()
 }
 
 /// Endroit de l'îlot sous `pos`. Le milieu de la pastille repliée n'en fait pas partie :
@@ -483,7 +497,7 @@ impl Panels {
                 let color = if *paused { DIM } else { ORANGE };
                 ring(&mut canvas, center, 7.5, 2.4, f64::from(*done) / 1000.0, color);
             }
-            IslandKind::Media { playing } => {
+            IslandKind::Media { playing, .. } => {
                 let heights: [f64; 3] = if *playing { [7.0, 12.0, 9.0] } else { [3.0; 3] };
                 let color = if *playing { GREEN } else { DIM };
                 for (index, height) in heights.iter().enumerate() {
@@ -570,7 +584,7 @@ impl Panels {
                 );
                 value(canvas, text, color);
             }
-            IslandKind::Media { playing } => {
+            IslandKind::Media { playing, .. } => {
                 canvas.icon("app-music", (left + 2.0, cy), 18.0, Style::Color);
                 // Égaliseur : des barres hautes en lecture, basses en pause.
                 let heights: [f64; 4] = if *playing {
@@ -590,14 +604,6 @@ impl Panels {
 
     /// Îlot déplié.
     fn draw_island_open(&self, canvas: &mut Canvas, rect: Rect, kind: &IslandKind) {
-        let layout_buttons = |count: usize, side: f64| -> Vec<Rect> {
-            (0..count)
-                .map(|index| {
-                    let right = rect.right() - 18.0 - (count - 1 - index) as f64 * (side + 12.0);
-                    Rect::new(right - side, rect.center().1 - side / 2.0, side, side)
-                })
-                .collect()
-        };
         let cy = rect.center().1;
         match kind {
             IslandKind::Osd(osd) => {
@@ -700,7 +706,7 @@ impl Panels {
                 };
                 canvas.text(&self.regular, label, rect.x + 76.0, cy - 24.0, 12.0, DIM);
                 canvas.text(&self.light, left, rect.x + 74.0, cy - 8.0, 30.0, color);
-                let buttons = layout_buttons(2, 46.0);
+                let buttons = round_buttons(rect, cy, 2, 46.0);
                 canvas.fill(buttons[0], 23.0, color.with_alpha(64));
                 let (bx, by) = buttons[0].center();
                 if *paused {
@@ -722,7 +728,10 @@ impl Panels {
                 artist,
                 playing,
                 cover,
+                position,
+                length,
             } => {
+                let cy = rect.y + MEDIA_ROW;
                 let art = Rect::new(rect.x + 16.0, cy - 30.0, 60.0, 60.0);
                 match cover {
                     Some(cover) => canvas.image_cover(art, cover, 12.0),
@@ -731,7 +740,10 @@ impl Panels {
                         canvas.icon("app-music", art.center(), 36.0, Style::Color);
                     }
                 }
-                let buttons = layout_buttons(3, 40.0);
+                let buttons = round_buttons(rect, cy, 3, 40.0);
+                if *length > 0 {
+                    self.draw_track_bar(canvas, rect, *position, *length);
+                }
                 let x = art.right() + 14.0;
                 let room = buttons[0].x - 14.0 - x;
                 let title = canvas.fit_text(&self.bold, title, px(15.0), room);
@@ -763,6 +775,38 @@ impl Panels {
                 }
             }
             _ => {}
+        }
+    }
+}
+
+impl Panels {
+    /// Barre d'avancement du morceau, sous la pochette : temps écoulé, barre, temps restant.
+    fn draw_track_bar(&self, canvas: &mut Canvas, rect: Rect, position: u32, length: u32) {
+        let position = position.min(length);
+        let cy = rect.bottom() - 22.0;
+        let elapsed = crate::desktop::island::track_label(position);
+        let left = format!("-{}", crate::desktop::island::track_label(length - position));
+        let label_w = 44.0;
+        canvas.text(&self.regular, &elapsed, rect.x + 18.0, cy - 8.0, 12.0, DIM);
+        let left_w = canvas.css_width(&self.regular, &left, 12.0);
+        canvas.text(
+            &self.regular,
+            &left,
+            rect.right() - 18.0 - left_w,
+            cy - 8.0,
+            12.0,
+            DIM,
+        );
+        let track = Rect::new(
+            rect.x + 18.0 + label_w,
+            cy - 2.5,
+            rect.w - 36.0 - label_w * 2.0,
+            5.0,
+        );
+        canvas.fill(track, 2.5, BUTTON);
+        let filled = track.w * f64::from(position) / f64::from(length);
+        if filled > 0.0 {
+            canvas.fill(Rect::new(track.x, track.y, filled.max(5.0), track.h), 2.5, INK);
         }
     }
 }
@@ -882,7 +926,10 @@ mod tests {
                     paused: false,
                     done: 10,
                 },
-                IslandKind::Media { playing: true },
+                IslandKind::Media {
+                    playing: true,
+                    player: "org.mpris.MediaPlayer2.musique".to_owned(),
+                },
             ],
         };
         let pill = layout.island(&island).expect("affichée");

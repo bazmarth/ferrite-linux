@@ -4,14 +4,9 @@
 //! est vérifié sur un autre fil par `unix_chkpwd`, l'auxiliaire de PAM prévu pour ça.
 
 use std::{
-    collections::HashMap,
     io::Write,
     process::{Command, Stdio},
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-        mpsc,
-    },
+    sync::atomic::Ordering,
     time::{Duration, Instant},
 };
 
@@ -20,6 +15,7 @@ use smithay::reexports::calloop::{
     timer::{TimeoutAction, Timer},
 };
 
+pub use crate::desktop::media::{Media, MediaCommand, MediaLink};
 use crate::{
     desktop::panels::{LOCK_BLUR_MAX, LOCK_WALLS, LockFace, LockMessage},
     state::Ferrite,
@@ -29,20 +25,20 @@ use crate::{
 const HELPERS: [&str; 2] = ["/usr/sbin/unix_chkpwd", "/sbin/unix_chkpwd"];
 /// Temps du passage du repos à la saisie, et de la secousse d'un refus.
 const TRANSITION: Duration = ferrite_ui::tokens::motion::LONG;
-/// Assombrissement avant le verrouillage : assez lent pour se voir, sans faire attendre.
-const DARKEN_LOCK: Duration = Duration::from_millis(520);
-/// Après l'accueil : court passage au noir avant de retrouver le bureau.
-const DARKEN_UNLOCK: Duration = ferrite_ui::tokens::motion::NORMAL;
-/// Le noir se lève sur l'écran verrouillé ou sur le bureau.
-const REVEAL: Duration = Duration::from_millis(480);
+/// Fondu enchaîné zoomé entre le bureau et l'écran verrouillé.
+const SWAP: Duration = Duration::from_millis(560);
+/// Zoom du bureau quand il est derrière l'écran verrouillé (il recule).
+const DESKTOP_ZOOM: f32 = 0.9;
+/// Zoom de l'écran verrouillé quand il est hors de l'écran (devant, tout proche).
+const LOCK_ZOOM: f32 = 1.08;
+/// Attente maximale de la photo de l'écran avant le passage.
+const CAPTURE_WAIT: Duration = Duration::from_millis(120);
 const SCREEN_FADE_STEP: Duration = Duration::from_millis(16);
 const SHAKE: Duration = Duration::from_millis(380);
 /// Message d'accueil, une fois le mot de passe accepté.
 const WELCOME: Duration = Duration::from_millis(600);
 /// Période de l'invitation qui pulse.
 const PULSE: Duration = Duration::from_millis(2400);
-/// Relecture du lecteur multimédia, tant que l'écran est verrouillé.
-const MEDIA_REFRESH: Duration = Duration::from_secs(2);
 
 /// État de l'écran de verrouillage.
 #[derive(Debug)]
@@ -215,245 +211,6 @@ fn shake_offset(t: f64) -> i16 {
     (KEYS[index] + (KEYS[index + 1] - KEYS[index]) * at.fract()).round() as i16
 }
 
-/// Lecteur multimédia en cours, vu par MPRIS.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Media {
-    pub detail: String,
-    pub progress: u8,
-    pub playing: bool,
-    /// Pour le widget Musique : titre, artiste et pochette (`mpris:artUrl` local).
-    pub title: String,
-    pub artist: String,
-    pub cover: Option<crate::clipboard::Thumbnail>,
-    /// Fichier `.desktop` du lecteur (`DesktopEntry` de MPRIS), pour ouvrir sa fenêtre.
-    pub entry: String,
-}
-
-/// Côté de la pochette réduite pour le widget Musique.
-const COVER_SIDE: u32 = 160;
-
-/// Chemin d'une adresse `file://` (les `%20` et autres décodés).
-fn file_url_path(url: &str) -> Option<std::path::PathBuf> {
-    let encoded = url.strip_prefix("file://")?;
-    let bytes = encoded.as_bytes();
-    let mut decoded = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        let hex = bytes
-            .get(index + 1..index + 3)
-            .and_then(|pair| std::str::from_utf8(pair).ok());
-        match (
-            bytes[index],
-            hex.and_then(|pair| u8::from_str_radix(pair, 16).ok()),
-        ) {
-            (b'%', Some(value)) => {
-                decoded.push(value);
-                index += 3;
-            }
-            (byte, _) => {
-                decoded.push(byte);
-                index += 1;
-            }
-        }
-    }
-    Some(std::path::PathBuf::from(
-        String::from_utf8_lossy(&decoded).into_owned(),
-    ))
-}
-
-/// Pochette réduite, en BGRA prémultiplié comme les vignettes du presse-papiers.
-fn load_cover(path: &std::path::Path) -> Option<crate::clipboard::Thumbnail> {
-    let image = ferrite_ui::wallpaper::decode(path).ok()?;
-    let small = ferrite_ui::wallpaper::cover(&image, COVER_SIDE, COVER_SIDE);
-    let pixels = small
-        .rgba
-        .chunks_exact(4)
-        .flat_map(|p| {
-            let alpha = u32::from(p[3]);
-            let premultiply = |value: u8| (u32::from(value) * alpha / 255) as u8;
-            [premultiply(p[2]), premultiply(p[1]), premultiply(p[0]), p[3]]
-        })
-        .collect();
-    Some(crate::clipboard::Thumbnail {
-        width: small.width,
-        height: small.height,
-        pixels: Arc::new(pixels),
-    })
-}
-
-/// Bouton du lecteur.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MediaCommand {
-    Previous,
-    PlayPause,
-    Next,
-}
-
-impl MediaCommand {
-    fn method(self) -> &'static str {
-        match self {
-            MediaCommand::Previous => "Previous",
-            MediaCommand::PlayPause => "PlayPause",
-            MediaCommand::Next => "Next",
-        }
-    }
-}
-
-/// Liaison avec le fil qui suit le lecteur multimédia.
-#[derive(Debug)]
-pub struct MediaLink {
-    /// Vrai tant que l'écran est verrouillé : le fil n'interroge personne le reste du temps.
-    watching: Arc<AtomicBool>,
-    commands: mpsc::Sender<MediaCommand>,
-}
-
-/// Texte d'un morceau : « artiste · titre », ou ce qu'on en sait.
-fn media_detail(artist: Option<&str>, title: Option<&str>, player: &str) -> String {
-    match (
-        artist.filter(|text| !text.is_empty()),
-        title.filter(|text| !text.is_empty()),
-    ) {
-        (Some(artist), Some(title)) => format!("{artist} · {title}"),
-        (None, Some(title)) => title.to_owned(),
-        _ => player.to_owned(),
-    }
-}
-
-/// Part écoulée, de 0 à 100.
-fn media_progress(position: i64, length: i64) -> u8 {
-    if length <= 0 || position <= 0 {
-        return 0;
-    }
-    (position.saturating_mul(100) / length).min(100) as u8
-}
-
-const MPRIS_PREFIX: &str = "org.mpris.MediaPlayer2.";
-const MPRIS_PATH: &str = "/org/mpris/MediaPlayer2";
-const MPRIS_PLAYER: &str = "org.mpris.MediaPlayer2.Player";
-
-fn mpris_players(connection: &zbus::blocking::Connection) -> zbus::Result<Vec<String>> {
-    let names = zbus::blocking::fdo::DBusProxy::new(connection)?.list_names()?;
-    Ok(names
-        .into_iter()
-        .map(|name| name.to_string())
-        .filter(|name| name.starts_with(MPRIS_PREFIX))
-        .collect())
-}
-
-fn mpris_proxy<'a>(
-    connection: &zbus::blocking::Connection,
-    player: &'a str,
-) -> zbus::Result<zbus::blocking::Proxy<'a>> {
-    zbus::blocking::Proxy::new(connection, player, MPRIS_PATH, MPRIS_PLAYER)
-}
-
-/// Lecteur à montrer : celui qui joue, sinon le premier en pause. Rien s'il est à l'arrêt.
-/// Lecteur trouvé : son nom de bus, ce qu'il joue et sa pochette.
-type Found = (String, Media, Option<std::path::PathBuf>);
-
-fn read_media(connection: &zbus::blocking::Connection) -> zbus::Result<Option<Found>> {
-    let mut paused = None;
-    for player in mpris_players(connection)? {
-        let proxy = mpris_proxy(connection, &player)?;
-        let Ok(status) = proxy.get_property::<String>("PlaybackStatus") else {
-            continue;
-        };
-        if status != "Playing" && status != "Paused" {
-            continue;
-        }
-        let metadata: HashMap<String, zbus::zvariant::OwnedValue> =
-            proxy.get_property("Metadata").unwrap_or_default();
-        let title = metadata
-            .get("xesam:title")
-            .and_then(|value| value.downcast_ref::<&str>().ok());
-        let artist = metadata
-            .get("xesam:artist")
-            .and_then(|value| value.downcast_ref::<&zbus::zvariant::Array>().ok())
-            .and_then(|artists| artists.get::<&str>(0).ok().flatten());
-        let length = metadata
-            .get("mpris:length")
-            .and_then(|value| value.downcast_ref::<i64>().ok())
-            .unwrap_or(0);
-        let position = proxy.get_property::<i64>("Position").unwrap_or(0);
-        let art = metadata
-            .get("mpris:artUrl")
-            .and_then(|value| value.downcast_ref::<&str>().ok())
-            .and_then(file_url_path);
-        let short_name = player.trim_start_matches(MPRIS_PREFIX);
-        let entry =
-            zbus::blocking::Proxy::new(connection, player.as_str(), MPRIS_PATH, "org.mpris.MediaPlayer2")
-                .ok()
-                .and_then(|root| root.get_property::<String>("DesktopEntry").ok())
-                .unwrap_or_else(|| short_name.split('.').next().unwrap_or(short_name).to_owned());
-        let media = Media {
-            detail: media_detail(artist, title, short_name),
-            progress: media_progress(position, length),
-            playing: status == "Playing",
-            title: title.unwrap_or(short_name).to_owned(),
-            artist: artist.unwrap_or_default().to_owned(),
-            // Remplie par `watch_media`, qui garde la dernière pochette décodée.
-            cover: None,
-            entry,
-        };
-        drop(proxy);
-        if media.playing {
-            return Ok(Some((player.clone(), media, art)));
-        }
-        paused.get_or_insert((player.clone(), media, art));
-    }
-    Ok(paused)
-}
-
-fn watch_media(
-    events: &channel::Sender<Event>,
-    watching: &AtomicBool,
-    commands: &mpsc::Receiver<MediaCommand>,
-) -> zbus::Result<()> {
-    let connection = zbus::blocking::Connection::session()?;
-    let mut last = None;
-    let mut current: Option<String> = None;
-    // Dernière pochette décodée, gardée tant que le morceau ne change pas.
-    let mut cover: Option<(std::path::PathBuf, Option<crate::clipboard::Thumbnail>)> = None;
-    loop {
-        // Une commande réveille le fil : le lecteur est relu aussitôt.
-        match commands.recv_timeout(MEDIA_REFRESH) {
-            Ok(command) => {
-                if let Some(player) = &current {
-                    let reply = mpris_proxy(&connection, player)
-                        .and_then(|proxy| proxy.call_method(command.method(), &()).map(|_| ()));
-                    if let Err(error) = reply {
-                        tracing::warn!(%error, "commande du lecteur refusée");
-                    }
-                }
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
-            Err(mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
-        }
-        if !watching.load(Ordering::Relaxed) {
-            last = None;
-            current = None;
-            continue;
-        }
-        let found = read_media(&connection)?;
-        current = found.as_ref().map(|(player, _, _)| player.clone());
-        let media = found.map(|(_, mut media, art)| {
-            if let Some(art) = art {
-                if cover.as_ref().is_none_or(|(path, _)| *path != art) {
-                    cover = Some((art.clone(), load_cover(&art)));
-                }
-                media.cover = cover.as_ref().and_then(|(_, thumbnail)| thumbnail.clone());
-            }
-            media
-        });
-        if media != last {
-            last.clone_from(&media);
-            if events.send(Event::Media(media)).is_err() {
-                return Ok(());
-            }
-        }
-    }
-}
-
 /// Efface un mot de passe de la mémoire avant de le rendre.
 fn wipe(password: &mut String) {
     // Même longueur : les octets sont écrasés sur place, sans nouvelle allocation.
@@ -470,7 +227,8 @@ pub enum Event {
     Checked(Result<bool, String>),
     /// Réponse de `ferrite-visage verifier`.
     Face(crate::desktop::face::FaceResult),
-    Media(Option<Media>),
+    /// Relevé des lecteurs multimédia (`desktop/media.rs`).
+    Media(Vec<Media>),
 }
 
 /// Vérifie le mot de passe du compte courant avec `helper`.
@@ -588,19 +346,8 @@ pub fn start(handle: &LoopHandle<'static, Ferrite>) -> Result<(channel::Sender<E
             }
         })
         .map_err(|err| err.to_string())?;
-    let watching = Arc::new(AtomicBool::new(false));
-    let (commands, received) = mpsc::channel();
-    let media_events = events.clone();
-    let watched = watching.clone();
-    std::thread::Builder::new()
-        .name("lecteur-multimedia".to_owned())
-        .spawn(move || {
-            if let Err(err) = watch_media(&media_events, &watched, &received) {
-                tracing::warn!(%err, "lecteur multimédia non suivi");
-            }
-        })
-        .map_err(|err| err.to_string())?;
-    Ok((events, MediaLink { watching, commands }))
+    let media = crate::desktop::media::start(events.clone())?;
+    Ok((events, media))
 }
 
 /// Attend le signal `PrepareForSleep` de logind.
@@ -700,50 +447,65 @@ fn acquire_sleep_delay_inhibitor(manager: &zbus::blocking::Proxy<'_>) -> Option<
     }
 }
 
-/// Ce qui suit l'assombrissement complet de l'écran.
+/// Scène qui remplace l'écran présent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AfterDark {
+pub enum Scene {
+    /// L'écran verrouillé se pose sur le bureau.
     Lock,
-    LockAndSleep,
+    /// Le bureau revient sous l'écran verrouillé.
     Unlock,
 }
 
-/// Passage par le noir : verrouillage, mise en veille, réveil et déverrouillage.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ScreenFade {
-    /// L'écran s'assombrit depuis `from` (part de noir déjà là) ; à la fin, `then`.
-    Darken {
-        started: Instant,
-        duration: Duration,
-        from: f32,
-        then: AfterDark,
-    },
-    /// Noir complet jusqu'au réveil.
-    Dark,
-    /// Le noir se lève sur ce qui est maintenant à l'écran.
-    Reveal { started: Instant, duration: Duration },
-}
-
-impl ScreenFade {
-    fn darken(from: f32, then: AfterDark, reduce_motion: bool) -> Self {
-        // Veille : noir immédiat, sans fondu (il se voyait mal sur la vraie machine).
-        let duration = match then {
-            AfterDark::Lock => DARKEN_LOCK,
-            AfterDark::LockAndSleep => Duration::ZERO,
-            AfterDark::Unlock => DARKEN_UNLOCK,
-        };
-        ScreenFade::Darken {
-            started: Instant::now(),
-            duration: if reduce_motion { Duration::ZERO } else { duration },
-            from,
-            then,
+impl Scene {
+    /// Zoom de l'image qui part, à la fin du passage : le bureau recule, l'écran verrouillé
+    /// s'approche et s'envole.
+    fn leaving_zoom(self) -> f32 {
+        match self {
+            Scene::Lock => DESKTOP_ZOOM,
+            Scene::Unlock => LOCK_ZOOM,
         }
     }
 
-    fn reveal(reduce_motion: bool) -> Self {
-        ScreenFade::Reveal {
+    /// Zoom de la scène qui arrive, au début du passage ; elle se pose à 1.
+    fn arriving_zoom(self) -> f32 {
+        match self {
+            Scene::Lock => LOCK_ZOOM,
+            Scene::Unlock => DESKTOP_ZOOM,
+        }
+    }
+}
+
+/// Image d'un passage, à un instant : zoom et opacité de chaque scène.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SwapFrame {
+    pub leaving_zoom: f32,
+    pub leaving_alpha: f32,
+    pub arriving_zoom: f32,
+    pub arriving_alpha: f32,
+}
+
+/// Passages de l'écran : verrouillage, déverrouillage, mise en veille et réveil.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ScreenFade {
+    /// L'écran présent est photographié (au prochain rendu), puis la scène change.
+    Capture { since: Instant, to: Scene },
+    /// Fondu enchaîné : la photo de l'ancien écran s'efface en zoomant, la nouvelle scène,
+    /// vivante, se pose en dézoomant.
+    Swap {
+        started: Instant,
+        duration: Duration,
+        to: Scene,
+    },
+    /// Noir complet jusqu'au réveil.
+    Dark,
+}
+
+impl ScreenFade {
+    fn swap(to: Scene, reduce_motion: bool) -> Self {
+        ScreenFade::Swap {
             started: Instant::now(),
-            duration: if reduce_motion { Duration::ZERO } else { REVEAL },
+            duration: if reduce_motion { Duration::ZERO } else { SWAP },
+            to,
         }
     }
 
@@ -754,36 +516,46 @@ impl ScreenFade {
         (started.elapsed().as_secs_f32() / duration.as_secs_f32()).clamp(0.0, 1.0)
     }
 
-    /// Part de noir sur l'écran, de 0 à 1, douce au départ comme à l'arrivée.
-    pub fn alpha(&self) -> f32 {
+    /// Zoom et opacités d'un passage arrivé à `t` (de 0 à 1).
+    pub fn swap_frame(to: Scene, t: f32) -> SwapFrame {
         use ferrite_ui::theme::Easing;
-        match *self {
-            ScreenFade::Darken {
-                started,
-                duration,
-                from,
-                ..
-            } => from + (1.0 - from) * Easing::EaseInOut.apply(Self::part(started, duration)),
-            ScreenFade::Dark => 1.0,
-            ScreenFade::Reveal { started, duration } => {
-                1.0 - Easing::EaseInOut.apply(Self::part(started, duration))
-            }
+        // Le zoom file vite puis ralentit : le mouvement se pose sans à-coup.
+        let motion = Easing::EaseOut.apply(t);
+        let fade = Easing::EaseInOut.apply(t);
+        SwapFrame {
+            leaving_zoom: 1.0 + (to.leaving_zoom() - 1.0) * motion,
+            leaving_alpha: 1.0 - fade,
+            arriving_zoom: to.arriving_zoom() + (1.0 - to.arriving_zoom()) * motion,
+            // La nouvelle scène est pleine avant que l'ancienne soit partie : pas de creux
+            // sombre au milieu du passage.
+            arriving_alpha: (fade * 1.6).min(1.0),
         }
     }
 
-    /// Pendant l'assombrissement et le noir, clavier et souris sont ignorés ; le dévoilement,
-    /// lui, laisse déjà taper le mot de passe.
+    /// Image du passage en cours, s'il y en a un à dessiner.
+    pub fn frame(&self) -> Option<SwapFrame> {
+        match *self {
+            ScreenFade::Swap {
+                started,
+                duration,
+                to,
+            } => Some(Self::swap_frame(to, Self::part(started, duration))),
+            _ => None,
+        }
+    }
+
+    /// Pendant la photo et le noir, clavier et souris sont ignorés ; pendant le fondu, la
+    /// nouvelle scène les reçoit déjà (on peut taper son mot de passe).
     pub fn blocks_input(&self) -> bool {
-        !matches!(self, ScreenFade::Reveal { .. })
+        !matches!(self, ScreenFade::Swap { .. })
     }
 
     fn finished(&self) -> bool {
         match *self {
-            ScreenFade::Darken {
+            ScreenFade::Swap {
                 started, duration, ..
-            }
-            | ScreenFade::Reveal { started, duration } => Self::part(started, duration) >= 1.0,
-            ScreenFade::Dark => false,
+            } => Self::part(started, duration) >= 1.0,
+            ScreenFade::Capture { .. } | ScreenFade::Dark => false,
         }
     }
 }
@@ -798,60 +570,82 @@ impl Lock {
 }
 
 impl Ferrite {
-    /// Assombrit progressivement l'écran, verrouille, puis dévoile l'écran verrouillé.
+    /// Verrouille : le bureau recule et s'efface, l'écran verrouillé se pose par-dessus.
     pub fn lock_session(&mut self) {
         if let Some(lock) = self.lock.as_mut() {
             // Mise en veille pendant l'accueil : on repart verrouillé.
             lock.welcome_until = None;
             lock.checking = false;
-            if let Some(ScreenFade::Darken { then, .. }) = self.screen_fade.as_mut()
-                && *then == AfterDark::Unlock
-            {
-                *then = AfterDark::Lock;
+            if matches!(
+                self.screen_fade,
+                Some(ScreenFade::Capture {
+                    to: Scene::Unlock,
+                    ..
+                })
+            ) {
+                self.screen_fade = None;
+                self.screen_fade_shots.borrow_mut().clear();
+                self.request_redraw();
             }
             return;
         }
-        self.begin_darken(AfterDark::Lock);
+        self.begin_swap(Scene::Lock);
     }
 
-    /// Verrouille puis met l'ordinateur en veille ; l'écran reste noir jusqu'au réveil.
+    /// Verrouille puis met l'ordinateur en veille : noir immédiat jusqu'au réveil (un fondu
+    /// se voyait mal sur la vraie machine).
     pub fn lock_and_sleep(&mut self) {
-        self.begin_darken(AfterDark::LockAndSleep);
-    }
-
-    fn begin_darken(&mut self, then: AfterDark) {
-        let reduce = self.dock_config.reduce_motion;
-        match self.screen_fade.as_mut() {
-            // Déjà en route vers le noir : la veille l'emporte sur le simple verrouillage.
-            Some(ScreenFade::Darken { then: pending, .. }) => {
-                if then == AfterDark::LockAndSleep {
-                    *pending = AfterDark::LockAndSleep;
-                }
-                return;
-            }
-            Some(ScreenFade::Dark) => return,
-            // Le noir se levait : on repart de là où il en est, sans saut.
-            Some(fade @ ScreenFade::Reveal { .. }) => {
-                *fade = ScreenFade::darken(fade.alpha(), then, reduce);
-                self.request_redraw();
-                return;
-            }
-            None => self.screen_fade = Some(ScreenFade::darken(0.0, then, reduce)),
+        if self.screen_fade == Some(ScreenFade::Dark) {
+            return;
         }
         self.super_held = false;
         self.super_used = true;
+        self.lock_now();
+        self.screen_fade = Some(ScreenFade::Dark);
+        self.screen_fade_shots.borrow_mut().clear();
+        self.request_redraw();
+        self.request_system_change(crate::system::Change::Power(crate::state::PowerAction::Sleep));
+    }
+
+    fn begin_swap(&mut self, to: Scene) {
+        match self.screen_fade {
+            // Déjà en route, ou écran éteint : rien à refaire.
+            Some(ScreenFade::Capture { .. } | ScreenFade::Dark) => return,
+            Some(ScreenFade::Swap { .. }) | None => {}
+        }
+        self.super_held = false;
+        self.super_used = true;
+        self.screen_fade_shots.borrow_mut().clear();
+        if self.dock_config.reduce_motion {
+            // « Réduire les animations » : la scène change d'un coup.
+            self.screen_fade = None;
+            self.change_scene(to);
+            self.request_redraw();
+            return;
+        }
+        self.screen_fade = Some(ScreenFade::Capture {
+            since: Instant::now(),
+            to,
+        });
         self.drive_screen_fade();
+    }
+
+    fn change_scene(&mut self, to: Scene) {
+        match to {
+            Scene::Lock => self.lock_now(),
+            Scene::Unlock => self.unlock_now(),
+        }
     }
 
     /// Réveil ou veille refusée : l'écran présent revient d'un coup, sans fondu.
     pub fn reveal_screen(&mut self) {
-        if !matches!(self.screen_fade, Some(ScreenFade::Darken { .. })) && self.screen_fade.is_some() {
+        if self.screen_fade == Some(ScreenFade::Dark) {
             self.screen_fade = None;
             self.request_redraw();
         }
     }
 
-    /// Fait avancer le fondu image après image, et enchaîne les étapes.
+    /// Fait avancer le passage image après image, et enchaîne les étapes.
     fn drive_screen_fade(&mut self) {
         self.request_redraw();
         let timer = Timer::from_duration(SCREEN_FADE_STEP);
@@ -864,61 +658,39 @@ impl Ferrite {
             }
         });
         if let Err(error) = inserted {
-            tracing::warn!(%error, "fondu de l'écran indisponible");
+            tracing::warn!(%error, "passage animé de l'écran indisponible");
             // Sans minuterie, on va droit au résultat.
-            while self.step_screen_fade() {
-                if let Some(fade) = self.screen_fade.as_mut() {
-                    *fade = match *fade {
-                        ScreenFade::Darken { from, then, .. } => ScreenFade::Darken {
-                            started: Instant::now(),
-                            duration: Duration::ZERO,
-                            from,
-                            then,
-                        },
-                        _ => ScreenFade::Reveal {
-                            started: Instant::now(),
-                            duration: Duration::ZERO,
-                        },
-                    };
+            if let Some(ScreenFade::Capture { to, .. } | ScreenFade::Swap { to, .. }) = self.screen_fade {
+                if matches!(self.screen_fade, Some(ScreenFade::Capture { .. })) {
+                    self.change_scene(to);
                 }
+                self.screen_fade = None;
+                self.screen_fade_shots.borrow_mut().clear();
             }
         }
     }
 
-    /// Une étape du fondu ; `false` quand il n'y a plus rien à animer.
+    /// Une étape du passage ; `false` quand il n'y a plus rien à animer.
     fn step_screen_fade(&mut self) -> bool {
-        let Some(fade) = self.screen_fade else {
-            return false;
-        };
-        if !fade.finished() {
-            return !matches!(fade, ScreenFade::Dark);
-        }
-        match fade {
-            ScreenFade::Darken { then, .. } => match then {
-                AfterDark::Lock => {
-                    self.lock_now();
-                    self.screen_fade = Some(ScreenFade::reveal(self.dock_config.reduce_motion));
-                    true
+        match self.screen_fade {
+            Some(ScreenFade::Capture { since, to }) => {
+                // La photo est prise au rendu ; sans rendu (écran éteint), on n'attend pas.
+                if self.screen_fade_shots.borrow().is_empty() && since.elapsed() < CAPTURE_WAIT {
+                    return true;
                 }
-                AfterDark::LockAndSleep => {
-                    self.lock_now();
-                    self.screen_fade = Some(ScreenFade::Dark);
-                    self.request_system_change(crate::system::Change::Power(
-                        crate::state::PowerAction::Sleep,
-                    ));
-                    false
+                self.change_scene(to);
+                self.screen_fade = Some(ScreenFade::swap(to, self.dock_config.reduce_motion));
+                true
+            }
+            Some(fade @ ScreenFade::Swap { .. }) => {
+                if !fade.finished() {
+                    return true;
                 }
-                AfterDark::Unlock => {
-                    self.unlock_now();
-                    self.screen_fade = Some(ScreenFade::reveal(self.dock_config.reduce_motion));
-                    true
-                }
-            },
-            ScreenFade::Reveal { .. } => {
                 self.screen_fade = None;
+                self.screen_fade_shots.borrow_mut().clear();
                 false
             }
-            ScreenFade::Dark => false,
+            Some(ScreenFade::Dark) | None => false,
         }
     }
 
@@ -943,6 +715,9 @@ impl Ferrite {
             lock.show_field();
         }
         self.set_media_watching(true);
+        if let Some(lock) = self.lock.as_mut() {
+            lock.media = self.media.current(Instant::now()).cloned();
+        }
         self.focus_window(None);
         self.refresh_pointer_focus();
     }
@@ -982,12 +757,7 @@ impl Ferrite {
                     lock.refused_at = Some(Instant::now());
                 }
             }
-            Event::Media(media) => {
-                if let Some(lock) = self.lock.as_mut() {
-                    lock.media = media.clone();
-                }
-                self.media = media;
-            }
+            Event::Media(list) => self.on_media(list),
         }
     }
 
@@ -1103,12 +873,6 @@ impl Ferrite {
         }
     }
 
-    pub fn lock_media(&mut self, command: MediaCommand) {
-        if let Some(link) = &self.media_link {
-            let _ = link.commands.send(command);
-        }
-    }
-
     /// Le lecteur est toujours suivi : l'îlot du haut de l'écran montre la musique en
     /// cours (une lecture des propriétés MPRIS toutes les deux secondes).
     pub fn refresh_media_watching(&self) {
@@ -1128,12 +892,12 @@ impl Ferrite {
             .as_ref()
             .and_then(|lock| lock.welcome_until)
             .is_some_and(|until| Instant::now() >= until);
-        if ready && !matches!(self.screen_fade, Some(ScreenFade::Darken { .. })) {
-            self.begin_darken(AfterDark::Unlock);
+        if ready && !matches!(self.screen_fade, Some(ScreenFade::Capture { .. })) {
+            self.begin_swap(Scene::Unlock);
         }
     }
 
-    /// Ouvre la session, au plus noir du passage entre l'écran verrouillé et le bureau.
+    /// Ouvre la session, juste avant que le bureau reparaisse sous l'écran verrouillé.
     fn unlock_now(&mut self) {
         if !self.lock.as_ref().is_some_and(Lock::unlocking) {
             return;
@@ -1203,55 +967,37 @@ mod tests {
     }
 
     #[test]
-    fn le_morceau_s_affiche_avec_ce_qu_on_en_sait() {
-        assert_eq!(
-            media_detail(Some("Nina"), Some("Sinnerman"), "vlc"),
-            "Nina · Sinnerman"
-        );
-        assert_eq!(media_detail(None, Some("Sinnerman"), "vlc"), "Sinnerman");
-        assert_eq!(media_detail(Some(""), Some(""), "vlc"), "vlc");
+    fn le_passage_part_et_arrive_sans_saut() {
+        for to in [Scene::Lock, Scene::Unlock] {
+            let start = ScreenFade::swap_frame(to, 0.0);
+            assert_eq!(start.leaving_zoom, 1.0);
+            assert_eq!(start.leaving_alpha, 1.0);
+            assert_eq!(start.arriving_alpha, 0.0);
+            let end = ScreenFade::swap_frame(to, 1.0);
+            assert_eq!(end.arriving_zoom, 1.0);
+            assert_eq!(end.arriving_alpha, 1.0);
+            assert_eq!(end.leaving_alpha, 0.0);
+            // Au milieu, la nouvelle scène est presque pleine : pas de creux sombre.
+            let middle = ScreenFade::swap_frame(to, 0.5);
+            assert!(middle.arriving_alpha > 0.75);
+        }
+        // Le bureau recule en partant et revient de derrière.
+        assert!(ScreenFade::swap_frame(Scene::Lock, 0.5).leaving_zoom < 1.0);
+        assert!(ScreenFade::swap_frame(Scene::Unlock, 0.5).arriving_zoom < 1.0);
+        // L'écran verrouillé arrive de devant et s'y envole en partant.
+        assert!(ScreenFade::swap_frame(Scene::Lock, 0.5).arriving_zoom > 1.0);
+        assert!(ScreenFade::swap_frame(Scene::Unlock, 0.5).leaving_zoom > 1.0);
+
+        assert!(ScreenFade::swap(Scene::Lock, false).frame().is_some());
+        assert!(!ScreenFade::swap(Scene::Lock, false).blocks_input());
+        assert!(ScreenFade::Dark.blocks_input() && ScreenFade::Dark.frame().is_none());
     }
 
     #[test]
-    fn la_progression_du_morceau_reste_entre_0_et_100() {
-        assert_eq!(media_progress(50, 200), 25);
-        assert_eq!(media_progress(500, 200), 100);
-        assert_eq!(media_progress(50, 0), 0);
-        assert_eq!(media_progress(-1, 200), 0);
-    }
-
-    #[test]
-    fn le_noir_arrive_et_repart_sans_saut() {
-        let darken = ScreenFade::darken(0.0, AfterDark::Lock, false);
-        assert!(darken.alpha() < 0.01);
-        assert!(darken.blocks_input());
-        assert!(!darken.finished());
-
-        // Reprise d'un dévoilement : on repart de la part de noir présente.
-        let resumed = ScreenFade::darken(0.4, AfterDark::Lock, false);
-        assert!((resumed.alpha() - 0.4).abs() < 0.01);
-
-        // Veille : noir immédiat.
-        let sleep = ScreenFade::darken(0.0, AfterDark::LockAndSleep, false);
-        assert!(sleep.finished());
-        assert_eq!(sleep.alpha(), 1.0);
-
-        assert_eq!(ScreenFade::Dark.alpha(), 1.0);
-        assert!(!ScreenFade::Dark.finished());
-
-        let reveal = ScreenFade::reveal(false);
-        assert!(reveal.alpha() > 0.99);
-        assert!(!reveal.blocks_input());
-    }
-
-    #[test]
-    fn reduire_les_animations_coupe_le_fondu() {
-        let darken = ScreenFade::darken(0.0, AfterDark::Lock, true);
-        assert!(darken.finished());
-        assert_eq!(darken.alpha(), 1.0);
-        let reveal = ScreenFade::reveal(true);
-        assert!(reveal.finished());
-        assert_eq!(reveal.alpha(), 0.0);
+    fn reduire_les_animations_coupe_le_passage() {
+        let swap = ScreenFade::swap(Scene::Lock, true);
+        assert!(swap.finished());
+        assert_eq!(swap.frame().map(|frame| frame.arriving_alpha), Some(1.0));
     }
 
     #[test]

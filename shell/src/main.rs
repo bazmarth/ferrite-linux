@@ -76,6 +76,18 @@ fn run(options: Options) -> Result<u8, Box<dyn std::error::Error>> {
     if options.demo_island {
         state.island_open_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(3600));
     }
+    if let Some(delay) = options.demo_island_press {
+        let timer = smithay::reexports::calloop::timer::Timer::from_duration(
+            std::time::Duration::from_secs_f64(delay),
+        );
+        let pressed = event_loop.handle().insert_source(timer, |_, _, state| {
+            state.island_press(desktop::panels::IslandHit::Button(1));
+            smithay::reexports::calloop::timer::TimeoutAction::Drop
+        });
+        if let Err(err) = pressed {
+            warn!("appui de démonstration sur l'îlot non prévu : {err}");
+        }
+    }
     let demo_capture = if options.demo_region || options.demo_video {
         Some(render::capture::Mode::Area)
     } else if options.demo_capture {

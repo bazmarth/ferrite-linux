@@ -163,6 +163,9 @@ pub struct Ferrite {
     pub system_link: Option<SystemLink>,
     /// Passage par le noir : verrouillage, mise en veille, réveil, déverrouillage.
     pub screen_fade: Option<crate::desktop::lock::ScreenFade>,
+    /// Photo de chaque écran (par nom) avant un passage, qui s'efface pendant le fondu.
+    pub screen_fade_shots:
+        std::cell::RefCell<std::collections::HashMap<String, smithay::backend::renderer::gles::GlesTexture>>,
     pub pending_power: Option<PowerAction>,
     /// Fin du compte à rebours du dialogue d'arrêt : l'action choisie se fait seule.
     pub power_deadline: Option<std::time::Instant>,
@@ -192,8 +195,8 @@ pub struct Ferrite {
     pub lock: Option<crate::desktop::lock::Lock>,
     pub lock_events: Option<smithay::reexports::calloop::channel::Sender<crate::desktop::lock::Event>>,
     pub media_link: Option<crate::desktop::lock::MediaLink>,
-    /// Lecteur multimédia suivi (écran verrouillé, widget Musique).
-    pub media: Option<crate::desktop::lock::Media>,
+    /// Lecteurs multimédia, et celui que suivent l'îlot, l'écran verrouillé et le widget.
+    pub media: crate::desktop::media::Players,
     /// Tuilage automatique (Super+T), fenêtres dans leur ordre de tuilage, et fenêtres
     /// réduites par « afficher le bureau » (Super+D) à remettre.
     pub tiling: bool,
@@ -244,6 +247,8 @@ pub struct Ferrite {
     pub island_ticking: bool,
     /// Activité dépliée par un clic (une bulle), sinon la première.
     pub island_focus: Option<crate::desktop::island::IslandFocus>,
+    /// Le dernier appui a replié l'îlot déplié : ce clic-là ne vaut pas pour l'îlot.
+    pub island_click_folded: bool,
     /// Déverrouillage par visage : mot de passe déjà donné dans cette session, vérification
     /// en cours, dernier essai.
     pub face_since_password: bool,
@@ -452,6 +457,7 @@ impl Ferrite {
             system_error: None,
             system_link: None,
             screen_fade: None,
+            screen_fade_shots: Default::default(),
             pending_power: None,
             power_deadline: None,
             lock_picture: None,
@@ -471,7 +477,7 @@ impl Ferrite {
             lock: None,
             lock_events: None,
             media_link: None,
-            media: None,
+            media: crate::desktop::media::Players::default(),
             tiling: false,
             tile_order: Vec::new(),
             key_repeat: None,
@@ -501,6 +507,7 @@ impl Ferrite {
             island_open_until: None,
             island_ticking: false,
             island_focus: None,
+            island_click_folded: false,
             face_since_password: false,
             face_running: false,
             face_tried: None,

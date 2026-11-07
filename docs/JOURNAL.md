@@ -1889,3 +1889,75 @@ Super+Retour arrière n'y fait rien.
 Vérifié : CI (sans shellcheck) ; sur la machine, le clavier envoie bien chaque appui
 (enregistrement `libinput debug-events`), juste après des Super+Espace.
 Pas vérifié : le bureau corrigé sur la machine (à copier par `tools/dev-on.sh`).
+
+## 2026-11-07 — Îlot : plusieurs lecteurs, bouton lecture/pause fidèle, barre d'avancement
+
+Défauts reproduits dans le bureau imbriqué avec deux faux lecteurs MPRIS (script Python) :
+- Deux lecteurs qui jouent (Musique et Brave) : l'îlot n'en montrait qu'un, l'autre était
+  invisible. En pause sur le premier, l'îlot sautait sur le second ; un deuxième appui sur
+  le même bouton mettait alors le second en pause au lieu de relancer le premier (le fil ne
+  suivait qu'un lecteur, « celui qui joue », repris à chaque relevé).
+- Un seul lecteur : l'appui sur pause faisait disparaître l'îlot déplié (seule la musique
+  « qui joue » comptait), au lieu de montrer le bouton de lecture ; le nouvel état n'était
+  relu qu'au relevé suivant (jusqu'à 2 s).
+Corrections :
+- Le suivi MPRIS quitte `lock.rs` pour `shell/src/desktop/media.rs` : tous les lecteurs en
+  lecture ou en pause sont relevés (triés par nom), le bureau en suit un (`Players`). Les
+  boutons visent ce lecteur par son nom, et il reste suivi 6 s après un appui ou tant que
+  l'îlot est déplié sur lui, même en pause.
+- Lecture/pause s'affiche dès l'appui ; le fil relit les lecteurs toutes les 100 ms pendant
+  1,5 s, puis renvoie le relevé tel quel (si le lecteur a refusé, l'îlot se corrige).
+- Chaque autre lecteur qui joue a sa bulle à droite de la pastille ; la toucher déplie ce
+  lecteur-là.
+- Îlot déplié sur un morceau : barre d'avancement (écoulé, barre, restant), une image par
+  seconde tant qu'il joue ; pas de barre si le lecteur ne donne pas la durée (direct).
+- `--demo-island-press S` : appuie sur lecture/pause de l'îlot déplié après S secondes
+  (pour les captures).
+- Vu sur la vidéo de l'utilisateur (bureau réel, Musique et Brave) : l'îlot déplié sautait
+  d'un lecteur à l'autre. Un clic à la place des bulles, invisibles pendant que l'îlot est
+  déplié, le repliait puis touchait aussitôt la bulle cachée, qui dépliait l'autre lecteur.
+  Le clic qui replie l'îlot ne vaut plus pour l'îlot (`island_click_folded`).
+Vérifié : CI (sans shellcheck) ; tests du choix du lecteur, de la position, de pause puis
+lecture sur le même lecteur ; captures avec deux faux lecteurs (bulle du second, barre
+« 0:35 / -2:45 », icône lecture 0,1 s après l'appui, position figée, îlot resté sur le
+lecteur mis en pause).
+Pas vérifié : le correctif des bulles cachées sur le bureau réel (aucun clic possible dans
+le bureau imbriqué) ; l'écran verrouillé et le widget Musique avec plusieurs lecteurs.
+
+## 2026-11-07 — Centre de contrôle : pied à quatre boutons ronds
+
+Demandes de l'utilisateur sur le bas du centre de contrôle :
+- Le bouton rouge d'alimentation ouvre toujours le dialogue d'arrêt (`DesktopAction::OpenPowerDialog`,
+  qui remplace `RequestPower`). Il suivait le réglage du bouton physique (en « Veille », un clic
+  mettait en veille). Le bouton physique garde son réglage (veille, rien, dialogue).
+- Le lien « Paramètres… » devient un bouton rond avec la roue dentée (`glyph-gear`).
+- Nouveau bouton rond « compte » (`cc-account`, même dessin que l'icône Comptes de Paramètres) :
+  ouvre Paramètres sur la rubrique Comptes (`comptes`, « Compte actuel »).
+- Ordre de gauche à droite : compte, Paramètres, cadenas, alimentation.
+- `--demo-controls principal` : ouvre le centre de contrôle sur ses tuiles (pour les captures).
+- Écran verrouillé : son bouton d'alimentation ouvre lui aussi toujours le dialogue (il mettait
+  en veille avec le réglage « Veille »). Seul le bouton physique suit le réglage.
+Vérifié : CI (sans shellcheck) ; tests de position des quatre boutons (bonne action, sans
+chevauchement, dans le panneau) ; captures en clair et en sombre.
+Pas vérifié : les clics sur le bureau réel (à copier par `tools/dev-on.sh`) ; le dialogue sur
+l'écran verrouillé en capture (`--demo-lock` verrouille après un fondu, qui le referme).
+
+## 2026-11-07 — Verrouillage : fondu enchaîné zoomé
+
+Demande de l'utilisateur (vidéo) : le passage au verrouillage passait par un écran noir,
+sans zoom. Il le voulait « zoom et dézoom, propre et fluide ».
+- Plus de passage par le noir : au verrouillage, le bureau est photographié
+  (`ScreenFade::Capture`), l'écran verrouillé prend sa place aussitôt, puis la photo du bureau
+  recule (zoom 1 → 0,9) en s'effaçant pendant que l'écran verrouillé, vivant, se pose
+  (1,08 → 1). Au déverrouillage, l'inverse : l'écran verrouillé s'approche et s'envole,
+  le bureau revient de derrière. 560 ms, zoom en `EaseOut`, opacités en `EaseInOut` ; la
+  nouvelle scène est presque pleine à mi-chemin (pas de creux sombre).
+- Rendu (`push_screen_swap`) : la scène (tout sauf pointeur et fichiers glissés) est dessinée
+  dans une texture à chaque image du passage et posée par l'élément « génie » sans
+  déformation, sur fond noir. Photos rangées par écran dans `screen_fade_shots`.
+- On peut taper son mot de passe pendant le fondu. Veille : toujours noir immédiat.
+  « Réduire les animations » : changement d'un coup.
+Vérifié : CI (sans shellcheck) ; captures du verrouillage ralenti à 6 s (bureau qui recule
+avec bord noir, écran verrouillé agrandi qui se pose, fondu croisé), puis écran final net.
+Pas vérifié : le déverrouillage en image (il faut un mot de passe) ; la fluidité sur la vraie
+machine (une texture plein écran par image pendant 0,56 s).

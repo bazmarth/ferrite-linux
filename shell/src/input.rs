@@ -1290,7 +1290,11 @@ impl Ferrite {
                 }
                 return;
             }
-            let desktop_action = self.desktop_action_at(location);
+            // Le clic qui vient de replier l'îlot ne touche pas ses bulles, invisibles tant
+            // qu'il était déplié : sinon il dépliait aussitôt un autre lecteur.
+            let desktop_action = self
+                .desktop_action_at(location)
+                .filter(|action| !(self.island_click_folded && matches!(action, DesktopAction::Island(_))));
             // Widgets ramenés devant : un clic à côté les renvoie derrière.
             if self.widgets_front && desktop_action.is_none() {
                 if button.state == ButtonState::Pressed {
@@ -1562,7 +1566,7 @@ impl Ferrite {
             }
             DesktopAction::DashboardMedia(command) => {
                 self.stop_dashboard_editing();
-                self.lock_media(command);
+                self.press_media(command);
             }
             DesktopAction::DashboardOpenMusic => {
                 self.stop_dashboard_editing();
@@ -1604,7 +1608,7 @@ impl Ferrite {
             }
             DesktopAction::SetVolume(value) => self.request_system_change(Change::Volume(value)),
             DesktopAction::SetBrightness(value) => self.request_system_change(Change::Brightness(value)),
-            DesktopAction::RequestPower(_) => self.handle_power_button(),
+            DesktopAction::OpenPowerDialog => self.open_power_dialog(crate::state::PowerAction::Sleep),
             DesktopAction::PowerChoose(power) => self.open_power_dialog(power),
             DesktopAction::CancelPower => self.pending_power = None,
             DesktopAction::AuthSubmit => self.auth_submit(),
@@ -1693,8 +1697,7 @@ impl Ferrite {
     fn handle_power_button(&mut self) {
         match self.keyboard_shortcuts.power_button_action() {
             ferrite_system::config::PowerButtonAction::Sleep => self.lock_and_sleep(),
-            // « Ne rien faire » ne vise que le bouton physique : les boutons dessinés
-            // ouvrent alors le dialogue.
+            // Bouton physique seul : « Ne rien faire » est filtré avant d'arriver ici.
             ferrite_system::config::PowerButtonAction::Dialog
             | ferrite_system::config::PowerButtonAction::Nothing => {
                 self.open_power_dialog(crate::state::PowerAction::Sleep);
@@ -2069,8 +2072,9 @@ impl Ferrite {
             LockAction::ToggleTheme => self.lock_toggle_theme(),
             LockAction::Wall(wall) => self.lock_set_wall(wall),
             LockAction::Keyboard => self.toggle_keyboard_layout(),
-            LockAction::Power => self.handle_power_button(),
-            LockAction::Media(command) => self.lock_media(command),
+            // Bouton dessiné : toujours le dialogue, comme celui du centre de contrôle.
+            LockAction::Power => self.open_power_dialog(crate::state::PowerAction::Sleep),
+            LockAction::Media(command) => self.press_media(command),
             LockAction::Face => self.lock_face_retry(),
             LockAction::Consume => {}
         }

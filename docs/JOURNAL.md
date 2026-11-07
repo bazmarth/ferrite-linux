@@ -2066,3 +2066,17 @@ Vérifié : CI (sans shellcheck) ; test de `column_widths` ; captures en clair e
 (tableau à texte long, tableau sans barres au bord, tableau de 7 colonnes).
 Pas vérifié : le défilement de côté à la souris ; on ne voit pas d'indice qu'il faut faire
 défiler (le tableau est coupé net au bord).
+
+## 2026-11-07 — Essais sur le vrai PC : tout est bon
+
+L'utilisateur a fait sur le ThinkBook (bureau relancé, version du jour) une liste de 12 essais
+de ce qui était codé sans avoir été confirmé. Résultat : tout est bon.
+- Fichiers : taper pour chercher, résultats des sous-dossiers, onglets (Ctrl+T, Ctrl+Tab,
+  Ctrl+W), « Ouvrir avec » qui lance l'application choisie.
+- TextEdit : bouton Dossier parent de l'explorateur, « Afficher dans Fichiers ».
+- Bureau : la pochette du widget Musique ramène Brave qui joue ; tuile Économie d'énergie
+  (Activée ↔ Désactivée) ; verrouillage et déverrouillage zoomés, sans écran noir.
+- Agent polkit : fenêtre « Authentification requise » sur `pkexec true` ; montage de la
+  partition Windows depuis Fichiers.
+- Veille légère (`s2idle`) : veille d'une minute puis réveil sur l'écran verrouillé.
+Pas vérifié : les archives ZIP/TAR/RAR dans Fichiers (pas dans la liste).

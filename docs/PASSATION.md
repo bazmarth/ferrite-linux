@@ -369,12 +369,14 @@ de couleur, durées communes, galerie, guide). Le détail est dans `docs/JOURNAL
 
 ### 5.2 À vérifier sur la vraie machine (codé, pas encore confirmé par l'utilisateur)
 
-- Agent polkit : fenêtre « Authentification requise » sur `pkexec true`, montage de la
-  partition Windows, « Ouvrir en administrateur » sur `/root`.
+- Confirmé par l'utilisateur le 2026-11-07 : agent polkit (`pkexec true`, montage de la
+  partition Windows), un cycle veille → réveil en `s2idle`, verrouillage zoomé, onglets et
+  recherche de Fichiers, « Ouvrir avec », tuile Économie d'énergie (détail dans le journal).
+- Agent polkit : « Ouvrir en administrateur » sur `/root`.
 - Parcours des archives ZIP/TAR/RAR dans Fichiers : couvert par des tests, reste à essayer
   visuellement sur la vraie machine.
-- Veille légère (`s2idle`, choix du noyau) : un cycle veille → réveil reste à confirmer
-  sur le ThinkBook. Le mode `deep` ne se réveille pas (incident du 2026-11-06) : ne pas le
+- Veille légère (`s2idle`, choix du noyau) : un cycle court est confirmé ; reste une nuit
+  entière sur batterie. Le mode `deep` ne se réveille pas (incident du 2026-11-06) : ne pas le
   forcer. Le ventilateur reste géré par le firmware.
 - Îlot du haut : animation à l'œil, minuteur de l'Horloge (annonce et boutons), musique,
   clics réels. Enregistrement vidéo : vérifié par l'utilisateur (vidéo du 2026-11-06).

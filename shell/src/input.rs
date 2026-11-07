@@ -1570,9 +1570,15 @@ impl Ferrite {
             }
             DesktopAction::DashboardOpenMusic => {
                 self.stop_dashboard_editing();
-                self.activate_app(&crate::desktop::apps::AppKey::Builtin(
-                    crate::desktop::apps::App::MUSIC,
-                ));
+                // Un lecteur joue (Brave, VLC, Musique…) : sa fenêtre, comme l'îlot.
+                // Sinon, l'app Musique.
+                if self.media().is_some() {
+                    self.open_media_player();
+                } else {
+                    self.activate_app(&crate::desktop::apps::AppKey::Builtin(
+                        crate::desktop::apps::App::MUSIC,
+                    ));
+                }
             }
             DesktopAction::GoToPage(page) => self.go_to_page(page),
             DesktopAction::LaunchTile(index) => {

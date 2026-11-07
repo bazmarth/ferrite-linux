@@ -356,7 +356,7 @@ impl Ferrite {
     }
 
     /// La fenêtre du lecteur qui joue (Musique, Brave, VLC…), lancée s'il le faut.
-    fn open_media_player(&mut self) {
+    pub(crate) fn open_media_player(&mut self) {
         let Some(entry) = self.media().map(|media| media.entry.clone()) else {
             return;
         };

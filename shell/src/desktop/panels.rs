@@ -279,7 +279,7 @@ pub enum DesktopAction {
     DashboardDeleteList(usize),
     /// Application du mini-Dock (indice dans `DashboardView::apps`).
     DashboardApp(usize),
-    /// Widget Musique : bouton du lecteur, ou ouvrir Musique.
+    /// Widget Musique : bouton du lecteur, ou ouvrir le lecteur qui joue (Musique sinon).
     DashboardMedia(crate::desktop::lock::MediaCommand),
     DashboardOpenMusic,
     /// Widgets Notes : montrer une note dans le widget Notes, cocher une ligne.

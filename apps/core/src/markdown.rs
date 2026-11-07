@@ -55,10 +55,13 @@ pub enum Block {
         language: String,
         lines: Vec<String>,
     },
-    /// Image seule sur sa ligne : « ![texte](chemin) ».
+    /// Image seule sur sa ligne : « ![texte](chemin) », ou dans un lien
+    /// « [![texte](chemin)](adresse) » (vignette d'une vidéo, par exemple).
     Image {
         alt: String,
         path: String,
+        /// Adresse du lien autour de l'image (vide sinon).
+        link: String,
     },
     Quote(Vec<Block>),
     List(Vec<Item>),
@@ -359,9 +362,9 @@ fn parse_lines(lines: &[&str]) -> Vec<Block> {
             continue;
         }
         if paragraph.is_empty()
-            && let Some((alt, path)) = image(line)
+            && let Some((alt, path, link)) = image(line)
         {
-            blocks.push(Block::Image { alt, path });
+            blocks.push(Block::Image { alt, path, link });
             i += 1;
             continue;
         }
@@ -373,8 +376,18 @@ fn parse_lines(lines: &[&str]) -> Vec<Block> {
 }
 
 /// Image seule sur la ligne : (texte de remplacement, chemin).
-fn image(line: &str) -> Option<(String, String)> {
+fn image(line: &str) -> Option<(String, String, String)> {
     let chars: Vec<char> = line.trim().chars().collect();
+    if chars.first() == Some(&'[') {
+        let (start, end, after) = link_at(&chars, 0)?;
+        if after != chars.len() {
+            return None;
+        }
+        let inner: String = chars[start..end].iter().collect();
+        let target: String = chars[end + 2..after - 1].iter().collect();
+        let (alt, path, _) = image(&inner)?;
+        return Some((alt, path, link_target(&target)));
+    }
     if chars.first() != Some(&'!') {
         return None;
     }
@@ -384,7 +397,7 @@ fn image(line: &str) -> Option<(String, String)> {
         let path: String = chars[end + 2..after - 1].iter().collect();
         // « chemin "titre" » : le titre est ignoré.
         let path = path.split_whitespace().next().unwrap_or("");
-        (alt, String::from(path))
+        (alt, String::from(path), String::new())
     })
 }
 
@@ -682,5 +695,17 @@ mod tests {
             ]
         );
         assert!(spans[0].link.is_empty());
+    }
+
+    #[test]
+    fn image_dans_un_lien() {
+        let blocks = parse("[![Voir la vidéo](images/a.png)](https://video.fr/?id=1)\n");
+        match blocks.first() {
+            Some(Block::Image { alt, path, link }) => {
+                assert_eq!((alt.as_str(), path.as_str()), ("Voir la vidéo", "images/a.png"));
+                assert_eq!(link, "https://video.fr/?id=1");
+            }
+            other => panic!("pas une image : {other:?}"),
+        }
     }
 }

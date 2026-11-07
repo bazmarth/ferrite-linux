@@ -2272,3 +2272,13 @@ Vérifié : CI (sans shellcheck), test `liens_gardent_leur_adresse` ; capture du
 imbriqué : l'image `/images/swisscheese.png` s'affiche, les liens sont soulignés.
 Pas vérifié : le clic sur un lien (pas d'automate de clic), l'image JPEG à l'écran (hors
 de la capture), les liens dans les tableaux (pas encore cliquables).
+
+## 2026-11-07 — TextEdit : image dans un lien (vignette de vidéo)
+
+Demande de l'utilisateur (capture) : « [![Watch the video](images/…png)](https://…) »
+s'affichait en texte « [image: Watch the video] ».
+- `markdown::image` reconnaît une image seule dans un lien ; `Block::Image` garde l'adresse
+  (`link`). Dans l'aperçu, l'image est cliquable (main, adresse en bulle) et ouvre le lien.
+Vérifié : CI (sans shellcheck), test `image_dans_un_lien` ; capture du bureau imbriqué sur
+« 1.1 The CIA triad… » : la vignette de la vidéo s'affiche.
+Pas vérifié : le clic (ouverture de la vidéo dans le navigateur).

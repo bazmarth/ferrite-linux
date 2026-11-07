@@ -2424,9 +2424,18 @@ fn render_markdown_block(ui: &mut egui::Ui, block: &markdown::Block, images: &mu
             code_card(ui, language, lines);
             ui.add_space(14.0);
         }
-        Block::Image { alt, path } => {
+        Block::Image { alt, path, link } => {
             let texture = images.get(ui.ctx(), path);
-            image_card(ui, alt, path, texture.as_ref());
+            let response = image_card(ui, alt, path, texture.as_ref());
+            if !link.is_empty() {
+                let response = response
+                    .interact(Sense::click())
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .on_hover_text(link);
+                if response.clicked() {
+                    images.clicked = Some(link.clone());
+                }
+            }
             ui.add_space(14.0);
         }
         Block::Quote(blocks) => {
@@ -2746,7 +2755,12 @@ fn kind_title(kind: FileKind, language: &str) -> String {
 }
 
 /// Image de l'aperçu, à sa taille (réduite pour tenir) ; un cadre si elle manque.
-fn image_card(ui: &mut egui::Ui, alt: &str, path: &str, texture: Option<&egui::TextureHandle>) {
+fn image_card(
+    ui: &mut egui::Ui,
+    alt: &str,
+    path: &str,
+    texture: Option<&egui::TextureHandle>,
+) -> egui::Response {
     let width = ui.available_width();
     match texture {
         Some(texture) => {
@@ -2754,7 +2768,7 @@ fn image_card(ui: &mut egui::Ui, alt: &str, path: &str, texture: Option<&egui::T
             let scale = (width / size.x).min(1.0);
             let image = egui::Image::new(egui::load::SizedTexture::new(texture.id(), size * scale))
                 .corner_radius(10.0);
-            let response = ui.add(image);
+            let mut response = ui.add(image);
             ui.painter().rect_stroke(
                 response.rect,
                 10.0,
@@ -2762,8 +2776,9 @@ fn image_card(ui: &mut egui::Ui, alt: &str, path: &str, texture: Option<&egui::T
                 egui::StrokeKind::Inside,
             );
             if !alt.is_empty() {
-                response.on_hover_text(alt);
+                response = response.on_hover_text(alt);
             }
+            response
         }
         None => {
             egui::Frame::new()
@@ -2785,7 +2800,8 @@ fn image_card(ui: &mut egui::Ui, alt: &str, path: &str, texture: Option<&egui::T
                                 .color(style::text_secondary()),
                         );
                     });
-                });
+                })
+                .response
         }
     }
 }
@@ -3474,7 +3490,7 @@ mod tests {
         let blocks = markdown::parse(body);
         assert!(matches!(
             blocks.first(),
-            Some(markdown::Block::Image { alt, path }) if alt == "Capture" && path == "./a.png"
+            Some(markdown::Block::Image { alt, path, .. }) if alt == "Capture" && path == "./a.png"
         ));
         assert!(markdown::front_matter("---\njamais refermé").0.is_empty());
     }

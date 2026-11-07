@@ -34,7 +34,8 @@ mêmes couleurs. Une nouvelle application ne redessine rien de tout cela.
    reçoit des fichiers), puis une ligne dans `create` :
    `"mon-app" => Box::new(MonAppState::default()),`.
 4. **La vérification** : `tools/ci.sh`, puis une capture en clair et en sombre
-   (`docs/PASSATION.md`, procédure des captures).
+   (`docs/TECHNIQUE.md` §6, recettes de capture). Une page de Paramètres suit le gabarit de
+   `settings/rows.rs` (colonne centrée, groupes, lignes grisées par `Row::unavailable`).
 
 Le modèle le plus court à lire est la galerie : `apps/core/src/gallery.rs`
 (`ferrite-apps galerie`, hors du menu Applications).
@@ -45,7 +46,8 @@ Le modèle le plus court à lire est la galerie : `apps/core/src/gallery.rs`
   fenêtre n'a pas de décoration système, le bureau garde coins, ombre et bords.
 - **Pièces** : `kit` avant tout dessin à la main : `card`, `soft_card`, `heading`, `note`,
   `caption`, `separator`, `button`, `wide_button`, `switch`, `slider`, `radio`,
-  `segments`, `segments_at`, `status`, `tabular_text`. Une pièce qui manque s'ajoute à
+  `segments`, `segments_at`, `status`, `tabular_text`, `tool_button` (boutons de barre
+  d'outils, `tool_button_at`). Une pièce qui manque s'ajoute à
   `kit`, pas dans l'application.
 - **Couleurs** : uniquement les rôles de `style` (`background`, `line`, `stage`,
   `primary_text`, `success`, `inverse`…, tous montrés dans la page « Couleurs » de la

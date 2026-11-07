@@ -247,3 +247,56 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
   peut ouvrir des fenêtres X11 ; ni le réseau ni les autres comptes. Si `/tmp/.X11-unix`
   a disparu (constaté une fois, cause inconnue), ferrite-shell le recrée en 1777 avant de
   lancer XWayland, sinon aucune application X11 ne s'affiche.
+
+- **2026-11-06 — Veille mémoire laissée au noyau, jamais `deep`.** Le 2026-11-06, une veille
+  automatique est entrée en `deep` et le ThinkBook ne s'est jamais réveillé (redémarrage
+  forcé). Le micrologiciel choisit lui-même `s2idle`, qui se réveille bien : le fichier
+  `sleep.conf.d/60-ferrite.conf` qui forçait `deep` est retiré de l'image.
+
+- **2026-11-06 — Une seule barre de titre, celle de Ferrite, par défaut.** Beaucoup
+  d'applications egui ou winit demandent par `xdg-decoration` à dessiner leur cadre puis
+  n'en dessinent pas (aucun bouton). La règle est inversée : toute fenêtre qui passe par ce
+  protocole reçoit la barre Ferrite. Gardent la leur : les applications Ferrite et la liste
+  `cadre_propre` (navigateurs Chromium, dont les onglets sont la barre). La règle est revue
+  quand l'identifiant de la fenêtre arrive après la demande.
+
+- **2026-11-06 — Sélecteur de fichiers Ferrite par le portail, GTK en repli.**
+  `xdg-desktop-portal-ferrite` ne fournit que `FileChooser` et lance `ferrite-apps choisir`
+  (une fenêtre par demande, processus à part : un plantage du sélecteur n'emporte ni le
+  portail ni l'application). GTK reste l'implémentation de tout le reste et le repli
+  (`FileChooser=ferrite;gtk`).
+
+- **2026-11-06 — Applications par défaut dans les `mimeapps.list` standard.** Pas de fichier
+  Ferrite : le choix est lu dans les `mimeapps.list` (utilisateur, `/etc/xdg`, système) et
+  écrit dans `~/.config/mimeapps.list` sans toucher au reste, pour que `xdg-open` et les
+  applications tierces suivent le même choix.
+
+- **2026-11-07 — Vignettes vidéo dans un processus à part.** GStreamer dans Fichiers gardait
+  la mémoire de chaque décodeur (690 Mo pour 9 vidéos). `ferrite-apps vignette-video`
+  extrait une image et rend la mémoire en se terminant (98 Mo).
+
+- **2026-11-07 — Copie de winit pour le pincement.** winit 0.30 ne lit pas le pincement du
+  pavé tactile sous Wayland et eframe 0.37 en dépend. Plutôt qu'attendre une nouvelle
+  version, une copie de winit 0.30.13 (`third_party/winit`, `[patch.crates-io]`) ajoute ce
+  seul geste ; les écarts sont listés dans `third_party/winit/FERRITE.md`. À retirer quand
+  une version d'eframe utilisera un winit qui le gère.
+
+- **2026-11-07 — Veille sans fondu, verrouillage en fondu enchaîné zoomé.** Sur la vraie
+  machine, le fondu au noir avant la veille se voyait mal : l'écran passe au noir d'un coup.
+  Le verrouillage passe d'une scène à l'autre sans noir (photo du bureau qui recule, écran
+  verrouillé qui se pose, 560 ms). C'est une texture plein écran par image pendant le
+  passage seulement, exception assumée à la règle « rien de plein écran par image ».
+
+- **2026-11-07 — Bouton d'alimentation : seul le bouton physique suit le réglage.** Les
+  boutons dessinés (centre de contrôle, écran verrouillé) ouvrent toujours le dialogue
+  d'arrêt, pour qu'un clic n'éteigne ou n'endorme jamais le PC par surprise. Le bouton
+  physique : veille (par défaut), rien, ou dialogue.
+
+- **2026-11-07 — Économie d'énergie lue dans `powerprofilesctl`.** La tuile montre le vrai
+  profil (lu avec le reste de l'état système) au lieu d'un drapeau local. Le profil
+  Performance compte comme « Désactivée » ; sans le démon, la tuile est « Indisponible » et
+  sans effet (aucun bouton qui ment).
+
+- **2026-11-07 — `PASSATION.md` devient `TECHNIQUE.md`.** Personne ne reprend le projet :
+  Claude le développe à chaque séance. Le document reste la référence technique relue avant
+  de toucher au code.

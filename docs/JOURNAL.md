@@ -2080,3 +2080,24 @@ de ce qui était codé sans avoir été confirmé. Résultat : tout est bon.
   partition Windows depuis Fichiers.
 - Veille légère (`s2idle`) : veille d'une minute puis réveil sur l'écran verrouillé.
 Pas vérifié : les archives ZIP/TAR/RAR dans Fichiers (pas dans la liste).
+
+## 2026-11-07 — Documentation remise à l'état actuel
+
+Demande de l'utilisateur : « mettre à jour tous les fichiers de documentation ».
+- `docs/PASSATION.md` devient `docs/TECHNIQUE.md` (« Référence technique ») : il n'y a pas de
+  passation, Claude fait tout. Arborescence, fichiers de l'image, clés de réglages, scripts,
+  garde-fous et animations mis à jour ; feuille de route (§5) réécrite au 2026-11-07.
+- `README.md` et `docs/ARCHITECTURE.md` réécrits (ils décrivaient encore WSL et l'état de fin
+  octobre) ; encadré d'avancement en tête de `docs/PLAN.md` ; `docs/FEDORA.md` marqué historique.
+- `docs/RACCOURCIS.md` : Super+Échap, Ctrl+Alt+M, pincement, coins actifs, bouton
+  d'alimentation, et raccourcis de Fichiers, du Lecteur PDF et du sélecteur.
+- `docs/DEPENDANCES.md` : crates manquantes (GStreamer, symphonia, tract, winit retouché…)
+  et paquets de l'image ajoutés depuis le 2026-11-06.
+- `docs/DECISIONS.md` : dix décisions des 6 et 7 novembre qui n'y étaient pas.
+- `services/README.md`, `packaging/README.md`, `docs/NOUVELLE-APPLICATION.md`, skill
+  `ferrite-contexte` : renvois et contenu à jour.
+Trouvé en chemin : `poppler-utils` manque à `ferrite.list.chroot` ; le Lecteur PDF ne
+marchera pas dans l'ISO. Noté dans les défauts connus, pas corrigé.
+Vérifié : chaque fait comparé au code (arborescence, clés de réglages, raccourcis par défaut,
+dépendances des `Cargo.toml`, liste des paquets). Les anciennes entrées du journal gardent
+le nom `PASSATION.md`.

@@ -1,7 +1,10 @@
-# Ferrite OS — Document de passation technique
+# Ferrite OS — Référence technique
 
-Destinataire : l'IA qui reprend le développement et la maintenance (contexte système).
-État décrit : branche `main`, commit `a70bb5b` (release `v2026.11.05`), 5 novembre 2026.
+Ce que Claude (Claude Code), qui développe et entretient Ferrite, relit avant de toucher au
+code : structure, règles, pièges connus, état et suite du projet. Ancien nom :
+`PASSATION.md` (renommé le 2026-11-07, il n'y a pas de passation : Claude fait tout).
+État décrit : branche `main`, 7 novembre 2026 (commit `0f0847e` ; dernière release
+`v2026.11.05` au commit `a70bb5b`, 29 commits plus tôt).
 Langue du projet : **français partout** (code commenté, interface, messages de commit, docs).
 
 > Ferrite n'est pas une personnalisation de bureau existant (pas de dotfiles GNOME/KDE/Hyprland).
@@ -39,7 +42,7 @@ plan quand ils divergent), `docs/ARCHITECTURE.md`, `docs/DEPENDANCES.md`,
    `docs/DECISIONS.md` (format : date — choix — raison).
 8. L'utilisateur n'est pas développeur : réponses en français simple, pas de jargon inutile,
    dire clairement ce qui est vérifié et ce qui ne l'est pas.
-9. Une autre session (autre IA) peut modifier le dépôt en parallèle : avant de commiter,
+9. Une autre session de Claude peut modifier le dépôt en parallèle : avant de commiter,
    `git status` / `git diff --stat` et ne pas embarquer un travail inachevé sans le dire.
 
 ---
@@ -81,14 +84,19 @@ ferrite-linux/
 │       ├── render/         mod.rs (composition d'une image), profile.rs, capture.rs,
 │       │                   decorations.rs, shaders.rs, title.rs, genie (effet de réduction)
 │       ├── wm/             fenêtres, espaces de travail (workspaces.rs), aimantation, tuilage, animations
-│       ├── protocols/      un module par protocole Wayland (xdg_shell, idle, session_lock, xwayland…)
+│       ├── protocols/      un module par protocole Wayland (xdg_shell, decoration : qui garde
+│       │                   son cadre, extra : pincement `zwp_pointer_gestures_v1`, idle,
+│       │                   session_lock, screencopy, xwayland : échelle ×2, xhost root…)
 │       └── desktop/
-│           ├── panels.rs   ~6 000 lignes : barre, menus, centre de contrôle, lanceur, dialogue
+│           ├── panels.rs   ~6 900 lignes : barre, menus, centre de contrôle, lanceur, dialogue
 │           │               d'arrêt, OSD, notifications ; Canvas ; hit-test `action_at`
 │           ├── panels/     lock_screen.rs (écran de verrouillage en couches), auth.rs
 │           │               (fenêtre polkit), cards.rs (widgets), island.rs (îlot)
 │           ├── dock.rs     Dock (layout, agrandissement, masquage, rebond)
-│           ├── lock.rs     état du verrouillage, vérification unix_chkpwd, MPRIS
+│           ├── lock.rs     état du verrouillage, unix_chkpwd, fondus (`ScreenFade`, photo
+│           │               du bureau pour le fondu enchaîné zoomé)
+│           ├── media.rs    lecteurs MPRIS : tous relevés, un suivi (`Players`), boutons
+│           ├── face.rs     déverrouillage par visage (lance `ferrite-visage verifier`)
 │           ├── polkit.rs   agent d'authentification polkit
 │           ├── idle.rs     verrouillage / veille après inactivité
 │           ├── night.rs    mode nuit (table gamma DRM)
@@ -98,22 +106,32 @@ ferrite-linux/
 │           ├── recording.rs  enregistrement vidéo de l'écran (wf-recorder)
 │           ├── widgets.rs  espace 0 (widgets), météo
 │           ├── apps.rs, launch.rs, controls.rs, function_keys.rs, file_drag.rs, svg.rs
-├── apps/core/              ferrite-apps (egui) : files/ (Fichiers), terminal/, editor/,
-│                           settings.rs + settings/ (Paramètres), monitor/, music/,
-│                           viewer.rs (Visionneuse), pdf_viewer.rs, video.rs, clock.rs,
-│                           calculator.rs, gallery.rs (galerie des pièces), details.rs ;
+├── apps/core/              ferrite-apps (egui) : files/ (Fichiers : recherche, onglets,
+│                           analyse de l'espace, « Ouvrir avec », étiquettes, vignettes),
+│                           terminal/, editor.rs + editor/ (TextEdit), markdown.rs (aperçu),
+│                           settings.rs + settings/ (Paramètres, gabarit `rows.rs`),
+│                           monitor/, music/, viewer.rs (Visionneuse), pdf_viewer.rs +
+│                           pdf_viewer/ (Poppler, recherche, récents), video.rs, clock.rs,
+│                           calculator.rs, chooser.rs (sélecteur de fichiers du portail),
+│                           gallery.rs (galerie des pièces), details.rs ;
 │                           main.rs (vues `AppView` créées par `create`), style.rs (thème,
 │                           rôles de couleur), kit.rs (pièces communes), island.rs (lien
 │                           de l'Horloge avec l'îlot). Nouvelle appli : docs/NOUVELLE-APPLICATION.md
 ├── services/system/        ferrite-system : appels système partagés (nmcli, wpctl, bluetoothctl,
 │                           brightnessctl, timedatectl, rfkill, udisks…), config.rs (réglages),
 │                           night.rs, idle.rs, weather.rs, command.rs (délais, kill),
-│                           catalog.rs (liste unique des applications Ferrite)
+│                           catalog.rs (liste unique des applications Ferrite),
+│                           defaults.rs (applications par défaut, mimeapps.list),
+│                           power.rs (profils de powerprofilesctl)
 ├── services/visage/        ferrite-visage : déverrouillage par visage (caméra infrarouge)
 ├── services/portal/        xdg-desktop-portal-ferrite : sélecteur de fichiers des applications
 │                           (portail FileChooser → `ferrite-apps choisir`, apps/core/src/chooser.rs)
 ├── ui/                     ferrite-ui : tokens.rs, theme.rs (palette, Scale, Easing), wallpaper.rs, icons.rs
-├── icons/SVG, assets/fonts embarqués à la compilation ; ferrite-theme/ = pack d'icônes (voir §0.3)
+├── third_party/winit/      copie de winit 0.30.13 avec le pincement Wayland (`[patch.crates-io]`,
+│                           voir FERRITE.md)
+├── icons/SVG, assets/fonts embarqués à la compilation (logo : ferrite-logo*.svg,
+│                           ferrite-symbol*.svg) ; assets/demarrage/ (sources GRUB et Plymouth) ;
+│                           assets/visage/ (modèles, hors git) ; ferrite-theme/ = pack d'icônes (§0.3)
 ├── image/                  live-build : auto/config, config/package-lists/ferrite.list.chroot,
 │                           config/hooks/live/*.hook.chroot, config/includes.chroot/ (fichiers système)
 ├── tools/                  scripts (§2)
@@ -134,13 +152,18 @@ ferrite-linux/
 | `etc/systemd/system/ferrite-wifi-unblock.service` | débloque rfkill au démarrage |
 | `etc/systemd/system/ferrite-dev.service` | montage du partage QEMU `ferrite-dev` (développement en VM) |
 | `etc/xdg/mimeapps.list` | applications par défaut (Fichiers, Visionneuse, Musique…) |
-| `usr/share/applications/ferrite-*.desktop` | entrées des applications Ferrite |
-| `usr/share/xdg-desktop-portal/ferrite-portals.conf` | portails : implémentation GTK pour `XDG_CURRENT_DESKTOP=Ferrite` |
+| `usr/share/applications/ferrite-*.desktop` | entrées des applications Ferrite (Fichiers, Musique, PDF, TextEdit, Vidéo, Visionneuse) |
+| `usr/share/xdg-desktop-portal/ferrite-portals.conf` | portails pour `XDG_CURRENT_DESKTOP=Ferrite` : sélecteur de fichiers Ferrite (`FileChooser=ferrite;gtk`), GTK pour le reste |
+| `usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.ferrite.service` | démarrage à la demande de `xdg-desktop-portal-ferrite` |
+| `usr/share/plymouth/themes/ferrite/` | écran de démarrage (logo en fondu, trois points) |
 | `etc/xdg/foot/foot.ini` | terminal de secours |
 
+Hors `includes.chroot` : `image/config/bootloaders/grub-pc/splash.png` (fond du menu GRUB).
 Hooks : `0100-enable-ferrite-wifi` (active les deux services Ferrite), `0110-enable-audio`
-(sockets PipeWire globaux, bluetooth). Binaires `ferrite-shell` et `ferrite-apps` copiés
-dans `/usr/local/bin` par `tools/usb.sh` au moment de la construction.
+(sockets PipeWire globaux, bluetooth), `0120-ferrite-plymouth` (thème de démarrage,
+option `splash`). `tools/usb.sh` copie dans `/usr/local/bin` `ferrite-shell`,
+`ferrite-apps`, `ferrite-visage` et `xdg-desktop-portal-ferrite`, et les modèles du visage
+dans `/usr/share/ferrite/visage`, au moment de la construction.
 
 ### 1.4 Réglages utilisateur
 
@@ -151,15 +174,25 @@ redémarrage). Clés en français, valeurs en français. Clés actuelles :
 
 `accent`, `aimantation`, `apparence` (clair/sombre/auto), `barre_bluetooth`,
 `barre_hauteur`, `barre_laterale_icones`, `barre_masquage`, `barre_pourcentage`,
-`barre_translucide`, `barres_defilement`, `clavier`, `defilement_inverse`,
-`dock_agrandissement`, `dock_epingles`, `dock_hauteur`, `dock_icones`, `dock_masquage`,
-`dock_points`, `dock_recentes`, `dock_taille`, `double_clic`, `fenetres_multiples`,
-`fond_ecran`, `horloge`, `meteo_ville`, `mode_nuit`, `mode_nuit_debut`, `mode_nuit_fin`,
-`mode_nuit_temperature`, `reduire_animations`, `surlignage`, `tableau_*` (widgets Notes et
-Tâches), `tuilage`, `veille_batterie`, `veille_secteur`, `verrouillage_auto`,
-`verrouillage_flou`, `verrouillage_fond` (nom d'un fond dessiné ou chemin absolu d'une
-photo), `verrouillage_theme`, `widgets_applications`, `widgets_disposition`, `widgets_nombre`,
-et les raccourcis (`open_terminal`, `lock_screen`, `toggle_widgets`…).
+`barre_translucide`, `barres_defilement`, `bouton_alimentation` (veille, rien, dialogue :
+bouton physique seulement), `cadre_propre` (applications qui gardent leur barre de titre),
+`clavier`, `coin_hg`/`coin_hd`/`coin_bg`/`coin_bd` (coins actifs), `defilement_inverse`,
+`defilement_vitesse_molette`, `defilement_vitesse_pave`, `dock_agrandissement`,
+`dock_epingles`, `dock_hauteur`, `dock_icones`, `dock_masquage`, `dock_points`,
+`dock_recentes`, `dock_taille`, `double_clic`, `fenetres_multiples`, `fond_ecran`,
+`horloge`, `meteo_ville`, `meteo_latitude`, `meteo_longitude`, `mode_nuit`,
+`mode_nuit_debut`, `mode_nuit_fin`, `mode_nuit_temperature`, `reduire_animations`,
+`surlignage`, `tableau_*` (widgets Notes et Tâches), `tuilage`, `veille_batterie`,
+`veille_secteur`, `verrouillage_auto`, `verrouillage_flou`, `verrouillage_fond` (nom d'un
+fond dessiné ou chemin absolu d'une photo), `verrouillage_theme`, `visage_deverrouillage`,
+`widgets_applications`, `widgets_disposition`, `widgets_nombre`, et les raccourcis
+(`raccourci_<id>`, liste dans `services/system/src/config.rs`).
+
+Autres fichiers de l'utilisateur : `~/.config/ferrite/etiquettes` et `etiquettes-liste`
+(étiquettes de Fichiers), `fichiers` (préférences de Fichiers), `applications-recentes` ;
+`~/.local/share/ferrite/lecteur-pdf-recents` ; `~/.config/mimeapps.list` (applications par
+défaut, écrit sans toucher au reste). Empreintes du visage : `/var/lib/ferrite/visage/<uid>`
+(écrites par root via `pkexec`).
 
 Ajouter un réglage = une valeur par défaut dans la crate `ferrite-system` (comme
 `IdleSettings::default`, `NightSettings::default`), lecture dans le fil système
@@ -194,7 +227,9 @@ But : lancer le bureau sur tty1 et le relancer selon son code de sortie.
 - Plantages : relance automatique, au plus 3 en 2 minutes, puis console avec les
   15 dernières lignes du journal. Journal : `$XDG_RUNTIME_DIR/ferrite-shell.log`
   (le précédent en `.precedent`).
-- N'ouvre **aucune application** au démarrage : on arrive sur l'espace 0 (widgets).
+- N'ouvre **aucune application** elle-même : on arrive sur l'espace 0 (widgets). C'est
+  `ferrite-shell` (`shell/src/session.rs`) qui relance les applications et replace leurs
+  fenêtres si le dernier arrêt ou redémarrage est passé par le dialogue d'arrêt Ferrite.
 - Modifier ce script ne prend effet sur la machine installée qu'après
   `sudo install -m 0755 image/config/includes.chroot/usr/local/bin/ferrite-session /usr/local/bin/`
   (commande tapée par l'utilisateur) puis redémarrage ou déconnexion.
@@ -204,9 +239,11 @@ But : lancer le bureau sur tty1 et le relancer selon son code de sortie.
 | Script | But et garde-fous |
 |---|---|
 | `lib.sh` | `REPO`, `BUILD`, `info/ok/die`, fichiers OVMF ; sourcé par tous |
-| `ci.sh` | fmt + clippy `-D warnings` + tests + shellcheck ; `--image` construit l'ISO |
-| `dev-on.sh` | compile en release et **copie** (pas de lien) vers `~/.local/share/ferrite-dev` : une compilation ratée ou en cours n'est jamais prise. Puis l'utilisateur fait « Relancer le bureau ». `--sans-compiler` copie la dernière compilation |
-| `dev-off.sh` | retire la copie dev : retour aux binaires de `/usr/local/bin` |
+| `ci.sh` | fmt + clippy `--all-targets -D warnings` + tests + `check-colors.sh` + shellcheck (sauté s'il n'est pas installé, ce qui est le cas sur le PC) ; `--image` construit l'ISO |
+| `check-colors.sh` | refuse une couleur écrite à la main hors des rôles communs (exceptions en tête du script) |
+| `dev-on.sh` | compile en release `ferrite-shell`, `ferrite-apps`, `ferrite-visage` et le portail, et les **copie** (pas de lien) vers `~/.local/share/ferrite-dev` : une compilation ratée ou en cours n'est jamais prise. Installe aussi les modèles du visage, le service du portail et les `.desktop` Ferrite dans le dossier personnel. Puis Ctrl+Alt+Retour arrière ou « Relancer le bureau ». `--sans-compiler` copie la dernière compilation |
+| `dev-off.sh` | retire la copie dev et les `.desktop` : retour aux binaires de `/usr/local/bin` |
+| `visage-modeles.sh` | télécharge YuNet et SFace dans `assets/visage/` (hors git), SHA-256 vérifiés |
 | `usb.sh` | construit `build/ferrite-live.iso` (+ `.sha256`). Étape 1 en utilisateur (cargo release), puis se relance en `sudo`. live-build travaille dans `/var/tmp/ferrite-image` (le disque NTFS ne gère pas les fichiers spéciaux). **Incrémental** : empreinte `.ferrite-stamp` de `image/auto`, listes de paquets, hooks et compression ; si inchangés, recopie seulement `includes.chroot` et refait `lb binary`. `--complet`, `--final` (xz, image à distribuer), `--propre` (`lb clean --purge`) |
 | `vm-test.sh SCENARIO [ISO]` | démarre l'ISO dans QEMU sans fenêtre (KVM si accessible), rejoue un scénario (`sleep`, `click X Y`, `type`, `key`, `drag`, `shot NOM` → `build/NOM.png`, `serial`, `serve`) sur un écran 1280×800. Scénarios dans `tools/scenarios/` |
 | `vm.sh`, `vm-gui.sh`, `vm-manager/` | VM interactive |
@@ -259,6 +296,18 @@ arbre commité** pour que la release corresponde au code. Dépôt
   s'est jamais réveillé (redémarrage forcé). systemd ne peut pas se replier si le réveil
   échoue après l'entrée en veille.
 - **Photo de verrouillage** décodée dans le fil système, une fois par choix, jamais au rendu.
+- **Bouton d'alimentation physique** : le verrou logind `handle-power-key` est gardé dans
+  l'état du bureau (`power_key_inhibitor`) pour toute la session. Pris dans une fonction
+  qui se termine, il était relâché aussitôt et logind éteignait le PC.
+- **Modificateurs après une touche gardée** : une touche interceptée par le bureau qui change
+  les modificateurs (Super+Espace) les annonce à la fenêtre active
+  (`modifiers_to_announce`), sinon l'application croit Super toujours tenu.
+- **Survol et clics** : `hit_test` rend `Hit::Body` dans le cadre d'une fenêtre même hors de
+  ses surfaces, et les panneaux du bureau (`desktop_action_at`) gardent le pointeur : rien
+  ne traverse vers la fenêtre de dessous.
+- **Visage** : jamais pour polkit, jamais avant le premier mot de passe de la session,
+  seulement sur un geste ; empreintes de root, `verifier` refuse un fichier modifiable par
+  d'autres (voir DECISIONS).
 - **Fenêtres sur l'espace 0** (réservé aux widgets) : une fenêtre qui s'ouvre y est
   déplacée vers l'espace 1 **avant** son premier configure, sinon elle ne s'affiche jamais.
 
@@ -297,7 +346,10 @@ Elle prime sur la charte §3.4 de `PLAN.md` (voir `DECISIONS.md`, 2026-11-02).
   (panneaux, fondus, Dock), NORMAL 280 (fenêtres, vue d'ensemble, contrôles), LONG 360
   (bureaux, verrouillage, îlot, retour d'un glisser). `EaseOut` cubique pour les
   apparitions, `EaseInOut` entre deux états. Applications : `kit::glide`. Exceptions
-  voulues : génie 520 ms, rebond du Dock, pulsation de l'invitation.
+  voulues : génie 520 ms, rebond du Dock, pulsation de l'invitation, verrouillage et
+  déverrouillage en fondu enchaîné zoomé de 560 ms (photo du bureau qui recule, écran
+  verrouillé qui se pose). Veille et réveil : noir immédiat, sans fondu (demande de
+  l'utilisateur).
 - `reduire_animations` : état final immédiat (`Easing::progress`). Toujours le respecter.
 - Effet génie à la réduction, rebond des icônes du Dock au lancement, agrandissement au survol.
 
@@ -360,49 +412,65 @@ l'utilisateur ; pousser de force (`--force`) sur `main`.
 
 ## 5. Feuille de route
 
-### 5.1 État au 2026-11-06 (tout est commité)
+### 5.1 État au 2026-11-07 (tout est commité)
 
-Faits et poussés : lecteur vidéo, lecteur PDF, Horloge (minuteur, chronomètre), capture
-d'écran façon GNOME et enregistrement vidéo (wf-recorder), îlot du haut, bouton
-d'alimentation géré par le bureau, socle commun des applications (catalogue, `kit`, rôles
-de couleur, durées communes, galerie, guide). Le détail est dans `docs/JOURNAL.md`.
+Phases 0 à 3 terminées, phases 4 et 5 en grande partie : le bureau complet tourne au
+quotidien sur le ThinkBook (Debian 13 installée sur sa propre partition, mode dev).
+Depuis la release `v2026.11.05` : îlot à plusieurs activités et plusieurs lecteurs,
+déverrouillage par visage, sélecteur de fichiers Ferrite pour toutes les applications
+(portail), applications par défaut et « Ouvrir avec », Fichiers modernisé (recherche dans
+les sous-dossiers, onglets, étiquettes modifiables, vignettes vidéo, analyse de l'espace),
+Lecteur PDF refait, TextEdit (explorateur, tableaux Markdown), Paramètres sur un seul
+gabarit (20 rubriques), pincement du pavé tactile, nouveau logo et écran de démarrage,
+verrouillage en fondu enchaîné zoomé, une seule barre de titre pour toutes les fenêtres,
+applications X11 nettes à l'échelle 2, profils d'énergie (`powerprofilesctl`). Le détail
+est dans `docs/JOURNAL.md`.
 
 ### 5.2 À vérifier sur la vraie machine (codé, pas encore confirmé par l'utilisateur)
 
-- Confirmé par l'utilisateur le 2026-11-07 : agent polkit (`pkexec true`, montage de la
-  partition Windows), un cycle veille → réveil en `s2idle`, verrouillage zoomé, onglets et
-  recherche de Fichiers, « Ouvrir avec », tuile Économie d'énergie (détail dans le journal).
-- Agent polkit : « Ouvrir en administrateur » sur `/root`.
-- Parcours des archives ZIP/TAR/RAR dans Fichiers : couvert par des tests, reste à essayer
-  visuellement sur la vraie machine.
-- Veille légère (`s2idle`, choix du noyau) : un cycle court est confirmé ; reste une nuit
-  entière sur batterie. Le mode `deep` ne se réveille pas (incident du 2026-11-06) : ne pas le
-  forcer. Le ventilateur reste géré par le firmware.
-- Îlot du haut : animation à l'œil, minuteur de l'Horloge (annonce et boutons), musique,
-  clics réels. Enregistrement vidéo : vérifié par l'utilisateur (vidéo du 2026-11-06).
-- Premier démarrage après le passage au bus systemd (notifications, son, portails, coffre ;
-  une appli peut redemander sa connexion une fois).
+Confirmé par l'utilisateur le 2026-11-07 : agent polkit (`pkexec true`, montage de la
+partition Windows), un cycle veille → réveil en `s2idle`, verrouillage et déverrouillage
+zoomés, onglets et recherche de Fichiers, « Ouvrir avec », explorateur de TextEdit, widget
+Musique avec Brave, tuile Économie d'énergie. Enregistrement vidéo : confirmé le 2026-11-06.
+Reste :
+- Une nuit entière de veille sur batterie. Le mode `deep` ne se réveille pas (incident du
+  2026-11-06) : ne pas le forcer. Le ventilateur reste géré par le firmware.
+- « Ouvrir en administrateur » sur `/root` ; GParted lancé en administrateur.
+- Parcours des archives ZIP/TAR/RAR dans Fichiers (couvert par des tests).
+- Pincement du pavé tactile (Lecteur PDF, Visionneuse) ; bouton d'alimentation physique
+  (veille, rien, dialogue) ; enregistrement du visage par `pkexec`.
+- Sélecteur de fichiers Ferrite depuis Brave ; changement d'application par défaut.
+- Une ISO complète avec tout ce travail : jamais reconstruite depuis le 2026-11-05 (liste
+  des paquets changée, Plymouth et GRUB jamais vus dans une vraie ISO).
 
 ### 5.3 Prochaines étapes proposées (ordre recommandé)
 
-1. Thème de curseurs réel (aujourd'hui grisé dans Paramètres) : les liens de
-   `ferrite-theme/` sont réparés depuis le 2026-11-06.
-2. Finir la phase 5 : réglages encore grisés (taille du texte, taille du curseur, pavé
-   tactile).
+1. Corriger l'image : `poppler-utils` manque à la liste des paquets (§5.4), puis
+   reconstruire l'ISO, l'essayer en VM, et publier une release depuis un arbre commité.
+2. Finir la phase 5 : réglages encore grisés dans Paramètres (thème et taille du curseur,
+   taille du texte, position du Dock, mode des espaces de travail, niveau d'entrée et sons
+   d'alerte, réception Bluetooth) et rubriques en maquette (Notifications, Imprimantes,
+   Accessibilité, Mises à jour).
 3. « Éteindre l'écran après… » (DPMS DRM) avant la veille.
-4. Applications par défaut et « Ouvrir avec… » partout (MIME).
-5. Logithèque (phase 7) : PackageKit + Flatpak, notification des mises à jour (polkit est prêt).
-6. Batterie et fiabilité (phase 10) : moins d'images au repos (l'appli Claude soumet 40 images/s
-   en attente), démarrage < 20 s, tests automatiques des écrans par captures de référence.
-7. Phases 8–9 : écran de connexion (greetd), `xdg-desktop-portal-ferrite`, paquets `.deb`,
-   dépôt apt signé, installateur graphique (tests en VM d'abord, Windows intact).
-8. Phase 6 en dernier : navigateur maison (Brave couvre le besoin).
+4. Logithèque (phase 7) : PackageKit + Flatpak, notification des mises à jour (polkit est prêt).
+5. Batterie et fiabilité (phase 10) : moins d'images au repos (l'appli Claude soumet ~50
+   images/s), démarrage < 20 s, tests automatiques des écrans par captures de référence.
+6. Phases 8–9 : écran de connexion (greetd), paquets `.deb`, dépôt apt signé, installateur
+   graphique (tests en VM d'abord, Windows intact).
+7. Phase 6 en dernier : navigateur maison (Brave couvre le besoin).
 
 ### 5.4 Défauts connus
 
+- **`poppler-utils` absent de `ferrite.list.chroot`** : le Lecteur PDF (`pdfinfo`,
+  `pdftoppm`, `pdftotext`) ne marchera pas dans l'ISO (`--apt-recommends false`). Présent
+  sur le PC de développement.
 - Le widget Musique peut chevaucher le widget Système dans la disposition de l'utilisateur.
 - Ouverture du centre de contrôle ~31 ms (une rastérisation complète).
 - `--demo-auth` : le voile sombre du fond ne couvre pas les widgets de l'espace 0.
+- Lecteur PDF : ni sélection du texte ni liens cliquables. Aperçu Markdown : aucun indice
+  qu'un tableau trop large défile de côté.
+- Le portail ne gère pas `Request.Close` (une demande fermée par l'application).
+- Applications Electron à barre maison (VS Code, Claude) : leurs propres boutons de fenêtre.
 - Une résolution DNS de 51 s a été vue une fois, non reproduite.
 - XWayland en bureau imbriqué : « Could not find a free socket » (sans conséquence en session réelle).
 
@@ -414,6 +482,10 @@ de couleur, durées communes, galerie, guide). Le détail est dans `docs/JOURNAL
 tools/ci.sh                                   # avant tout commit
 tools/dev-on.sh                               # puis « Relancer le bureau » (dialogue d'arrêt)
 target/debug/ferrite-shell --winit --capture /tmp/x.png --capture-delay 5 [--demo-lock|--demo-auth|--demo-power] [-- ferrite-apps settings energie]
+# Autres options de démonstration (captures) : --demo-face scan|reconnu|echec (avec
+# --demo-lock), --demo-controls principal, --demo-swap FRACTION, --demo-island(-press),
+# --demo-osd, --demo-overview, --demo-switcher, --demo-genie, --demo-region, --demo-video…
+# (liste complète : ferrite-shell --help)
 XDG_CONFIG_HOME=/tmp/cfg target/debug/ferrite-shell --winit …   # réglages isolés pour un essai
 # Appli déjà ouverte sur le vrai bureau : sinon l'instance unique lui passe la main.
 # Bus et dossier d'exécution à part (chemin court : limite des sockets à 108 caractères).

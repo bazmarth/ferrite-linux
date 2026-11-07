@@ -2,56 +2,73 @@
 
 Ferrite OS sur le noyau Linux : Debian 13 « trixie » pour le matériel et les paquets
 (`.deb`, Flatpak), avec **notre propre bureau** (compositeur Wayland `ferrite-shell`, écrit
-en Rust avec Smithay) et **nos propres applications**.
+en Rust avec Smithay) et **nos propres applications** (`ferrite-apps`, egui).
 
-Le plan complet, phase par phase, est dans [docs/PLAN.md](docs/PLAN.md). L'état d'avancement
-est dans [docs/JOURNAL.md](docs/JOURNAL.md).
+Ce n'est pas une personnalisation d'un bureau existant : barre du haut, Dock, centre de
+contrôle, îlot, écran de verrouillage, widgets, Fichiers, Paramètres, TextEdit, Musique,
+Lecteur vidéo, Lecteur PDF, Visionneuse, Horloge, Terminal… sont écrits ici.
 
-Le Ferrite d'origine (noyau maison, `D:\Os`) reste un projet séparé et intact.
+Le Ferrite d'origine (noyau maison) reste un projet séparé et intact.
+
+## Documents
+
+| Document | Contenu |
+|---|---|
+| [docs/TECHNIQUE.md](docs/TECHNIQUE.md) | référence technique : structure, règles, pièges, état et suite du projet |
+| [docs/PLAN.md](docs/PLAN.md) | cahier des charges d'origine, phase par phase |
+| [docs/DECISIONS.md](docs/DECISIONS.md) | choix non évidents et leurs raisons (priment sur le plan) |
+| [docs/JOURNAL.md](docs/JOURNAL.md) | journal des séances : ce qui est fait, vérifié ou non |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | vue d'ensemble des couches et du démarrage |
+| [docs/RACCOURCIS.md](docs/RACCOURCIS.md) | raccourcis clavier et gestes |
+| [docs/DEPENDANCES.md](docs/DEPENDANCES.md) | bibliothèques et paquets, avec leur raison |
+| [docs/NOUVELLE-APPLICATION.md](docs/NOUVELLE-APPLICATION.md) | ajouter une application Ferrite |
+| [docs/TEST-THINKBOOK.md](docs/TEST-THINKBOOK.md) | essayer l'ISO sur clé USB |
+| [docs/FEDORA.md](docs/FEDORA.md) | développer depuis Fedora (historique) |
 
 ## Organisation
 
 | Dossier | Contenu |
 |---|---|
-| `ui/` | `ferrite-ui` : charte visuelle (mesures, couleurs, échelle, animations), puis widgets |
-| `shell/` | `ferrite-shell` : compositeur Wayland et bureau (phase 2) |
-| `apps/` | applications Ferrite (phase 5) |
-| `services/` | services système : réglages, écran de connexion |
-| `image/` | configuration `live-build` de l'image live |
-| `packaging/` | paquets `.deb` et dépôt apt (phase 9) |
-| `assets/` | polices, icônes, fonds d'écran, sons |
-| `tools/` | scripts : installation, CI, image, machine virtuelle |
-| `docs/` | plan, journal, décisions, dépendances, architecture, tests |
+| `shell/` | `ferrite-shell` : compositeur Wayland et tout le bureau |
+| `apps/core/` | `ferrite-apps` : toutes les applications Ferrite, une sous-commande par application |
+| `services/system/` | `ferrite-system` : appels système partagés, réglages, catalogue des applications |
+| `services/visage/` | `ferrite-visage` : déverrouillage par visage (caméra infrarouge) |
+| `services/portal/` | `xdg-desktop-portal-ferrite` : sélecteur de fichiers Ferrite pour toutes les applications |
+| `ui/` | `ferrite-ui` : mesures, couleurs, échelle, animations |
+| `image/` | configuration `live-build` de l'image ISO |
+| `icons/`, `assets/` | icônes et logo, polices, fonds d'écran, sons, écran de démarrage |
+| `third_party/winit/` | copie retouchée de winit (pincement du pavé tactile) |
+| `tools/` | scripts : CI, mode dev, image, machine virtuelle, installation |
+| `packaging/` | paquets `.deb` et dépôt apt (pas encore fait) |
+| `docs/` | documentation |
 
 ## Développer
 
-Tout se fait dans **Debian 13 sous WSL2** (ou sous Fedora : voir [docs/FEDORA.md](docs/FEDORA.md)). Le dépôt est sur `D:\ferrite-linux`, donc
-`/mnt/d/ferrite-linux` dans WSL.
+Le développement se fait **dans Ferrite lui-même**, sur le ThinkBook : Debian 13 + Ferrite
+installés sur leur propre partition (`tools/install-dev.sh`), dépôt sur la partition de
+données. Le bureau en cours d'usage est remplacé par la version compilée :
 
 ```sh
-cd /mnt/d/ferrite-linux
-sudo tools/setup-wsl.sh    # paquets Debian, QEMU, live-build (une fois)
-tools/setup-wsl.sh         # Rust stable via rustup (une fois)
-tools/ci.sh                # format, lints, tests — avant chaque commit
+tools/ci.sh        # format, clippy, tests, couleurs, shellcheck — avant chaque commit
+tools/dev-on.sh    # compile et copie le bureau et les applis, puis Ctrl+Alt+Retour arrière
+tools/dev-off.sh   # revenir aux binaires stables de /usr/local/bin
 ```
 
-## Lancer le bureau en fenêtre (WSLg)
+Une version copiée qui plante deux fois de suite est écartée et la session repart sur les
+binaires stables.
+
+Essai dans une fenêtre, sans toucher au vrai bureau, avec capture d'écran :
 
 ```sh
-tools/shell-dev.sh                 # ferrite-shell avec le terminal foot
-tools/shell-dev.sh -- weston-terminal
+target/debug/ferrite-shell --winit --capture /tmp/x.png --capture-delay 5 -- ferrite-apps files
 ```
 
-Ctrl+Alt+Retour arrière quitte ferrite-shell ; Ctrl+Alt+M remet la dernière fenêtre
-réduite. Options : `ferrite-shell --help`.
-
-## Construire et essayer l'image live
+## Construire et essayer l'image ISO
 
 ```sh
-tools/usb.sh                       # compile ferrite-shell puis → build/ferrite-live.iso (sudo)
-tools/vm.sh                        # démarre l'ISO dans QEMU (UEFI), fenêtre via WSLg
-tools/vm.sh --headless 90          # sans fenêtre : capture build/vm-ecran.png
+tools/usb.sh                                   # build/ferrite-live.iso (sudo, tapé par l'utilisateur)
+tools/vm-test.sh tools/scenarios/stabilite.txt # démarre l'ISO dans QEMU et prend des captures
 ```
 
-Pour la clé USB et les vérifications sur le ThinkBook : [docs/TEST-THINKBOOK.md](docs/TEST-THINKBOOK.md).
+Clé USB et vérifications sur le ThinkBook : [docs/TEST-THINKBOOK.md](docs/TEST-THINKBOOK.md).
 L'image live ne monte ni ne modifie le SSD interne : Windows reste intact.

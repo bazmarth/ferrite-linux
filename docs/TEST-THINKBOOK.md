@@ -1,13 +1,14 @@
-# Essai sur le ThinkBook (phase 1)
+# Essayer l'ISO sur le ThinkBook
 
 L'image live démarre depuis une clé USB sans rien écrire sur le SSD : Windows n'est pas
 touché. Il suffit de retirer la clé et de redémarrer pour retrouver Windows.
 
 ## 1. Préparer la clé USB (depuis Windows)
 
-1. Récupérer `D:\ferrite-linux\build\ferrite-live.iso` (≈ 1 Gio) et vérifier son empreinte
-   avec `build\ferrite-live.iso.sha256` :
-   `Get-FileHash D:\ferrite-linux\build\ferrite-live.iso -Algorithm SHA256`
+1. Récupérer l'ISO : `build/ferrite-live.iso` après `tools/usb.sh` (sur la partition de
+   données, visible sous Windows), ou `ferrite-os-AAAA.MM.JJ.iso` d'une release GitHub.
+   Vérifier son empreinte avec le fichier `.sha256` qui l'accompagne, sous Windows :
+   `Get-FileHash <chemin de l'iso> -Algorithm SHA256`
 2. Ouvrir **Rufus**, choisir la clé (**toutes ses données seront effacées**), puis l'ISO.
 3. Schéma de partition **GPT**, système de destination **UEFI (non CSM)**.
 4. Si Rufus demande le mode d'écriture : **mode image DD**.
@@ -21,11 +22,12 @@ touché. Il suffit de retirer la clé et de redémarrer pour retrouver Windows.
 3. Choisir la clé USB (entrée UEFI), puis « Live system » dans GRUB.
 4. Le Secure Boot peut rester activé (chargeur signé Debian).
 
-L'utilisateur `ferrite` est connecté automatiquement et l'accueil Ferrite s'affiche.
+Après l'écran de démarrage Ferrite, l'utilisateur `ferrite` est connecté automatiquement et
+le bureau Ferrite s'affiche (sans écran verrouillé sur le live).
 
 ## 3. Vérifications
 
-Lancer :
+Ouvrir le Terminal (Super + Entrée ou Ctrl + Alt + T) et lancer :
 
 ```sh
 ferrite-check
@@ -35,7 +37,7 @@ Puis faire à la main ce que le script ne peut pas faire :
 
 | # | Vérification | Commande | Attendu |
 |---|---|---|---|
-| 1 | Temps de démarrage | (chronomètre, du menu GRUB à l'accueil) | moins de 60 s |
+| 1 | Temps de démarrage | (chronomètre, du menu GRUB au bureau) | moins de 60 s |
 | 2 | Réseaux Wi-Fi visibles | `nmcli dev wifi list` | la liste des réseaux |
 | 3 | Connexion Wi-Fi | `nmcli dev wifi connect "NOM" --ask` puis `ping -c3 debian.org` | réponses |
 | 4 | Son audible | `speaker-test -c 2 -t wav -l 1` | « Front left », « Front right » |

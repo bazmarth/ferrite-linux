@@ -16,9 +16,16 @@ Chaque dépendance avec sa licence et la raison de sa présence. Les versions ex
 | `tracing`, `tracing-subscriber` | ferrite-shell | MIT | journal (celui de Smithay) ; niveau réglable par `RUST_LOG` |
 | `resvg` 0.49 (sans fonctions par défaut) | ferrite-shell, ferrite-apps | Apache-2.0/MIT | rendu des icônes SVG de `ferrite-theme` et `icons/SVG` (Dock, barre du haut, menus, Fichiers) ; sans `text` : les icônes n'utilisent que des tracés |
 | `ferrite-system` (interne) | ferrite-shell, ferrite-apps | MIT | services du système avec délai maximal ; aucune dépendance externe |
-| `zbus` 5 (`blocking-api`) | ferrite-shell | MIT | serveur `org.freedesktop.Notifications`, signal de mise en veille de logind ; imposé par le plan |
+| `zbus` 5 (`blocking-api`) | ferrite-shell, ferrite-apps, xdg-desktop-portal-ferrite | MIT | serveur `org.freedesktop.Notifications`, logind (veille, bouton d'alimentation), agent polkit, MPRIS (îlot, Musique), portail `FileChooser` ; imposé par le plan |
 | `alacritty_terminal` 0.26 | ferrite-apps | Apache-2.0 | émulation du Terminal ; imposé par le plan |
-| `eframe` 0.37 | ferrite-apps | MIT/Apache-2.0 | fenêtres natives Wayland pour Fichiers, TextEdit et Calculatrice ; rendu GLES et prise en charge clavier/souris |
+| `eframe` 0.37 | ferrite-apps | MIT/Apache-2.0 | fenêtres natives Wayland de toutes les applications Ferrite ; rendu GLES et prise en charge clavier/souris |
+| `winit` 0.30.13 (copie dans `third_party/winit`) | ferrite-apps (par eframe) | Apache-2.0 | remplace la version de crates.io (`[patch.crates-io]`) pour transmettre le pincement du pavé tactile sous Wayland ; détails dans `third_party/winit/FERRITE.md` |
+| `async-channel` 2 | ferrite-shell | MIT/Apache-2.0 | réponses de l'agent polkit attendues sans bloquer la boucle |
+| `libc` 0.2 | ferrite-shell | MIT/Apache-2.0 | `statvfs` : espace disque libre affiché par le bureau |
+| `gstreamer`, `gstreamer-app`, `gstreamer-video` 0.25 | ferrite-apps, ferrite-visage | MIT/Apache-2.0 (GStreamer : LGPL, liaison dynamique) | Lecteur vidéo, vignettes des vidéos dans Fichiers, lecture de la caméra infrarouge |
+| `symphonia` 0.5 (mp3, aac, isomp4, alac) | ferrite-apps | MPL-2.0 | Musique : décodage et lecture des métadonnées des morceaux |
+| `tract-onnx` 0.21 | ferrite-visage | MIT/Apache-2.0 | exécution des modèles YuNet et SFace (visage) en Rust pur, sans OpenCV |
+| `blocking` 1 | xdg-desktop-portal-ferrite | MIT/Apache-2.0 | fenêtre du sélecteur (`ferrite-apps choisir`) attendue dans un fil à part, sans bloquer les autres demandes |
 
 ## Paquets de l'image live
 
@@ -39,7 +46,18 @@ Liste : `image/config/package-lists/ferrite.list.chroot`. Points notables :
 | `rar` | création d’archives RAR ; outil propriétaire fourni par les dépôts non libres |
 | `wf-recorder` | enregistrement vidéo de l’écran (MP4) depuis la barre de capture ; lit les images par le protocole screencopy du compositeur, encode avec FFmpeg |
 | `dbus-bin` | `dbus-update-activation-environment` : transmet `WAYLAND_DISPLAY` et `DISPLAY` aux services D-Bus |
-| `foot`, `tmux` | terminal de secours ; le Terminal Ferrite ne les utilise pas |
+| `foot` | terminal de secours ; le Terminal Ferrite ne l'utilise pas |
+| `fish` | shell des terminaux du bureau (complétion, suggestions) |
+| `power-profiles-daemon` | `powerprofilesctl` : tuile « Économie d'énergie » |
+| `pkexec`, `polkitd`, `accountsservice` | mot de passe administrateur (agent polkit du bureau), « Ouvrir en administrateur », enregistrement du visage |
+| `gnome-keyring`, `libpam-gnome-keyring`, `gcr` | coffre à mots de passe (Secret Service) des navigateurs et d'Electron |
+| `ntfs-3g` | disques et clés formatés sous Windows |
+| `libgstreamer1.0-0`, `gstreamer1.0-plugins-base`, `-good`, `gstreamer1.0-libav` | Lecteur vidéo, Musique, caméra infrarouge ; libav pour le H.264 |
+| `libglib2.0-bin`, `gsettings-desktop-schemas`, `dconf-gsettings-backend` | thème clair/sombre et ordre des boutons annoncés aux applications GTK |
+| `x11-xserver-utils` | `xhost` : programmes lancés par `pkexec` (GParted) affichés sur XWayland |
+| `xsettingsd` | échelle ×2 des programmes GTK sous X11 |
+| `plymouth-label` | écran de démarrage Ferrite (thème `ferrite`) |
+| `poppler-utils` | **manque encore à la liste** : `pdfinfo`, `pdftoppm`, `pdftotext` du Lecteur PDF |
 | `fonts-jetbrains-mono` | police du terminal `foot` (`/etc/xdg/foot/foot.ini`) |
 
 ## Ressources
@@ -49,5 +67,6 @@ Liste : `image/config/package-lists/ferrite.list.chroot`. Points notables :
 | Inter, InterDisplay | SIL OFL 1.1 | `assets/fonts/Inter-LICENSE.txt` |
 | JetBrains Mono | SIL OFL 1.1 | `assets/fonts/JetBrainsMono-OFL.txt` |
 | Source Serif 4 | SIL OFL 1.1 | `assets/fonts/SourceSerif4-LICENSE.txt` |
-| Icônes Ferrite (`icons/SVG`) | fournies par l'utilisateur pour le projet | `icons/manifest.json` |
+| Icônes Ferrite (`icons/SVG`), logo | fournies par l'utilisateur pour le projet | `icons/manifest.json` |
+| Modèles YuNet et SFace (visage) | MIT, Apache-2.0 (OpenCV Zoo) | téléchargés par `tools/visage-modeles.sh`, hors git |
 | Thème Ferrite (`ferrite-theme`) | fourni par l'utilisateur pour le projet ; licence à préciser | `ferrite-theme/README.md` |

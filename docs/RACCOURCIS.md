@@ -23,7 +23,9 @@ sans redémarrer. L'écran s'assombrit progressivement avant le verrouillage et 
 | Tuilage automatique | Super + T | — |
 | Échanger avec la principale (en tuilage) | Super + Entrée | bouton d'agrandissement d'une fenêtre de la pile, ou la glisser sur la principale |
 | Échanger deux fenêtres (en tuilage) | — | glisser l'une sur l'autre |
-| Afficher le bureau | Super + D | — |
+| Afficher le bureau | Super + D | coin bas-droit |
+| Remettre la dernière fenêtre réduite | Ctrl + Alt + M | — |
+| Zoomer (Lecteur PDF, Visionneuse, applis qui le gèrent) | Ctrl + molette | pincer à deux doigts sur le pavé tactile |
 
 ## Espaces de travail
 
@@ -43,6 +45,7 @@ sans redémarrer. L'écran s'assombrit progressivement avant le verrouillage et 
 | Historique du presse-papiers | Super + V |
 | Terminal | Super + Entrée (hors tuilage), Ctrl + Alt + T |
 | Verrouiller | Super + L |
+| Dialogue d'arrêt | Super + Échap |
 | Widgets devant les fenêtres, puis derrière | Super + W, Échap |
 | Modifier les widgets | clic droit sur le bureau |
 | Capture : écran de capture (Sélection, Écran ou Fenêtre) | Impr. écran |
@@ -51,3 +54,23 @@ sans redémarrer. L'écran s'assombrit progressivement avant le verrouillage et 
 | Changer de disposition clavier (aussi sur l'écran verrouillé, avec indication à l'écran) | Super + Espace |
 | Quitter le bureau | Ctrl + Alt + Retour arrière |
 | Terminal virtuel | Ctrl + Alt + F1…F12 |
+
+Les coins actifs (haut-gauche : vue d'ensemble, bas-droit : bureau) se choisissent dans
+Paramètres → Bureau et dock. Le bouton d'alimentation physique suit Paramètres → Énergie
+(veille par défaut, rien, ou dialogue d'arrêt) ; les boutons dessinés ouvrent toujours le
+dialogue.
+
+## Dans les applications Ferrite
+
+| Application | Action | Clavier |
+|---|---|---|
+| Fichiers | Nouvel onglet / fermer l'onglet | Ctrl + T / Ctrl + W (ou clic du milieu) |
+| Fichiers | Onglet suivant / précédent | Ctrl + Tab / Ctrl + Maj + Tab |
+| Fichiers | Chercher (dossier et sous-dossiers) | taper une lettre hors d'un champ ; Échap efface |
+| Fichiers | Aperçu rapide | Espace |
+| Fichiers | Mettre à la Corbeille | Suppr |
+| Lecteur PDF | Chercher, résultat suivant / précédent | Ctrl + F, Entrée / Maj + Entrée |
+| Lecteur PDF | Miniatures des pages | F9 |
+| Lecteur PDF | Zoom | + / −, Ctrl + molette, pincement |
+| Lecteur PDF | Défiler | Page préc. / suiv., Espace, flèches, Début / Fin |
+| Sélecteur de fichiers | Valider / annuler | Entrée / Échap (Ctrl pour choisir plusieurs fichiers) |

@@ -1,5 +1,9 @@
 # Développer Ferrite Linux sous Fedora
 
+> Historique : depuis le 2026-11-03, on développe dans Ferrite lui-même (Debian 13 installée
+> sur sa partition par `tools/install-dev.sh`, voir `docs/TECHNIQUE.md` §2.2). Ce guide reste
+> valable pour compiler depuis Fedora.
+
 Le bureau (`ferrite-shell`) et les applications (`ferrite-apps`) se compilent et se lancent
 directement sous Fedora. Seule l'image live, qui reste une Debian 13, se construit dans un
 conteneur Debian.

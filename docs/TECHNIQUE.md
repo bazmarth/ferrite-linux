@@ -445,8 +445,8 @@ Reste :
 
 ### 5.3 Prochaines étapes proposées (ordre recommandé)
 
-1. Corriger l'image : `poppler-utils` manque à la liste des paquets (§5.4), puis
-   reconstruire l'ISO, l'essayer en VM, et publier une release depuis un arbre commité.
+1. Reconstruire l'ISO (liste des paquets changée, dont `poppler-utils` ajouté le
+   2026-11-07), l'essayer en VM, et publier une release depuis un arbre commité.
 2. Finir la phase 5 : réglages encore grisés dans Paramètres (thème et taille du curseur,
    taille du texte, position du Dock, mode des espaces de travail, niveau d'entrée et sons
    d'alerte, réception Bluetooth) et rubriques en maquette (Notifications, Imprimantes,
@@ -461,9 +461,6 @@ Reste :
 
 ### 5.4 Défauts connus
 
-- **`poppler-utils` absent de `ferrite.list.chroot`** : le Lecteur PDF (`pdfinfo`,
-  `pdftoppm`, `pdftotext`) ne marchera pas dans l'ISO (`--apt-recommends false`). Présent
-  sur le PC de développement.
 - Le widget Musique peut chevaucher le widget Système dans la disposition de l'utilisateur.
 - Ouverture du centre de contrôle ~31 ms (une rastérisation complète).
 - `--demo-auth` : le voile sombre du fond ne couvre pas les widgets de l'espace 0.

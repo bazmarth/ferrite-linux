@@ -93,6 +93,9 @@ ntfs-3g
 libarchive-tools
 rar
 
+# Lecteur PDF : pdfinfo (pages), pdftoppm (rendu des pages), pdftotext (recherche)
+poppler-utils
+
 # Enregistrement vidéo de l'écran (barre de capture, mode vidéo) par screencopy
 wf-recorder
 

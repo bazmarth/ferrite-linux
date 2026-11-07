@@ -2101,3 +2101,15 @@ marchera pas dans l'ISO. Noté dans les défauts connus, pas corrigé.
 Vérifié : chaque fait comparé au code (arborescence, clés de réglages, raccourcis par défaut,
 dépendances des `Cargo.toml`, liste des paquets). Les anciennes entrées du journal gardent
 le nom `PASSATION.md`.
+
+## 2026-11-07 — Image : poppler-utils ajouté (Lecteur PDF)
+
+Trouvé en mettant la documentation à jour : le Lecteur PDF appelle `pdfinfo`, `pdftoppm` et
+`pdftotext`, mais `poppler-utils` n'était pas dans `ferrite.list.chroot`. Avec
+`--apt-recommends false`, rien ne l'amenait : dans l'ISO, aucun PDF ne se serait ouvert. Le
+PC de développement l'a déjà, d'où l'oubli.
+- `poppler-utils` ajouté à la liste des paquets ; DEPENDANCES et TECHNIQUE à jour.
+Vérifié : le paquet existe dans Debian 13 (25.03.0) ; seul `pdf_viewer/poppler.rs` utilise
+ces commandes ; CI.
+Pas vérifié : une ISO reconstruite (`tools/usb.sh`, sudo, environ 30 minutes, la liste des
+paquets ayant changé) et le Lecteur PDF dedans.

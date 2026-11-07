@@ -880,6 +880,9 @@ icons![
     "device-headphones",
     "device-mouse",
     "device-phone",
+    "file-document",
+    "file-spreadsheet",
+    "file-presentation",
     ;
     "app-files" => "apps/system-file-manager",
     "app-video" => "apps/multimedia-video-player",

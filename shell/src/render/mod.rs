@@ -1940,6 +1940,9 @@ fn file_icon(path: &std::path::Path) -> &'static str {
         .unwrap_or_default();
     match extension.as_str() {
         "pdf" => "file-pdf",
+        "doc" | "docx" | "odt" | "rtf" => "file-document",
+        "xls" | "xlsx" | "ods" => "file-spreadsheet",
+        "ppt" | "pptx" | "odp" => "file-presentation",
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" => "file-image",
         "mp3" | "ogg" | "flac" | "wav" | "opus" | "m4a" => "file-audio",
         "mp4" | "mkv" | "webm" | "avi" | "mov" => "file-video",

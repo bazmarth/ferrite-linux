@@ -255,6 +255,13 @@ pub(super) fn kind_label(entry: &FileEntry) -> String {
     let extension = extension(&entry.name).to_ascii_lowercase();
     match extension.as_str() {
         "pdf" => "Document PDF".into(),
+        "doc" | "docx" => "Document Word".into(),
+        "odt" => "Document OpenDocument".into(),
+        "rtf" => "Document RTF".into(),
+        "xls" | "xlsx" => "Classeur Excel".into(),
+        "ods" => "Classeur OpenDocument".into(),
+        "ppt" | "pptx" => "Présentation PowerPoint".into(),
+        "odp" => "Présentation OpenDocument".into(),
         "txt" | "md" | "log" => "Document texte".into(),
         "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg" => {
             format!("Image {}", extension.to_uppercase())

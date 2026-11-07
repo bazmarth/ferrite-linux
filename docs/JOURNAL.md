@@ -2134,3 +2134,23 @@ accepte vraiment ses extensions, `.desktop`, `mimeapps.list` et rubriques de Par
 d'accord avec la table, « Ouvrir avec » d'un `.avi`).
 Pas vérifié : à l'écran ni sur le vrai bureau ; le `mimeapps.list` du PC n'est mis à jour
 qu'avec une nouvelle image.
+
+## 2026-11-07 — Bureautique : .pptx ouvert dans ChatGPT, icônes Word/Excel/PowerPoint
+
+Demande de l'utilisateur (vidéo) : un `.pptx` ouvert depuis Fichiers lançait ChatGPT
+(précédé d'une fenêtre noire) ; les `.pptx`, `.xlsx`, `.docx` seront ouverts par la suite
+ArtCraft (DeckCraft, GridCraft, WordCraft, en Flatpak) ; il faut aussi leurs icônes.
+- Cause : la session Ferrite ne définissait pas `XDG_DATA_DIRS`, donc `xdg-open` ne voyait
+  pas les raccourcis Flatpak et prenait ChatGPT, qui annonce aussi ces types.
+- `applications::session_data_dirs` : dossiers Flatpak (utilisateur, système) puis la valeur
+  reçue, sans doublon ; donnée à toutes les applications lancées par le bureau et à D-Bus
+  (`client_environment`).
+- Icônes `file-document`, `file-spreadsheet`, `file-presentation` (`icons/SVG`, style des
+  icônes de fichiers du thème) pour doc/docx/odt/rtf, xls/xlsx/ods, ppt/pptx/odp, dans
+  Fichiers et le presse-papiers du bureau ; colonne Type : « Document Word », « Classeur
+  Excel », « Présentation PowerPoint »…
+Vérifié : CI (sans shellcheck) ; tests (dossiers Flatpak, icônes, filtre Documents) ;
+`xdg-mime query default` : ChatGPT sans la correction, DeckCraft/WordCraft/GridCraft avec ;
+capture de Fichiers avec les nouvelles icônes.
+Pas vérifié : sur le vrai bureau (il faut le relancer) ; la fenêtre noire n'apparaît pas
+dans l'enregistrement, elle venait sans doute du démarrage de ChatGPT.

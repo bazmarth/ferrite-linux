@@ -82,6 +82,9 @@ icons![
     "status-wifi-2",
     "status-wifi-3",
     "status-wifi-4",
+    "file-document",
+    "file-spreadsheet",
+    "file-presentation",
     ;
     "app-files" => "apps/system-file-manager",
     "app-terminal" => "apps/utilities-terminal",

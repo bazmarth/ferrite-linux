@@ -636,6 +636,11 @@ impl Ferrite {
             ),
             ("XDG_CURRENT_DESKTOP".to_owned(), "Ferrite".to_owned()),
             ("XDG_SESSION_TYPE".to_owned(), "wayland".to_owned()),
+            // Les applications Flatpak (et leurs types de fichiers) visibles de `xdg-open`.
+            (
+                "XDG_DATA_DIRS".to_owned(),
+                ferrite_system::applications::session_data_dirs(),
+            ),
             // Applications GTK, Qt, Firefox, Electron et SDL en Wayland natif : elles
             // dessinent à la résolution de l'écran au lieu d'être agrandies (floues) par
             // XWayland. X11 reste le repli.

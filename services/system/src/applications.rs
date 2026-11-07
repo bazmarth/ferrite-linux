@@ -50,6 +50,35 @@ fn data_dirs() -> Vec<PathBuf> {
     dirs
 }
 
+/// Valeur de `XDG_DATA_DIRS` donnée aux applications lancées par le bureau : celle reçue
+/// (ou la valeur standard), précédée des dossiers où Flatpak publie ses raccourcis.
+/// Sans eux, `xdg-open` ignore les applications Flatpak et choisit au hasard parmi les
+/// autres (un `.pptx` ouvert dans ChatGPT au lieu de DeckCraft).
+pub fn session_data_dirs() -> String {
+    let user_data = env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")));
+    session_data_dirs_from(env::var("XDG_DATA_DIRS").ok().as_deref(), user_data.as_deref())
+}
+
+fn session_data_dirs_from(current: Option<&str>, user_data: Option<&Path>) -> String {
+    let current = current
+        .filter(|dirs| !dirs.is_empty())
+        .unwrap_or("/usr/local/share:/usr/share");
+    let mut dirs: Vec<String> = Vec::new();
+    if let Some(user_data) = user_data {
+        dirs.push(user_data.join("flatpak/exports/share").display().to_string());
+    }
+    dirs.push("/var/lib/flatpak/exports/share".to_owned());
+    for dir in current.split(':').filter(|dir| !dir.is_empty()) {
+        let dir = dir.trim_end_matches('/').to_owned();
+        if !dirs.contains(&dir) {
+            dirs.push(dir);
+        }
+    }
+    dirs.join(":")
+}
+
 /// Dossiers `applications` surveillés.
 pub fn directories() -> Vec<PathBuf> {
     data_dirs()
@@ -311,5 +340,22 @@ Exec=vlc --other
             ]
         );
         assert_eq!(split_exec("env A=1 app %% %f"), vec!["env", "A=1", "app", "%"]);
+    }
+
+    #[test]
+    fn les_raccourcis_flatpak_sont_visibles() {
+        let home = Path::new("/home/a/.local/share");
+        assert_eq!(
+            session_data_dirs_from(None, Some(home)),
+            "/home/a/.local/share/flatpak/exports/share:/var/lib/flatpak/exports/share:/usr/local/share:/usr/share"
+        );
+        // Déjà présents (session lancée par un gestionnaire de connexion) : pas de doublon.
+        assert_eq!(
+            session_data_dirs_from(
+                Some("/home/a/.local/share/flatpak/exports/share:/var/lib/flatpak/exports/share/:/usr/share"),
+                Some(home)
+            ),
+            "/home/a/.local/share/flatpak/exports/share:/var/lib/flatpak/exports/share:/usr/share"
+        );
     }
 }

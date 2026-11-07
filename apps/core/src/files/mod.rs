@@ -144,7 +144,11 @@ impl Filter {
             "odt" | "ods" | "odp" | "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" | "rtf" | "csv" | "epub"
         );
         match (self, path_icon(&entry.path, false)) {
-            (Filter::Documents, "file-pdf" | "file-text" | "file-script") => true,
+            (
+                Filter::Documents,
+                "file-pdf" | "file-text" | "file-script" | "file-document" | "file-spreadsheet"
+                | "file-presentation",
+            ) => true,
             (Filter::Documents, _) => office,
             (Filter::Images, icon) => icon == "file-image",
             (Filter::Audio, icon) => icon == "file-audio",
@@ -2774,6 +2778,9 @@ pub(crate) fn path_icon(path: &Path, directory: bool) -> &'static str {
         }
         "sh" => "file-script",
         "pdf" => "file-pdf",
+        "doc" | "docx" | "odt" | "rtf" => "file-document",
+        "xls" | "xlsx" | "ods" => "file-spreadsheet",
+        "ppt" | "pptx" | "odp" => "file-presentation",
         "zip" | "tar" | "gz" | "xz" | "bz2" | "zst" | "7z" | "rar" | "deb" | "rpm" | "iso" => "file-archive",
         "appimage" | "run" | "bin" | "exe" => "file-executable",
         _ if is_text_file(path) => "file-text",
@@ -2884,6 +2891,27 @@ pub(crate) fn format_date(time: Option<SystemTime>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn icones_des_documents_bureautiques() {
+        let icon = |name: &str| path_icon(Path::new(name), false);
+        assert_eq!(icon("/x/Mémoire.DOCX"), "file-document");
+        assert_eq!(icon("/x/notes.odt"), "file-document");
+        assert_eq!(icon("/x/budget.xlsx"), "file-spreadsheet");
+        assert_eq!(icon("/x/budget.ods"), "file-spreadsheet");
+        assert_eq!(icon("/x/soutenance.pptx"), "file-presentation");
+        assert_eq!(icon("/x/soutenance.ppt"), "file-presentation");
+        assert!(Filter::Documents.matches(&FileEntry {
+            name: "soutenance.pptx".into(),
+            path: PathBuf::from("/x/soutenance.pptx"),
+            directory: false,
+            symlink: false,
+            modified: None,
+            size: None,
+            archive_member: None,
+            trash: None,
+        }));
+    }
 
     #[test]
     fn icones_des_dossiers() {

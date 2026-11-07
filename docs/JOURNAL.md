@@ -2257,3 +2257,18 @@ Vérifié : CI (sans shellcheck) ; échanges Wayland (1280×800 avant, 1280×754
 avec la barre du haut toujours visible) ; capture du bureau imbriqué : barre « Document1 -
 WordCraft » avec fermer et agrandir.
 Pas vérifié : sur le vrai bureau (il faut le relancer).
+
+## 2026-11-07 — TextEdit : images et liens de l'aperçu Markdown
+
+Demande de l'utilisateur (capture du cours Security-101) : afficher les images et rendre
+les liens cliquables.
+- Une image écrite `/images/a.png` (style GitHub, depuis la racine du projet) est cherchée
+  dans le dossier du document puis dans ses parents (`Images::resolve`) ; `%20` décodé.
+- Les images JPEG sont lues aussi (décodeur des fonds d'écran, `ferrite_ui::wallpaper`).
+- `markdown::Span` garde l'adresse du lien (`link`). Dans l'aperçu : main et bulle avec
+  l'adresse au survol ; au clic, un `.md` local s'ouvre dans TextEdit, le reste avec
+  `xdg-open` (navigateur, courriel).
+Vérifié : CI (sans shellcheck), test `liens_gardent_leur_adresse` ; capture du bureau
+imbriqué : l'image `/images/swisscheese.png` s'affiche, les liens sont soulignés.
+Pas vérifié : le clic sur un lien (pas d'automate de clic), l'image JPEG à l'écran (hors
+de la capture), les liens dans les tableaux (pas encore cliquables).

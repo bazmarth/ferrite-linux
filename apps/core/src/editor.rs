@@ -2044,6 +2044,7 @@ impl EditorState {
         let mut images = Images {
             textures: images,
             base,
+            clicked: None,
         };
         egui::ScrollArea::vertical()
             .id_salt(("textedit-markdown-preview", document.id))
@@ -2074,6 +2075,19 @@ impl EditorState {
                 });
                 ui.add_space(36.0);
             });
+        if let Some(link) = images.clicked.take() {
+            let target = if link.contains(':') {
+                link
+            } else {
+                images.resolve(&link).display().to_string()
+            };
+            let local = Path::new(&target);
+            if local.is_file() && FileKind::of(local) == FileKind::Markdown {
+                self.open(local.to_path_buf());
+            } else if !target.starts_with('#') {
+                open_link(&target);
+            }
+        }
     }
 
     /// Onglet « Infos » : ce que l'on sait du document.
@@ -2318,49 +2332,57 @@ fn rule(ui: &mut egui::Ui) {
 struct Images<'a> {
     textures: &'a mut HashMap<PathBuf, Option<egui::TextureHandle>>,
     base: Option<PathBuf>,
+    /// Lien cliqué pendant cette image de l'aperçu.
+    clicked: Option<String>,
 }
 
 impl Images<'_> {
+    /// Chemin d'une image ou d'un lien local. « /images/a.png » (comme sur GitHub) part
+    /// de la racine du projet : on le cherche dans le dossier du document puis dans ses
+    /// parents ; sinon le chemin est relatif au document.
+    fn resolve(&self, path: &str) -> PathBuf {
+        let path = path.split(['#', '?']).next().unwrap_or(path);
+        let path = path.replace("%20", " ");
+        let Some(base) = &self.base else {
+            return PathBuf::from(path);
+        };
+        if let Some(rooted) = path.strip_prefix('/') {
+            if Path::new(&path).exists() {
+                return PathBuf::from(path);
+            }
+            return base
+                .ancestors()
+                .map(|folder| folder.join(rooted))
+                .find(|candidate| candidate.exists())
+                .unwrap_or_else(|| base.join(rooted));
+        }
+        base.join(path)
+    }
+
     fn get(&mut self, ctx: &egui::Context, path: &str) -> Option<egui::TextureHandle> {
         if path.contains("://") {
             return None;
         }
-        let path = match &self.base {
-            Some(base) => base.join(path),
-            None => PathBuf::from(path),
-        };
+        let path = self.resolve(path);
         self.textures
             .entry(path.clone())
             .or_insert_with(|| {
-                let image = load_png(&path)?;
+                let image = load_image(&path)?;
                 Some(ctx.load_texture(path.display().to_string(), image, egui::TextureOptions::LINEAR))
             })
             .clone()
     }
 }
 
-/// Image PNG en RVBA ; rien si le fichier manque, n'est pas un PNG ou est démesuré.
-fn load_png(path: &Path) -> Option<egui::ColorImage> {
-    let data = std::fs::read(path).ok()?;
-    let mut decoder = png::Decoder::new(std::io::Cursor::new(data));
-    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
-    let mut reader = decoder.read_info().ok()?;
-    let mut buffer = vec![0; reader.output_buffer_size()?];
-    let info = reader.next_frame(&mut buffer).ok()?;
-    if info.width as usize * info.height as usize > 4096 * 4096 {
+/// Image PNG ou JPEG en RVBA ; rien si le fichier manque, est illisible ou démesuré.
+fn load_image(path: &Path) -> Option<egui::ColorImage> {
+    let image = ferrite_ui::wallpaper::decode(path).ok()?;
+    if image.width as usize * image.height as usize > 4096 * 4096 {
         return None;
     }
-    let pixels = &buffer[..info.buffer_size()];
-    let rgba: Vec<u8> = match info.color_type {
-        png::ColorType::Rgba => pixels.to_vec(),
-        png::ColorType::Rgb => pixels.chunks(3).flat_map(|p| [p[0], p[1], p[2], 255]).collect(),
-        png::ColorType::GrayscaleAlpha => pixels.chunks(2).flat_map(|p| [p[0], p[0], p[0], p[1]]).collect(),
-        png::ColorType::Grayscale => pixels.iter().flat_map(|&v| [v, v, v, 255]).collect(),
-        png::ColorType::Indexed => return None,
-    };
     Some(egui::ColorImage::from_rgba_unmultiplied(
-        [info.width as usize, info.height as usize],
-        &rgba,
+        [image.width as usize, image.height as usize],
+        &image.rgba,
     ))
 }
 
@@ -2380,11 +2402,11 @@ fn render_markdown_block(ui: &mut egui::Ui, block: &markdown::Block, images: &mu
             for section in &mut job.sections {
                 section.format.font_id.family = style::strong_family();
             }
-            ui.add(egui::Label::new(job).wrap());
+            link_label(ui, job, spans, images);
             ui.add_space(after);
         }
         Block::Paragraph(spans) => {
-            ui.add(egui::Label::new(markdown_job(ui, spans, 15.0, body())).wrap());
+            link_label(ui, markdown_job(ui, spans, 15.0, body()), spans, images);
             ui.add_space(12.0);
         }
         Block::Aligned(alignment, spans) => {
@@ -2394,7 +2416,7 @@ fn render_markdown_block(ui: &mut egui::Ui, block: &markdown::Block, images: &mu
                 Align::Right => egui::Align::Max,
             };
             ui.with_layout(egui::Layout::top_down(align), |ui| {
-                ui.label(markdown_job(ui, spans, 15.0, body()));
+                link_label(ui, markdown_job(ui, spans, 15.0, body()), spans, images);
             });
             ui.add_space(10.0);
         }
@@ -2476,7 +2498,7 @@ fn render_markdown_block(ui: &mut egui::Ui, block: &markdown::Block, images: &mu
                             }
                         }
                     }
-                    ui.add(egui::Label::new(markdown_job(ui, &item.text, 15.0, body())).wrap());
+                    link_label(ui, markdown_job(ui, &item.text, 15.0, body()), &item.text, images);
                 });
                 ui.add_space(6.0);
             }
@@ -2758,7 +2780,7 @@ fn image_card(ui: &mut egui::Ui, alt: &str, path: &str, texture: Option<&egui::T
                             ui.label(RichText::new(alt).color(style::primary_text()));
                         }
                         ui.label(
-                            RichText::new(format!("Image introuvable ou non PNG : {path}"))
+                            RichText::new(format!("Image introuvable ou illisible : {path}"))
                                 .size(11.5)
                                 .color(style::text_secondary()),
                         );
@@ -2766,6 +2788,54 @@ fn image_card(ui: &mut egui::Ui, alt: &str, path: &str, texture: Option<&egui::T
                 });
         }
     }
+}
+
+/// Texte de l'aperçu dont les liens s'ouvrent au clic (main au survol, adresse en bulle).
+fn link_label(ui: &mut egui::Ui, job: LayoutJob, spans: &[markdown::Span], images: &mut Images) {
+    let has_links = spans.iter().any(|span| !span.link.is_empty());
+    if !has_links {
+        ui.add(egui::Label::new(job).wrap());
+        return;
+    }
+    let galley = ui.fonts_mut(|fonts| fonts.layout_job(job));
+    let response = ui.add(egui::Label::new(galley.clone()).sense(Sense::click()));
+    let origin = response.rect.min - galley.rect.min.to_vec2();
+    let link = response.hover_pos().and_then(|pointer| {
+        let local = pointer - origin;
+        if !galley.rect.contains(local.to_pos2()) {
+            return None;
+        }
+        let cursor = galley.cursor_from_pos(local);
+        let index = if local.x < galley.pos_from_cursor(cursor).min.x {
+            cursor.index.saturating_sub(1)
+        } else {
+            cursor.index
+        };
+        let byte = egui::epaint::text::ByteIndex(galley.job.text.char_indices().nth(index.0)?.0);
+        let section = galley
+            .job
+            .sections
+            .iter()
+            .position(|section| section.byte_range.contains(&byte))?;
+        spans
+            .get(section)
+            .map(|span| span.link.clone())
+            .filter(|link| !link.is_empty())
+    });
+    if let Some(link) = link {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        if response.clicked() {
+            images.clicked = Some(link.clone());
+        }
+        response.on_hover_text(link);
+    }
+}
+
+/// Ouvre une adresse (site, courriel, fichier) avec l'application choisie par le système.
+fn open_link(target: &str) {
+    let mut command = std::process::Command::new("xdg-open");
+    command.arg(target);
+    let _ = ferrite_system::command::spawn_detached(command);
 }
 
 fn markdown_job(ui: &egui::Ui, spans: &[markdown::Span], size: f32, color: Color32) -> LayoutJob {

@@ -18,6 +18,8 @@ pub const STRIKE: u8 = 16;
 pub struct Span {
     pub text: String,
     pub style: u8,
+    /// Adresse du lien (vide hors d'un lien).
+    pub link: String,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -437,23 +439,26 @@ fn inline_lines(lines: &[&str]) -> Vec<Span> {
 pub fn inline(text: &str) -> Vec<Span> {
     let chars: Vec<char> = text.chars().collect();
     let mut out = Vec::new();
-    parse_inline(&chars, 0, &mut out);
+    parse_inline(&chars, 0, "", &mut out);
     // Fusion des fragments voisins de même style.
     let mut merged: Vec<Span> = Vec::new();
     for span in out {
         match merged.last_mut() {
-            Some(last) if last.style == span.style => last.text.push_str(&span.text),
+            Some(last) if last.style == span.style && last.link == span.link => {
+                last.text.push_str(&span.text)
+            }
             _ => merged.push(span),
         }
     }
     merged
 }
 
-fn push(out: &mut Vec<Span>, text: &str, style: u8) {
+fn push(out: &mut Vec<Span>, text: &str, style: u8, link: &str) {
     if !text.is_empty() {
         out.push(Span {
             text: String::from(text),
             style,
+            link: String::from(link),
         });
     }
 }
@@ -529,11 +534,22 @@ fn link_at(chars: &[char], i: usize) -> Option<(usize, usize, usize)> {
     Some((i + 1, j, close + 1))
 }
 
-fn parse_inline(chars: &[char], style: u8, out: &mut Vec<Span>) {
+/// Adresse d'un lien « [texte](adresse "titre") » : sans le titre ni les chevrons.
+fn link_target(raw: &str) -> String {
+    let raw = raw.trim();
+    let raw = raw.split_once(" \"").map_or(raw, |(address, _)| address).trim();
+    String::from(
+        raw.strip_prefix('<')
+            .and_then(|r| r.strip_suffix('>'))
+            .unwrap_or(raw),
+    )
+}
+
+fn parse_inline(chars: &[char], style: u8, link: &str, out: &mut Vec<Span>) {
     let mut text = String::new();
     let mut i = 0;
     let flush = |text: &mut String, out: &mut Vec<Span>| {
-        push(out, text, style);
+        push(out, text, style, link);
         text.clear();
     };
     while i < chars.len() {
@@ -546,10 +562,7 @@ fn parse_inline(chars: &[char], style: u8, out: &mut Vec<Span>) {
             }
             '\n' => {
                 flush(&mut text, out);
-                out.push(Span {
-                    text: String::from("\n"),
-                    style,
-                });
+                push(out, "\n", style, link);
                 i += 1;
                 continue;
             }
@@ -563,7 +576,7 @@ fn parse_inline(chars: &[char], style: u8, out: &mut Vec<Span>) {
                     } else {
                         code
                     };
-                    push(out, &code, style | CODE);
+                    push(out, &code, style | CODE, link);
                     i = end + run;
                     continue;
                 }
@@ -575,7 +588,7 @@ fn parse_inline(chars: &[char], style: u8, out: &mut Vec<Span>) {
                 if let Some((start, end, after)) = link_at(chars, i + 1) {
                     flush(&mut text, out);
                     let alt: String = chars[start..end].iter().collect();
-                    push(out, &alloc::format!("[image: {alt}]"), style | ITALIC);
+                    push(out, &alloc::format!("[image: {alt}]"), style | ITALIC, link);
                     i = after;
                     continue;
                 }
@@ -583,7 +596,8 @@ fn parse_inline(chars: &[char], style: u8, out: &mut Vec<Span>) {
             '[' => {
                 if let Some((start, end, after)) = link_at(chars, i) {
                     flush(&mut text, out);
-                    parse_inline(&chars[start..end], style | LINK, out);
+                    let target: String = chars[end + 2..after - 1].iter().collect();
+                    parse_inline(&chars[start..end], style | LINK, &link_target(&target), out);
                     i = after;
                     continue;
                 }
@@ -596,7 +610,12 @@ fn parse_inline(chars: &[char], style: u8, out: &mut Vec<Span>) {
                         && !inner.contains(' ')
                     {
                         flush(&mut text, out);
-                        push(out, &inner, style | LINK);
+                        let target = if inner.contains('@') && !inner.contains("://") {
+                            alloc::format!("mailto:{inner}")
+                        } else {
+                            inner.clone()
+                        };
+                        push(out, &inner, style | LINK, &target);
                         i += len + 2;
                         continue;
                     }
@@ -625,7 +644,7 @@ fn parse_inline(chars: &[char], style: u8, out: &mut Vec<Span>) {
                             (_, 2) => BOLD,
                             _ => BOLD | ITALIC,
                         };
-                        parse_inline(&chars[i + run..end], style | added, out);
+                        parse_inline(&chars[i + run..end], style | added, link, out);
                         i = end + run;
                         continue;
                     }
@@ -640,4 +659,28 @@ fn parse_inline(chars: &[char], style: u8, out: &mut Vec<Span>) {
         i += 1;
     }
     flush(&mut text, out);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn liens_gardent_leur_adresse() {
+        let spans = inline(r#"Voir [le **site**](https://exemple.fr "titre") et <https://a.b>."#);
+        let links: Vec<(&str, &str)> = spans
+            .iter()
+            .filter(|span| span.style & LINK != 0)
+            .map(|span| (span.text.as_str(), span.link.as_str()))
+            .collect();
+        assert_eq!(
+            links,
+            [
+                ("le ", "https://exemple.fr"),
+                ("site", "https://exemple.fr"),
+                ("https://a.b", "https://a.b")
+            ]
+        );
+        assert!(spans[0].link.is_empty());
+    }
 }

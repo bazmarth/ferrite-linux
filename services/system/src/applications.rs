@@ -24,6 +24,8 @@ pub struct DesktopEntry {
     pub wm_class: Option<String>,
     /// Catégories freedesktop (`Categories`), pour ranger le lanceur par rubriques.
     pub categories: Vec<String>,
+    /// Types de fichiers qu'elle sait ouvrir (`MimeType`), pour les applications par défaut.
+    pub mime_types: Vec<String>,
 }
 
 /// Entrées déjà fournies par le bureau Ferrite lui-même (Dock, menu).
@@ -168,6 +170,15 @@ pub fn parse(text: &str, id: &str) -> Option<DesktopEntry> {
             .map(|list| {
                 list.split(';')
                     .filter(|category| !category.is_empty())
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default(),
+        mime_types: keys
+            .get("MimeType")
+            .map(|list| {
+                list.split(';')
+                    .filter(|mime| !mime.is_empty())
                     .map(str::to_owned)
                     .collect()
             })

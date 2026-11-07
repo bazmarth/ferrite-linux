@@ -1,0 +1,5 @@
+#!/bin/sh
+# Écran de démarrage : thème Plymouth « ferrite » (logo de Ferrite OS sur fond nuit), puis
+# reconstruction de l'initramfs pour qu'il s'affiche dès le chargement du noyau.
+set -eu
+plymouth-set-default-theme -R ferrite

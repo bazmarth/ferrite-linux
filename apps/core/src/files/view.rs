@@ -1,6 +1,7 @@
 //! Interface de Fichiers, d'après la planche « Fichiers » : barre latérale (Favoris,
 //! Appareils, Étiquettes), barre d'outils (chemin, Grille / Liste, recherche, thème,
-//! aperçu), grille ou liste, barre d'état et panneau d'aperçu ; glisser-déposer vers les
+//! aperçu), pastilles de filtre et tri, fichiers récents, grille ou liste, bande
+//! d'informations et panneau d'aperçu ; glisser-déposer vers les
 //! dossiers, la barre latérale, le chemin et la Corbeille, puis, hors de la fenêtre, vers
 //! le Dock et les autres applications (voir `ferrite_system::drag`).
 
@@ -15,16 +16,28 @@ use ferrite_system::drag::{self, Deposit};
 use crate::details;
 
 use super::look::{Look, look};
-use super::places::TAGS;
 use super::*;
 
 /// Barre latérale, panneau d'aperçu et cases de la grille, en points.
 const SIDEBAR_WIDTH: f32 = 250.0;
 const PREVIEW_WIDTH: f32 = 300.0;
 const CELL_MIN: f32 = 124.0;
-const CELL_HEIGHT: f32 = 136.0;
+const CELL_HEIGHT: f32 = 152.0;
 const CELL_GAP: f32 = 10.0;
 const LIST_ROW: f32 = 40.0;
+/// Bande d'informations du bas.
+const STATUS_HEIGHT: f32 = 52.0;
+/// Rangée des filtres, bande des récents et largeur minimale d'une carte récente.
+const FILTER_BAR: f32 = 42.0;
+const RECENT_PANEL: f32 = 104.0;
+const RECENT_CARD_MIN: f32 = 190.0;
+/// Clés du menu « Trier ».
+const SORT_KEYS: [(&str, SortKey); 4] = [
+    ("Nom", SortKey::Name),
+    ("Date de modification", SortKey::Modified),
+    ("Taille", SortKey::Size),
+    ("Type", SortKey::Kind),
+];
 /// Colonnes Taille, Modifié et Type de la liste.
 const LIST_COLUMNS: [f32; 3] = [120.0, 190.0, 150.0];
 
@@ -164,6 +177,40 @@ fn icon_button(
     response
 }
 
+/// Pastille de filtre ou d'étiquette : fond accentué quand elle est choisie, point de
+/// couleur éventuel devant le texte.
+fn chip(ui: &mut egui::Ui, look: &Look, label: &str, dot: Option<Color32>, on: bool) -> egui::Response {
+    let ink = if on { look.sel_fg } else { look.fg2 };
+    let galley = ui.painter().layout_no_wrap(label.to_owned(), font(12.0, on), ink);
+    let lead = if dot.is_some() { 16.0 } else { 0.0 };
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(galley.size().x + 24.0 + lead, 26.0), Sense::click());
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    let fill = if on {
+        look.sel_bg
+    } else if response.hovered() {
+        look.stage
+    } else {
+        look.chip
+    };
+    ui.painter().rect_filled(rect, 13.0, fill);
+    if let Some(dot) = dot {
+        ui.painter()
+            .circle_filled(egui::pos2(rect.left() + 15.0, rect.center().y), 4.0, dot);
+    }
+    ui.painter().galley(
+        egui::pos2(rect.left() + 12.0 + lead, rect.center().y - galley.size().y / 2.0),
+        galley,
+        ink,
+    );
+    response
+}
+
+/// Couleur d'une étiquette : son accentuation, comme dans Paramètres.
+pub(super) fn tag_color(tags: &places::Tags, tag: &str) -> Color32 {
+    style::accent_color(tags.color_of(tag))
+}
+
 fn chevron(painter: &egui::Painter, rect: egui::Rect, left: bool, color: Color32, width: f32) {
     let c = rect.center();
     let (x, y) = (if left { 2.5 } else { -2.5 }, 5.0);
@@ -263,11 +310,22 @@ impl FilesState {
             }
             self.status_panel(ui, &look, &mut actions);
         }
+        let analyzing = matches!(self.location, Location::Analysis { .. });
+        if analyzing {
+            self.analysis_bar(ui, &look, &mut actions);
+        } else {
+            self.filter_bar(ui, &look, &mut actions);
+        }
+        if !self.recent_strip.is_empty() && self.search.trim().is_empty() && self.filter == Filter::All {
+            self.recent_panel(ui, &look, &mut actions);
+        }
         self.item_rects.clear();
         let (layer, (area, offset)) = egui::CentralPanel::no_frame()
             .frame(Frame::new().fill(look.win))
             .show(ui, |ui| {
+                // L'analyse se lit en liste : tailles, parts et barres alignées.
                 let shown = match self.view {
+                    _ if analyzing => self.list(ui, &look, &mut actions, &mut targets),
                     View::List => self.list(ui, &look, &mut actions, &mut targets),
                     View::Grid => self.grid(ui, &look, &mut actions, &mut targets),
                 };
@@ -352,6 +410,14 @@ impl FilesState {
                 if response.clicked() {
                     actions.push(Action::ShowTrash);
                 }
+                let analyzing = matches!(self.location, Location::Analysis { .. });
+                if self
+                    .place(ui, look, "status-storage", "Analyse de l’espace", None, analyzing)
+                    .on_hover_text("Retrouver les dossiers et fichiers les plus lourds")
+                    .clicked()
+                {
+                    actions.push(Action::Analyze(home.clone()));
+                }
             }
 
             self.heading(ui, look, "Appareils");
@@ -371,6 +437,15 @@ impl FilesState {
                 if let Some(mount) = &device.mount {
                     targets.push((response.rect, Target::Folder(mount.clone())));
                 }
+                if let Some(mount) = device.mount.clone() {
+                    response.context_menu(|ui| {
+                        style::menu_style(ui);
+                        if style::menu_row(ui, "Analyser l’espace", "", false, true).clicked() {
+                            actions.push(Action::Analyze(mount));
+                            ui.close();
+                        }
+                    });
+                }
                 if eject {
                     actions.push(Action::Eject(device));
                 } else if response.clicked() {
@@ -382,15 +457,60 @@ impl FilesState {
             }
 
             if self.picker.is_none() {
-                self.heading(ui, look, "Étiquettes");
-                for tag in TAGS {
-                    let selected = self.location == Location::Tag(tag.to_owned());
-                    if self.tag_row(ui, look, tag, selected).clicked() {
-                        actions.push(Action::Show(Location::Tag(tag.to_owned())));
+                if self.heading_with_add(ui, look, "Étiquettes", "Nouvelle étiquette") {
+                    actions.push(Action::EditTag(None, None));
+                }
+                let names: Vec<String> = self.tags.list().iter().map(|def| def.name.clone()).collect();
+                for tag in names {
+                    let selected = self.location == Location::Tag(tag.clone());
+                    let response = self.tag_row(ui, look, &tag, selected);
+                    if response.clicked() {
+                        actions.push(Action::Show(Location::Tag(tag.clone())));
                     }
+                    response.context_menu(|ui| {
+                        style::menu_style(ui);
+                        if style::menu_row(ui, "Modifier…", "", false, true).clicked() {
+                            actions.push(Action::EditTag(Some(tag.clone()), None));
+                            ui.close();
+                        }
+                        if style::menu_row(ui, "Supprimer…", "", true, true).clicked() {
+                            actions.push(Action::AskDeleteTag(tag.clone()));
+                            ui.close();
+                        }
+                    });
                 }
             }
         });
+    }
+
+    /// Titre de rubrique avec un bouton « + » à droite ; vrai si on l'a cliqué.
+    fn heading_with_add(&self, ui: &mut egui::Ui, look: &Look, title: &str, hint: &str) -> bool {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 34.0), Sense::hover());
+        ui.painter().text(
+            egui::pos2(rect.left() + 10.0, rect.bottom() - 5.0),
+            egui::Align2::LEFT_BOTTOM,
+            title.to_uppercase(),
+            font(11.0, true),
+            look.head,
+        );
+        let button = egui::Rect::from_center_size(
+            egui::pos2(rect.right() - 16.0, rect.bottom() - 11.0),
+            egui::Vec2::splat(24.0),
+        );
+        let response = ui
+            .interact(button, ui.scope_id().with(("ajouter", title)), Sense::click())
+            .on_hover_text(hint)
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        if response.hovered() {
+            ui.painter().rect_filled(button, 7.0, style::tint(10));
+        }
+        let c = button.center();
+        let stroke = Stroke::new(1.6, look.fg2);
+        ui.painter()
+            .line_segment([c - egui::vec2(5.0, 0.0), c + egui::vec2(5.0, 0.0)], stroke);
+        ui.painter()
+            .line_segment([c - egui::vec2(0.0, 5.0), c + egui::vec2(0.0, 5.0)], stroke);
+        response.clicked()
     }
 
     fn heading(&self, ui: &mut egui::Ui, look: &Look, title: &str) {
@@ -530,7 +650,7 @@ impl FilesState {
             ui.painter().rect_filled(rect, 9.0, style::tint(8));
         }
         let dot = egui::pos2(rect.left() + 17.0, rect.center().y);
-        ui.painter().circle_stroke(dot, 4.25, Stroke::new(1.5, look.fg3));
+        ui.painter().circle_filled(dot, 5.0, tag_color(&self.tags, tag));
         ui.painter().text(
             egui::pos2(dot.x + 17.0, rect.center().y),
             egui::Align2::LEFT_CENTER,
@@ -631,8 +751,9 @@ impl FilesState {
             {
                 actions.push(Action::ToggleTheme);
             }
-            // Recherche : 220 × 34.
-            let (field, _) = ui.allocate_exact_size(egui::vec2(220.0, 34.0), Sense::hover());
+            // Recherche : 220 × 34, moins quand la fenêtre est étroite (le chemin d'abord).
+            let search_width = (ui.available_width() * 0.3 - 40.0).clamp(150.0, 220.0);
+            let (field, _) = ui.allocate_exact_size(egui::vec2(search_width, 34.0), Sense::hover());
             ui.painter().rect_filled(field, 10.0, look.chip);
             let c = egui::pos2(field.left() + 18.0, field.center().y - 1.0);
             ui.painter().circle_stroke(c, 4.2, Stroke::new(1.6, look.fg3));
@@ -722,6 +843,38 @@ impl FilesState {
             Location::Trash => vec![("Corbeille".into(), None)],
             Location::Recent => vec![("Récents".into(), None)],
             Location::Tag(tag) => vec![(tag.clone(), None)],
+            Location::Analysis { dir, largest } => {
+                let root = self
+                    .scan
+                    .as_ref()
+                    .map_or_else(|| dir.clone(), |scan| scan.root.clone());
+                let mut parts: Vec<(String, Option<Location>)> = dir
+                    .ancestors()
+                    .take_while(|part| part.starts_with(&root))
+                    .map(|part| {
+                        let name = if part == home() {
+                            "Dossier perso".to_owned()
+                        } else if part.as_os_str() == "/" {
+                            "Système".to_owned()
+                        } else {
+                            file_name(part)
+                        };
+                        (
+                            name,
+                            Some(Location::Analysis {
+                                dir: part.to_path_buf(),
+                                largest: false,
+                            }),
+                        )
+                    })
+                    .collect();
+                parts.push(("Analyse".into(), None));
+                parts.reverse();
+                if *largest {
+                    parts.push(("Plus gros fichiers".into(), None));
+                }
+                parts
+            }
             Location::Archive { archive, directory } => {
                 let parent = archive.parent().unwrap_or_else(|| Path::new(".")).to_path_buf();
                 let parent_name = if parent == home() {
@@ -850,8 +1003,258 @@ impl FilesState {
         }
     }
 
+    // ----- Analyse de l'espace -----
+
+    /// Total de référence des parts : le dossier analysé (ou la somme de ses éléments).
+    fn analysis_total(&self) -> Option<u64> {
+        let Location::Analysis { dir, .. } = &self.location else {
+            return None;
+        };
+        let counted = self.scan.as_ref().and_then(|scan| scan.size_of(dir));
+        Some(counted.unwrap_or_else(|| self.entries.iter().filter_map(|entry| entry.size).sum()))
+    }
+
+    /// Bandeau de l'analyse : Contenu ou Plus gros fichiers, avancement, Actualiser.
+    fn analysis_bar(&mut self, ui: &mut egui::Ui, look: &Look, actions: &mut Vec<Action>) {
+        let largest = matches!(self.location, Location::Analysis { largest: true, .. });
+        let progress = self.scan.as_ref().map(analysis::Scan::progress);
+        let total = self.analysis_total().unwrap_or(0);
+        egui::Panel::top(ui.scope_id().with("analyse"))
+            .resizable(false)
+            .show_separator_line(false)
+            .exact_size(FILTER_BAR)
+            .frame(Frame::new().fill(look.win).inner_margin(Margin::symmetric(22, 0)))
+            .show(ui, |ui| {
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    if chip(ui, look, "Contenu", None, !largest).clicked() {
+                        actions.push(Action::AnalysisMode(false));
+                    }
+                    if chip(ui, look, "Plus gros fichiers", None, largest).clicked() {
+                        actions.push(Action::AnalysisMode(true));
+                    }
+                    ui.add_space(12.0);
+                    let summary = match progress {
+                        Some(progress) if !progress.done => format!(
+                            "Analyse en cours… {} fichier{} · {}",
+                            progress.files,
+                            plural(progress.files as usize),
+                            format_size(progress.bytes)
+                        ),
+                        Some(progress) => {
+                            let mut text = format!(
+                                "{} ici · {} fichier{} analysé{}",
+                                format_size(total),
+                                progress.files,
+                                plural(progress.files as usize),
+                                plural(progress.files as usize)
+                            );
+                            if progress.unreadable > 0 {
+                                text.push_str(&format!(
+                                    " · {} dossier{} illisible{}",
+                                    progress.unreadable,
+                                    plural(progress.unreadable as usize),
+                                    plural(progress.unreadable as usize)
+                                ));
+                            }
+                            text
+                        }
+                        None => String::new(),
+                    };
+                    ui.label(RichText::new(summary).font(font(12.0, false)).color(look.fg2));
+                    if progress.is_some_and(|progress| !progress.done) {
+                        ui.add(egui::Spinner::new().size(14.0).color(look.fg3));
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if chip(ui, look, "Actualiser", None, false)
+                            .on_hover_text("Tout recompter")
+                            .clicked()
+                        {
+                            actions.push(Action::Rescan);
+                        }
+                        ui.label(
+                            RichText::new("Suppr : mettre à la Corbeille")
+                                .font(font(11.0, false))
+                                .color(look.fg3),
+                        );
+                    });
+                });
+            });
+    }
+
+    // ----- Filtres et tri -----
+
+    /// Pastilles des natures présentes dans le dossier, et menu « Trier » à droite.
+    fn filter_bar(&mut self, ui: &mut egui::Ui, look: &Look, actions: &mut Vec<Action>) {
+        let present: Vec<Filter> = Filter::ALL
+            .into_iter()
+            .filter(|filter| {
+                *filter == Filter::All
+                    || *filter == self.filter
+                    || self.entries.iter().any(|entry| {
+                        (self.show_hidden || !entry.name.starts_with('.')) && filter.matches(entry)
+                    })
+            })
+            .collect();
+        egui::Panel::top(ui.scope_id().with("filtres"))
+            .resizable(false)
+            .show_separator_line(false)
+            .exact_size(FILTER_BAR)
+            .frame(Frame::new().fill(look.win).inner_margin(Margin::symmetric(22, 0)))
+            .show(ui, |ui| {
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    // Une seule pastille « Tout » n'apporte rien.
+                    if present.len() > 2 {
+                        for filter in present {
+                            if chip(ui, look, filter.label(), None, self.filter == filter).clicked() {
+                                actions.push(Action::SetFilter(filter));
+                            }
+                        }
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        self.sort_menu(ui, look, actions);
+                    });
+                });
+            });
+    }
+
+    fn sort_menu(&mut self, ui: &mut egui::Ui, look: &Look, actions: &mut Vec<Action>) {
+        let (key_label, _) = SORT_KEYS
+            .iter()
+            .find(|(_, key)| *key == self.sort)
+            .copied()
+            .unwrap_or(SORT_KEYS[0]);
+        let label = format!("Trier : {}", key_label.to_lowercase());
+        let galley = ui.painter().layout_no_wrap(label, font(12.0, false), look.fg2);
+        let (rect, response) =
+            ui.allocate_exact_size(egui::vec2(galley.size().x + 34.0, 28.0), Sense::click());
+        let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+        if response.hovered() {
+            ui.painter().rect_filled(rect, 8.0, style::tint(8));
+        }
+        ui.painter().galley(
+            egui::pos2(rect.left() + 10.0, rect.center().y - galley.size().y / 2.0),
+            galley,
+            look.fg2,
+        );
+        let c = egui::pos2(rect.right() - 14.0, rect.center().y);
+        ui.painter().line(
+            vec![
+                c + egui::vec2(-3.5, -1.5),
+                c + egui::vec2(0.0, 2.0),
+                c + egui::vec2(3.5, -1.5),
+            ],
+            Stroke::new(1.5, look.fg3),
+        );
+        egui::Popup::menu(&response).show(|ui| {
+            style::menu_style(ui);
+            for (label, key) in SORT_KEYS {
+                if style::radio_row(ui, label, self.sort == key).clicked() {
+                    let ascending = if self.sort == key {
+                        self.ascending
+                    } else {
+                        matches!(key, SortKey::Name | SortKey::Kind)
+                    };
+                    actions.push(Action::SortBy(key, ascending));
+                    ui.close();
+                }
+            }
+            ui.separator();
+            for (label, ascending) in [("Croissant", true), ("Décroissant", false)] {
+                if style::radio_row(ui, label, self.ascending == ascending).clicked() {
+                    actions.push(Action::SortBy(self.sort, ascending));
+                    ui.close();
+                }
+            }
+        });
+    }
+
+    /// Fichiers ouverts récemment, en cartes, en tête du dossier personnel.
+    fn recent_panel(&mut self, ui: &mut egui::Ui, look: &Look, actions: &mut Vec<Action>) {
+        let recent = self.recent_strip.clone();
+        let ctx = ui.ctx().clone();
+        egui::Panel::top(ui.scope_id().with("recents"))
+            .resizable(false)
+            .show_separator_line(false)
+            .exact_size(RECENT_PANEL)
+            .frame(Frame::new().fill(look.win).inner_margin(Margin::symmetric(22, 0)))
+            .show(ui, |ui| {
+                let area = ui.max_rect();
+                ui.painter().text(
+                    egui::pos2(area.left(), area.top() + 12.0),
+                    egui::Align2::LEFT_CENTER,
+                    "Récemment ouverts",
+                    font(13.0, true),
+                    look.fg2,
+                );
+                let top = area.top() + 26.0;
+                let columns = ((area.width() + 10.0) / (RECENT_CARD_MIN + 10.0))
+                    .floor()
+                    .max(1.0) as usize;
+                let shown = recent.len().min(columns);
+                let width = (area.width() - 10.0 * (columns - 1) as f32) / columns as f32;
+                for (slot, entry) in recent.iter().take(shown).enumerate() {
+                    let rect = egui::Rect::from_min_size(
+                        egui::pos2(area.left() + slot as f32 * (width + 10.0), top),
+                        egui::vec2(width, 52.0),
+                    );
+                    let response = ui
+                        .interact(rect, ui.scope_id().with(("recent", slot)), Sense::click())
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
+                        .on_hover_text(display_location(&entry.path));
+                    ui.painter().rect_filled(
+                        rect,
+                        12.0,
+                        if response.hovered() { look.stage } else { look.chip },
+                    );
+                    let art = egui::Rect::from_center_size(
+                        egui::pos2(rect.left() + 28.0, rect.center().y),
+                        egui::Vec2::splat(34.0),
+                    );
+                    match self.thumbs.get(&ctx, &entry.path) {
+                        Some(texture) => paint_cover(ui, &texture, art, 6.0),
+                        None => self.icons.paint(ui, entry_icon(entry), art, IconStyle::Color),
+                    }
+                    let left = art.right() + 10.0;
+                    let room = rect.right() - left - 10.0;
+                    text(
+                        ui,
+                        &entry.name,
+                        egui::pos2(left, rect.center().y - 9.0),
+                        egui::Align2::LEFT_CENTER,
+                        font(13.0, true),
+                        look.fg,
+                        room,
+                    );
+                    text(
+                        ui,
+                        &format_time(entry.modified),
+                        egui::pos2(left, rect.center().y + 9.0),
+                        egui::Align2::LEFT_CENTER,
+                        font(11.0, false),
+                        look.fg3,
+                        room,
+                    );
+                    if response.clicked() {
+                        actions.push(Action::Open(entry.path.clone(), false));
+                    }
+                }
+                ui.painter().text(
+                    egui::pos2(area.left(), area.bottom() - 12.0),
+                    egui::Align2::LEFT_CENTER,
+                    "Tous les fichiers",
+                    font(13.0, true),
+                    look.fg2,
+                );
+            });
+    }
+
     // ----- Barre d'état -----
 
+    /// Bande d'informations du bas : l'élément choisi (icône, nom, nature, taille, date)
+    /// avec Partager et Ouvrir ; sinon le résumé du dossier et l'espace libre ; une copie
+    /// en cours prend sa place.
     fn status_panel(&mut self, ui: &mut egui::Ui, look: &Look, actions: &mut Vec<Action>) {
         let visible = self.visible().len();
         let selected = self.selected.len();
@@ -860,11 +1263,26 @@ impl FilesState {
         let message = self.message.clone();
         let usage = self.usage;
         let in_trash = self.location == Location::Trash;
+        let in_archive = self.in_archive();
         let query = self.search.trim().to_owned();
+        let single = (selected == 1)
+            .then(|| {
+                self.entries
+                    .iter()
+                    .find(|entry| self.selected.contains(&entry.path))
+            })
+            .flatten()
+            .cloned();
+        let paths = self.selection();
+        let ctx = ui.ctx().clone();
         egui::Panel::bottom(ui.scope_id().with("etat"))
             .resizable(false)
-            .exact_size(34.0)
-            .frame(Frame::new().fill(look.win).inner_margin(Margin::symmetric(18, 0)))
+            .exact_size(STATUS_HEIGHT)
+            .frame(
+                Frame::new()
+                    .fill(look.preview)
+                    .inner_margin(Margin::symmetric(18, 0)),
+            )
             .show(ui, |ui| {
                 let full = ui.max_rect().expand2(egui::vec2(18.0, 0.0));
                 ui.painter()
@@ -887,6 +1305,46 @@ impl FilesState {
                         if ui.small_button("Annuler").clicked() {
                             actions.push(Action::CancelJob(0));
                         }
+                        return;
+                    }
+                    let mut room = ui.available_width() - 240.0;
+                    if let Some(entry) = &single {
+                        // Icône (ou vignette), nom, puis nature · taille · date.
+                        let (art, _) = ui.allocate_exact_size(egui::Vec2::splat(32.0), Sense::hover());
+                        match self.thumbs.get(&ctx, &entry.path) {
+                            Some(texture) => paint_cover(ui, &texture, art, 6.0),
+                            None => self.icons.paint(ui, entry_icon(entry), art, IconStyle::Color),
+                        }
+                        ui.add_space(6.0);
+                        let (rect, _) =
+                            ui.allocate_exact_size(egui::vec2(room.max(80.0), 36.0), Sense::hover());
+                        text(
+                            ui,
+                            &entry.name,
+                            egui::pos2(rect.left(), rect.top() + 9.0),
+                            egui::Align2::LEFT_CENTER,
+                            font(13.0, true),
+                            look.fg,
+                            rect.width(),
+                        );
+                        let mut facts = vec![kind_label(entry)];
+                        if let Some(size) = self.cell_detail(entry) {
+                            facts.push(size);
+                        }
+                        let date = format_time(entry.modified);
+                        if !date.is_empty() {
+                            facts.push(format!("modifié {}", date.to_lowercase()));
+                        }
+                        text(
+                            ui,
+                            &facts.join(" · "),
+                            egui::pos2(rect.left(), rect.bottom() - 8.0),
+                            egui::Align2::LEFT_CENTER,
+                            font(11.0, false),
+                            look.fg3,
+                            rect.width(),
+                        );
+                        room = 0.0;
                     } else {
                         let mut summary = format!("{visible} élément{}", plural(visible));
                         if selected > 0 {
@@ -899,21 +1357,56 @@ impl FilesState {
                             summary.push_str(&format!(" · filtre « {query} »"));
                         }
                         ui.label(summary);
-                        if let Some((text, error)) = &message {
-                            ui.label("·");
-                            if *error {
-                                ui.colored_label(style::error(), text);
-                            } else {
-                                ui.label(text);
-                            }
+                    }
+                    if let Some((text, error)) = &message
+                        && room > 0.0
+                    {
+                        ui.label("·");
+                        if *error {
+                            ui.colored_label(style::error(), text);
+                        } else {
+                            ui.label(text);
                         }
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if in_trash {
+                        ui.spacing_mut().item_spacing.x = 8.0;
+                        if let Some(entry) = &single
+                            && !in_trash
+                        {
+                            let open = egui::Button::new(
+                                RichText::new("Ouvrir")
+                                    .font(font(13.0, true))
+                                    .color(style::accent_text()),
+                            )
+                            // Texte noir ou blanc selon la clarté de l'accent (clair en thème sombre).
+                            .fill(style::accent())
+                            .corner_radius(9)
+                            .min_size(egui::vec2(88.0, 32.0));
+                            if ui.add(open).clicked() {
+                                actions.push(Action::Open(entry.path.clone(), entry.directory));
+                            }
+                        }
+                        if selected > 0 && !in_trash && !in_archive {
+                            let share = egui::Button::new(
+                                RichText::new("Partager").font(font(13.0, false)).color(look.fg),
+                            )
+                            .fill(look.chip)
+                            .corner_radius(9)
+                            .min_size(egui::vec2(88.0, 32.0));
+                            if ui
+                                .add(share)
+                                .on_hover_text("Copie l’adresse, à coller dans un message")
+                                .clicked()
+                            {
+                                actions.push(Action::Share(paths.clone()));
+                            }
+                        } else if in_trash {
                             if ui.small_button("Vider la Corbeille").clicked() {
                                 actions.push(Action::AskEmptyTrash);
                             }
-                        } else if let Some(usage) = usage {
+                        } else if selected == 0
+                            && let Some(usage) = usage
+                        {
                             let (bar, _) = ui.allocate_exact_size(egui::vec2(90.0, 4.0), Sense::hover());
                             usage_bar(ui.painter(), bar, used_part(usage), look);
                             ui.label(usage_text(usage));
@@ -934,6 +1427,15 @@ impl FilesState {
             )
         } else if searching {
             ("Aucun résultat", "Essayez un autre nom.")
+        } else if matches!(self.location, Location::Analysis { .. })
+            && self.scan.as_ref().is_some_and(|scan| !scan.progress().done)
+        {
+            (
+                "Analyse en cours…",
+                "Les tailles apparaissent à mesure qu’elles sont comptées.",
+            )
+        } else if matches!(self.location, Location::Analysis { .. }) {
+            ("Rien à montrer ici", "Ce dossier ne contient aucun fichier.")
         } else if self.location == Location::Trash {
             ("La Corbeille est vide", "Les éléments supprimés arrivent ici.")
         } else if self.location == Location::Recent {
@@ -1012,7 +1514,8 @@ impl FilesState {
         let ctx = ui.ctx().clone();
         let scrolled = egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
             self.lasso_autoscroll(ui);
-            ui.add_space(20.0);
+            // Sous les récents, leur titre « Tous les fichiers » sert déjà d'espace.
+            ui.add_space(if self.recent_strip.is_empty() { 12.0 } else { 4.0 });
             ui.spacing_mut().item_spacing = egui::vec2(CELL_GAP, CELL_GAP);
             for row in visible.chunks(columns) {
                 ui.horizontal(|ui| {
@@ -1055,7 +1558,7 @@ impl FilesState {
                                 IconStyle::Color,
                             ),
                         }
-                        let label_center = egui::pos2(rect.center().x, rect.bottom() - 8.0 - 10.0);
+                        let label_center = egui::pos2(rect.center().x, rect.bottom() - 28.0);
                         let mut child = ui.new_child(
                             egui::UiBuilder::new()
                                 .max_rect(egui::Rect::from_center_size(
@@ -1065,11 +1568,11 @@ impl FilesState {
                                 .layout(egui::Layout::left_to_right(egui::Align::Center)),
                         );
                         if !self.rename_field(&mut child, &entry.path, cell_width - 12.0, actions) {
-                            let font = font(13.0, selected);
+                            let name_font = font(13.0, selected);
                             let ink = if selected { Color32::WHITE } else { look.fg };
                             let galley_width = ui
                                 .painter()
-                                .layout_no_wrap(entry.name.clone(), font.clone(), ink)
+                                .layout_no_wrap(entry.name.clone(), name_font.clone(), ink)
                                 .size()
                                 .x
                                 .min(112.0 - 14.0);
@@ -1085,10 +1588,30 @@ impl FilesState {
                                 &entry.name,
                                 label_center,
                                 egui::Align2::CENTER_CENTER,
-                                font,
+                                name_font,
                                 ink,
                                 112.0 - 14.0,
                             );
+                            // Sous le nom : taille du fichier ou contenu du dossier.
+                            if let Some(detail) = self.cell_detail(&entry) {
+                                text(
+                                    ui,
+                                    &detail,
+                                    egui::pos2(rect.center().x, rect.bottom() - 10.0),
+                                    egui::Align2::CENTER_CENTER,
+                                    font(11.0, false),
+                                    if selected { look.sel_fg } else { look.fg3 },
+                                    cell_width - 12.0,
+                                );
+                            }
+                            // Étiquettes : un point de couleur chacune, en haut à droite.
+                            for (slot, tag) in self.tags.of(&entry.path).iter().enumerate() {
+                                ui.painter().circle_filled(
+                                    egui::pos2(rect.right() - 14.0 - slot as f32 * 12.0, rect.top() + 14.0),
+                                    4.5,
+                                    tag_color(&self.tags, tag),
+                                );
+                            }
                         }
                         let response = response.on_hover_text_at_pointer(&entry.name);
                         self.item_response(&response, index, ui, actions);
@@ -1134,12 +1657,23 @@ impl FilesState {
         let (header, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 34.0), Sense::hover());
         ui.painter()
             .hline(area.x_range(), header.bottom() - 0.5, Stroke::new(1.0, look.line));
-        let third = if in_trash { "Supprimé le" } else { "Modifié" };
+        let largest = matches!(self.location, Location::Analysis { largest: true, .. });
+        let third = if in_trash {
+            "Supprimé le"
+        } else if largest {
+            "Dossier"
+        } else {
+            "Modifié"
+        };
+        let analysis_total = self.analysis_total();
+        let scan_root = self.scan.as_ref().map(|scan| scan.root.clone());
+        let analyzing = analysis_total.is_some();
+        let fourth = if analyzing { "Part" } else { "Type" };
         for (index, (title, key, left)) in [
             ("Nom", SortKey::Name, area.left() + 12.0),
             ("Taille", SortKey::Size, x(0)),
             (third, SortKey::Modified, x(1)),
-            ("Type", SortKey::Kind, x(2)),
+            (fourth, SortKey::Kind, x(2)),
         ]
         .into_iter()
         .enumerate()
@@ -1152,7 +1686,9 @@ impl FilesState {
             let rect =
                 egui::Rect::from_min_size(egui::pos2(left, header.top()), egui::vec2(width, header.height()));
             let response = ui.interact(rect, ui.scope_id().with(("tri", index)), Sense::click());
+            // L'analyse est toujours triée du plus lourd au plus léger.
             let arrow = match (self.sort == key, self.ascending) {
+                _ if analyzing => "",
                 (true, true) => " ↑",
                 (true, false) => " ↓",
                 _ => "",
@@ -1164,7 +1700,7 @@ impl FilesState {
                 font(12.0, true),
                 if self.sort == key { look.fg2 } else { look.fg3 },
             );
-            if response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+            if !analyzing && response.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
                 actions.push(Action::Sort(key));
             }
         }
@@ -1228,27 +1764,64 @@ impl FilesState {
                     );
                 }
                 let size = match (entry.directory, entry.size) {
+                    (true, Some(size)) if analyzing => format_size(size),
+                    (true, None) if analyzing => "Calcul…".to_owned(),
                     (true, _) => "—".to_owned(),
                     (false, Some(size)) => format_size(size),
                     (false, None) => String::new(),
                 };
                 let date = match &entry.trash {
                     Some(item) => item.deleted.replace('T', " à ").chars().take(18).collect(),
+                    // Plus gros fichiers : où il se trouve, depuis le dossier analysé.
+                    None if largest => entry
+                        .path
+                        .parent()
+                        .zip(scan_root.as_deref())
+                        .and_then(|(parent, root)| parent.strip_prefix(root).ok())
+                        .map(|relative| relative.display().to_string())
+                        .filter(|relative| !relative.is_empty())
+                        .unwrap_or_else(|| "—".into()),
                     None => format_time(entry.modified),
                 };
-                for (column, value) in [size, date, kind_label(&entry)].into_iter().enumerate() {
+                // Analyse : la part du dossier analysé, en barre et en pourcentage.
+                let fourth = match analysis_total {
+                    Some(total) => {
+                        let part = match entry.size {
+                            Some(size) if total > 0 => size as f32 / total as f32,
+                            _ => 0.0,
+                        };
+                        let bar = egui::Rect::from_min_size(
+                            egui::pos2(x(2), rect.center().y - 3.0),
+                            egui::vec2(LIST_COLUMNS[2] - 52.0, 6.0),
+                        );
+                        usage_bar(ui.painter(), bar, part, look);
+                        if entry.size.is_some() {
+                            format!("{:>3} %", (part * 100.0).round() as u32)
+                        } else {
+                            String::new()
+                        }
+                    }
+                    None => kind_label(&entry),
+                };
+                for (column, value) in [size, date, fourth].into_iter().enumerate() {
+                    let left = if column == 2 && analyzing {
+                        x(2) + LIST_COLUMNS[2] - 46.0
+                    } else {
+                        x(column)
+                    };
                     text(
                         ui,
                         &value,
-                        egui::pos2(x(column), rect.center().y),
+                        egui::pos2(left, rect.center().y),
                         egui::Align2::LEFT_CENTER,
-                        font(14.0, false),
+                        font(14.0, column == 0 && analyzing),
                         sub,
                         LIST_COLUMNS[column] - 6.0,
                     );
                 }
                 let response = response.on_hover_text_at_pointer(match &entry.trash {
                     Some(item) => format!("Origine : {}", item.original.display()),
+                    None if largest => format!("{} — dans {}", entry.name, display_location(&entry.path)),
                     None => entry.name.clone(),
                 });
                 self.item_response(&response, index, ui, actions);
@@ -1331,6 +1904,7 @@ impl FilesState {
                             Location::Trash => ("places-trash", "Corbeille".into()),
                             Location::Recent => ("app-clock", "Récents".into()),
                             Location::Tag(tag) => ("places-folder", tag.clone()),
+                            Location::Analysis { dir, .. } => ("status-storage", file_name(dir)),
                         };
                         (icon, name, format!("Dossier · {count} élément{}", plural(count)))
                     }
@@ -1490,10 +2064,10 @@ impl FilesState {
                                     Sense::click(),
                                 );
                                 ui.painter().rect_filled(rect, 13.0, look.chip);
-                                ui.painter().circle_stroke(
+                                ui.painter().circle_filled(
                                     egui::pos2(rect.left() + 14.0, rect.center().y),
-                                    3.25,
-                                    Stroke::new(1.5, look.fg3),
+                                    4.0,
+                                    tag_color(&self.tags, &tag),
                                 );
                                 ui.painter().galley(
                                     egui::pos2(rect.left() + 24.0, rect.center().y - galley.size().y / 2.0),
@@ -1516,13 +2090,7 @@ impl FilesState {
                                 .galley(rect.center() - galley.size() / 2.0, galley, look.fg2);
                             egui::Popup::menu(&add).show(|ui| {
                                 style::menu_style(ui);
-                                for tag in TAGS {
-                                    let on = self.tags.of(&entry.path).iter().any(|known| known == tag);
-                                    if style::radio_row(ui, tag, on).clicked() {
-                                        actions.push(Action::ToggleTag(entry.path.clone(), tag.to_owned()));
-                                        ui.close();
-                                    }
-                                }
+                                self.tag_choices(ui, &entry.path, actions);
                             });
                         });
                     });
@@ -1615,6 +2183,20 @@ impl FilesState {
         }
     }
 
+    /// Ligne sous le nom d'une case : « 240 Ko », « 12 éléments ».
+    fn cell_detail(&self, entry: &FileEntry) -> Option<String> {
+        if entry.directory {
+            let count = *self.child_counts.get(&entry.path)?;
+            Some(if count == 0 {
+                "Vide".to_owned()
+            } else {
+                format!("{count} élément{}", plural(count))
+            })
+        } else {
+            entry.size.map(format_size)
+        }
+    }
+
     /// Détail d'une sélection de plusieurs éléments : dossiers, fichiers et leur taille
     /// (« 8 dossiers, 7 fichiers · 916,8 Ko »).
     fn selection_detail(&self) -> Option<String> {
@@ -1626,9 +2208,13 @@ impl FilesState {
             .iter()
             .filter(|entry| self.selected.contains(&entry.path));
         let (mut folders, mut files, mut bytes) = (0usize, 0usize, 0u64);
+        let analyzing = matches!(self.location, Location::Analysis { .. });
         for entry in chosen {
             if entry.directory {
                 folders += 1;
+                if analyzing {
+                    bytes += entry.size.unwrap_or(0);
+                }
             } else {
                 files += 1;
                 bytes += entry.size.unwrap_or(0);
@@ -1642,7 +2228,7 @@ impl FilesState {
             parts.push(format!("{files} fichier{}", plural(files)));
         }
         let mut detail = parts.join(", ");
-        if files > 0 {
+        if files > 0 || (analyzing && bytes > 0) {
             detail.push_str(&format!(" · {}", format_size(bytes)));
         }
         Some(detail)

@@ -161,8 +161,8 @@ pub struct Ferrite {
     /// Dernier refus d'un réglage système, montré dans les réglages rapides.
     pub system_error: Option<String>,
     pub system_link: Option<SystemLink>,
-    /// Fondu au noir avant le verrouillage ou la mise en veille.
-    pub screen_fade: Option<(Instant, bool)>,
+    /// Passage par le noir : verrouillage, mise en veille, réveil, déverrouillage.
+    pub screen_fade: Option<crate::desktop::lock::ScreenFade>,
     pub pending_power: Option<PowerAction>,
     /// Fin du compte à rebours du dialogue d'arrêt : l'action choisie se fait seule.
     pub power_deadline: Option<std::time::Instant>,
@@ -285,6 +285,9 @@ pub struct Ferrite {
     pub redraw: Option<smithay::reexports::calloop::ping::Ping>,
     /// Fraction figée pour la démonstration `--demo-genie`.
     pub genie_demo: Option<(f64, Option<Instant>)>,
+    /// Fraction figée pour la démonstration `--demo-swap`, instant où les fenêtres étaient
+    /// prêtes, et l'échange déjà fait.
+    pub swap_demo: Option<(f64, Option<Instant>, bool)>,
     /// Options de démonstration : actions faites à l'apparition de la première fenêtre.
     pub demo_switcher: bool,
     pub demo_screenshot: bool,
@@ -538,6 +541,7 @@ impl Ferrite {
             x_display: None,
             seat,
             genie_demo: None,
+            swap_demo: None,
             demo_switcher: false,
             demo_screenshot: false,
         })
@@ -718,6 +722,35 @@ impl Ferrite {
         self.request_redraw();
     }
 
+    /// `--demo-swap` : dès que deux fenêtres rangées ont dessiné, elles échangent leurs
+    /// places et le glissement reste figé.
+    fn run_swap_demo(&mut self) {
+        let Some((fraction, since, false)) = self.swap_demo else {
+            return;
+        };
+        let ready = self.tiling
+            && self.tile_order.len() >= 2
+            && self.tile_order.iter().all(|window| window.geometry().size.w > 0)
+            && self.window_animations.borrow().is_empty();
+        // Les applications ont le temps de prendre leur place rangée avant l'échange.
+        let since = if ready {
+            since.or_else(|| Some(Instant::now()))
+        } else {
+            None
+        };
+        self.swap_demo = Some((fraction, since, false));
+        if !since.is_some_and(|since| since.elapsed() >= std::time::Duration::from_secs(2)) {
+            self.request_redraw();
+            return;
+        }
+        let second = self.tile_order[1].clone();
+        self.promote_tiled(&second);
+        for animation in self.window_animations.borrow_mut().iter_mut() {
+            animation.frozen = Some(fraction);
+        }
+        self.swap_demo = Some((fraction, since, true));
+    }
+
     pub fn run_genie_demo(&mut self) {
         if self.top_window().is_some() {
             if std::mem::take(&mut self.demo_switcher) {
@@ -732,6 +765,7 @@ impl Ferrite {
                 });
             }
         }
+        self.run_swap_demo();
         let Some((fraction, None)) = self.genie_demo else {
             return;
         };

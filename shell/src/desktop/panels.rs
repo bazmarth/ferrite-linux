@@ -1805,8 +1805,15 @@ impl Panels {
         if let Some(rect) = open {
             canvas.fill(Rect::new(rect.x, 4.0, rect.w, layout.bar - 8.0), 8.0, pill);
         }
+        // Symbole de Ferrite OS sans tuile, de la teinte du texte de la barre : blanc sur le
+        // voile sombre ou la barre opaque du thème sombre, sombre sur la barre opaque claire.
+        let symbol = if ink.r > 128 {
+            "ferrite-symbol-white"
+        } else {
+            "ferrite-symbol"
+        };
         canvas.icon(
-            "ferrite-logo",
+            symbol,
             (applications.x + 20.0, layout.bar / 2.0),
             20.0,
             Style::Color,

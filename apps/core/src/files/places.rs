@@ -7,10 +7,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use ferrite_system::command;
+use ferrite_system::{command, config::Accent};
 
-/// Étiquettes proposées, comme sur la planche.
-pub const TAGS: [&str; 3] = ["Travail", "Personnel", "Important"];
+/// Étiquettes proposées tant que l'utilisateur n'a rien changé, comme sur la planche.
+const DEFAULT_TAGS: [(&str, Accent); 3] = [
+    ("Travail", Accent::Blue),
+    ("Personnel", Accent::Green),
+    ("Important", Accent::Red),
+];
 
 /// Nombre maximal de fichiers récents affichés.
 const RECENT_LIMIT: usize = 40;
@@ -84,15 +88,51 @@ fn unescape(text: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+/// Une étiquette : son nom et sa couleur, prise dans la palette des accentuations.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TagDef {
+    pub name: String,
+    pub color: Accent,
+}
+
 /// Étiquettes des fichiers, gardées dans `~/.config/ferrite/etiquettes` : une ligne
-/// « étiquette<TAB>chemin » par fichier étiqueté.
+/// « étiquette<TAB>chemin » par fichier étiqueté. La liste des étiquettes, dans l'ordre de
+/// la barre latérale, est dans `~/.config/ferrite/etiquettes-liste` : « nom<TAB>couleur ».
 #[derive(Debug, Default)]
 pub struct Tags {
     by_path: BTreeMap<PathBuf, Vec<String>>,
+    defs: Vec<TagDef>,
 }
 
 fn tags_path() -> PathBuf {
     ferrite_system::config::Settings::path().with_file_name("etiquettes")
+}
+
+fn defs_path() -> PathBuf {
+    ferrite_system::config::Settings::path().with_file_name("etiquettes-liste")
+}
+
+fn accent_of(key: &str) -> Accent {
+    Accent::ALL
+        .into_iter()
+        .find(|accent| accent.key() == key)
+        .unwrap_or_default()
+}
+
+/// Lit la liste « nom<TAB>couleur » ; `None` si le fichier n'existe pas encore.
+pub fn parse_defs(text: &str) -> Vec<TagDef> {
+    let mut defs: Vec<TagDef> = Vec::new();
+    for line in text.lines() {
+        let (name, color) = line.split_once('\t').unwrap_or((line, ""));
+        let name = name.trim();
+        if !name.is_empty() && !defs.iter().any(|def| def.name == name) {
+            defs.push(TagDef {
+                name: name.to_owned(),
+                color: accent_of(color.trim()),
+            });
+        }
+    }
+    defs
 }
 
 impl Tags {
@@ -108,7 +148,32 @@ impl Tags {
                 }
             }
         }
+        tags.defs = match fs::read_to_string(defs_path()) {
+            Ok(text) => parse_defs(&text),
+            Err(_) => DEFAULT_TAGS
+                .iter()
+                .map(|(name, color)| TagDef {
+                    name: (*name).to_owned(),
+                    color: *color,
+                })
+                .collect(),
+        };
+        tags.adopt_orphans();
         tags
+    }
+
+    /// Une étiquette portée par un fichier mais absente de la liste y est ajoutée (en
+    /// bleu) : rien ne disparaît sans qu'on l'ait demandé.
+    fn adopt_orphans(&mut self) {
+        let used: Vec<String> = self.by_path.values().flatten().cloned().collect();
+        for name in used {
+            if !self.defs.iter().any(|def| def.name == name) {
+                self.defs.push(TagDef {
+                    name,
+                    color: Accent::Blue,
+                });
+            }
+        }
     }
 
     fn save(&self) {
@@ -117,11 +182,96 @@ impl Tags {
             .iter()
             .flat_map(|(path, tags)| tags.iter().map(move |tag| format!("{tag}\t{}\n", path.display())))
             .collect();
-        let path = tags_path();
-        if let Some(parent) = path.parent() {
-            let _ = fs::create_dir_all(parent);
+        write_config(&tags_path(), &text);
+    }
+
+    fn save_defs(&self) {
+        let text: String = self
+            .defs
+            .iter()
+            .map(|def| format!("{}\t{}\n", def.name, def.color.key()))
+            .collect();
+        write_config(&defs_path(), &text);
+    }
+
+    /// Étiquettes, dans l'ordre de la barre latérale.
+    pub fn list(&self) -> &[TagDef] {
+        &self.defs
+    }
+
+    pub fn color_of(&self, name: &str) -> Accent {
+        self.defs
+            .iter()
+            .find(|def| def.name == name)
+            .map(|def| def.color)
+            .unwrap_or_default()
+    }
+
+    /// Nombre de fichiers qui portent `name`.
+    pub fn usage(&self, name: &str) -> usize {
+        self.by_path
+            .values()
+            .filter(|tags| tags.iter().any(|tag| tag == name))
+            .count()
+    }
+
+    /// Nom accepté pour une étiquette (nouvelle, ou `current` renommée) : non vide, sur
+    /// une ligne, pas déjà pris (sans tenir compte de la casse).
+    pub fn check_name(&self, name: &str, current: Option<&str>) -> Result<String, String> {
+        let name = name.trim();
+        if name.is_empty() {
+            return Err("Donnez un nom à l’étiquette.".into());
         }
-        let _ = fs::write(path, text);
+        if name.contains(['\t', '\n', '\r']) {
+            return Err("Le nom tient sur une ligne.".into());
+        }
+        if name.chars().count() > 40 {
+            return Err("Nom trop long (40 caractères au plus).".into());
+        }
+        let taken = self
+            .defs
+            .iter()
+            .any(|def| Some(def.name.as_str()) != current && def.name.to_lowercase() == name.to_lowercase());
+        if taken {
+            return Err(format!("L’étiquette « {name} » existe déjà."));
+        }
+        Ok(name.to_owned())
+    }
+
+    /// Crée l'étiquette, ou renomme et recolore `current` (les fichiers la gardent).
+    pub fn save_tag(&mut self, current: Option<&str>, name: &str, color: Accent) -> Result<String, String> {
+        let name = self.check_name(name, current)?;
+        match current.and_then(|current| self.defs.iter_mut().find(|def| def.name == current)) {
+            Some(def) => {
+                let old = std::mem::replace(&mut def.name, name.clone());
+                def.color = color;
+                if old != name {
+                    for tags in self.by_path.values_mut() {
+                        for tag in tags.iter_mut().filter(|tag| **tag == old) {
+                            tag.clone_from(&name);
+                        }
+                    }
+                    self.save();
+                }
+            }
+            None => self.defs.push(TagDef {
+                name: name.clone(),
+                color,
+            }),
+        }
+        self.save_defs();
+        Ok(name)
+    }
+
+    /// Supprime l'étiquette et la retire des fichiers (les fichiers restent).
+    pub fn delete(&mut self, name: &str) {
+        self.defs.retain(|def| def.name != name);
+        for tags in self.by_path.values_mut() {
+            tags.retain(|tag| tag != name);
+        }
+        self.by_path.retain(|_, tags| !tags.is_empty());
+        self.save();
+        self.save_defs();
     }
 
     pub fn of(&self, path: &Path) -> &[String] {
@@ -158,7 +308,13 @@ impl Tags {
     }
 }
 
-/// Espace libre et taille du système de fichiers qui contient `path`, en octets.
+fn write_config(path: &Path, text: &str) {
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    let _ = fs::write(path, text);
+}
+
 pub fn disk_usage(path: &Path) -> Option<(u64, u64)> {
     let output = command::run("df", &["-B1", "--output=avail,size", &path.to_string_lossy()]).ok()?;
     let mut fields = output.lines().nth(1)?.split_whitespace();
@@ -170,6 +326,42 @@ pub fn disk_usage(path: &Path) -> Option<(u64, u64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn liste_des_etiquettes() {
+        let defs = parse_defs("Travail\tbleu\nFamille\trose\n\nFamille\tvert\nSans couleur\n");
+        assert_eq!(
+            defs,
+            [
+                TagDef {
+                    name: "Travail".into(),
+                    color: Accent::Blue
+                },
+                TagDef {
+                    name: "Famille".into(),
+                    color: Accent::Pink
+                },
+                TagDef {
+                    name: "Sans couleur".into(),
+                    color: Accent::Blue
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn noms_d_etiquettes() {
+        let tags = Tags {
+            defs: parse_defs("Travail\tbleu\nFamille\trose\n"),
+            ..Tags::default()
+        };
+        assert!(tags.check_name("  ", None).is_err());
+        assert!(tags.check_name("travail", None).is_err());
+        assert_eq!(tags.check_name(" Vacances ", None), Ok("Vacances".into()));
+        // Garder son propre nom en changeant la couleur est permis.
+        assert_eq!(tags.check_name("Travail", Some("Travail")), Ok("Travail".into()));
+        assert!(tags.check_name("Famille", Some("Travail")).is_err());
+    }
 
     #[test]
     fn fichiers_recents_du_xbel() {

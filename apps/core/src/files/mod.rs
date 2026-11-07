@@ -18,6 +18,7 @@
 //! L'interface ne modifie jamais l'état pendant son propre dessin : chaque clic produit une
 //! `Action`, appliquée une fois l'image construite.
 
+mod analysis;
 mod devices;
 mod look;
 mod ops;
@@ -27,7 +28,7 @@ pub(crate) mod trash;
 mod view;
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashMap},
     env, fs,
     os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
@@ -38,7 +39,7 @@ use std::{
 };
 
 use eframe::egui::{self, Color32, CornerRadius, Frame, Key, Margin, RichText, Sense, Stroke};
-use ferrite_system::{applications::DesktopEntry, command::spawn_detached};
+use ferrite_system::{applications::DesktopEntry, command::spawn_detached, config::Accent};
 
 use self::{devices::Device, ops::Job, trash::TrashItem};
 use crate::style::{self, IconStyle, Icons};
@@ -70,6 +71,11 @@ enum Location {
     Recent,
     /// Fichiers qui portent cette étiquette.
     Tag(String),
+    /// Analyse de l'espace : contenu de `dir` trié par taille, ou plus gros fichiers.
+    Analysis {
+        dir: PathBuf,
+        largest: bool,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,6 +84,66 @@ enum SortKey {
     Size,
     Modified,
     Kind,
+}
+
+/// Filtre par nature, choisi dans la rangée de pastilles au-dessus du contenu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Filter {
+    All,
+    Folders,
+    Documents,
+    Images,
+    Audio,
+    Videos,
+    Archives,
+}
+
+impl Filter {
+    const ALL: [Filter; 7] = [
+        Filter::All,
+        Filter::Folders,
+        Filter::Documents,
+        Filter::Images,
+        Filter::Audio,
+        Filter::Videos,
+        Filter::Archives,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Filter::All => "Tout",
+            Filter::Folders => "Dossiers",
+            Filter::Documents => "Documents",
+            Filter::Images => "Images",
+            Filter::Audio => "Musique",
+            Filter::Videos => "Vidéos",
+            Filter::Archives => "Archives",
+        }
+    }
+
+    /// L'élément entre-t-il dans ce filtre ? Les documents regroupent textes, PDF, code,
+    /// et bureautique.
+    fn matches(self, entry: &FileEntry) -> bool {
+        if self == Filter::All {
+            return true;
+        }
+        if entry.directory {
+            return self == Filter::Folders;
+        }
+        let office = matches!(
+            extension(&entry.name).to_ascii_lowercase().as_str(),
+            "odt" | "ods" | "odp" | "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" | "rtf" | "csv" | "epub"
+        );
+        match (self, path_icon(&entry.path, false)) {
+            (Filter::Documents, "file-pdf" | "file-text" | "file-script") => true,
+            (Filter::Documents, _) => office,
+            (Filter::Images, icon) => icon == "file-image",
+            (Filter::Audio, icon) => icon == "file-audio",
+            (Filter::Videos, icon) => icon == "file-video",
+            (Filter::Archives, icon) => icon == "file-archive",
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,6 +176,21 @@ enum Dialog {
     EmptyTrash,
     Properties(Box<Properties>),
     OpenWith(PathBuf, Vec<DesktopEntry>),
+    Tag(TagEditor),
+    DeleteTag(String),
+}
+
+/// Création ou modification d'une étiquette.
+#[derive(Debug)]
+struct TagEditor {
+    /// Étiquette modifiée ; `None` pour en créer une.
+    current: Option<String>,
+    name: String,
+    color: Accent,
+    error: Option<String>,
+    /// Fichier à étiqueter dès la création (menu « Nouvelle étiquette… » d'un fichier).
+    apply_to: Option<PathBuf>,
+    focused: bool,
 }
 
 #[derive(Debug)]
@@ -157,6 +238,16 @@ enum Action {
     TogglePreview,
     Share(Vec<PathBuf>),
     ToggleTag(PathBuf, String),
+    /// Ouvre la fenêtre d'une étiquette (nouvelle si `None`), à poser sur le fichier donné.
+    EditTag(Option<String>, Option<PathBuf>),
+    SaveTag,
+    AskDeleteTag(String),
+    ConfirmDeleteTag(String),
+    /// Analyse l'espace occupé dans ce dossier.
+    Analyze(PathBuf),
+    /// Contenu du dossier (faux) ou plus gros fichiers (vrai).
+    AnalysisMode(bool),
+    Rescan,
     QuickLook,
     StartDrag(usize),
     Drop {
@@ -198,7 +289,10 @@ enum Action {
     TerminalHere,
     ToggleHidden,
     SetView(View),
+    SetFilter(Filter),
     Sort(SortKey),
+    /// Choisit la clé et le sens du tri (menu « Trier »).
+    SortBy(SortKey, bool),
     EditPath,
     CommitPath,
     Mount(Device),
@@ -223,6 +317,14 @@ pub struct FilesState {
     sort: SortKey,
     ascending: bool,
     search: String,
+    filter: Filter,
+    /// Nombre d'éléments de chaque sous-dossier affiché, compté à la lecture du dossier.
+    child_counts: HashMap<PathBuf, usize>,
+    /// Fichiers ouverts récemment, montrés en tête du dossier personnel.
+    recent_strip: Vec<FileEntry>,
+    /// Analyse de l'espace en cours ou terminée, et dernière relecture de ses résultats.
+    scan: Option<analysis::Scan>,
+    scan_seen: Option<(Instant, bool)>,
     path_edit: Option<String>,
     rename: Option<(PathBuf, String, bool)>,
     clipboard: Option<(Vec<PathBuf>, bool)>,
@@ -282,6 +384,11 @@ impl Default for FilesState {
             sort: SortKey::Name,
             ascending: true,
             search: String::new(),
+            filter: Filter::All,
+            child_counts: HashMap::new(),
+            recent_strip: Vec::new(),
+            scan: None,
+            scan_seen: None,
             path_edit: None,
             rename: None,
             clipboard: None,
@@ -291,7 +398,9 @@ impl Default for FilesState {
             usage: None,
             system_usage: None,
             downloads: 0,
-            preview: true,
+            // La bande d'informations du bas suffit d'ordinaire ; le panneau se rouvre
+            // depuis la barre d'outils.
+            preview: false,
             quick: None,
             drag: None,
             deposits: None,
@@ -318,6 +427,14 @@ impl Default for FilesState {
 fn preferences_path() -> PathBuf {
     ferrite_system::config::Settings::path().with_file_name("fichiers")
 }
+
+/// Plus gros fichiers montrés par l'analyse.
+const ANALYSIS_LARGEST: usize = 100;
+/// Fichiers récents montrés en tête du dossier personnel.
+const RECENT_STRIP: usize = 6;
+/// Au-delà, le contenu des sous-dossiers n'est pas compté.
+const MAX_COUNTED_FOLDERS: usize = 400;
+const MAX_COUNTED_CHILDREN: usize = 10_000;
 
 fn home() -> PathBuf {
     env::var_os("HOME")
@@ -398,7 +515,9 @@ impl FilesState {
                 Some(("tri", "type")) => self.sort = SortKey::Kind,
                 Some(("croissant", value)) => self.ascending = value == "oui",
                 Some(("caches", value)) => self.show_hidden = value == "oui",
-                Some(("apercu", value)) => self.preview = value == "oui",
+                // Nouvelle clé depuis la bande d'informations : l'ancienne (« apercu », ouvert par
+                // défaut) est ignorée, le panneau repart fermé.
+                Some(("panneau", value)) => self.preview = value == "oui",
                 _ => {}
             }
         }
@@ -411,7 +530,7 @@ impl FilesState {
 tri={}
 croissant={}
 caches={}
-apercu={}
+panneau={}
 ",
             match self.view {
                 View::List => "liste",
@@ -463,7 +582,11 @@ apercu={}
     fn current_dir(&self) -> Option<&Path> {
         match &self.location {
             Location::Folder(path) => Some(path),
-            Location::Archive { .. } | Location::Trash | Location::Recent | Location::Tag(_) => None,
+            Location::Archive { .. }
+            | Location::Trash
+            | Location::Recent
+            | Location::Tag(_)
+            | Location::Analysis { .. } => None,
         }
     }
 
@@ -481,6 +604,12 @@ apercu={}
             self.error(format!("Dossier introuvable : {}", path.display()));
             return;
         }
+        if let Location::Analysis { dir, .. } = &location
+            && !dir.is_dir()
+        {
+            self.error(format!("Dossier introuvable : {}", dir.display()));
+            return;
+        }
         if let Location::Archive { archive, .. } = &location
             && !archive.is_file()
         {
@@ -491,6 +620,7 @@ apercu={}
         self.back.push(previous);
         self.forward.clear();
         self.search.clear();
+        self.filter = Filter::All;
         self.refresh();
     }
 
@@ -543,6 +673,11 @@ apercu={}
                         }
                     })
                     .collect()
+            }
+            Location::Analysis { dir, largest } => {
+                self.loaded = None;
+                self.denied = false;
+                analysis_entries(self.scan.as_ref(), dir, *largest)
             }
             Location::Recent => {
                 self.loaded = None;
@@ -618,13 +753,67 @@ apercu={}
                 }
             }
         };
-        if self.location != Location::Recent {
+        if !matches!(self.location, Location::Recent | Location::Analysis { .. }) {
             self.sort_entries();
         }
+        if !matches!(self.location, Location::Analysis { .. }) {
+            self.count_children();
+        }
+        self.recent_strip = if self.location == Location::Folder(home()) && self.picker.is_none() {
+            places::recent()
+                .into_iter()
+                .filter_map(|path| entry_for(&path))
+                .filter(|entry| !entry.directory)
+                .take(RECENT_STRIP)
+                .collect()
+        } else {
+            Vec::new()
+        };
         self.thumbs.forget();
         let paths: BTreeSet<PathBuf> = self.entries.iter().map(|e| e.path.clone()).collect();
         self.selected.retain(|path| paths.contains(path));
         self.anchor = None;
+    }
+
+    /// Taille d'un élément affiché (dossier compris en analyse).
+    fn entry_size(&self, path: &Path) -> u64 {
+        self.entries
+            .iter()
+            .find(|entry| entry.path == path)
+            .and_then(|entry| entry.size)
+            .unwrap_or(0)
+    }
+
+    /// Un élément supprimé pendant une analyse : ses dossiers parents maigrissent.
+    fn forget_in_scan(&self, path: &Path, size: u64) {
+        if let Some(scan) = &self.scan
+            && path.starts_with(&scan.root)
+        {
+            scan.forget(path, size);
+        }
+    }
+
+    /// Compte le contenu des sous-dossiers (affiché sous leur nom), sauf dans les dossiers
+    /// qui en ont beaucoup : la lecture resterait rapide, mais pas sur une clé lente.
+    fn count_children(&mut self) {
+        self.child_counts.clear();
+        if self.in_archive() {
+            return;
+        }
+        let folders: Vec<&FileEntry> = self.entries.iter().filter(|entry| entry.directory).collect();
+        if folders.len() > MAX_COUNTED_FOLDERS {
+            return;
+        }
+        for entry in folders {
+            if let Ok(dir) = fs::read_dir(&entry.path) {
+                let count = dir
+                    .filter_map(Result::ok)
+                    .take(MAX_COUNTED_CHILDREN)
+                    .filter(|child| self.show_hidden || !child.file_name().to_string_lossy().starts_with('.'))
+                    .count();
+                self.child_counts.insert(entry.path.clone(), count);
+            }
+        }
     }
 
     fn sort_entries(&mut self) {
@@ -651,6 +840,7 @@ apercu={}
             .enumerate()
             .filter(|(_, entry)| self.show_hidden || !entry.name.starts_with('.'))
             .filter(|(_, entry)| query.is_empty() || entry.name.to_lowercase().contains(&query))
+            .filter(|(_, entry)| self.filter.matches(entry))
             .map(|(index, _)| index)
             .collect()
     }
@@ -703,15 +893,14 @@ apercu={}
     }
 
     fn open_materialized(&self, path: PathBuf, temporary_dir: Option<PathBuf>) -> Result<(), String> {
-        // TextEdit et la Visionneuse sont le même exécutable que Fichiers.
-        let builtin = if is_text_file(&path) {
-            Some("textedit")
-        } else if crate::viewer::supported(&path) {
-            Some("viewer")
-        } else if crate::music::supported(&path) {
-            Some("music")
-        } else {
+        // TextEdit et la Visionneuse sont le même exécutable que Fichiers, sauf si une autre
+        // application a été choisie pour ce type (Paramètres → Applications par défaut) :
+        // `xdg-open` la lance alors.
+        let chosen_elsewhere = ferrite_system::defaults::foreign_default(&path).is_some();
+        let builtin = if chosen_elsewhere {
             None
+        } else {
+            builtin_app(&path)
         };
         if let Some(temporary_dir) = temporary_dir {
             let result = if let Some(app) = builtin {
@@ -853,6 +1042,22 @@ apercu={}
                         ));
                     }
                 }
+                Location::Analysis { dir, largest } => {
+                    let root = self.scan.as_ref().map(|scan| scan.root.clone());
+                    if *largest {
+                        self.go(Location::Analysis {
+                            dir: dir.clone(),
+                            largest: false,
+                        });
+                    } else if let Some(parent) = dir.parent()
+                        && root.is_some_and(|root| parent.starts_with(root))
+                    {
+                        self.go(Location::Analysis {
+                            dir: parent.to_path_buf(),
+                            largest: false,
+                        });
+                    }
+                }
                 Location::Trash | Location::Recent | Location::Tag(_) => {}
             },
             Action::Open(path, directory) if self.picker.is_some() => {
@@ -867,6 +1072,13 @@ apercu={}
                         }
                     }
                 }
+            }
+            // Analyse : un dossier ouvert montre son propre contenu par taille.
+            Action::Open(path, true) if matches!(self.location, Location::Analysis { .. }) => {
+                self.go(Location::Analysis {
+                    dir: path,
+                    largest: false,
+                });
             }
             Action::Open(path, directory) => {
                 if self.location == Location::Trash {
@@ -1002,13 +1214,24 @@ apercu={}
                 let selection = self.selection();
                 let mut failed = None;
                 for path in &selection {
-                    if let Err(error) = trash::trash(path) {
-                        failed = Some(error);
+                    let size = self.entry_size(path);
+                    match trash::trash(path) {
+                        Ok(_) => self.forget_in_scan(path, size),
+                        Err(error) => failed = Some(error),
                     }
                 }
                 self.refresh();
                 match failed {
                     Some(error) => self.error(error),
+                    // En analyse, on fait le ménage : rappeler que la place n'est rendue
+                    // qu'une fois la Corbeille vidée.
+                    None if !selection.is_empty() && matches!(self.location, Location::Analysis { .. }) => {
+                        self.info(format!(
+                            "{} élément{} mis à la Corbeille : videz-la pour libérer la place",
+                            selection.len(),
+                            plural(selection.len())
+                        ))
+                    }
                     None if !selection.is_empty() => self.info(format!(
                         "{} élément{} mis à la Corbeille",
                         selection.len(),
@@ -1027,13 +1250,15 @@ apercu={}
                 self.dialog = None;
                 let in_trash = self.location == Location::Trash;
                 for path in paths {
+                    let size = self.entry_size(&path);
                     let result = if in_trash {
                         trash::delete(&path)
                     } else {
                         ops::remove_tree(&path)
                     };
-                    if let Err(error) = result {
-                        self.error(error);
+                    match result {
+                        Ok(()) => self.forget_in_scan(&path, size),
+                        Err(error) => self.error(error),
                     }
                 }
                 self.refresh();
@@ -1105,10 +1330,22 @@ apercu={}
             }
             Action::ToggleHidden => {
                 self.show_hidden = !self.show_hidden;
+                self.count_children();
                 self.save_preferences();
             }
             Action::SetView(view) => {
                 self.view = view;
+                self.save_preferences();
+            }
+            Action::SetFilter(filter) => {
+                self.filter = filter;
+                self.selected.clear();
+                self.anchor = None;
+            }
+            Action::SortBy(key, ascending) => {
+                self.sort = key;
+                self.ascending = ascending;
+                self.sort_entries();
                 self.save_preferences();
             }
             Action::Sort(key) => {
@@ -1158,6 +1395,79 @@ apercu={}
                 self.devices_checked = None;
             }
             Action::CloseDialog => self.dialog = None,
+            Action::Analyze(dir) => {
+                let fresh = self.scan.as_ref().is_some_and(|scan| dir.starts_with(&scan.root));
+                if !fresh {
+                    self.scan = Some(analysis::Scan::start(dir.clone(), ctx));
+                    self.scan_seen = None;
+                }
+                self.go(Location::Analysis { dir, largest: false });
+            }
+            Action::AnalysisMode(largest) => {
+                if let Location::Analysis { dir, .. } = &self.location {
+                    let dir = dir.clone();
+                    self.go(Location::Analysis { dir, largest });
+                }
+            }
+            Action::Rescan => {
+                if let Some(root) = self.scan.as_ref().map(|scan| scan.root.clone()) {
+                    self.scan = Some(analysis::Scan::start(root, ctx));
+                    self.scan_seen = None;
+                    self.refresh();
+                }
+            }
+            Action::EditTag(current, apply_to) => {
+                let color = match &current {
+                    Some(name) => self.tags.color_of(name),
+                    // Une couleur pas encore prise, pour distinguer la nouvelle.
+                    None => Accent::ALL
+                        .into_iter()
+                        .find(|accent| !self.tags.list().iter().any(|def| def.color == *accent))
+                        .unwrap_or_default(),
+                };
+                self.dialog = Some(Dialog::Tag(TagEditor {
+                    name: current.clone().unwrap_or_default(),
+                    current,
+                    color,
+                    error: None,
+                    apply_to,
+                    focused: false,
+                }));
+            }
+            Action::SaveTag => {
+                if let Some(Dialog::Tag(editor)) = &mut self.dialog {
+                    match self
+                        .tags
+                        .save_tag(editor.current.as_deref(), &editor.name, editor.color)
+                    {
+                        Ok(name) => {
+                            if let Some(path) = editor.apply_to.take()
+                                && !self.tags.of(&path).contains(&name)
+                            {
+                                self.tags.toggle(&path, &name);
+                            }
+                            // On regardait l'étiquette renommée : on la suit.
+                            if let Some(old) = &editor.current
+                                && self.location == Location::Tag(old.clone())
+                            {
+                                self.location = Location::Tag(name);
+                                self.refresh();
+                            }
+                            self.dialog = None;
+                        }
+                        Err(error) => editor.error = Some(error),
+                    }
+                }
+            }
+            Action::AskDeleteTag(name) => self.dialog = Some(Dialog::DeleteTag(name)),
+            Action::ConfirmDeleteTag(name) => {
+                self.tags.delete(&name);
+                self.dialog = None;
+                if self.location == Location::Tag(name.clone()) {
+                    self.go(Location::Folder(home()));
+                }
+                self.info(format!("Étiquette « {name} » supprimée"));
+            }
             Action::CancelJob(index) => {
                 if let Some(job) = self.jobs.get(index) {
                     job.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -1274,8 +1584,26 @@ apercu={}
             Location::Folder(dir) => modified(dir),
             Location::Archive { archive, .. } => modified(archive),
             Location::Trash => modified(&trash::files_dir()),
-            Location::Recent | Location::Tag(_) => None,
+            Location::Recent | Location::Tag(_) | Location::Analysis { .. } => None,
         };
+        // Analyse en cours : ses résultats sont relus régulièrement, et une dernière fois
+        // quand elle se termine.
+        if matches!(self.location, Location::Analysis { .. })
+            && let Some(scan) = &self.scan
+        {
+            let done = scan.progress().done;
+            let due = match self.scan_seen {
+                None => true,
+                Some((at, seen_done)) => !seen_done && (done || at.elapsed() > Duration::from_millis(700)),
+            };
+            if due && self.rename.is_none() {
+                self.scan_seen = Some((Instant::now(), done));
+                self.refresh();
+            }
+            if !done {
+                ctx.request_repaint_after(Duration::from_millis(700));
+            }
+        }
         if self.rename.is_none() && stamp != self.loaded {
             self.refresh();
         }
@@ -1523,10 +1851,126 @@ apercu={}
             actions.push(Action::Trash);
             ui.close();
         }
+        if single {
+            ui.menu_button("Étiquettes", |ui| self.tag_choices(ui, &entry.path, actions));
+        }
+        if single
+            && entry.directory
+            && !matches!(self.location, Location::Analysis { .. })
+            && style::menu_row(ui, "Analyser l’espace utilisé", "", false, true).clicked()
+        {
+            actions.push(Action::Analyze(entry.path.clone()));
+            ui.close();
+        }
         style::menu_separator(ui);
         if style::menu_row(ui, "Propriétés", "Alt+Entrée", false, single).clicked() {
             actions.push(Action::Properties(entry.path.clone()));
             ui.close();
+        }
+    }
+
+    /// Étiquettes à poser ou retirer sur `path`, puis « Nouvelle étiquette… ».
+    fn tag_choices(&self, ui: &mut egui::Ui, path: &Path, actions: &mut Vec<Action>) {
+        style::menu_style(ui);
+        for def in self.tags.list() {
+            let on = self.tags.of(path).contains(&def.name);
+            if style::radio_row(ui, &def.name, on).clicked() {
+                actions.push(Action::ToggleTag(path.to_path_buf(), def.name.clone()));
+                ui.close();
+            }
+        }
+        style::menu_separator(ui);
+        if style::menu_row(ui, "Nouvelle étiquette…", "", false, true).clicked() {
+            actions.push(Action::EditTag(None, Some(path.to_path_buf())));
+            ui.close();
+        }
+    }
+
+    /// Fenêtre d'une étiquette : nom, couleur, et Supprimer pour une étiquette existante.
+    fn tag_dialog(&mut self, ctx: &egui::Context, actions: &mut Vec<Action>) {
+        let Some(Dialog::Tag(editor)) = &mut self.dialog else {
+            return;
+        };
+        let creating = editor.current.is_none();
+        let modal = egui::Modal::new(egui::Id::unique("fichiers-etiquette")).show(ctx, |ui| {
+            ui.set_width(360.0);
+            ui.heading(if creating {
+                "Nouvelle étiquette"
+            } else {
+                "Modifier l’étiquette"
+            });
+            ui.add_space(10.0);
+            ui.label(RichText::new("Nom").color(style::text_secondary()));
+            let field = ui.add(
+                egui::TextEdit::singleline(&mut editor.name)
+                    .hint_text("Vacances, Factures…")
+                    .desired_width(f32::INFINITY),
+            );
+            if !editor.focused {
+                field.request_focus();
+                editor.focused = true;
+            }
+            if field.changed() {
+                editor.error = None;
+            }
+            let enter = field.lost_focus() && ui.input(|input| input.key_pressed(Key::Enter));
+            ui.add_space(12.0);
+            ui.label(RichText::new("Couleur").color(style::text_secondary()));
+            ui.add_space(4.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                for accent in Accent::ALL {
+                    let (rect, response) = ui.allocate_exact_size(egui::Vec2::splat(30.0), Sense::click());
+                    let response = response
+                        .on_hover_text(accent.label())
+                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                    let center = rect.center();
+                    if editor.color == accent {
+                        ui.painter()
+                            .circle_stroke(center, 13.5, Stroke::new(2.0, style::primary_text()));
+                    }
+                    ui.painter().circle_filled(
+                        center,
+                        if response.hovered() { 11.0 } else { 10.0 },
+                        style::accent_color(accent),
+                    );
+                    if response.clicked() {
+                        editor.color = accent;
+                    }
+                }
+            });
+            if let Some(error) = &editor.error {
+                ui.add_space(6.0);
+                ui.colored_label(style::error(), error);
+            }
+            ui.add_space(14.0);
+            ui.horizontal(|ui| {
+                if let Some(current) = &editor.current
+                    && ui
+                        .add(egui::Button::new(
+                            RichText::new("Supprimer…").color(style::error()),
+                        ))
+                        .clicked()
+                {
+                    actions.push(Action::AskDeleteTag(current.clone()));
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let confirm = egui::Button::new(
+                        RichText::new(if creating { "Créer" } else { "Enregistrer" })
+                            .color(style::accent_text()),
+                    )
+                    .fill(style::accent());
+                    if ui.add(confirm).clicked() || enter {
+                        actions.push(Action::SaveTag);
+                    }
+                    if ui.button("Annuler").clicked() {
+                        actions.push(Action::CloseDialog);
+                    }
+                });
+            });
+        });
+        if modal.should_close() {
+            actions.push(Action::CloseDialog);
         }
     }
 
@@ -1560,6 +2004,15 @@ apercu={}
                 Action::AskEmptyTrash,
             );
             return;
+        }
+        if let Some(dir) = self.current_dir() {
+            item(
+                ui,
+                "Analyser l’espace utilisé",
+                true,
+                Action::Analyze(dir.to_path_buf()),
+            );
+            style::menu_separator(ui);
         }
         item(ui, "Nouveau dossier", true, Action::NewFolder);
         item(ui, "Coller", self.clipboard.is_some(), Action::Paste);
@@ -1669,6 +2122,10 @@ apercu={}
             self.properties_dialog(ctx, actions);
             return;
         }
+        if matches!(self.dialog, Some(Dialog::Tag(_))) {
+            self.tag_dialog(ctx, actions);
+            return;
+        }
         let Some(dialog) = &self.dialog else { return };
         let modal = egui::Modal::new(egui::Id::unique("fichiers-dialogue")).show(ctx, |ui| {
             ui.set_width(380.0);
@@ -1700,8 +2157,28 @@ apercu={}
                         None => {}
                     }
                 }
-                // Dessiné à part (voir `properties_dialog`).
-                Dialog::Properties(_) => {}
+                // Dessinés à part (voir `properties_dialog` et `tag_dialog`).
+                Dialog::Properties(_) | Dialog::Tag(_) => {}
+                Dialog::DeleteTag(name) => {
+                    ui.heading(format!("Supprimer l’étiquette « {name} » ?"));
+                    let count = self.tags.usage(name);
+                    let detail = match count {
+                        0 => "Aucun fichier ne la porte.".to_owned(),
+                        1 => "Elle sera retirée d’un fichier. Le fichier n’est pas supprimé.".to_owned(),
+                        count => {
+                            format!(
+                                "Elle sera retirée de {count} fichiers. Les fichiers ne sont pas supprimés."
+                            )
+                        }
+                    };
+                    ui.label(RichText::new(detail).color(style::text_secondary()));
+                    ui.add_space(12.0);
+                    match dialog_buttons(ui, "Supprimer") {
+                        Some(true) => actions.push(Action::ConfirmDeleteTag(name.clone())),
+                        Some(false) => actions.push(Action::CloseDialog),
+                        None => {}
+                    }
+                }
                 Dialog::Replace(path) => {
                     ui.heading(format!("Remplacer « {} » ?", file_name(path)));
                     ui.label(
@@ -1744,6 +2221,7 @@ apercu={}
                                 icon: None,
                                 wm_class: None,
                                 categories: Vec::new(),
+                                mime_types: Vec::new(),
                             };
                             actions.push(Action::LaunchWith(path.clone(), app));
                         }
@@ -1957,11 +2435,72 @@ fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
 }
 
 /// Met `paths` à la Corbeille ; renvoie les erreurs rencontrées.
+/// Commande `ferrite-apps vignette-video` (voir `thumbs`).
+pub fn print_video_frame(path: &Path) -> bool {
+    thumbs::print_video_frame(path)
+}
+
 pub fn put_in_trash(paths: &[PathBuf]) -> Vec<String> {
     paths.iter().filter_map(|path| trash::trash(path).err()).collect()
 }
 
 /// Élément de `path`, hors de la lecture d'un dossier (Récents, étiquettes).
+/// Éléments d'une analyse : le contenu de `dir`, les dossiers avec leur taille totale
+/// (`None` tant qu'ils ne sont pas comptés), du plus lourd au plus léger ; ou les plus gros
+/// fichiers trouvés sous `dir`.
+fn analysis_entries(scan: Option<&analysis::Scan>, dir: &Path, largest: bool) -> Vec<FileEntry> {
+    let Some(scan) = scan else { return Vec::new() };
+    if largest {
+        return scan
+            .largest_under(dir, ANALYSIS_LARGEST)
+            .into_iter()
+            .filter_map(|(size, path)| {
+                entry_for(&path).map(|entry| FileEntry {
+                    size: Some(size),
+                    ..entry
+                })
+            })
+            .collect();
+    }
+    let mut entries: Vec<FileEntry> = fs::read_dir(dir)
+        .map(|listing| {
+            listing
+                .filter_map(Result::ok)
+                .filter_map(|child| {
+                    let path = child.path();
+                    let metadata = child.metadata().ok()?;
+                    let directory = metadata.is_dir();
+                    Some(FileEntry {
+                        name: child.file_name().to_string_lossy().into_owned(),
+                        size: if directory {
+                            scan.size_of(&path)
+                        } else {
+                            Some(metadata.len())
+                        },
+                        directory,
+                        symlink: metadata.file_type().is_symlink(),
+                        modified: metadata.modified().ok(),
+                        archive_member: None,
+                        trash: None,
+                        path,
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    // Les plus lourds d'abord ; les dossiers pas encore comptés en tête, ils peuvent l'être.
+    entries.sort_by(|a, b| {
+        let weight = |entry: &FileEntry| match entry.size {
+            None if entry.directory => u64::MAX,
+            size => size.unwrap_or(0),
+        };
+        weight(b)
+            .cmp(&weight(a))
+            .then_with(|| natural_cmp(&a.name, &b.name))
+    });
+    entries
+}
+
 fn entry_for(path: &Path) -> Option<FileEntry> {
     let metadata = fs::metadata(path).ok()?;
     Some(FileEntry {
@@ -1986,6 +2525,23 @@ fn archive_virtual_path(archive: &Path, member: &str) -> PathBuf {
         .unwrap_or_else(|| Path::new("."))
         .join(format!(".ferrite-archive-{name}"))
         .join(member)
+}
+
+/// Application de Ferrite (même exécutable) qui ouvre `path`, sinon `xdg-open` choisit.
+/// La vidéo passe avant la musique : « .mp4 » est aussi une extension audio de Musique,
+/// mais c'est presque toujours un film ou un enregistrement d'écran.
+fn builtin_app(path: &Path) -> Option<&'static str> {
+    if is_text_file(path) {
+        Some("textedit")
+    } else if crate::viewer::supported(path) {
+        Some("viewer")
+    } else if crate::video::supported(path) {
+        Some("video")
+    } else if crate::music::supported(path) {
+        Some("music")
+    } else {
+        None
+    }
 }
 
 /// Icône du dossier `icons/SVG` selon la nature de l'entrée.
@@ -2152,6 +2708,41 @@ mod tests {
         assert_eq!(folder_icon(&home.join("projet"), home), "places-folder");
         // Ailleurs que dans le dossier personnel, un dossier « Musique » n'a rien de spécial.
         assert_eq!(folder_icon(&home.join("a/Musique"), home), "places-folder");
+    }
+
+    #[test]
+    fn les_videos_s_ouvrent_dans_le_lecteur_video() {
+        assert_eq!(
+            builtin_app(Path::new("/x/Enregistrement du 2026-11-06 à 16.34.47.mp4")),
+            Some("video")
+        );
+        assert_eq!(builtin_app(Path::new("/x/film.MKV")), Some("video"));
+        assert_eq!(builtin_app(Path::new("/x/chanson.m4a")), Some("music"));
+        assert_eq!(builtin_app(Path::new("/x/notes.md")), Some("textedit"));
+        assert_eq!(builtin_app(Path::new("/x/archive.zip")), None);
+    }
+
+    #[test]
+    fn filtres_par_nature() {
+        let entry = |name: &str, directory: bool| FileEntry {
+            name: name.into(),
+            path: PathBuf::from("/x").join(name),
+            directory,
+            symlink: false,
+            modified: None,
+            size: None,
+            archive_member: None,
+            trash: None,
+        };
+        assert!(Filter::Folders.matches(&entry("Projets", true)));
+        assert!(!Filter::Documents.matches(&entry("Projets", true)));
+        assert!(Filter::Documents.matches(&entry("facture.PDF", false)));
+        assert!(Filter::Documents.matches(&entry("budget.ods", false)));
+        assert!(Filter::Images.matches(&entry("plage.jpg", false)));
+        assert!(!Filter::Images.matches(&entry("chanson.mp3", false)));
+        assert!(Filter::Audio.matches(&entry("chanson.mp3", false)));
+        assert!(Filter::Archives.matches(&entry("sauvegarde.tar.gz", false)));
+        assert!(Filter::All.matches(&entry("nimporte", false)));
     }
 
     #[test]

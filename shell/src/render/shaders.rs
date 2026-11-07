@@ -264,7 +264,6 @@ uniform vec4 icon;
 uniform float top;
 uniform float bottom;
 uniform float squeeze;
-uniform vec2 crop;
 uniform float radius;
 
 void main() {
@@ -284,14 +283,9 @@ void main() {
         return;
     }
 
-    // `crop` : part de l'image posée sur le cadre (1 : toute l'image, étirée) ; au-delà
-    // de l'image, rien.
-    float u = (p.x - left) / max(right - left, 1.0) * crop.x;
-    float v = (p.y - top) / max(bottom - top, 1.0) * crop.y;
-    if (u > 1.0 || v > 1.0) {
-        gl_FragColor = vec4(0.0);
-        return;
-    }
+    // Toute l'image, étirée au cadre.
+    float u = (p.x - left) / max(right - left, 1.0);
+    float v = (p.y - top) / max(bottom - top, 1.0);
     vec4 color = texture2D(tex, vec2(u, v));
 #if defined(NO_ALPHA)
     color = vec4(color.rgb, 1.0);
@@ -369,7 +363,6 @@ impl Shaders {
                 float("top"),
                 float("bottom"),
                 float("squeeze"),
-                UniformName::new("crop", UniformType::_2f),
                 float("radius"),
             ],
         )?;

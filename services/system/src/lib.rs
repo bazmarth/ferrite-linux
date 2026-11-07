@@ -15,6 +15,7 @@ pub mod bluetooth;
 pub mod catalog;
 pub mod command;
 pub mod config;
+pub mod defaults;
 pub mod display;
 pub mod drag;
 pub mod idle;

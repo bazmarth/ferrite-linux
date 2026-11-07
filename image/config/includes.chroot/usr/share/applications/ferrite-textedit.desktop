@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=TextEdit
+Comment=Éditeur de texte de Ferrite
+Exec=ferrite-apps textedit %f
+Icon=accessories-text-editor
+MimeType=text/plain;text/markdown;
+Categories=Utility;TextEditor;
+NoDisplay=true

@@ -16,6 +16,7 @@ use std::{
 /// Durée pendant laquelle un curseur réglé à la main n'est pas remplacé par une relecture.
 const HOLD: Duration = Duration::from_secs(2);
 
+mod defaults;
 mod face;
 mod rows;
 
@@ -58,6 +59,7 @@ enum Page {
     Mouse,
     Printers,
     Accounts,
+    Defaults,
     Privacy,
     Accessibility,
     Updates,
@@ -82,6 +84,7 @@ impl Page {
             "souris" => Page::Mouse,
             "comptes" => Page::Accounts,
             "confidentialite" | "visage" => Page::Privacy,
+            "applications" | "defaut" => Page::Defaults,
             "date" => Page::DateTime,
             "apropos" => Page::About,
             _ => return None,
@@ -110,6 +113,7 @@ impl Page {
             "Système",
             &[
                 Page::Accounts,
+                Page::Defaults,
                 Page::Privacy,
                 Page::Accessibility,
                 Page::Updates,
@@ -135,6 +139,7 @@ impl Page {
             Page::Mouse => "Souris et pavé tactile",
             Page::Printers => "Imprimantes",
             Page::Accounts => "Comptes",
+            Page::Defaults => "Applications par défaut",
             Page::Privacy => "Confidentialité",
             Page::Accessibility => "Accessibilité",
             Page::Updates => "Mises à jour",
@@ -155,6 +160,7 @@ impl Page {
             Page::Keyboard | Page::Mouse | Page::Printers | Page::Updates | Page::About => 0x6B7280,
             Page::Accounts | Page::DateTime => 0xE5571A,
             Page::Privacy => 0x374151,
+            Page::Defaults => 0x2779E0,
         }
     }
 
@@ -174,6 +180,7 @@ impl Page {
             Page::Mouse => "glyph-mouse",
             Page::Printers => "glyph-printer",
             Page::Accounts => "glyph-account",
+            Page::Defaults => "glyph-app",
             Page::Privacy => "glyph-lock",
             Page::Accessibility => "glyph-access",
             Page::Updates => "glyph-update",
@@ -285,6 +292,8 @@ pub struct SettingsState {
     wallpaper_path: String,
     /// Confidentialité : enregistrement du visage.
     face: face::FaceState,
+    /// Applications installées, lues à l'ouverture de « Applications par défaut ».
+    installed_apps: Option<Vec<ferrite_system::applications::DesktopEntry>>,
 }
 
 impl std::fmt::Debug for SettingsState {
@@ -345,6 +354,7 @@ impl Default for SettingsState {
             requested: HashSet::new(),
             wallpaper_path: String::new(),
             face: face::FaceState::default(),
+            installed_apps: None,
         }
     }
 }
@@ -498,6 +508,7 @@ impl SettingsState {
             | Page::Mouse
             | Page::Printers
             | Page::Accounts
+            | Page::Defaults
             | Page::Privacy
             | Page::Accessibility
             | Page::Updates => {}
@@ -593,6 +604,7 @@ impl SettingsState {
                         Page::Accounts => self.accounts_page(ui),
                         Page::Energy => self.energy_page(ui),
                         Page::Privacy => self.privacy_page(ui),
+                        Page::Defaults => self.defaults_page(ui),
                         Page::Notifications | Page::Printers | Page::Accessibility | Page::Updates => {
                             self.pending_page(ui)
                         }
@@ -721,8 +733,14 @@ impl SettingsState {
         heading(ui, "Logiciel");
         ui.horizontal(|ui| {
             let (rect, _) = ui.allocate_exact_size(egui::vec2(116.0, 116.0), egui::Sense::hover());
+            // Logo de Ferrite OS : tuile claire en thème clair, sombre en thème sombre.
+            let logo = if style::theme_is_dark() {
+                "ferrite-logo"
+            } else {
+                "ferrite-logo-light"
+            };
             self.icons
-                .paint(ui, "ferrite-logo", rect.shrink(8.0), style::IconStyle::Color);
+                .paint(ui, logo, rect.shrink(8.0), style::IconStyle::Color);
             ui.add_space(26.0);
             ui.vertical(|ui| {
                 ui.add_space(14.0);

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="1024" height="1024">
+  <title>FerriteOs — icône claire</title>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#E1E4EC"/>
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="192" height="192" rx="44" fill="url(#bg)"/>
+  <rect x="4.5" y="4.5" width="191" height="191" rx="43.5" fill="none" stroke="#0B0F1A" stroke-opacity="0.08"/>
+  <circle cx="100" cy="100" r="50" fill="none" stroke="#0B0F1A" stroke-width="22" stroke-linecap="round" stroke-dasharray="244 70" transform="rotate(-5 100 100)"/>
+  <circle cx="135.4" cy="64.6" r="11" fill="#0D9488"/>
+</svg>

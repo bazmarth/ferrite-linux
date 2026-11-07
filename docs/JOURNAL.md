@@ -1596,3 +1596,175 @@ ralenti garde au moins d'une unité), presse-papiers, menu Applications, widgets
 réglage est relu en direct (`Event::ScrollSpeed`).
 Vérifié : capture de la page, tests (`scroll_factor`, conversion curseur ↔ vitesse,
 lecture du réglage). Pas vérifié : la sensation réelle à la molette et au pavé tactile.
+
+## 2026-11-06 — Applications par défaut
+
+- `ferrite_system::defaults` : rubriques (navigateur web, courriel, dossiers, images,
+  vidéos, musique, PDF, textes), applications capables (celle de Ferrite d'abord, puis
+  les installées d'après leur `MimeType`, désormais lu dans `DesktopEntry`), choix lu
+  dans les `mimeapps.list` (utilisateur, `/etc/xdg`, système) et écrit dans
+  `~/.config/mimeapps.list` sans toucher au reste du fichier. Images : PNG et JPEG
+  seulement, ce que la Visionneuse sait ouvrir.
+- Paramètres → Système → Applications par défaut (`ferrite-apps settings applications`) :
+  une liste par rubrique ; sans choix enregistré, l'application qui s'ouvrira est montrée.
+- Fichiers respecte le choix : un type confié à une autre application que celle de
+  Ferrite part par `xdg-open`.
+- Image : `ferrite-textedit.desktop` (textes et Markdown), associations des textes dans
+  `/etc/xdg/mimeapps.list`. `dev-on.sh` installe les `.desktop` de Ferrite dans le dossier
+  personnel (vers les binaires de développement), `dev-off.sh` les retire.
+Vérifié : capture de la page (Brave, Fichiers, Visionneuse, Lecteur vidéo, Musique,
+Lecteur PDF, TextEdit), tests (lecture, écriture, type d'un fichier).
+Pas vérifié : un changement réel puis l'ouverture d'un fichier depuis Fichiers.
+
+## 2026-11-07 — Fichiers modernisé
+
+- Rangée de pastilles au-dessus du contenu : filtre par nature (Tout, Dossiers, Documents,
+  Images, Musique, Vidéos, Archives — seulement celles présentes dans le dossier) et menu
+  « Trier » (clé et sens). Le filtre repart sur « Tout » à chaque changement de dossier.
+- Dossier personnel : bande « Récemment ouverts » (6 fichiers au plus, autant que la largeur
+  en montre), puis « Tous les fichiers ».
+- Grille : sous le nom, la taille du fichier ou le contenu du dossier (« 12 éléments »,
+  « Vide », compté à la lecture, pas au-delà de 400 sous-dossiers) ; un point de couleur
+  par étiquette. Étiquettes colorées aussi dans la barre latérale et l'aperçu (Travail :
+  accent, Personnel : succès, Important : erreur).
+- Bande d'informations en bas (52 points) : l'élément choisi (icône, nom, nature · taille ·
+  date) avec Partager et Ouvrir ; sinon résumé et espace libre. Le panneau d'aperçu reste
+  disponible mais repart fermé (préférence `panneau`, l'ancienne `apercu` est ignorée).
+- Disques nommés lisiblement : « Fedora » au lieu de « fedora », « Windows (291,6 Go) »,
+  « Disque de 165,9 Go », « Clé USB de 4 Go ».
+- Recherche plus étroite quand la fenêtre l'est, pour laisser le chemin visible.
+Vérifié : captures clair et sombre (dossier perso avec récents et sélection, sous-dossier
+Factures, étiquettes), tests (filtres, noms de disques), CI.
+Pas vérifié : clics réels (filtres, menu Trier, cartes récentes) sur le vrai bureau ; la
+lisibilité du bouton Ouvrir avec chacune des couleurs d’accent.
+
+## 2026-11-07 — Fichiers : étiquettes modifiables et vignettes des vidéos
+
+- Étiquettes : la liste n'est plus figée. Elle est gardée dans
+  `~/.config/ferrite/etiquettes-liste` (« nom<TAB>couleur », dans l'ordre de la barre
+  latérale) ; sans ce fichier, Travail (bleu), Personnel (vert), Important (rouge). Les
+  couleurs sont les 9 accentuations de Paramètres (`config::Accent`), aucune teinte à la main.
+- Barre latérale : bouton « + » à côté de « Étiquettes » ; clic droit sur une étiquette →
+  Modifier… (nom et couleur) ou Supprimer… (confirmation qui dit de combien de fichiers elle
+  sera retirée ; les fichiers restent). Renommer garde l'étiquette sur ses fichiers.
+- Menu d'un fichier → Étiquettes (poser, retirer, « Nouvelle étiquette… » qui la pose
+  aussitôt) ; même choix dans « + Ajouter » du panneau d'aperçu.
+- Nom refusé s'il est vide, sur plusieurs lignes, trop long (40) ou déjà pris (casse ignorée).
+  Une étiquette portée par un fichier mais absente de la liste y revient en bleu.
+- Vignettes des vidéos (mp4, mkv, webm, avi, mov, m4v, ogv) : image prise vers 10 % de la
+  durée par GStreamer (comme le Lecteur vidéo), une vidéo à la fois, 8 s au plus.
+Vérifié : captures (dossier de vidéos avec vignettes, fenêtre « Modifier l'étiquette »,
+points de couleur sur les fichiers), tests (liste, noms), CI.
+Pas vérifié : clics réels (création, renommage, suppression) sur le vrai bureau ; la section
+Étiquettes de la barre latérale, sous le bas de la capture.
+
+## 2026-11-07 — Fichiers : vidéos ouvertes dans Musique, mémoire des vignettes vidéo
+
+- Un `.mp4` (enregistrement d'écran, film) ouvert depuis Fichiers partait dans Musique :
+  « mp4 » est aussi une extension audio de Musique, testée avant. `builtin_app` essaie
+  maintenant le Lecteur vidéo avant Musique (test `les_videos_s_ouvrent_dans_le_lecteur_video`).
+- Vignettes vidéo : extraites par un processus à part, `ferrite-apps vignette-video <fichier>`
+  (« largeur hauteur\n » puis RVBA sur la sortie), réduites par GStreamer avec les
+  proportions d'affichage (les vidéos de téléphone étaient étirées en largeur). Fichiers sur
+  un dossier de 9 vidéos : 690 Mo de mémoire avant, 98 Mo après (95 Mo sans vidéos).
+  Les vignettes passent par deux fils permanents au lieu d'un fil chacune.
+Vérifié : le lecteur lit les enregistrements de ~/Vidéos et les « Recording » (captures),
+mesure de mémoire, capture du dossier de vidéos, tests, CI.
+Pas vérifié : double-clic sur une vidéo dans Fichiers sur le vrai bureau.
+
+## 2026-11-07 — Fichiers : analyse de l'espace
+
+Pour faire le ménage : Fichiers → « Analyse de l'espace » (barre latérale, analyse le
+dossier personnel), ou clic droit → « Analyser l'espace utilisé » sur un dossier, dans le
+vide d'un dossier, ou sur un appareil monté.
+- `files/analysis.rs` : parcours en arrière-plan, sans quitter le disque de départ ni
+  suivre les liens ; taille de chaque dossier publiée dès qu'il est compté, 200 plus gros
+  fichiers retenus. Une suppression fait maigrir les dossiers parents sans tout recompter.
+- Vue (toujours en liste) : « Contenu » trié du plus lourd au plus léger, avec Taille et
+  Part (barre et pourcentage du dossier analysé) ; un dossier ouvert montre son propre
+  contenu ; « Plus gros fichiers » liste les 100 plus gros sous le dossier, avec le
+  sous-dossier où ils sont. Bandeau : avancement, total, dossiers illisibles, Actualiser.
+- Sélection, Suppr (Corbeille), suppression définitive, menus : ceux de Fichiers. Le message
+  rappelle de vider la Corbeille pour récupérer la place.
+Vérifié : test du parcours (tailles, plus gros fichiers, suppression), captures clair et
+sombre sur /media/FICHIERS/RANGEMENT (6,2 Go), CI.
+Pas vérifié : analyse d'un très gros dossier (tout le disque) sur le vrai bureau ; mise à
+la Corbeille depuis l'analyse.
+
+## 2026-11-07 — Logo : nouveau logo de Ferrite OS et écran de démarrage
+
+Nouveau logo (anneau ouvert et point turquoise) tiré du pack fourni par l'utilisateur :
+tuiles claire et sombre, symbole sombre et blanc, en SVG.
+- `icons/SVG/` : `ferrite-logo.svg` (tuile sombre), `ferrite-logo-light.svg` (tuile claire),
+  `ferrite-symbol.svg` (trait sombre) et `ferrite-symbol-white.svg` (trait blanc). Le logo
+  ne vient plus de `ferrite-theme/places/start-here.svg` (ancien cube, laissé tel quel :
+  ce dossier ne se commite pas).
+- Barre du haut, bouton « Applications » : symbole sans tuile de la teinte du texte de la
+  barre (blanc sur le voile sombre, sombre sur la barre opaque claire).
+- Paramètres → À propos : tuile claire en thème clair, sombre en thème sombre.
+- Écran de verrouillage et menu Applications : aucun logo affiché, rien à changer.
+- Démarrage de l'ISO : fond du menu GRUB (`bootloaders/grub-pc/splash.png`, 800 × 600, déjà
+  prévu par `theme.cfg` ; titre anglais retiré) et thème Plymouth `ferrite` (fond nuit,
+  logo en fondu, trois points qui s'allument ; `plymouth` + `plymouth-label`, hook
+  `0120-ferrite-plymouth`, `splash` ajouté aux options du noyau). Sources SVG des images
+  dans `assets/demarrage/`.
+Vérifié : captures de la barre et d'À propos en clair et en sombre (logo net), rendu du
+fond GRUB, CI (sans shellcheck, absent du PC : le hook n'est pas vérifié par lui).
+Pas vérifié : barre opaque claire (symbole sombre) ; GRUB et Plymouth dans une vraie ISO
+(`tools/usb.sh` puis `tools/vm-test.sh`) — en particulier que Plymouth s'efface bien avant
+que le bureau prenne l'écran sur tty1.
+
+## 2026-11-07 — Verrouillage et veille : passage par le noir en douceur
+
+Avant : assombrissement linéaire de 0,36 s, puis l'écran verrouillé surgissait d'un coup ; au
+réveil et au déverrouillage, tout apparaissait aussi sans transition.
+- `desktop/lock.rs` : `ScreenFade` en trois temps (s'assombrir → noir → se dévoiler), courbe
+  douce aux deux bouts (`Easing::EaseInOut`).
+  - Verrouiller : 0,52 s vers le noir, puis l'écran verrouillé se dévoile en 0,48 s.
+  - Mettre en veille : 0,9 s vers le noir, l'écran reste noir ; au réveil, l'écran verrouillé
+    se dévoile. Veille venue de l'ordinateur (capot) : verrouillé tout de suite derrière le noir.
+  - Déverrouiller : après « Bienvenue », court passage au noir (0,28 s) puis le bureau se dévoile.
+  - Veille refusée : le noir se lève au lieu de disparaître d'un coup.
+  - Un fondu repris en cours repart de la part de noir présente (pas de saut).
+  - Pendant le dévoilement, clavier et souris marchent déjà ; « réduire les animations » coupe
+    les fondus.
+Vérifié : CI, tests du fondu, captures `--demo-lock` (noir, mi-dévoilement, écran final).
+Pas vérifié : vraie mise en veille et réveil sur le ThinkBook, déverrouillage sur le vrai bureau.
+
+## 2026-11-07 — Fenêtres : échange de places fluide en tuilage
+
+Vidéo de l'utilisateur : en échangeant deux fenêtres rangées, l'ancienne image restait à sa
+petite taille dans un coin d'un grand cadre vide (rectangle blanchâtre), la fenêtre qui
+rétrécit débordait puis se recadrait d'un coup, le tout en 0,28 s.
+- `render/genie.rs`, `shaders.rs` : l'image d'une fenêtre qui change de cadre est étirée au
+  cadre qui glisse (plus de rognage ni de vide), coins arrondis redessinés à sa taille.
+- `render/mod.rs` : ancien et nouveau contenu posés tous deux sur le cadre, en fondu enchaîné.
+- `wm/animation.rs` : glissement en `motion::LONG` (0,36 s), fondu enchaîné en
+  `motion::SHORT` avec une courbe douce. Vaut aussi pour le bouton vert et l'aimantation.
+- Option `--demo-swap FRACTION` : en tuilage, échange les deux premières fenêtres et fige le
+  glissement, pour les captures.
+Vérifié : CI, captures figées à 0, 0,4 et 0,75 (horloge et moniteur en tuilage).
+Pas vérifié : le mouvement réel (fondu enchaîné compris) sur le vrai bureau, avec Electron.
+
+## 2026-11-07 — Lecteur PDF refait, avec ses documents récents
+
+Avant : une seule page à la fois, rendue en entier à chaque changement de page (lent),
+pas de miniatures ni de recherche, et rien de retenu d'une ouverture à l'autre.
+- `pdf_viewer.rs` : toutes les pages défilent à la suite (molette, Page préc./suiv., Espace,
+  flèches, Début/Fin) ; seules les pages à l'écran (et leurs voisines) sont rendues, à la
+  taille exacte d'affichage, donc nettes à tout zoom ; les pages éloignées sont libérées.
+- Colonne de miniatures (F9), la page lue y est marquée et suivie.
+- Zoom : automatique (largeur, 125 % au plus), largeur, page entière, 25 à 400 % ; boutons,
+  + / −, Ctrl + molette et pincement du pavé tactile ; la vue reste au même endroit.
+- Recherche (Ctrl+F) sans majuscules ni accents, résultats surlignés, Entrée / Maj+Entrée.
+- Champ « Aller à la page », nom du document au centre de la barre.
+- Récents : `~/.local/share/ferrite/lecteur-pdf-recents` (12 documents, page lue retenue).
+  Sans document, l'accueil montre leurs couvertures ; bouton horloge dans la barre ; clic
+  droit pour retirer un document ou effacer la liste. Un document rouvert reprend sa page.
+- Sous-modules `pdf_viewer/poppler.rs` (pdfinfo, pdftoppm, pdftotext), `search.rs`,
+  `recents.rs`, avec leurs tests.
+Vérifié : CI (sans shellcheck), captures accueil des récents, document repris à la page 12,
+recherche surlignée (33 résultats), thème sombre avec un PDF en paysage.
+Pas vérifié : sélection et copie du texte (non prises en charge), liens cliquables (non pris
+en charge), très gros documents (plusieurs centaines de pages) sur le vrai bureau, pincement
+du pavé tactile sur le ThinkBook. Les récents ne vont pas dans `recently-used.xbel` (Fichiers).

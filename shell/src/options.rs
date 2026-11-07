@@ -20,6 +20,8 @@ Options :
                         (applications, reglages, presse-papiers ou notifications)
   --demo-genie FRACTION réduit la première fenêtre ouverte et fige l'animation
                         « génie » à cette fraction (0 à 1), pour les captures
+  --demo-swap FRACTION  en tuilage, échange les deux premières fenêtres et fige le
+                        glissement à cette fraction (0 à 1), pour les captures
   --demo-overview       ouvre la vue d'ensemble au démarrage (pour les captures)
   --demo-switcher       ouvre le sélecteur Alt+Tab dès qu'une fenêtre existe (pour les captures)
   --demo-controls LISTE ouvre le centre de contrôle sur sa liste (wifi ou bluetooth)
@@ -71,6 +73,8 @@ pub struct Options {
     pub menu: Option<Popover>,
     /// Animation « génie » figée à cette fraction sur la première fenêtre.
     pub genie_demo: Option<f64>,
+    /// Échange de places en tuilage figé à cette fraction.
+    pub swap_demo: Option<f64>,
     /// Position figée entre les pages.
     pub demo_page: Option<f64>,
     /// Ouvre la vue d'ensemble au démarrage (pour les captures).
@@ -104,6 +108,7 @@ impl Default for Options {
             capture_delay: Duration::from_secs(3),
             menu: None,
             genie_demo: None,
+            swap_demo: None,
             demo_page: None,
             demo_overview: false,
             demo_switcher: false,
@@ -166,6 +171,15 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
             "--demo-genie" => {
                 let text = value("--demo-genie")?;
                 options.genie_demo = Some(
+                    text.parse::<f64>()
+                        .ok()
+                        .filter(|fraction| (0.0..=1.0).contains(fraction))
+                        .ok_or_else(|| format!("fraction invalide : {text} (entre 0 et 1)"))?,
+                );
+            }
+            "--demo-swap" => {
+                let text = value("--demo-swap")?;
+                options.swap_demo = Some(
                     text.parse::<f64>()
                         .ok()
                         .filter(|fraction| (0.0..=1.0).contains(fraction))

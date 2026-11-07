@@ -19,5 +19,6 @@ rm -f "$dev/ferrite-shell" "$dev/ferrite-apps" "$dev/.ferrite-shell.nouveau" "$d
 rm -rf "$dev/visage"
 # Portail de développement : la version installée (/usr/local/bin) reprend la main.
 rm -f "${XDG_DATA_HOME:-$HOME/.local/share}/dbus-1/services/org.freedesktop.impl.portal.desktop.ferrite.service"
+rm -f "${XDG_DATA_HOME:-$HOME/.local/share}"/applications/ferrite-*.desktop
 rmdir "$dev" 2>/dev/null || true
 ok "Mode développement inactif : Ctrl+Alt+Retour arrière relance le bureau stable"

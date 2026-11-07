@@ -89,6 +89,7 @@ fn run(options: Options) -> Result<u8, Box<dyn std::error::Error>> {
             .insert_idle(move |state| state.open_capture(mode));
     }
     state.genie_demo = options.genie_demo.map(|fraction| (fraction, None));
+    state.swap_demo = options.swap_demo.map(|fraction| (fraction, None, false));
     match system::start(&event_loop.handle()) {
         Ok(link) => state.system_link = Some(link),
         Err(err) => warn!("services système indisponibles : {err}"),

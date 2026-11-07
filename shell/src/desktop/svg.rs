@@ -34,6 +34,9 @@ macro_rules! icons {
 
 icons![
     "app-code",
+    "ferrite-logo",
+    "ferrite-symbol",
+    "ferrite-symbol-white",
     "app-search",
     "app-video",
     "status-battery-000",
@@ -80,7 +83,6 @@ icons![
     "status-wifi-3",
     "status-wifi-4",
     ;
-    "ferrite-logo" => "places/start-here",
     "app-files" => "apps/system-file-manager",
     "app-terminal" => "apps/utilities-terminal",
     "app-web" => "apps/web-browser",

@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=Ferrite OS
+Description=Démarrage de Ferrite OS : logo au centre sur fond nuit, trois points qui s'allument.
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/ferrite
+ScriptFile=/usr/share/plymouth/themes/ferrite/ferrite.script

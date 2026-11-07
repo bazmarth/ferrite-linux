@@ -391,7 +391,7 @@ impl Ferrite {
                     }
                     return FilterResult::Forward;
                 }
-                if state.screen_fade.is_some() {
+                if state.screen_fade.is_some_and(|fade| fade.blocks_input()) {
                     return FilterResult::Intercept(Action::LockIgnore);
                 }
                 // Bouton d'alimentation physique : veille ou dialogue selon Paramètres → Énergie.
@@ -975,7 +975,7 @@ impl Ferrite {
         relative: Option<RelativeMotionEvent>,
         time: u32,
     ) {
-        if self.screen_fade.is_some() {
+        if self.screen_fade.is_some_and(|fade| fade.blocks_input()) {
             return;
         }
         let Some(pointer) = self.seat.get_pointer() else {
@@ -1063,7 +1063,7 @@ impl Ferrite {
     /// Clic de souris : décorations (feux, barre de titre, bords) gérées ici, le reste
     /// transmis au client sous le pointeur.
     fn on_button(&mut self, button: ButtonEvent) {
-        if self.screen_fade.is_some() {
+        if self.screen_fade.is_some_and(|fade| fade.blocks_input()) {
             return;
         }
         let Some(pointer) = self.seat.get_pointer() else {

@@ -1242,7 +1242,7 @@ impl Drop for VideoState {
     }
 }
 
-fn file_uri(path: &Path) -> Result<String, String> {
+pub(crate) fn file_uri(path: &Path) -> Result<String, String> {
     let path = path
         .canonicalize()
         .map_err(|error| format!("Fichier vidéo inaccessible : {error}"))?;

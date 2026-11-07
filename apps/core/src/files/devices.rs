@@ -67,11 +67,7 @@ pub fn parse_lsblk(output: &str) -> Vec<Device> {
                 } else {
                     format!("/dev/{parent}")
                 },
-                label: match (label.is_empty(), removable) {
-                    (false, _) => label,
-                    (true, true) => format!("Clé {}", field("SIZE")),
-                    (true, false) => format!("Disque {}", field("SIZE")),
-                },
+                label: friendly_label(&label, &field("FSTYPE"), &field("SIZE"), removable),
                 size: field("SIZE"),
                 mount: Some(mount).filter(|mount| !mount.is_empty()).map(PathBuf::from),
                 usage: None,
@@ -98,6 +94,47 @@ fn internal_data(fstype: &str, kind: &str, mount: &str, size: &str) -> bool {
     ["/media/", "/mnt/", "/run/media/"]
         .iter()
         .any(|place| mount.starts_with(place))
+}
+
+/// Nom montré dans la barre latérale : l'étiquette du volume (« fedora » devient
+/// « Fedora »), sinon sa nature et sa taille (« Clé USB de 4 Go », « Windows (291,6 Go) »).
+fn friendly_label(label: &str, fstype: &str, size: &str, removable: bool) -> String {
+    if !label.is_empty() {
+        if label.chars().any(char::is_uppercase) {
+            return label.to_owned();
+        }
+        let mut chars = label.chars();
+        return chars
+            .next()
+            .map(|first| first.to_uppercase().chain(chars).collect())
+            .unwrap_or_default();
+    }
+    let size = french_size(size);
+    if removable {
+        format!("Clé USB de {size}")
+    } else if fstype == "ntfs" {
+        format!("Windows ({size})")
+    } else {
+        format!("Disque de {size}")
+    }
+}
+
+/// « 165.9G » ou « 165,9G » de `lsblk` en « 165,9 Go ».
+fn french_size(size: &str) -> String {
+    let size = size.trim().replace('.', ",");
+    let Some(split) = size.find(|c: char| c.is_ascii_alphabetic()) else {
+        return size;
+    };
+    let (number, unit) = size.split_at(split);
+    let unit = match unit {
+        "B" => "o",
+        "K" => "Ko",
+        "M" => "Mo",
+        "G" => "Go",
+        "T" => "To",
+        other => other,
+    };
+    format!("{number} {unit}")
 }
 
 /// Taille écrite par `lsblk` (« 901M », « 165,9G », « 1,8T ») en octets.
@@ -176,12 +213,23 @@ PATH="/dev/sdc1" PKNAME="sdc" LABEL="" SIZE="4G" RM="0" HOTPLUG="1" TYPE="part" 
 "#;
         let devices = parse_lsblk(output);
         let labels: Vec<&str> = devices.iter().map(|device| device.label.as_str()).collect();
-        assert_eq!(labels, ["Disque 291,6G", "FICHIERS", "MA CLE", "Clé 4G"]);
+        assert_eq!(
+            labels,
+            ["Windows (291,6 Go)", "FICHIERS", "MA CLE", "Clé USB de 4 Go"]
+        );
         assert!(!devices[0].removable && devices[0].mount.is_none());
         assert_eq!(devices[1].mount, Some(PathBuf::from("/media/FICHIERS")));
         assert_eq!(devices[2].disk, "/dev/sdb");
         assert!(devices[2].removable);
         assert_eq!(devices[2].mount, Some(PathBuf::from("/media/ferrite/MA CLE")));
+    }
+
+    #[test]
+    fn noms_lisibles() {
+        assert_eq!(friendly_label("fedora", "btrfs", "120G", false), "Fedora");
+        assert_eq!(friendly_label("MonDisque", "ext4", "1T", false), "MonDisque");
+        assert_eq!(friendly_label("", "ext4", "165.9G", false), "Disque de 165,9 Go");
+        assert_eq!(french_size("901M"), "901 Mo");
     }
 
     #[test]

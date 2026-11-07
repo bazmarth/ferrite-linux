@@ -444,7 +444,7 @@ impl Ferrite {
             Event::Failed(message) => self.system_error = Some(message),
             Event::SleepFailed(message) => {
                 warn!(%message, "mise en veille refusée");
-                self.screen_fade = None;
+                self.reveal_screen();
                 self.system_error = Some(message);
             }
             Event::KeyboardSettings(settings) => {
@@ -551,7 +551,7 @@ impl Ferrite {
             None => {
                 warn!(?change, "services système indisponibles");
                 if change == Change::Power(PowerAction::Sleep) {
-                    self.screen_fade = None;
+                    self.reveal_screen();
                     self.system_error = Some("Services système indisponibles".to_owned());
                 }
             }

@@ -1,0 +1,73 @@
+# Démarrage de Ferrite OS : fond nuit en dégradé, symbole au centre, trois points
+# turquoise qui s'allument tour à tour sous le logo.
+
+Window.SetBackgroundTopColor(0.082, 0.106, 0.180);
+Window.SetBackgroundBottomColor(0.027, 0.039, 0.071);
+
+largeur = Window.GetWidth();
+hauteur = Window.GetHeight();
+
+logo.image = Image("logo.png");
+logo.sprite = Sprite(logo.image);
+logo.x = Window.GetX() + largeur / 2 - logo.image.GetWidth() / 2;
+logo.y = Window.GetY() + hauteur / 2 - logo.image.GetHeight() / 2 - 30;
+logo.sprite.SetPosition(logo.x, logo.y, 1);
+logo.sprite.SetOpacity(0);
+
+point.image = Image("point.png");
+for (i = 0; i < 3; i++) {
+    points[i] = Sprite(point.image);
+    points[i].SetPosition(Window.GetX() + largeur / 2 - 30 + i * 24, logo.y + logo.image.GetHeight() + 48, 1);
+    points[i].SetOpacity(0.25);
+}
+
+temps = 0;
+
+fun rafraichir() {
+    temps++;
+    # Le logo apparaît en fondu pendant la première seconde (50 images par seconde).
+    if (temps < 50)
+        logo.sprite.SetOpacity(temps / 50);
+    else
+        logo.sprite.SetOpacity(1);
+    # Un point allumé à la fois, toutes les 0,4 s.
+    actif = Math.Int(temps / 20) % 3;
+    for (i = 0; i < 3; i++) {
+        if (i == actif)
+            points[i].SetOpacity(1);
+        else
+            points[i].SetOpacity(0.25);
+    }
+}
+
+Plymouth.SetRefreshFunction(rafraichir);
+
+# Messages du système (rares avec « quiet ») : une ligne discrète en bas.
+message.sprite = Sprite();
+fun afficher_message(texte) {
+    message.sprite.SetImage(Image.Text(texte, 0.6, 0.65, 0.75));
+    message.sprite.SetPosition(Window.GetX() + largeur / 2 - message.sprite.GetImage().GetWidth() / 2, Window.GetY() + hauteur - 60, 2);
+}
+Plymouth.SetMessageFunction(afficher_message);
+
+# Saisie d'un mot de passe (disque chiffré) : on écrit l'invite et une puce par caractère.
+invite.sprite = Sprite();
+puces.sprite = Sprite();
+fun demander_mot_de_passe(texte, nombre) {
+    invite.sprite.SetOpacity(1);
+    puces.sprite.SetOpacity(1);
+    invite.sprite.SetImage(Image.Text(texte, 1, 1, 1));
+    invite.sprite.SetPosition(Window.GetX() + largeur / 2 - invite.sprite.GetImage().GetWidth() / 2, logo.y + logo.image.GetHeight() + 90, 2);
+    chaine = "";
+    for (i = 0; i < nombre; i++)
+        chaine += "•";
+    puces.sprite.SetImage(Image.Text(chaine, 1, 1, 1));
+    puces.sprite.SetPosition(Window.GetX() + largeur / 2 - puces.sprite.GetImage().GetWidth() / 2, logo.y + logo.image.GetHeight() + 120, 2);
+}
+Plymouth.SetDisplayPasswordFunction(demander_mot_de_passe);
+
+fun retour_normal() {
+    invite.sprite.SetOpacity(0);
+    puces.sprite.SetOpacity(0);
+}
+Plymouth.SetDisplayNormalFunction(retour_normal);

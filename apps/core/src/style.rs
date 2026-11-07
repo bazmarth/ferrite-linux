@@ -855,6 +855,8 @@ macro_rules! icons {
 
 icons![
     "app-code",
+    "ferrite-logo",
+    "ferrite-logo-light",
     "places-usb",
     "status-bluetooth-on",
     "status-display",
@@ -878,7 +880,6 @@ icons![
     "device-mouse",
     "device-phone",
     ;
-    "ferrite-logo" => "places/start-here",
     "app-files" => "apps/system-file-manager",
     "app-video" => "apps/multimedia-video-player",
     "app-music" => "apps/multimedia-audio-player",

@@ -411,6 +411,7 @@ mod tests {
             icon: None,
             wm_class: None,
             categories: Vec::new(),
+            mime_types: Vec::new(),
         }
     }
 

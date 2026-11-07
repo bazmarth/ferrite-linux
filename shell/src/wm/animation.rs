@@ -23,16 +23,17 @@ use smithay::{
 pub const DURATION: Duration = Duration::from_millis(520);
 /// Durée de l'apparition d'une nouvelle fenêtre.
 pub const OPEN_DURATION: Duration = ferrite_ui::tokens::motion::NORMAL;
-/// Durée du passage d'une fenêtre à sa taille agrandie, ou de son retour.
-pub const ZOOM_DURATION: Duration = ferrite_ui::tokens::motion::NORMAL;
+/// Durée du passage d'une fenêtre d'un cadre à un autre (agrandissement, échange de
+/// places en tuilage) : assez long pour que l'œil suive le trajet.
+pub const ZOOM_DURATION: Duration = ferrite_ui::tokens::motion::LONG;
 /// Taille de départ d'une nouvelle fenêtre, par rapport à sa taille finale.
 const OPEN_SCALE: f64 = 0.88;
 /// Côté du point, au centre de l'icône du Dock, où la fenêtre disparaît et d'où elle
 /// ressort.
 const POINT: f64 = 6.0;
-/// Fondu du nouveau contenu d'une fenêtre qui change de taille, dès que l'application
-/// l'a dessiné.
-const CROSSFADE: Duration = Duration::from_millis(120);
+/// Fondu enchaîné vers le nouveau contenu d'une fenêtre qui change de taille, dès que
+/// l'application l'a dessiné.
+const CROSSFADE: Duration = ferrite_ui::tokens::motion::SHORT;
 /// Plus grand pas d'une image à la suivante (30 images par seconde) : après une image
 /// lente (instantané de la fenêtre, panneau redessiné), l'animation reprend où elle en
 /// était au lieu de sauter d'un coup.
@@ -124,10 +125,10 @@ impl WindowAnimation {
         self.next_at.set(Some(self.elapsed()));
     }
 
-    /// Opacité du nouveau contenu, posé sur l'ancien.
+    /// Opacité du nouveau contenu, posé sur l'ancien (douce aux deux bouts).
     pub fn next_alpha(&self) -> f64 {
         self.next_at.get().map_or(0.0, |at| {
-            (self.elapsed().saturating_sub(at).as_secs_f64() / CROSSFADE.as_secs_f64()).min(1.0)
+            smoothstep(self.elapsed().saturating_sub(at).as_secs_f64() / CROSSFADE.as_secs_f64())
         })
     }
 

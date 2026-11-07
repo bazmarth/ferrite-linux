@@ -29,7 +29,14 @@ use crate::{
 const HELPERS: [&str; 2] = ["/usr/sbin/unix_chkpwd", "/sbin/unix_chkpwd"];
 /// Temps du passage du repos à la saisie, et de la secousse d'un refus.
 const TRANSITION: Duration = ferrite_ui::tokens::motion::LONG;
-pub const SCREEN_FADE_DURATION: Duration = ferrite_ui::tokens::motion::LONG;
+/// Assombrissement avant le verrouillage : assez lent pour se voir, sans faire attendre.
+const DARKEN_LOCK: Duration = Duration::from_millis(520);
+/// Avant la veille, l'écran s'éteint plus doucement, comme une lampe qu'on baisse.
+const DARKEN_SLEEP: Duration = Duration::from_millis(900);
+/// Après l'accueil : court passage au noir avant de retrouver le bureau.
+const DARKEN_UNLOCK: Duration = ferrite_ui::tokens::motion::NORMAL;
+/// Le noir se lève sur l'écran verrouillé ou sur le bureau.
+const REVEAL: Duration = Duration::from_millis(480);
 const SCREEN_FADE_STEP: Duration = Duration::from_millis(16);
 const SHAKE: Duration = Duration::from_millis(380);
 /// Message d'accueil, une fois le mot de passe accepté.
@@ -679,12 +686,91 @@ fn acquire_sleep_delay_inhibitor(manager: &zbus::blocking::Proxy<'_>) -> Option<
     }
 }
 
-fn finish_screen_fade(screen_fade: &mut Option<(Instant, bool)>) -> Option<bool> {
-    let (_, sleep_after) = *screen_fade.as_ref()?;
-    if !sleep_after {
-        *screen_fade = None;
+/// Ce qui suit l'assombrissement complet de l'écran.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AfterDark {
+    Lock,
+    LockAndSleep,
+    Unlock,
+}
+
+/// Passage par le noir : verrouillage, mise en veille, réveil et déverrouillage.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ScreenFade {
+    /// L'écran s'assombrit depuis `from` (part de noir déjà là) ; à la fin, `then`.
+    Darken {
+        started: Instant,
+        duration: Duration,
+        from: f32,
+        then: AfterDark,
+    },
+    /// Noir complet jusqu'au réveil.
+    Dark,
+    /// Le noir se lève sur ce qui est maintenant à l'écran.
+    Reveal { started: Instant, duration: Duration },
+}
+
+impl ScreenFade {
+    fn darken(from: f32, then: AfterDark, reduce_motion: bool) -> Self {
+        let duration = match then {
+            AfterDark::Lock => DARKEN_LOCK,
+            AfterDark::LockAndSleep => DARKEN_SLEEP,
+            AfterDark::Unlock => DARKEN_UNLOCK,
+        };
+        ScreenFade::Darken {
+            started: Instant::now(),
+            duration: if reduce_motion { Duration::ZERO } else { duration },
+            from,
+            then,
+        }
     }
-    Some(sleep_after)
+
+    fn reveal(reduce_motion: bool) -> Self {
+        ScreenFade::Reveal {
+            started: Instant::now(),
+            duration: if reduce_motion { Duration::ZERO } else { REVEAL },
+        }
+    }
+
+    fn part(started: Instant, duration: Duration) -> f32 {
+        if duration.is_zero() {
+            return 1.0;
+        }
+        (started.elapsed().as_secs_f32() / duration.as_secs_f32()).clamp(0.0, 1.0)
+    }
+
+    /// Part de noir sur l'écran, de 0 à 1, douce au départ comme à l'arrivée.
+    pub fn alpha(&self) -> f32 {
+        use ferrite_ui::theme::Easing;
+        match *self {
+            ScreenFade::Darken {
+                started,
+                duration,
+                from,
+                ..
+            } => from + (1.0 - from) * Easing::EaseInOut.apply(Self::part(started, duration)),
+            ScreenFade::Dark => 1.0,
+            ScreenFade::Reveal { started, duration } => {
+                1.0 - Easing::EaseInOut.apply(Self::part(started, duration))
+            }
+        }
+    }
+
+    /// Pendant l'assombrissement et le noir, clavier et souris sont ignorés ; le dévoilement,
+    /// lui, laisse déjà taper le mot de passe.
+    pub fn blocks_input(&self) -> bool {
+        !matches!(self, ScreenFade::Reveal { .. })
+    }
+
+    fn finished(&self) -> bool {
+        match *self {
+            ScreenFade::Darken {
+                started, duration, ..
+            }
+            | ScreenFade::Reveal { started, duration } => Self::part(started, duration) >= 1.0,
+            ScreenFade::Dark => false,
+        }
+    }
 }
 
 impl Lock {
@@ -697,59 +783,130 @@ impl Lock {
 }
 
 impl Ferrite {
-    /// Assombrit progressivement l'écran avant d'afficher l'écran de verrouillage.
+    /// Assombrit progressivement l'écran, verrouille, puis dévoile l'écran verrouillé.
     pub fn lock_session(&mut self) {
         if let Some(lock) = self.lock.as_mut() {
             // Mise en veille pendant l'accueil : on repart verrouillé.
             lock.welcome_until = None;
             lock.checking = false;
+            if let Some(ScreenFade::Darken { then, .. }) = self.screen_fade.as_mut()
+                && *then == AfterDark::Unlock
+            {
+                *then = AfterDark::Lock;
+            }
             return;
         }
-        self.begin_screen_fade(false);
+        self.begin_darken(AfterDark::Lock);
     }
 
-    /// Verrouille puis met l'écran en veille après le fondu.
+    /// Verrouille puis met l'ordinateur en veille ; l'écran reste noir jusqu'au réveil.
     pub fn lock_and_sleep(&mut self) {
-        self.begin_screen_fade(true);
+        self.begin_darken(AfterDark::LockAndSleep);
     }
 
-    fn begin_screen_fade(&mut self, sleep_after: bool) {
-        if let Some((started, pending_sleep)) = self.screen_fade {
-            self.screen_fade = Some((started, pending_sleep || sleep_after));
-            return;
+    fn begin_darken(&mut self, then: AfterDark) {
+        let reduce = self.dock_config.reduce_motion;
+        match self.screen_fade.as_mut() {
+            // Déjà en route vers le noir : la veille l'emporte sur le simple verrouillage.
+            Some(ScreenFade::Darken { then: pending, .. }) => {
+                if then == AfterDark::LockAndSleep {
+                    *pending = AfterDark::LockAndSleep;
+                }
+                return;
+            }
+            Some(ScreenFade::Dark) => return,
+            // Le noir se levait : on repart de là où il en est, sans saut.
+            Some(fade @ ScreenFade::Reveal { .. }) => {
+                *fade = ScreenFade::darken(fade.alpha(), then, reduce);
+                self.request_redraw();
+                return;
+            }
+            None => self.screen_fade = Some(ScreenFade::darken(0.0, then, reduce)),
         }
-        self.screen_fade = Some((Instant::now(), sleep_after));
         self.super_held = false;
         self.super_used = true;
+        self.drive_screen_fade();
+    }
+
+    /// Le noir se lève sur l'écran présent (réveil, veille refusée, après un verrouillage).
+    pub fn reveal_screen(&mut self) {
+        if !matches!(self.screen_fade, Some(ScreenFade::Darken { .. })) && self.screen_fade.is_some() {
+            let running = matches!(self.screen_fade, Some(ScreenFade::Reveal { .. }));
+            self.screen_fade = Some(ScreenFade::reveal(self.dock_config.reduce_motion));
+            if !running {
+                self.drive_screen_fade();
+            }
+        }
+    }
+
+    /// Fait avancer le fondu image après image, et enchaîne les étapes.
+    fn drive_screen_fade(&mut self) {
         self.request_redraw();
         let timer = Timer::from_duration(SCREEN_FADE_STEP);
         let inserted = self.loop_handle.insert_source(timer, |_, _, state| {
-            let Some((started, _)) = state.screen_fade else {
-                return TimeoutAction::Drop;
-            };
-            if started.elapsed() < SCREEN_FADE_DURATION {
-                state.request_redraw();
-                return TimeoutAction::ToDuration(SCREEN_FADE_STEP);
-            }
-            let Some(sleep_after) = finish_screen_fade(&mut state.screen_fade) else {
-                return TimeoutAction::Drop;
-            };
-            state.lock_now();
-            if sleep_after {
-                state.request_system_change(crate::system::Change::Power(crate::state::PowerAction::Sleep));
-            }
             state.request_redraw();
-            TimeoutAction::Drop
+            if state.step_screen_fade() {
+                TimeoutAction::ToDuration(SCREEN_FADE_STEP)
+            } else {
+                TimeoutAction::Drop
+            }
         });
         if let Err(error) = inserted {
-            tracing::warn!(%error, "fondu avant verrouillage indisponible");
-            let Some(sleep_after) = finish_screen_fade(&mut self.screen_fade) else {
-                return;
-            };
-            self.lock_now();
-            if sleep_after {
-                self.request_system_change(crate::system::Change::Power(crate::state::PowerAction::Sleep));
+            tracing::warn!(%error, "fondu de l'écran indisponible");
+            // Sans minuterie, on va droit au résultat.
+            while self.step_screen_fade() {
+                if let Some(fade) = self.screen_fade.as_mut() {
+                    *fade = match *fade {
+                        ScreenFade::Darken { from, then, .. } => ScreenFade::Darken {
+                            started: Instant::now(),
+                            duration: Duration::ZERO,
+                            from,
+                            then,
+                        },
+                        _ => ScreenFade::Reveal {
+                            started: Instant::now(),
+                            duration: Duration::ZERO,
+                        },
+                    };
+                }
             }
+        }
+    }
+
+    /// Une étape du fondu ; `false` quand il n'y a plus rien à animer.
+    fn step_screen_fade(&mut self) -> bool {
+        let Some(fade) = self.screen_fade else {
+            return false;
+        };
+        if !fade.finished() {
+            return !matches!(fade, ScreenFade::Dark);
+        }
+        match fade {
+            ScreenFade::Darken { then, .. } => match then {
+                AfterDark::Lock => {
+                    self.lock_now();
+                    self.screen_fade = Some(ScreenFade::reveal(self.dock_config.reduce_motion));
+                    true
+                }
+                AfterDark::LockAndSleep => {
+                    self.lock_now();
+                    self.screen_fade = Some(ScreenFade::Dark);
+                    self.request_system_change(crate::system::Change::Power(
+                        crate::state::PowerAction::Sleep,
+                    ));
+                    false
+                }
+                AfterDark::Unlock => {
+                    self.unlock_now();
+                    self.screen_fade = Some(ScreenFade::reveal(self.dock_config.reduce_motion));
+                    true
+                }
+            },
+            ScreenFade::Reveal { .. } => {
+                self.screen_fade = None;
+                false
+            }
+            ScreenFade::Dark => false,
         }
     }
 
@@ -774,9 +931,14 @@ impl Ferrite {
 
     pub fn on_lock_event(&mut self, event: Event) {
         match event {
-            Event::Lock => self.lock_session(),
+            // L'ordinateur s'endort déjà (capot fermé…) : verrouillé derrière le noir, pour
+            // que le réveil dévoile l'écran verrouillé.
+            Event::Lock => {
+                self.lock_now();
+                self.screen_fade = Some(ScreenFade::Dark);
+            }
             Event::Resumed => {
-                self.screen_fade = None;
+                self.reveal_screen();
                 // Retour de veille : la personne est devant l'écran.
                 self.try_face_unlock();
             }
@@ -945,13 +1107,21 @@ impl Ferrite {
             .as_ref()
             .and_then(|lock| lock.welcome_until)
             .is_some_and(|until| Instant::now() >= until);
-        if ready {
-            self.lock = None;
-            self.refresh_media_watching();
-            let top = self.top_window();
-            self.focus_window(top);
-            self.refresh_pointer_focus();
+        if ready && !matches!(self.screen_fade, Some(ScreenFade::Darken { .. })) {
+            self.begin_darken(AfterDark::Unlock);
         }
+    }
+
+    /// Ouvre la session, au plus noir du passage entre l'écran verrouillé et le bureau.
+    fn unlock_now(&mut self) {
+        if !self.lock.as_ref().is_some_and(Lock::unlocking) {
+            return;
+        }
+        self.lock = None;
+        self.refresh_media_watching();
+        let top = self.top_window();
+        self.focus_window(top);
+        self.refresh_pointer_focus();
     }
 
     /// Entrée : la vérification se fait à côté, sans figer le bureau.
@@ -1030,14 +1200,32 @@ mod tests {
     }
 
     #[test]
-    fn le_voile_de_veille_reste_jusqu_a_la_reprise() {
-        let mut sleep_fade = Some((Instant::now(), true));
-        assert_eq!(finish_screen_fade(&mut sleep_fade), Some(true));
-        assert!(sleep_fade.is_some());
+    fn le_noir_arrive_et_repart_sans_saut() {
+        let darken = ScreenFade::darken(0.0, AfterDark::Lock, false);
+        assert!(darken.alpha() < 0.01);
+        assert!(darken.blocks_input());
+        assert!(!darken.finished());
 
-        let mut lock_fade = Some((Instant::now(), false));
-        assert_eq!(finish_screen_fade(&mut lock_fade), Some(false));
-        assert!(lock_fade.is_none());
+        // Reprise d'un dévoilement : on repart de la part de noir présente.
+        let resumed = ScreenFade::darken(0.4, AfterDark::LockAndSleep, false);
+        assert!((resumed.alpha() - 0.4).abs() < 0.01);
+
+        assert_eq!(ScreenFade::Dark.alpha(), 1.0);
+        assert!(!ScreenFade::Dark.finished());
+
+        let reveal = ScreenFade::reveal(false);
+        assert!(reveal.alpha() > 0.99);
+        assert!(!reveal.blocks_input());
+    }
+
+    #[test]
+    fn reduire_les_animations_coupe_le_fondu() {
+        let darken = ScreenFade::darken(0.0, AfterDark::Lock, true);
+        assert!(darken.finished());
+        assert_eq!(darken.alpha(), 1.0);
+        let reveal = ScreenFade::reveal(true);
+        assert!(reveal.finished());
+        assert_eq!(reveal.alpha(), 0.0);
     }
 
     #[test]

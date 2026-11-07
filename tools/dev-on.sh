@@ -60,6 +60,14 @@ if [ ! -f "$portal" ]; then
     printf '    sudo install -m 0644 %s /usr/share/xdg-desktop-portal/portals/\n' \
         "$REPO/image/config/includes.chroot$portal"
 fi
+# Applications Ferrite connues du système (Applications par défaut, xdg-open) : leurs
+# fichiers .desktop, pointant vers les binaires de développement, cachés du menu.
+apps_dir="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+mkdir -p "$apps_dir"
+for desktop in "$REPO"/image/config/includes.chroot/usr/share/applications/ferrite-*.desktop; do
+    sed "s|^Exec=ferrite-apps |Exec=$dev/ferrite-apps |" "$desktop" >"$apps_dir/$(basename "$desktop")"
+done
+update-desktop-database "$apps_dir" 2>/dev/null || true
 # Le portail relit sa configuration au démarrage : relancé pour prendre le nouveau service.
 pkill -f xdg-desktop-portal-ferrite 2>/dev/null || true
 systemctl --user try-restart xdg-desktop-portal.service 2>/dev/null || true

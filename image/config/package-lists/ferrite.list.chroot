@@ -120,6 +120,10 @@ foot
 # Shell des terminaux du bureau : complétion par Tab et suggestions (voir ferrite-session)
 fish
 
+# Écran de démarrage (thème « ferrite », hooks/live/0120) ; label : texte des messages
+plymouth
+plymouth-label
+
 # Polices
 fonts-noto-core
 fonts-dejavu-core

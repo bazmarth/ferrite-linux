@@ -23,7 +23,7 @@ mod viewer;
 
 use std::{
     env,
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{Duration, Instant, SystemTime},
 };
 
@@ -197,6 +197,13 @@ fn main() -> eframe::Result {
             eprintln!("{error}");
         }
         return Ok(());
+    }
+    // Image d'une vidéo pour les vignettes de Fichiers, extraite dans ce processus à part.
+    if env::args().nth(1).as_deref() == Some("vignette-video") {
+        let ok = env::args()
+            .nth(2)
+            .is_some_and(|path| files::print_video_frame(Path::new(&path)));
+        std::process::exit(if ok { 0 } else { 1 });
     }
     let Some(info) = args.next().and_then(|arg| catalog::by_command(&arg)) else {
         let commands: Vec<&str> = catalog::APPS.iter().map(|app| app.command).collect();

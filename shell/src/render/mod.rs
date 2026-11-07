@@ -323,15 +323,15 @@ fn build_output_elements(
                 *animation.snapshot.borrow_mut() = Some(texture.clone());
                 Some(texture)
             });
-            // Changement de taille : le contenu garde son échelle, rogné au cadre qui glisse,
-            // pour que l'ancien et le nouveau se superposent exactement pendant le fondu.
-            let clip = (animation.motion == wm::animation::Motion::Zoom).then(|| {
-                if wm::is_maximized(&animation.window) {
-                    0.0
-                } else {
+            // Changement de cadre : l'image suit le cadre qui glisse et s'étire, coins arrondis
+            // redessinés à sa taille ; l'ancien et le nouveau contenu y sont posés tous deux,
+            // d'où un fondu enchaîné sans trou ni recadrage.
+            let radius =
+                if animation.motion == wm::animation::Motion::Zoom && !wm::is_maximized(&animation.window) {
                     f64::from(ferrite_ui::theme::WINDOW_RADIUS)
-                }
-            });
+                } else {
+                    0.0
+                };
             // Changement de taille : le nouveau contenu, dès qu'il existe, en fondu au-dessus.
             if animation.wants_next()
                 && let Some(next) = window_texture(renderer, assets, &animation.window, dark_theme, scale)
@@ -349,7 +349,7 @@ fn build_output_elements(
                     assets.decorations.shaders.genie.clone(),
                     &faded,
                     scale,
-                    clip,
+                    radius,
                 )));
             }
             if let Some(texture) = texture {
@@ -358,7 +358,7 @@ fn build_output_elements(
                     assets.decorations.shaders.genie.clone(),
                     &shape,
                     scale,
-                    clip,
+                    radius,
                 )));
             } else {
                 push_animation_fallback(renderer, animation, &shape, scale, &mut elements);
@@ -478,11 +478,13 @@ fn push_screen_fade(
     output_geo: Rectangle<i32, Logical>,
     elements: &mut Vec<OutputElement>,
 ) {
-    let Some((started, _)) = state.screen_fade else {
+    let Some(fade) = state.screen_fade else {
         return;
     };
-    let alpha = (started.elapsed().as_secs_f64() / crate::desktop::lock::SCREEN_FADE_DURATION.as_secs_f64())
-        .clamp(0.0, 1.0) as f32;
+    let alpha = fade.alpha();
+    if alpha <= 0.0 {
+        return;
+    }
     match MemoryRenderBufferRenderElement::from_buffer(
         renderer,
         Point::from((0.0, 0.0)),
@@ -493,7 +495,7 @@ fn push_screen_fade(
         Kind::Unspecified,
     ) {
         Ok(element) => elements.insert(0, OutputElement::Memory(element)),
-        Err(err) => warn!("voile avant verrouillage indisponible : {err:?}"),
+        Err(err) => warn!("voile du passage au noir indisponible : {err:?}"),
     }
 }
 
@@ -736,7 +738,7 @@ fn push_overview(
             assets.decorations.shaders.genie.clone(),
             &shape,
             scale,
-            None,
+            0.0,
         )));
     }
 

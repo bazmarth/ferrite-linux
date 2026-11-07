@@ -21,3 +21,5 @@ video/x-ms-wmv=ferrite-video.desktop
 video/x-flv=ferrite-video.desktop
 video/3gpp=ferrite-video.desktop
 video/mp2t=ferrite-video.desktop
+text/plain=ferrite-textedit.desktop
+text/markdown=ferrite-textedit.desktop

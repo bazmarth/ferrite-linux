@@ -234,6 +234,11 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
   part que sur un geste (touche, clic, réveil), jamais au moment où l'écran se verrouille.
   Réglage `visage_deverrouillage` (désactivé par défaut). Les modèles (38 Mo) ne sont pas
   dans git : `tools/visage-modeles.sh` les télécharge et vérifie leur SHA-256.
+  Complément du 2026-11-07 : les empreintes quittent le dossier personnel pour
+  `/var/lib/ferrite/visage/<uid>` (root:groupe de l'utilisateur, 0640) ; ajouter ou
+  effacer un visage passe par `pkexec` (mot de passe administrateur). Sinon, quiconque
+  trouve la session ouverte pourrait ajouter son visage et rouvrir l'écran plus tard.
+  `verifier` refuse un fichier qui n'appartient pas à root ou que d'autres peuvent écrire.
 
 - **2026-11-06 — Programmes administrateur sur XWayland (xhost root local).** `pkexec`
   retire l'accès à Wayland : GParted lancé en administrateur ne trouvait aucun écran.

@@ -133,6 +133,7 @@ fn run(options: Options) -> Result<u8, Box<dyn std::error::Error>> {
         ));
     }
     if options.demo_lock {
+        state.demo_face = options.demo_face;
         state.lock_session();
         state.lock_reveal();
     }

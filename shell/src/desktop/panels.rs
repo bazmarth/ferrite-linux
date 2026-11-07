@@ -521,6 +521,11 @@ pub struct LockView {
     pub checking: bool,
     pub welcome: bool,
     pub message: LockMessage,
+    /// Déverrouillage par visage : où il en est, et s'il peut être (re)lancé.
+    pub face: LockFace,
+    pub face_ready: bool,
+    /// Pas de l'animation du visage (anneau qui tourne autour de l'avatar).
+    pub face_tick: u16,
     /// Secousse du champ après un refus, en dixièmes de point.
     pub shake: i16,
     pub pulse: u8,
@@ -554,8 +559,22 @@ pub enum LockMessage {
     Hint,
     Empty,
     Wrong,
-    /// La caméra infrarouge cherche le visage.
-    Face,
+}
+
+/// Déverrouillage par visage, sur l'écran verrouillé.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LockFace {
+    /// Rien en cours.
+    #[default]
+    Idle,
+    /// La caméra infrarouge cherche le visage : l'anneau tourne autour de l'avatar.
+    Scanning,
+    /// Visage reconnu : l'anneau se ferme, l'écran s'ouvre.
+    Recognized,
+    /// Visage vu mais pas reconnu (ou pas vu) : on peut réessayer.
+    Failed,
+    /// Caméra infrarouge ou modèles indisponibles.
+    Unavailable,
 }
 
 /// Notifications reçues : l'application et leur nombre, jamais leur contenu.
@@ -975,6 +994,8 @@ impl Panels {
                 bar_visible: true,
                 lock: state.view.lock.clone().map(|lock| LockView {
                     pulse: lock_screen::PULSE_APART,
+                    // L'anneau du visage a ses propres images : il tourne sans tout redessiner.
+                    face_tick: 0,
                     progress: if lock.field { 1000 } else { 0 },
                     ..lock
                 }),
@@ -6359,6 +6380,9 @@ mod tests {
             checking: false,
             welcome: false,
             message: LockMessage::Hint,
+            face: LockFace::Idle,
+            face_ready: false,
+            face_tick: 0,
             shake: 0,
             pulse: 0,
             spin: 0,

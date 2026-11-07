@@ -2,6 +2,11 @@
 resolver = "3"
 members = ["apps/core", "services/portal", "services/system", "services/visage", "shell", "tools/vm-manager", "ui"]
 
+# winit 0.30 ne transmet pas le pincement du pavé tactile sous Wayland : copie retouchée
+# (voir third_party/winit/FERRITE.md).
+[patch.crates-io]
+winit = { path = "third_party/winit" }
+
 [workspace.package]
 version = "0.1.0"
 edition = "2024"

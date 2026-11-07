@@ -1,6 +1,9 @@
 //! Confidentialité → Déverrouillage par visage : enregistrer son visage avec la caméra
-//! infrarouge (`ferrite-visage enregistrer`), l'effacer, et activer le déverrouillage de
-//! l'écran verrouillé (`visage_deverrouillage`).
+//! infrarouge (`pkexec ferrite-visage enregistrer`), l'effacer, et activer le
+//! déverrouillage de l'écran verrouillé (`visage_deverrouillage`).
+//!
+//! Ajouter ou effacer un visage demande le mot de passe administrateur (agent polkit du
+//! bureau) : les empreintes sont dans `/var/lib/ferrite/visage`, que seul root écrit.
 
 use std::{
     io::{BufRead, BufReader},
@@ -14,24 +17,45 @@ use ferrite_system::config::Settings;
 
 use super::{
     Page, SettingsState,
-    rows::{self, Lead, Row, group, hero},
+    rows::{self, Lead, Row, group},
 };
 
 /// Étape d'un enregistrement, lue sur la sortie de `ferrite-visage`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Step {
+    /// Mot de passe administrateur demandé (avant que la caméra s'allume).
+    Asking,
     Progress(usize, usize),
     NoFace,
     Done,
+    /// Visage effacé.
+    Forgotten,
     Failed(String),
+}
+
+/// Ce que l'on demande à `ferrite-visage`, en administrateur.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Job {
+    Enroll,
+    Forget,
+}
+
+impl Job {
+    fn arg(self) -> &'static str {
+        match self {
+            Self::Enroll => "enregistrer",
+            Self::Forget => "effacer",
+        }
+    }
 }
 
 #[derive(Debug, Default)]
 pub struct FaceState {
     /// Visage enregistré (lu une fois à l'ouverture de la page).
     enrolled: Option<bool>,
-    /// Enregistrement en cours : ses étapes, et la dernière.
+    /// Enregistrement ou effacement en cours : ses étapes, et la dernière.
     steps: Option<Receiver<Step>>,
+    job: Option<Job>,
     last: Option<Step>,
 }
 
@@ -41,7 +65,25 @@ fn program() -> PathBuf {
         .ok()
         .map(|exe| exe.with_file_name("ferrite-visage"))
         .filter(|path| path.is_file())
-        .unwrap_or_else(|| PathBuf::from("ferrite-visage"))
+        .or_else(|| {
+            // pkexec veut un chemin complet : on cherche dans le `PATH`.
+            std::env::var_os("PATH").and_then(|path| {
+                std::env::split_paths(&path)
+                    .map(|dir| dir.join("ferrite-visage"))
+                    .find(|path| path.is_file())
+            })
+        })
+        .unwrap_or_else(|| PathBuf::from("/usr/local/bin/ferrite-visage"))
+}
+
+/// Message pour un code de sortie de `pkexec ferrite-visage` qui n'a pas abouti.
+fn failure(job: Job, code: Option<i32>) -> String {
+    match (code, job) {
+        // 126 : demande fermée ; 127 : mot de passe refusé (codes de pkexec).
+        (Some(126 | 127), _) => "Mot de passe administrateur non donné : rien n’a changé.".to_owned(),
+        (_, Job::Enroll) => "La caméra infrarouge n’a pas pu être utilisée.".to_owned(),
+        (_, Job::Forget) => "Le visage n’a pas pu être effacé.".to_owned(),
+    }
 }
 
 fn read_enrolled() -> bool {
@@ -69,24 +111,18 @@ fn parse(line: &str) -> Option<Step> {
 
 impl SettingsState {
     pub(super) fn privacy_page(&mut self, ui: &mut egui::Ui) {
-        hero(
-            ui,
-            &mut self.icons,
-            (Page::Privacy.icon(), Page::Privacy.color()),
-            "Confidentialité",
-            "Déverrouillage par visage avec la caméra infrarouge",
-            None,
-        );
-        ui.add_space(20.0);
         let face = &mut self.face;
         let enrolled = *face.enrolled.get_or_insert_with(read_enrolled);
         // Étapes arrivées depuis le dernier dessin.
+        let mut forgotten = false;
         if let Some(steps) = &face.steps {
             for step in steps.try_iter() {
                 face.last = Some(step);
             }
-            if matches!(face.last, Some(Step::Done | Step::Failed(_))) {
+            if matches!(face.last, Some(Step::Done | Step::Forgotten | Step::Failed(_))) {
+                forgotten = face.last == Some(Step::Forgotten);
                 face.steps = None;
+                face.job = None;
                 face.enrolled = Some(read_enrolled());
             } else {
                 ui.ctx()
@@ -95,6 +131,10 @@ impl SettingsState {
         }
         let enrolling = face.steps.is_some();
         let mut settings = Settings::load();
+        // Visage effacé : plus rien pour déverrouiller.
+        if forgotten {
+            settings.set("visage_deverrouillage", "non");
+        }
         let mut unlock = settings
             .get("visage_deverrouillage")
             .is_some_and(|value| value == "oui");
@@ -102,6 +142,10 @@ impl SettingsState {
         let mut forget = false;
         group(ui, &mut self.icons, "Déverrouillage par visage", |rows| {
             let (status, hint) = match (&face.last, enrolling, enrolled) {
+                (Some(Step::Asking) | None, true, _) => (
+                    "Mot de passe administrateur demandé…".to_owned(),
+                    "Ajouter ou effacer un visage demande ce mot de passe",
+                ),
                 (Some(Step::Progress(done, total)), true, _) => (
                     format!("Enregistrement… {done} sur {total}"),
                     "Regardez l’écran, sans bouger",
@@ -110,10 +154,11 @@ impl SettingsState {
                     "Je ne vois pas votre visage".to_owned(),
                     "Placez-vous face à l’écran",
                 ),
+                (_, true, _) if face.job == Some(Job::Forget) => ("Effacement…".to_owned(), "Un instant"),
                 (_, true, _) => ("Allumage de la caméra…".to_owned(), "Regardez l’écran"),
                 (_, false, true) => (
                     "Visage enregistré".to_owned(),
-                    "Seule une empreinte est gardée, jamais une photo",
+                    "Une empreinte, jamais une photo. Le modifier demande le mot de passe administrateur",
                 ),
                 (_, false, false) => (
                     "Aucun visage enregistré".to_owned(),
@@ -161,17 +206,15 @@ impl SettingsState {
         crate::kit::note(
             ui,
             "Le visage ne sert qu’à l’écran verrouillé, jamais pour les droits administrateur. \
-             Une photo ne suffit pas : la caméra infrarouge ne voit pas les écrans.",
+             Une photo ne suffit pas : la caméra infrarouge ne voit pas les écrans. \
+             Ajouter ou effacer un visage demande le mot de passe administrateur.",
         );
-        if start {
-            self.face.last = None;
-            self.face.steps = Some(enroll(ui.ctx().clone()));
-        }
-        if forget {
-            let _ = Command::new(program()).arg("effacer").status();
-            settings.set("visage_deverrouillage", "non");
-            self.face.enrolled = Some(false);
-            self.face.last = None;
+        for (wanted, job) in [(start, Job::Enroll), (forget, Job::Forget)] {
+            if wanted {
+                self.face.last = Some(Step::Asking);
+                self.face.job = Some(job);
+                self.face.steps = Some(run(job, ui.ctx().clone()));
+            }
         }
         if settings != Settings::load() {
             self.save(&settings);
@@ -179,19 +222,21 @@ impl SettingsState {
     }
 }
 
-/// Lance `ferrite-visage enregistrer` et relaie ses étapes.
-fn enroll(ctx: egui::Context) -> Receiver<Step> {
+/// Lance `pkexec ferrite-visage enregistrer` (ou `effacer`) et relaie ses étapes ; le
+/// mot de passe administrateur est demandé par l'agent polkit du bureau.
+fn run(job: Job, ctx: egui::Context) -> Receiver<Step> {
     let (sender, steps) = mpsc::channel();
     std::thread::spawn(move || {
-        let child = Command::new(program())
-            .arg("enregistrer")
+        let child = Command::new("pkexec")
+            .arg(program())
+            .arg(job.arg())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn();
         let mut child = match child {
             Ok(child) => child,
             Err(error) => {
-                let _ = sender.send(Step::Failed(format!("ferrite-visage introuvable : {error}")));
+                let _ = sender.send(Step::Failed(format!("pkexec introuvable : {error}")));
                 ctx.request_repaint();
                 return;
             }
@@ -204,11 +249,15 @@ fn enroll(ctx: egui::Context) -> Receiver<Step> {
                 }
             }
         }
-        let success = child.wait().is_ok_and(|status| status.success());
-        let _ = sender.send(if success {
-            Step::Done
-        } else {
-            Step::Failed("La caméra infrarouge n’a pas pu être utilisée.".to_owned())
+        let code = child.wait().ok().and_then(|status| status.code());
+        let _ = sender.send(match (code, job) {
+            (Some(0), Job::Enroll) => Step::Done,
+            (Some(0), Job::Forget) => Step::Forgotten,
+            // Visage pas vu assez longtemps : le message est déjà arrivé (« echec »).
+            (Some(1), Job::Enroll) => Step::Failed(
+                "Votre visage n’a pas été vu assez longtemps. Regardez l’écran et recommencez.".to_owned(),
+            ),
+            _ => Step::Failed(failure(job, code)),
         });
         ctx.request_repaint();
     });
@@ -226,5 +275,12 @@ mod tests {
         assert_eq!(parse("termine"), Some(Step::Done));
         assert!(matches!(parse("echec"), Some(Step::Failed(_))));
         assert_eq!(parse("autre chose"), None);
+    }
+
+    #[test]
+    fn refus_du_mot_de_passe_administrateur() {
+        assert!(failure(Job::Enroll, Some(126)).contains("administrateur"));
+        assert!(failure(Job::Forget, Some(127)).contains("administrateur"));
+        assert!(failure(Job::Forget, Some(3)).contains("effacé"));
     }
 }

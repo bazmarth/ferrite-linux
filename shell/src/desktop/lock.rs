@@ -21,7 +21,7 @@ use smithay::reexports::calloop::{
 };
 
 use crate::{
-    desktop::panels::{LOCK_BLUR_MAX, LOCK_WALLS, LockMessage},
+    desktop::panels::{LOCK_BLUR_MAX, LOCK_WALLS, LockFace, LockMessage},
     state::Ferrite,
 };
 
@@ -62,6 +62,10 @@ pub struct Lock {
     /// Mot de passe accepté : l'écran part à cette heure.
     welcome_until: Option<Instant>,
     pub message: LockMessage,
+    /// Déverrouillage par visage : où il en est, depuis quand, et s'il peut être lancé.
+    pub face: LockFace,
+    pub face_since: Instant,
+    pub face_ready: bool,
     refused_at: Option<Instant>,
     opened_at: Instant,
     pub dark: bool,
@@ -103,6 +107,9 @@ impl Lock {
             checking: false,
             welcome_until: None,
             message: LockMessage::Hint,
+            face: LockFace::Idle,
+            face_since: Instant::now(),
+            face_ready: false,
             refused_at: None,
             opened_at: Instant::now(),
             dark,
@@ -178,6 +185,15 @@ impl Lock {
         let cycle = self.opened_at.elapsed().as_secs_f64() / PULSE.as_secs_f64();
         let wave = (cycle.fract() * 2.0 - 1.0).abs();
         (wave * 8.0).round() as u8
+    }
+
+    /// Pas de l'anneau du visage (un toutes les 40 ms) ; figé si les animations sont
+    /// réduites.
+    pub fn face_tick(&self, reduce_motion: bool) -> u16 {
+        if self.face != LockFace::Scanning || reduce_motion {
+            return 0;
+        }
+        (self.face_since.elapsed().as_millis() / 40 % 1200) as u16
     }
 
     /// Angle de l'indicateur d'attente, en 36 pas.
@@ -454,8 +470,8 @@ pub enum Event {
     Lock,
     Resumed,
     Checked(Result<bool, String>),
-    /// Réponse de `ferrite-visage verifier` : visage reconnu ou non.
-    Face(bool),
+    /// Réponse de `ferrite-visage verifier`.
+    Face(crate::desktop::face::FaceResult),
     Media(Option<Media>),
 }
 
@@ -774,7 +790,7 @@ impl ScreenFade {
 }
 
 impl Lock {
-    fn show_field(&mut self) {
+    pub(crate) fn show_field(&mut self) {
         if !self.field_visible {
             self.field_visible = true;
             self.field_changed = Some(Instant::now());
@@ -924,6 +940,12 @@ impl Ferrite {
         self.close_overview();
         self.stop_widgets_overlay();
         self.lock = Some(Lock::new());
+        self.refresh_face_ready();
+        if let (Some(face), Some(lock)) = (self.demo_face, self.lock.as_mut()) {
+            lock.face = face;
+            lock.face_ready = true;
+            lock.show_field();
+        }
         self.set_media_watching(true);
         self.focus_window(None);
         self.refresh_pointer_focus();
@@ -942,7 +964,7 @@ impl Ferrite {
                 // Retour de veille : la personne est devant l'écran.
                 self.try_face_unlock();
             }
-            Event::Face(recognized) => self.on_face_checked(recognized),
+            Event::Face(result) => self.on_face_checked(result),
             Event::Checked(result) => {
                 let accepted = match result {
                     Ok(accepted) => accepted,
@@ -1042,6 +1064,9 @@ impl Ferrite {
             lock.forget_password();
             lock.message = LockMessage::Hint;
             lock.refused_at = None;
+            if matches!(lock.face, LockFace::Failed | LockFace::Unavailable) {
+                lock.face = LockFace::Idle;
+            }
             if lock.field_visible {
                 lock.field_visible = false;
                 lock.field_changed = Some(Instant::now());

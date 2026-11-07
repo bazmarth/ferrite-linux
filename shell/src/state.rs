@@ -183,6 +183,8 @@ pub struct Ferrite {
     pub space: Space<Window>,
     pub workspaces: crate::wm::workspaces::Workspaces<crate::wm::workspaces::Parked>,
     pub swipe: Option<crate::wm::workspaces::Swipe>,
+    /// Pincement du pavé tactile en cours, transmis à la fenêtre sous le pointeur.
+    pub pinching: bool,
     pub overview: bool,
     /// Listes Wi-Fi et Bluetooth du centre de contrôle.
     pub controls: crate::desktop::controls::Controls,
@@ -247,6 +249,8 @@ pub struct Ferrite {
     pub face_since_password: bool,
     pub face_running: bool,
     pub face_tried: Option<std::time::Instant>,
+    /// État du visage imposé à l'écran verrouillé, pour les captures (`--demo-face`).
+    pub demo_face: Option<crate::desktop::panels::LockFace>,
     /// Sélection d'une fenêtre à capturer : mode actif, et fenêtre survolée.
     pub window_select: bool,
     pub window_select_hover: Option<Window>,
@@ -318,6 +322,7 @@ pub struct Ferrite {
         ViewporterState,
         FractionalScaleManagerState,
         RelativePointerManagerState,
+        smithay::wayland::pointer_gestures::PointerGesturesState,
         CursorShapeManagerState,
         TextInputManagerState,
         InputMethodManagerState,
@@ -364,6 +369,7 @@ impl Ferrite {
             ViewporterState::new::<Self>(&dh),
             FractionalScaleManagerState::new::<Self>(&dh),
             RelativePointerManagerState::new::<Self>(&dh),
+            smithay::wayland::pointer_gestures::PointerGesturesState::new::<Self>(&dh),
             CursorShapeManagerState::new::<Self>(&dh),
             TextInputManagerState::new::<Self>(&dh),
             InputMethodManagerState::new::<Self, _>(&dh, |_client| true),
@@ -459,6 +465,7 @@ impl Ferrite {
             space: Space::default(),
             workspaces: Default::default(),
             swipe: None,
+            pinching: false,
             overview: false,
             controls: Default::default(),
             lock: None,
@@ -497,6 +504,7 @@ impl Ferrite {
             face_since_password: false,
             face_running: false,
             face_tried: None,
+            demo_face: None,
             window_select: false,
             window_select_hover: None,
             overview_order: Vec::new(),
@@ -566,12 +574,14 @@ impl Ferrite {
         if let Some(found) = self.layer_surface_under(pos, &[Layer::Overlay, Layer::Top]) {
             return Some(found);
         }
-        if self.over_shell_chrome(pos) {
+        // Barre, Dock, et ce que le bureau dessine devant les fenêtres (confirmation d'arrêt,
+        // réglages rapides, menus…) : la fenêtre de dessous ne reçoit pas le survol.
+        if self.over_shell_chrome(pos) || self.widgets_front || self.desktop_action_at(pos).is_some() {
             return None;
         }
         match self.hit_test(pos) {
             Some(Hit::Surface(_, surface, location)) => Some((surface, location)),
-            Some(Hit::Decoration(..)) => None,
+            Some(Hit::Decoration(..) | Hit::Body(_)) => None,
             None if self.overview || self.region_select.is_some() || self.region_adjust.is_some() => None,
             None => self.layer_surface_under(pos, &[Layer::Bottom, Layer::Background]),
         }

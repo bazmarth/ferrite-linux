@@ -4,13 +4,14 @@
 //! - `wp_fractional_scale` : rendu net à 125 %, 150 %… ;
 //! - `xdg_activation` : une application ouverte depuis une autre passe au premier plan ;
 //! - `zwp_primary_selection` : coller avec le clic du milieu ;
-//! - `zwp_relative_pointer` : mouvements bruts de la souris (jeux, 3D).
+//! - `zwp_relative_pointer` : mouvements bruts de la souris (jeux, 3D) ;
+//! - `zwp_pointer_gestures` : pincement du pavé tactile (zoom des documents, cartes, pages).
 
 use std::time::Duration;
 
 use smithay::{
-    delegate_fractional_scale, delegate_primary_selection, delegate_relative_pointer, delegate_viewporter,
-    delegate_xdg_activation,
+    delegate_fractional_scale, delegate_pointer_gestures, delegate_primary_selection,
+    delegate_relative_pointer, delegate_viewporter, delegate_xdg_activation,
     reexports::wayland_server::protocol::wl_surface::WlSurface,
     wayland::{
         compositor::with_states,
@@ -80,3 +81,4 @@ delegate_fractional_scale!(Ferrite);
 delegate_xdg_activation!(Ferrite);
 delegate_primary_selection!(Ferrite);
 delegate_relative_pointer!(Ferrite);
+delegate_pointer_gestures!(Ferrite);

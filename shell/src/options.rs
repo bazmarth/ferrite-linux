@@ -26,6 +26,7 @@ Options :
   --demo-switcher       ouvre le sélecteur Alt+Tab dès qu'une fenêtre existe (pour les captures)
   --demo-controls LISTE ouvre le centre de contrôle sur sa liste (wifi ou bluetooth)
   --demo-lock           affiche l'écran de verrouillage au démarrage (pour les captures)
+  --demo-face ÉTAT      avec --demo-lock : visage en cours (scan), reconnu ou echec
   --demo-power          ouvre le dialogue d'arrêt au démarrage (pour les captures)
   --demo-auth           affiche une demande de mot de passe administrateur (pour les captures)
   --demo-osd            affiche la bulle du volume au démarrage (pour les captures)
@@ -83,6 +84,8 @@ pub struct Options {
     pub demo_switcher: bool,
     pub demo_region: bool,
     pub demo_lock: bool,
+    /// Déverrouillage par visage figé sur l'écran verrouillé (`--demo-face`).
+    pub demo_face: Option<crate::desktop::panels::LockFace>,
     pub demo_auth: bool,
     /// Ouvre le dialogue d'arrêt au démarrage (`--demo-power`).
     pub demo_power: bool,
@@ -114,6 +117,7 @@ impl Default for Options {
             demo_switcher: false,
             demo_region: false,
             demo_lock: false,
+            demo_face: None,
             demo_auth: false,
             demo_power: false,
             demo_osd: false,
@@ -193,6 +197,16 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
             "--demo-video" => options.demo_video = true,
             "--demo-island" => options.demo_island = true,
             "--demo-lock" => options.demo_lock = true,
+            "--demo-face" => {
+                use crate::desktop::panels::LockFace;
+                let text = value("--demo-face")?;
+                options.demo_face = Some(match text.as_str() {
+                    "scan" => LockFace::Scanning,
+                    "reconnu" => LockFace::Recognized,
+                    "echec" => LockFace::Failed,
+                    _ => return Err(format!("état invalide : {text} (scan, reconnu ou echec)")),
+                });
+            }
             "--demo-power" => options.demo_power = true,
             "--demo-auth" => options.demo_auth = true,
             "--demo-osd" => options.demo_osd = true,

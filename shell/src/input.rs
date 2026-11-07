@@ -7,8 +7,8 @@ use ferrite_system::config::{
 use smithay::{
     backend::input::{
         AbsolutePositionEvent, Axis, AxisSource, ButtonState, Event, GestureBeginEvent, GestureEndEvent,
-        GestureSwipeUpdateEvent, InputBackend, InputEvent, KeyState, KeyboardKeyEvent, PointerAxisEvent,
-        PointerButtonEvent, PointerMotionEvent,
+        GesturePinchUpdateEvent, GestureSwipeUpdateEvent, InputBackend, InputEvent, KeyState,
+        KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent, PointerMotionEvent,
     },
     input::{
         keyboard::{FilterResult, Keysym},
@@ -352,6 +352,26 @@ impl Ferrite {
             InputEvent::GestureSwipeBegin { event } => self.swipe_begin(event.fingers()),
             InputEvent::GestureSwipeUpdate { event } => self.swipe_update(event.delta_x(), event.delta_y()),
             InputEvent::GestureSwipeEnd { event } => self.swipe_end(event.cancelled()),
+            // Pincement (deux doigts qui s'écartent ou se rapprochent) : transmis à la fenêtre
+            // sous le pointeur, qui zoome (Lecteur PDF, navigateurs, cartes…).
+            InputEvent::GesturePinchBegin { event } => {
+                self.pinch_begin(event.fingers(), event.time_msec());
+            }
+            InputEvent::GesturePinchUpdate { event } => {
+                let update = smithay::input::pointer::GesturePinchUpdateEvent {
+                    time: event.time_msec(),
+                    delta: (event.delta_x(), event.delta_y()).into(),
+                    scale: event.scale(),
+                    rotation: event.rotation(),
+                };
+                if self.pinching
+                    && let Some(pointer) = self.seat.get_pointer()
+                {
+                    pointer.gesture_pinch_update(self, &update);
+                    pointer.frame(self);
+                }
+            }
+            InputEvent::GesturePinchEnd { event } => self.pinch_end(event.cancelled(), event.time_msec()),
             _ => {}
         }
     }
@@ -1060,6 +1080,7 @@ impl Ferrite {
             serial: SERIAL_COUNTER.next_serial(),
             time,
         };
+        self.forget_cursor_on_leave(&pointer, under.as_ref());
         pointer.motion(self, under.clone(), &motion);
         if let Some(relative) = relative {
             pointer.relative_motion(self, under, &relative);
@@ -1206,11 +1227,6 @@ impl Ferrite {
                     return;
                 }
             }
-            let output_geo = self
-                .space
-                .outputs()
-                .next()
-                .and_then(|output| self.space.output_geometry(output));
             // Dock : clic gauche pour ouvrir ou ramener l'application, clic droit pour son
             // menu.
             if self.pending_power.is_none()
@@ -1253,35 +1269,7 @@ impl Ferrite {
                 }
                 return;
             }
-            let desktop_action = output_geo.and_then(|output_geo| {
-                panels::action_at(output_geo, location, &crate::render::desktop_view(self))
-            });
-            // Sous une fenêtre, les widgets ne reçoivent rien, sauf s'ils sont passés devant.
-            let widgets_ahead = self.widgets_front || self.widgets_edit;
-            let desktop_action = desktop_action.filter(|action| {
-                !matches!(
-                    action,
-                    DesktopAction::DashboardAddNote
-                        | DesktopAction::DashboardEditNote(_)
-                        | DesktopAction::DashboardAddTask
-                        | DesktopAction::DashboardToggleTask(_)
-                        | DesktopAction::DashboardCyclePriority(_)
-                        | DesktopAction::DashboardDeleteTask(_)
-                        | DesktopAction::DashboardMonth(_)
-                        | DesktopAction::DashboardNoteStep(_)
-                        | DesktopAction::DashboardApp(_)
-                        | DesktopAction::DashboardMedia(_)
-                        | DesktopAction::DashboardOpenMusic
-                        | DesktopAction::DashboardShowNote(_)
-                        | DesktopAction::DashboardToggleCheck(_, _)
-                        | DesktopAction::DashboardDeleteNote(_)
-                        | DesktopAction::DashboardList(_)
-                        | DesktopAction::DashboardAddList
-                        | DesktopAction::DashboardDeleteList(_)
-                        | DesktopAction::DashboardConsume
-                ) || widgets_ahead
-                    || self.hit_test(location).is_none()
-            });
+            let desktop_action = self.desktop_action_at(location);
             // Widgets ramenés devant : un clic à côté les renvoie derrière.
             if self.widgets_front && desktop_action.is_none() {
                 if button.state == ButtonState::Pressed {
@@ -1339,13 +1327,56 @@ impl Ferrite {
                         return;
                     }
                 }
-                Some(Hit::Surface(window, ..)) => self.focus_window(Some(window)),
+                Some(Hit::Surface(window, ..) | Hit::Body(window)) => self.focus_window(Some(window)),
                 None => self.focus_window(None),
             }
         }
 
         pointer.button(self, &button);
         pointer.frame(self);
+    }
+
+    /// Élément du bureau (dialogue, panneau, menu, notification, widget) sous `location`,
+    /// tel qu'un clic l'atteindrait. Il passe devant les fenêtres, pour le clic comme pour
+    /// le survol.
+    pub(crate) fn desktop_action_at(
+        &self,
+        location: Point<f64, smithay::utils::Logical>,
+    ) -> Option<DesktopAction> {
+        let desktop_action = self
+            .space
+            .outputs()
+            .next()
+            .and_then(|output| self.space.output_geometry(output))
+            .and_then(|output_geo| {
+                panels::action_at(output_geo, location, &crate::render::desktop_view(self))
+            });
+        // Sous une fenêtre, les widgets ne reçoivent rien, sauf s'ils sont passés devant.
+        let widgets_ahead = self.widgets_front || self.widgets_edit;
+        desktop_action.filter(|action| {
+            !matches!(
+                action,
+                DesktopAction::DashboardAddNote
+                    | DesktopAction::DashboardEditNote(_)
+                    | DesktopAction::DashboardAddTask
+                    | DesktopAction::DashboardToggleTask(_)
+                    | DesktopAction::DashboardCyclePriority(_)
+                    | DesktopAction::DashboardDeleteTask(_)
+                    | DesktopAction::DashboardMonth(_)
+                    | DesktopAction::DashboardNoteStep(_)
+                    | DesktopAction::DashboardApp(_)
+                    | DesktopAction::DashboardMedia(_)
+                    | DesktopAction::DashboardOpenMusic
+                    | DesktopAction::DashboardShowNote(_)
+                    | DesktopAction::DashboardToggleCheck(_, _)
+                    | DesktopAction::DashboardDeleteNote(_)
+                    | DesktopAction::DashboardList(_)
+                    | DesktopAction::DashboardAddList
+                    | DesktopAction::DashboardDeleteList(_)
+                    | DesktopAction::DashboardConsume
+            ) || widgets_ahead
+                || self.hit_test(location).is_none()
+        })
     }
 
     /// Le lanceur revient en haut de sa liste.
@@ -2019,6 +2050,7 @@ impl Ferrite {
             LockAction::Keyboard => self.toggle_keyboard_layout(),
             LockAction::Power => self.handle_power_button(),
             LockAction::Media(command) => self.lock_media(command),
+            LockAction::Face => self.lock_face_retry(),
             LockAction::Consume => {}
         }
     }
@@ -2116,6 +2148,44 @@ impl Ferrite {
                 false
             }
         }
+    }
+
+    /// Début d'un pincement : transmis seulement si rien du bureau n'est ouvert par-dessus
+    /// (écran verrouillé, menu, vue d'ensemble) et qu'aucun glisser n'est en cours.
+    fn pinch_begin(&mut self, fingers: u32, time: u32) {
+        let Some(pointer) = self.seat.get_pointer() else {
+            return;
+        };
+        self.pinching = self.lock.is_none()
+            && self.popover.is_none()
+            && !self.overview
+            && !pointer.is_grabbed()
+            && pointer.current_focus().is_some();
+        if self.pinching {
+            let event = smithay::input::pointer::GesturePinchBeginEvent {
+                serial: SERIAL_COUNTER.next_serial(),
+                time,
+                fingers,
+            };
+            pointer.gesture_pinch_begin(self, &event);
+            pointer.frame(self);
+        }
+    }
+
+    fn pinch_end(&mut self, cancelled: bool, time: u32) {
+        if !std::mem::take(&mut self.pinching) {
+            return;
+        }
+        let Some(pointer) = self.seat.get_pointer() else {
+            return;
+        };
+        let event = smithay::input::pointer::GesturePinchEndEvent {
+            serial: SERIAL_COUNTER.next_serial(),
+            time,
+            cancelled,
+        };
+        pointer.gesture_pinch_end(self, &event);
+        pointer.frame(self);
     }
 
     fn on_axis<I: InputBackend>(&mut self, event: I::PointerAxisEvent) {

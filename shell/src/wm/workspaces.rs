@@ -664,8 +664,24 @@ impl Ferrite {
             serial: SERIAL_COUNTER.next_serial(),
             time: self.start_time.elapsed().as_millis() as u32,
         };
+        self.forget_cursor_on_leave(&pointer, under.as_ref());
         pointer.motion(self, under, &motion);
         pointer.frame(self);
+    }
+
+    /// Le pointeur change de surface : la forme demandée par l'ancienne (barre de texte…)
+    /// est oubliée ; la nouvelle redonne la sienne en recevant le pointeur.
+    pub fn forget_cursor_on_leave(
+        &mut self,
+        pointer: &smithay::input::pointer::PointerHandle<Self>,
+        under: Option<&(
+            smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+            Point<f64, Logical>,
+        )>,
+    ) {
+        if pointer.current_focus().as_ref() != under.map(|(surface, _)| surface) {
+            self.cursor_status = smithay::input::pointer::CursorImageStatus::default_named();
+        }
     }
 
     /// À chaque tour de boucle : met à jour la liste des bureaux.

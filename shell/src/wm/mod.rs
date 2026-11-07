@@ -389,6 +389,9 @@ pub enum Hit {
     Decoration(Window, Part),
     /// Surface d'un client, avec la position de son origine.
     Surface(Window, WlSurface, Point<f64, Logical>),
+    /// Dans le cadre d'une fenêtre, mais sur aucune de ses surfaces (contenu plus petit que
+    /// le cadre, trou dans sa zone cliquable) : le point reste à elle et ne traverse pas.
+    Body(Window),
 }
 
 /// Fenêtre réduite, avec la position où la remettre.
@@ -472,6 +475,15 @@ impl Ferrite {
                 toplevel.send_pending_configure();
             }
         }
+        // La fenêtre remontée peut se trouver sous le pointeur immobile (nouvelle fenêtre,
+        // Alt+Tab, Dock) : le survol passe à elle sans attendre un mouvement.
+        if self
+            .seat
+            .get_pointer()
+            .is_some_and(|pointer| !pointer.is_grabbed())
+        {
+            self.refresh_pointer_focus();
+        }
     }
 
     /// Fenêtre du dessus, s'il y en a une.
@@ -515,6 +527,10 @@ impl Ferrite {
                     surface,
                     (location + render_location).to_f64(),
                 ));
+            }
+            // Ce qu'on voit de la fenêtre masque toujours celles du dessous.
+            if content.to_f64().contains(pos) {
+                return Some(Hit::Body(window.clone()));
             }
         }
         None

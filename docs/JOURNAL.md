@@ -1769,6 +1769,90 @@ Pas vérifié : sélection et copie du texte (non prises en charge), liens cliqu
 en charge), très gros documents (plusieurs centaines de pages) sur le vrai bureau, pincement
 du pavé tactile sur le ThinkBook. Les récents ne vont pas dans `recently-used.xbel` (Fichiers).
 
+## 2026-11-07 — Zoom à deux doigts sur le pavé tactile
+
+Le pincement n'arrivait à aucune fenêtre : le compositeur ne le transmettait pas, et winit
+0.30 (fenêtres des applis Ferrite) ne le lit pas sous Wayland.
+- `shell` : protocole `zwp_pointer_gestures_v1` (`protocols/extra.rs`, `state.rs`) ; le
+  pincement est transmis à la fenêtre sous le pointeur (`input.rs`), sauf écran verrouillé,
+  menu ouvert, vue d'ensemble ou glisser en cours. Vaut aussi pour Firefox, les applis GTK…
+- `third_party/winit` : copie de winit 0.30.13 branchée par `[patch.crates-io]`, avec le
+  pincement Wayland → `WindowEvent::PinchGesture` (egui en fait un zoom). Détails dans
+  `third_party/winit/FERRITE.md`.
+- Lecteur PDF et Visionneuse zooment déjà sur ce geste (`zoom_delta`).
+Vérifié : CI ; dans un bureau imbriqué, le protocole est annoncé et le Lecteur PDF crée son
+objet de pincement (`WAYLAND_DEBUG`).
+Pas vérifié : le geste réel sur le pavé du ThinkBook (bureau réel, `tools/dev-on.sh`).
+
+## 2026-11-07 — Souris : la fenêtre du dessus ne laisse plus passer survol et clics
+
+Avant : sur une fenêtre placée devant, le curseur prenait la forme demandée par celle de
+dessous (barre de texte au-dessus d'un champ caché) et certains clics la traversaient.
+- `wm/mod.rs` : `hit_test` rend `Hit::Body` quand le point est dans le cadre d'une fenêtre
+  mais sur aucune de ses surfaces (contenu plus petit que le cadre, trou dans la zone
+  cliquable) : le point ne descend plus aux fenêtres de dessous ; un clic la met devant.
+- Changement de surface sous le pointeur : la forme de curseur de l'ancienne est oubliée
+  (`forget_cursor_on_leave`), une appli qui n'en redemande pas montre la flèche.
+- `focus_window` recalcule le survol (nouvelle fenêtre, Alt+Tab, Dock) sans attendre que la
+  souris bouge.
+- Vidéo de l'utilisateur : c'était la confirmation « Mettre en veille ? » (dessinée par le
+  bureau) qui laissait le survol à TextEdit dessous. `desktop_action_at` (extrait de
+  `on_button`) sert aussi à `surface_under` : confirmation d'arrêt, demande de mot de passe,
+  réglages rapides, menus, notifications et widgets ramenés devant gardent le pointeur.
+Vérifié : CI (sans shellcheck).
+Pas vérifié : sur le vrai bureau après la correction (curseur sur la confirmation d'arrêt).
+
+## 2026-11-07 — Visage : mot de passe administrateur, anneau animé, « Réessayer »
+
+- `ferrite-visage` : empreintes dans `/var/lib/ferrite/visage/<uid>` (écrites par root
+  seul, lisibles par l'utilisateur) ; `enregistrer` et `effacer` exigent d'être lancés par
+  `pkexec` (compte lu dans `PKEXEC_UID`). L'ancien fichier
+  `~/.local/share/ferrite/visage/empreintes` n'est plus lu : il faut réenregistrer son visage.
+- Paramètres → Confidentialité : « Enregistrer mon visage », « Recommencer » et « Effacer »
+  passent par `pkexec` (mot de passe administrateur demandé par l'agent du bureau) ; refus
+  ou fermeture de la demande : « rien n'a changé ».
+- Écran verrouillé : pendant la reconnaissance, un arc à traîne tourne autour de l'avatar
+  et une ligne balaie le visage (30 images dessinées une fois, puis seulement échangées) ;
+  message « Regardez l'écran : reconnaissance du visage… ». Reconnu : anneau fermé et
+  coche. Échec : anneau rouge, « Visage non reconnu… » et bouton « Réessayer avec le
+  visage » (un clic sur l'avatar aussi) ; caméra absente : « Caméra infrarouge
+  indisponible ». « Réduire les animations » fige l'anneau.
+- Au réveil, la reconnaissance fait passer directement à la saisie pour qu'on la voie.
+- Option `--demo-face scan|reconnu|echec` (avec `--demo-lock`) pour les captures.
+Vérifié : CI (sans shellcheck) ; captures des trois états en clair, et du balayage en sombre.
+Pas vérifié : la vraie caméra et la vraie demande `pkexec` (bureau réel, `tools/dev-on.sh`),
+ni l'enregistrement de bout en bout avec le nouveau dossier.
+
+## 2026-11-07 — Paramètres : un seul gabarit pour les 20 rubriques (maquette)
+
+D'après la maquette « Paramètres Ferrite OS » (planches Main et Système de design).
+- Une colonne de 680 px au plus, centrée (`rows::COLUMN`), fond de page un cran sous les
+  cartes ; plus de pages en deux colonnes. Titre de la barre d'outils en 16 px.
+- Barre latérale de 264 px ; rubrique choisie en pleine couleur d'accent, texte contrasté
+  (`style::sidebar_tile_item_accent`, les autres applis gardent l'ancien style) ; pastilles
+  aux couleurs des quatre familles (bleu, violet, vert, gris).
+- Cartes d'en-tête supprimées, sauf Wi-Fi et Bluetooth (ligne de tête de 44 px avec
+  l'interrupteur). Aperçu du dock retiré.
+- Titres de groupe uniques (13 px, semi-gras, gris), note de bas de groupe
+  (`rows::group_note`), séparateurs décalés de 16 px. Apparence, Clavier, Souris, Date et
+  heure et À propos passés aux mêmes lignes.
+- Doublons : « Fenêtres » n'est plus dans Bureau et dock ; « Applications du Dock » quitte
+  Fenêtres pour le groupe Dock.
+- Clavier : touches dessinées comme des touches ; un clic ouvre modificateurs, touche et
+  « Rétablir ». Les neuf « Envoyer sur l'espace N » tiennent sur une ligne tant qu'ils
+  gardent Super+Maj+1…9 (le changement s'applique aux neuf).
+- Notifications, Imprimantes, Accessibilité, Mises à jour : maquette grisée et note.
+  Accessibilité branche déjà « Réduire la transparence » et « Réduire les animations ».
+- « Opération en cours… » seulement pour une action demandée (`spawn_quiet` pour les
+  relectures et recherches périodiques).
+- Correctif : deux contrôles à segments de la même page partageaient un identifiant
+  (message rouge « First use of widget ID »).
+- `ferrite-apps settings notifications|imprimantes|accessibilite|maj` ouvre ces rubriques.
+Vérifié : CI (sans shellcheck) ; captures Bluetooth, Bureau et dock, Clavier, À propos (clair)
+et Notifications (sombre).
+Pas vérifié : la fenêtre des raccourcis au clic (ouverture, choix d'une touche), les pages
+Wi-Fi, Son, Écrans, Apparence, Souris, Date et heure en capture ; le bureau réel.
+
 ## 2026-11-07 — Bouton d'alimentation physique : le verrou tenait une fraction de seconde
 
 Le bouton physique éteignait toujours le PC sans rien demander. Cause : le verrou logind

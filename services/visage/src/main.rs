@@ -1,16 +1,17 @@
 //! `ferrite-visage` : déverrouillage par visage avec la caméra infrarouge.
 //!
 //! ```text
-//! ferrite-visage enregistrer   enregistre le visage (affiche « progression N/M »)
+//! pkexec ferrite-visage enregistrer   enregistre le visage (affiche « progression N/M »)
+//! pkexec ferrite-visage effacer       oublie le visage enregistré
 //! ferrite-visage verifier      0 : reconnu ; 1 : pas reconnu ; 2 : rien d'enregistré ;
 //!                              3 : caméra ou modèles indisponibles
-//! ferrite-visage effacer       oublie le visage enregistré
 //! ferrite-visage etat          « enregistre » ou « absent »
 //! ferrite-visage essai         5 s de détection, sans rien garder (réglage, dépannage)
 //! ```
 //!
 //! Seules des empreintes (128 nombres par image) sont gardées, jamais d'image, dans
-//! `~/.local/share/ferrite/visage/empreintes`, lisible par l'utilisateur seul. Le
+//! `/var/lib/ferrite/visage/<uid>` : l'utilisateur peut les lire, seul l'administrateur
+//! les écrire (`enregistrer` et `effacer` demandent son mot de passe par `pkexec`). Le
 //! compositeur lance `verifier` sur l'écran verrouillé ; il ne sert jamais aux droits
 //! administrateur (voir `docs/DECISIONS.md`).
 
@@ -40,14 +41,16 @@ fn main() -> ExitCode {
     let result = match command.as_str() {
         "enregistrer" => enroll(),
         "verifier" => verify(),
-        "effacer" => store::forget().map(|()| ExitCode::SUCCESS),
+        "effacer" => store::target_uid()
+            .and_then(|uid| store::forget(std::path::Path::new(store::DIR), uid))
+            .map(|()| ExitCode::SUCCESS),
         "essai" => trial(),
         "etat" => {
             println!("{}", if store::exists() { "enregistre" } else { "absent" });
             Ok(ExitCode::SUCCESS)
         }
         _ => {
-            eprintln!("Utilisation : ferrite-visage <enregistrer|verifier|effacer|etat>");
+            eprintln!("Utilisation : ferrite-visage <enregistrer|verifier|effacer|etat|essai>");
             Ok(ExitCode::from(2))
         }
     };
@@ -65,6 +68,8 @@ fn open() -> Result<(camera::Camera, models::Models), String> {
 }
 
 fn enroll() -> Result<ExitCode, String> {
+    // Avant d'allumer la caméra : sans droits administrateur, rien ne sera gardé.
+    let uid = store::target_uid()?;
     let (camera, models) = open()?;
     let started = Instant::now();
     let mut prints = Vec::new();
@@ -86,7 +91,7 @@ fn enroll() -> Result<ExitCode, String> {
         println!("echec");
         return Ok(ExitCode::from(1));
     }
-    store::save(&prints)?;
+    store::save(std::path::Path::new(store::DIR), uid, &prints)?;
     println!("termine");
     Ok(ExitCode::SUCCESS)
 }

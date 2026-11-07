@@ -6,9 +6,19 @@ use eframe::egui::{self, Color32, Frame, Margin, RichText, Sense, Stroke, text::
 use crate::style::{self, Icons};
 
 const ROW_HEIGHT: f32 = 48.0;
-const ROW_PADDING: f32 = 14.0;
+const ROW_PADDING: f32 = 16.0;
 /// Écart entre deux groupes d'une colonne.
-pub const GROUP_GAP: f32 = 18.0;
+pub const GROUP_GAP: f32 = 22.0;
+/// Largeur maximale de la colonne de contenu, centrée dans la page.
+pub const COLUMN: f32 = 680.0;
+/// Marge minimale de part et d'autre de la colonne.
+pub const COLUMN_MARGIN: f32 = 24.0;
+
+/// Fond de la page, sous les cartes de groupe (un cran plus foncé qu'elles en clair, plus
+/// clair que la barre latérale en sombre).
+pub fn page_color() -> Color32 {
+    style::themed(style::header_color(), style::sidebar_color())
+}
 
 /// Ce qui précède le libellé d'une ligne.
 #[derive(Clone, Copy, Default)]
@@ -108,8 +118,9 @@ impl Group<'_> {
         };
         let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_HEIGHT), sense);
         if !self.first {
+            // Séparateur décalé de 16 px, comme les réglages de la maquette.
             ui.painter().hline(
-                rect.x_range(),
+                egui::Rangef::new(rect.left() + ROW_PADDING, rect.right()),
                 rect.top() + 0.5,
                 Stroke::new(1.0, style::separator()),
             );
@@ -119,8 +130,11 @@ impl Group<'_> {
             ui.painter().rect_filled(rect.shrink(1.0), 6.0, style::tint(8));
         }
         let inner = rect.shrink2(egui::vec2(ROW_PADDING, 6.0));
+        // Identifiant propre à la ligne : deux lignes à segments (Position, Mode) ne se
+        // confondent plus.
         let mut child = ui.new_child(
             egui::UiBuilder::new()
+                .id_salt(("ligne", row.label))
                 .max_rect(inner)
                 .layout(egui::Layout::right_to_left(egui::Align::Center)),
         );
@@ -234,7 +248,8 @@ fn one_line(
     ui.painter().layout_job(job)
 }
 
-/// Bandeau de la page : pastille de 48 px, titre, sous-titre et interrupteur.
+/// Grande ligne de tête (Wi-Fi, Bluetooth) : pastille de 44 px, titre, état et
+/// interrupteur principal, dans sa propre carte.
 pub fn hero(
     ui: &mut egui::Ui,
     icons: &mut Icons,
@@ -245,36 +260,78 @@ pub fn hero(
 ) -> bool {
     let mut changed = false;
     Frame::new()
-        .fill(style::header_color())
+        .fill(style::background())
         .stroke(Stroke::new(1.0, style::separator()))
-        .corner_radius(14)
-        .inner_margin(Margin::symmetric(18, 16))
+        .corner_radius(12)
+        .inner_margin(Margin::symmetric(16, 12))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 16.0;
-                let (tile, _) = ui.allocate_exact_size(egui::vec2(48.0, 48.0), Sense::hover());
-                ui.painter().rect_filled(tile, 13.0, rgb(color));
+                ui.spacing_mut().item_spacing.x = 14.0;
+                let (tile, _) = ui.allocate_exact_size(egui::vec2(44.0, 44.0), Sense::hover());
+                ui.painter().rect_filled(tile, 11.0, rgb(color));
                 icons.paint(
                     ui,
                     glyph,
-                    tile.shrink(11.0),
+                    tile.shrink(10.0),
                     style::IconStyle::Tinted(Color32::WHITE),
                 );
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
-                    ui.add_space(3.0);
-                    ui.label(RichText::new(title).size(18.0).family(style::strong_family()));
-                    ui.label(RichText::new(subtitle).size(13.0).color(style::text_secondary()));
+                    ui.add_space(4.0);
+                    ui.label(RichText::new(title).size(16.0).family(style::strong_family()));
+                    ui.label(RichText::new(subtitle).size(12.0).color(style::text_secondary()));
                 });
                 if let Some((on, enabled)) = toggle {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        changed = style::switch_sized(ui, on, enabled, egui::vec2(52.0, 30.0)).changed();
+                        changed = style::switch_sized(ui, on, enabled, egui::vec2(44.0, 26.0)).changed();
                     });
                 }
             });
         });
+    ui.add_space(GROUP_GAP);
     changed
+}
+
+/// Titre de groupe : 13 px, semi-gras, couleur secondaire. Le même partout.
+pub fn group_title(ui: &mut egui::Ui, title: &str) {
+    ui.horizontal(|ui| {
+        ui.add_space(4.0);
+        ui.label(
+            RichText::new(title)
+                .size(13.0)
+                .family(style::strong_family())
+                .color(style::text_secondary()),
+        );
+    });
+    ui.add_space(8.0);
+}
+
+/// Note de bas de groupe, en 12 px, juste sous la carte.
+pub fn group_note(ui: &mut egui::Ui, text: &str) {
+    ui.add_space(-GROUP_GAP + 8.0);
+    ui.horizontal_wrapped(|ui| {
+        ui.add_space(4.0);
+        ui.label(RichText::new(text).size(12.0).color(style::text_secondary()));
+    });
+    ui.add_space(GROUP_GAP);
+}
+
+/// Groupe libre (aperçus, vignettes) : titre puis carte, avec une marge intérieure.
+pub fn card<R>(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    group_title(ui, title);
+    let result = Frame::new()
+        .fill(style::background())
+        .stroke(Stroke::new(1.0, style::separator()))
+        .corner_radius(12)
+        .inner_margin(Margin::same(16))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            add(ui)
+        })
+        .inner;
+    ui.add_space(GROUP_GAP);
+    result
 }
 
 /// Groupe de lignes : titre puis carte aux coins arrondis.
@@ -284,13 +341,9 @@ pub fn group<R>(
     title: &str,
     add: impl FnOnce(&mut Group<'_>) -> R,
 ) -> R {
-    ui.label(
-        RichText::new(title)
-            .size(13.0)
-            .family(style::strong_family())
-            .color(style::heading_text()),
-    );
-    ui.add_space(8.0);
+    if !title.is_empty() {
+        group_title(ui, title);
+    }
     let result = Frame::new()
         .fill(style::background())
         .stroke(Stroke::new(1.0, style::separator()))
@@ -310,6 +363,11 @@ pub fn group<R>(
 }
 
 pub use crate::kit::{button, radio, segments, slider, status, switch};
+
+/// Valeur affichée à droite d'une ligne, en 13 px gris.
+pub fn value(ui: &mut egui::Ui, text: &str) {
+    ui.label(RichText::new(text).size(13.0).color(style::text_secondary()));
+}
 
 /// Liste déroulante : renvoie vrai si le choix a changé.
 pub fn pick<T: PartialEq + Copy>(ui: &mut egui::Ui, id: &str, value: &mut T, options: &[(T, &str)]) -> bool {

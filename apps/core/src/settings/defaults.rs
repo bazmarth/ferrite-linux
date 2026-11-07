@@ -8,21 +8,12 @@ use ferrite_system::{
 };
 
 use super::{
-    Page, SettingsState,
-    rows::{self, Row, group, hero},
+    SettingsState,
+    rows::{self, Row, group},
 };
 
 impl SettingsState {
     pub(super) fn defaults_page(&mut self, ui: &mut egui::Ui) {
-        hero(
-            ui,
-            &mut self.icons,
-            (Page::Defaults.icon(), Page::Defaults.color()),
-            "Applications par défaut",
-            "L’application qui s’ouvre pour chaque type de document",
-            None,
-        );
-        ui.add_space(20.0);
         let installed: &Vec<DesktopEntry> = self.installed_apps.get_or_insert_with(applications::installed);
         let mut chosen: Option<(usize, String)> = None;
         group(ui, &mut self.icons, "Ouvrir avec", |rows| {

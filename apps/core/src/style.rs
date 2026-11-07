@@ -989,6 +989,31 @@ pub fn sidebar_tile_item(
     text: &str,
     selected: bool,
 ) -> egui::Response {
+    tile_item(ui, icons, icon, tile, text, selected, false)
+}
+
+/// Comme [`sidebar_tile_item`], l'élément choisi en pleine couleur d'accent, texte
+/// contrasté (Paramètres).
+pub fn sidebar_tile_item_accent(
+    ui: &mut egui::Ui,
+    icons: &mut Icons,
+    icon: &'static str,
+    tile: Color32,
+    text: &str,
+    selected: bool,
+) -> egui::Response {
+    tile_item(ui, icons, icon, tile, text, selected, true)
+}
+
+fn tile_item(
+    ui: &mut egui::Ui,
+    icons: &mut Icons,
+    icon: &'static str,
+    tile: Color32,
+    text: &str,
+    selected: bool,
+    accent_fill: bool,
+) -> egui::Response {
     let scale = sidebar_scale();
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), 34.0 * scale),
@@ -996,7 +1021,8 @@ pub fn sidebar_tile_item(
     );
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     if selected {
-        ui.painter().rect_filled(rect, 8.0, sidebar_selected());
+        let fill = if accent_fill { accent() } else { sidebar_selected() };
+        ui.painter().rect_filled(rect, 8.0, fill);
     } else if response.hovered() {
         ui.painter().rect_filled(rect, 8.0, tint(9));
     }
@@ -1016,11 +1042,15 @@ pub fn sidebar_tile_item(
         egui::pos2(icon_rect.right() + 10.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
         text,
-        FontId::proportional(14.0),
-        if selected {
-            sidebar_selected_text()
+        if selected && accent_fill {
+            FontId::new(14.0, strong_family())
         } else {
-            primary_text()
+            FontId::proportional(14.0)
+        },
+        match (selected, accent_fill) {
+            (true, true) => accent_text(),
+            (true, false) => sidebar_selected_text(),
+            _ => primary_text(),
         },
     );
     response

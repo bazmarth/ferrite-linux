@@ -175,6 +175,14 @@ const CARDS_WIDTH: f64 = 420.0;
 const NOTICE_HEIGHT: f64 = 65.0;
 const MEDIA_HEIGHT: f64 = 74.0;
 const FIELD_TOP: f64 = 330.0 + 104.0 + 14.0 + 27.0 + 14.0;
+/// Avatar de la saisie : côté et haut, en points de la toile.
+const AVATAR: f64 = 104.0;
+const AVATAR_TOP: f64 = 330.0;
+/// Côté de l'image de l'anneau du visage, et nombre de ses images (un tour complet).
+const FACE_RING: f64 = 150.0;
+const FACE_FRAMES: u16 = 30;
+/// Teinte de l'écran de verrouillage : attente, œil, anneau du visage.
+const TEAL: Color = Color::rgb(0x0E9AA7);
 
 const DAYS: [&str; 7] = [
     "dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi",
@@ -347,7 +355,13 @@ pub(super) struct LockLayers {
     veil: Option<(Color, MemoryRenderBuffer)>,
     /// Image, sa taille en pixels et la hauteur de sa bande en points de la toile.
     clocks: Vec<(ClockKey, MemoryRenderBuffer, (u32, u32), f64)>,
+    /// Images de l'anneau du visage (côté en pixels, thème), une par pas du tour, puis
+    /// celle du visage reconnu ; dessinées une fois chacune.
+    face: Option<FaceRingFrames>,
 }
+
+/// Images de l'anneau du visage : côté en pixels et thème, puis une image par pas.
+type FaceRingFrames = ((u32, bool), Vec<Option<MemoryRenderBuffer>>);
 
 impl std::fmt::Debug for LockLayers {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -368,6 +382,9 @@ fn lock_chrome_state(state: &VisualState) -> VisualState {
         lock.checking = false;
         lock.welcome = false;
         lock.message = LockMessage::Hint;
+        lock.face = LockFace::Idle;
+        lock.face_ready = false;
+        lock.face_tick = 0;
         lock.shake = 0;
         lock.pulse = 0;
         lock.spin = 0;
@@ -454,6 +471,24 @@ impl Places {
         Rect::new(self.cancel().right() + 10.0, self.cancel().y, 186.0, 40.0)
     }
 
+    /// Avatar de la saisie (un clic relance le visage).
+    fn avatar(self) -> Rect {
+        Rect::new(self.w / 2.0 - AVATAR / 2.0, AVATAR_TOP, AVATAR, AVATAR)
+    }
+
+    /// Image de l'anneau du visage, centrée sur l'avatar.
+    fn face_ring(self) -> Rect {
+        let avatar = self.avatar();
+        let (cx, cy) = avatar.center();
+        Rect::new(cx - FACE_RING / 2.0, cy - FACE_RING / 2.0, FACE_RING, FACE_RING)
+    }
+
+    /// « Réessayer » sous le message du champ.
+    fn face_button(self) -> Rect {
+        let field = self.field();
+        Rect::new(self.w / 2.0 - 100.0, field.bottom() + 40.0, 200.0, 36.0)
+    }
+
     fn field(self) -> Rect {
         Rect::new((self.w - 300.0) / 2.0, FIELD_TOP, 300.0, 48.0)
     }
@@ -503,7 +538,17 @@ pub enum LockAction {
     Keyboard,
     Power,
     Media(crate::desktop::lock::MediaCommand),
+    /// « Réessayer » ou l'avatar : relance la reconnaissance du visage.
+    Face,
     Consume,
+}
+
+/// Le bouton du visage est-il proposé ? (visage utilisable, rien en cours.)
+fn face_offered(lock: &LockView) -> bool {
+    lock.face_ready
+        && !lock.checking
+        && !lock.welcome
+        && !matches!(lock.face, LockFace::Scanning | LockFace::Recognized)
 }
 
 /// Action du clic en `pos` (position à l'écran).
@@ -541,6 +586,9 @@ pub fn lock_action_at(
         if lock.length > 0 && places.eye().contains(pos) {
             return LockAction::Peek;
         }
+        if face_offered(lock) && (places.face_button().contains(pos) || places.avatar().contains(pos)) {
+            return LockAction::Face;
+        }
         return LockAction::Consume;
     }
     if places.theme().contains(pos) {
@@ -566,6 +614,67 @@ pub fn lock_action_at(
         }
     }
     LockAction::Reveal
+}
+
+/// Anneau du visage, sur une toile de `FACE_RING` points de côté centrée sur l'avatar.
+/// Images 0 à `FACE_FRAMES - 1` : un arc à traîne qui fait le tour de l'avatar, et une
+/// ligne de balayage qui monte et descend sur le visage. `FACE_FRAMES` : anneau fermé et
+/// coche, visage reconnu.
+fn draw_face_ring(canvas: &mut Canvas, frame: u16, track: Color) {
+    use std::f64::consts::{FRAC_PI_2, TAU};
+    let center = FACE_RING / 2.0;
+    let radius = AVATAR / 2.0 + 11.0;
+    let circle = Rect::new(center - radius, center - radius, radius * 2.0, radius * 2.0);
+    if frame >= FACE_FRAMES {
+        canvas.stroke(circle, radius as f32, TEAL, 5.0);
+        let badge = (center + 40.0, center + 40.0);
+        canvas.fill(Rect::new(badge.0 - 14.0, badge.1 - 14.0, 28.0, 28.0), 14.0, TEAL);
+        canvas.line(
+            (badge.0 - 6.0, badge.1),
+            (badge.0 - 1.5, badge.1 + 5.0),
+            2.4,
+            Color::WHITE,
+        );
+        canvas.line(
+            (badge.0 - 1.5, badge.1 + 5.0),
+            (badge.0 + 6.5, badge.1 - 5.0),
+            2.4,
+            Color::WHITE,
+        );
+        return;
+    }
+    let turn = f64::from(frame) / f64::from(FACE_FRAMES);
+    canvas.stroke(circle, radius as f32, track, 4.0);
+    // Arc : la tête opaque, la traîne qui s'efface sur un tiers du tour ; un halo plus
+    // large sous la tête. Les morceaux se chevauchent pour que l'arc reste continu.
+    let head = turn * TAU - FRAC_PI_2;
+    const STEPS: u8 = 40;
+    const STEP: f64 = 0.055;
+    for (width, strength) in [(11.0, 0.22), (5.0, 1.0)] {
+        for step in (0..STEPS).rev() {
+            let b = head - f64::from(step) * STEP;
+            let a = b - STEP * 1.6;
+            let fade = (1.0 - f64::from(step) / f64::from(STEPS)).powf(1.4);
+            canvas.line(
+                (center + a.cos() * radius, center + a.sin() * radius),
+                (center + b.cos() * radius, center + b.sin() * radius),
+                width,
+                TEAL.with_alpha((255.0 * fade * strength) as u8),
+            );
+        }
+    }
+    // Balayage : une ligne qui parcourt le visage de haut en bas, puis remonte.
+    let inner = AVATAR / 2.0 - 4.0;
+    let dy = (turn * TAU).cos() * (inner - 10.0);
+    let half = (inner * inner - dy * dy).max(0.0).sqrt() - 4.0;
+    let y = center + dy;
+    canvas.line((center - half, y), (center + half, y), 7.0, TEAL.with_alpha(70));
+    canvas.line(
+        (center - half, y),
+        (center + half, y),
+        2.0,
+        Color::WHITE.with_alpha(200),
+    );
 }
 
 /// Trait de l'hexagone : ses extrémités, son opacité et sa couleur.
@@ -815,6 +924,32 @@ impl Panels {
             });
         }
 
+        // Anneau du visage autour de l'avatar : il tourne en passant d'une image déjà
+        // dessinée à la suivante, sans redessiner l'écran.
+        if lock.field && matches!(lock.face, LockFace::Scanning | LockFace::Recognized) {
+            let frame = if lock.face == LockFace::Recognized {
+                FACE_FRAMES
+            } else {
+                lock.face_tick % FACE_FRAMES
+            };
+            // Respiration de l'anneau, par son opacité.
+            let breath = if lock.face == LockFace::Scanning {
+                let wave = f64::from(lock.face_tick % 40) / 40.0 * std::f64::consts::TAU;
+                0.82 + 0.18 * wave.cos()
+            } else {
+                1.0
+            };
+            let ring = places.face_ring();
+            let side = (ring.w * ratio * scale).ceil().max(1.0) as u32;
+            let buffer = self.face_ring(side, (scale * ratio) as f32, lock.dark, frame);
+            elements.push(LockElement {
+                buffer,
+                pixels: (side, side),
+                rect: Rect::new(ring.x * ratio, ring.y * ratio, ring.w * ratio, ring.h * ratio),
+                alpha: (part * breath) as f32,
+            });
+        }
+
         // Le contenu de l'état visé apparaît en fondu.
         elements.push(LockElement {
             buffer: content.clone(),
@@ -869,6 +1004,32 @@ impl Panels {
             alpha: 1.0,
         });
         elements
+    }
+
+    /// Image `frame` de l'anneau du visage (`FACE_FRAMES` : visage reconnu), gardée.
+    fn face_ring(&self, side: u32, scale: f32, dark: bool, frame: u16) -> MemoryRenderBuffer {
+        let mut layers = self.lock_layers.borrow_mut();
+        let key = (side, dark);
+        if !layers.face.as_ref().is_some_and(|(known, _)| *known == key) {
+            layers.face = Some((key, vec![None; usize::from(FACE_FRAMES) + 1]));
+        }
+        let (_, frames) = layers.face.as_mut().expect("rempli juste avant");
+        let slot = &mut frames[usize::from(frame.min(FACE_FRAMES))];
+        if let Some(buffer) = slot {
+            return buffer.clone();
+        }
+        let mut canvas = Canvas {
+            pixels: vec![0; side as usize * side as usize * 4],
+            width: side,
+            height: side,
+            scale,
+            bold: &self.bold,
+            icons: &self.icons,
+        };
+        draw_face_ring(&mut canvas, frame, tokens(dark).track);
+        let buffer = memory_buffer(&canvas.pixels, side, side);
+        *slot = Some(buffer.clone());
+        buffer
     }
 
     /// Image de la date ou de l'heure, de toute la largeur, à la taille de repos ou de
@@ -1297,7 +1458,7 @@ impl Panels {
     /// Saisie : avatar, nom, champ du mot de passe et message.
     fn lock_entry(&self, canvas: &mut Canvas, places: &Places, lock: &LockView, tokens: &Tokens) {
         let center = places.w / 2.0;
-        let avatar = Rect::new(center - 52.0, 330.0, 104.0, 104.0);
+        let avatar = places.avatar();
         canvas.panel_shadow(avatar, 52.0);
         canvas.fill(avatar.expand(4.0), 56.0, tokens.ring);
         canvas.gradient(avatar, 52.0, &[(0.0, 0x3CC7D1), (1.0, 0x2779E0)]);
@@ -1318,9 +1479,16 @@ impl Panels {
             tokens.fg,
         );
 
+        // Visage pas reconnu : l'anneau reste, à la couleur de l'erreur.
+        if lock.face == LockFace::Failed {
+            canvas.stroke(avatar.expand(11.0), 63.0, tokens.error.0, 4.0);
+        }
+
         let field = places.field();
         if lock.checking || lock.welcome {
-            let text = if lock.welcome {
+            let text = if lock.welcome && lock.face == LockFace::Recognized {
+                "Visage reconnu, ouverture de la session…"
+            } else if lock.welcome {
                 "Bienvenue, ouverture de la session…"
             } else {
                 "Vérification…"
@@ -1341,7 +1509,7 @@ impl Panels {
                     (spinner.0 + a.cos() * 7.5, spinner.1 + a.sin() * 7.5),
                     (spinner.0 + b.cos() * 7.5, spinner.1 + b.sin() * 7.5),
                     2.2,
-                    Color::rgb(0x0E9AA7),
+                    TEAL,
                 );
             }
             canvas.text(&self.regular, text, x + 30.0, field.y + 15.0, 14.0, tokens.fg2);
@@ -1400,7 +1568,7 @@ impl Panels {
             canvas.fill(Rect::new(caret, field.y + 14.0, 1.6, 20.0), 0.8, tokens.fg);
             if lock.length > 0 {
                 let (name, ink) = if lock.shown.is_some() {
-                    ("cc-eye-off", Color::rgb(0x0E9AA7))
+                    ("cc-eye-off", TEAL)
                 } else {
                     ("cc-eye", tokens.fg3)
                 };
@@ -1413,13 +1581,35 @@ impl Panels {
             canvas.line((cx - 5.0, cy), (cx + 5.0, cy), 2.0, Color::WHITE);
             canvas.line((cx + 1.0, cy - 4.0), (cx + 5.0, cy), 2.0, Color::WHITE);
             canvas.line((cx + 1.0, cy + 4.0), (cx + 5.0, cy), 2.0, Color::WHITE);
-            let (text, ink) = match lock.message {
-                LockMessage::Hint => ("Appuyez sur Entrée pour déverrouiller", tokens.fg3),
-                LockMessage::Empty => ("Saisissez votre mot de passe", tokens.error.1),
-                LockMessage::Wrong => ("Mot de passe incorrect", tokens.error.1),
-                LockMessage::Face => ("Reconnaissance du visage…", tokens.fg3),
+            let (text, ink) = match (lock.message, lock.face) {
+                (LockMessage::Empty, _) => ("Saisissez votre mot de passe", tokens.error.1),
+                (LockMessage::Wrong, _) => ("Mot de passe incorrect", tokens.error.1),
+                (_, LockFace::Scanning) => ("Regardez l’écran : reconnaissance du visage…", tokens.fg2),
+                (_, LockFace::Failed) => (
+                    "Visage non reconnu. Réessayez ou saisissez votre mot de passe",
+                    tokens.error.1,
+                ),
+                (_, LockFace::Unavailable) => ("Caméra infrarouge indisponible", tokens.fg3),
+                _ => ("Appuyez sur Entrée pour déverrouiller", tokens.fg3),
             };
             canvas.centered(&self.regular, text, center, field.bottom() + 14.0, 13.0, ink);
+            if face_offered(lock) {
+                let button = places.face_button();
+                canvas.lock_button(button, tokens);
+                let label = if matches!(lock.face, LockFace::Failed | LockFace::Unavailable) {
+                    "Réessayer avec le visage"
+                } else {
+                    "Utiliser mon visage"
+                };
+                canvas.centered(
+                    &self.regular,
+                    label,
+                    button.center().0,
+                    button.y + 10.0,
+                    13.0,
+                    tokens.fg,
+                );
+            }
         }
 
         let cancel = places.cancel();

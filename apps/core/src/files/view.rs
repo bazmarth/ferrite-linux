@@ -274,16 +274,13 @@ pub(super) fn kind_label(entry: &FileEntry) -> String {
     }
 }
 
-/// Application qui ouvre ce genre de fichier.
+/// Application de Ferrite qui ouvre ce genre de fichier (liste commune
+/// `ferrite_system::formats`) ; les archives s'ouvrent dans Fichiers.
 pub(super) fn opener_label(entry: &FileEntry) -> &'static str {
-    match entry_icon(entry) {
-        "file-image" => "Visionneuse d’images",
-        "file-pdf" => "Visionneuse de documents",
-        "file-audio" => "Lecteur audio",
-        "file-video" => "Lecteur vidéo",
-        "file-archive" => "Gestionnaire d’archives",
-        "file-text" | "file-script" => "TextEdit",
-        _ => "—",
+    if entry.directory || super::ops::is_archive(&entry.path) {
+        "Fichiers"
+    } else {
+        ferrite_system::formats::builtin_for(&entry.path).map_or("—", |app| app.name())
     }
 }
 

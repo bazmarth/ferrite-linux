@@ -43,7 +43,12 @@ use std::{
 };
 
 use eframe::egui::{self, Color32, CornerRadius, Frame, Key, Margin, RichText, Sense, Stroke};
-use ferrite_system::{applications::DesktopEntry, command::spawn_detached, config::Accent};
+use ferrite_system::{
+    applications::DesktopEntry,
+    command::spawn_detached,
+    config::Accent,
+    formats::{self, Builtin},
+};
 
 use self::{devices::Device, ops::Job, trash::TrashItem};
 use crate::style::{self, IconStyle, Icons};
@@ -2739,20 +2744,10 @@ fn archive_virtual_path(archive: &Path, member: &str) -> PathBuf {
 }
 
 /// Application de Ferrite (même exécutable) qui ouvre `path`, sinon `xdg-open` choisit.
-/// La vidéo passe avant la musique : « .mp4 » est aussi une extension audio de Musique,
-/// mais c'est presque toujours un film ou un enregistrement d'écran.
+/// La liste est celle de `ferrite_system::formats`, que suivent aussi Paramètres et les
+/// fichiers `.desktop` de l'image.
 fn builtin_app(path: &Path) -> Option<&'static str> {
-    if is_text_file(path) {
-        Some("textedit")
-    } else if crate::viewer::supported(path) {
-        Some("viewer")
-    } else if crate::video::supported(path) {
-        Some("video")
-    } else if crate::music::supported(path) {
-        Some("music")
-    } else {
-        None
-    }
+    formats::builtin_for(path).map(Builtin::command)
 }
 
 /// Icône du dossier `icons/SVG` selon la nature de l'entrée.
@@ -2811,26 +2806,9 @@ fn folder_icon(path: &Path, home: &Path) -> &'static str {
     }
 }
 
+/// Fichier que TextEdit ouvre (textes et code).
 pub fn is_text_file(path: &Path) -> bool {
-    path.extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| {
-            matches!(
-                extension.to_ascii_lowercase().as_str(),
-                "txt"
-                    | "md"
-                    | "rs"
-                    | "toml"
-                    | "json"
-                    | "yaml"
-                    | "yml"
-                    | "sh"
-                    | "conf"
-                    | "log"
-                    | "ini"
-                    | "csv"
-            )
-        })
+    formats::builtin_for(path) == Some(Builtin::TextEdit)
 }
 
 fn file_name(path: &Path) -> String {
@@ -2930,7 +2908,42 @@ mod tests {
         assert_eq!(builtin_app(Path::new("/x/film.MKV")), Some("video"));
         assert_eq!(builtin_app(Path::new("/x/chanson.m4a")), Some("music"));
         assert_eq!(builtin_app(Path::new("/x/notes.md")), Some("textedit"));
+        assert_eq!(builtin_app(Path::new("/x/guide.PDF")), Some("pdf"));
+        assert_eq!(builtin_app(Path::new("/x/script.py")), Some("textedit"));
         assert_eq!(builtin_app(Path::new("/x/archive.zip")), None);
+    }
+
+    /// Chaque extension de la liste commune est vraiment acceptée par l'application qui
+    /// doit l'ouvrir, et `ferrite-apps` connaît sa commande.
+    #[test]
+    fn chaque_extension_ouverte_par_son_application() {
+        for format in formats::FORMATS {
+            let path = PathBuf::from(format!("/x/fichier.{}", format.extension));
+            let accepted = match format.app {
+                Builtin::TextEdit => is_text_file(&path),
+                Builtin::Viewer => crate::viewer::supported(&path),
+                Builtin::Pdf => crate::pdf_viewer::supported(&path),
+                Builtin::Video => crate::video::supported(&path),
+                Builtin::Music => crate::music::supported(&path),
+            };
+            assert!(accepted, ".{} refusé par {}", format.extension, format.app.name());
+            let entry = FileEntry {
+                name: file_name(&path),
+                path: path.clone(),
+                directory: false,
+                symlink: false,
+                modified: None,
+                size: None,
+                archive_member: None,
+                trash: None,
+            };
+            assert_eq!(
+                view::opener_label(&entry),
+                format.app.name(),
+                ".{}",
+                format.extension
+            );
+        }
     }
 
     #[test]

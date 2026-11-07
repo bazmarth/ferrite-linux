@@ -4,6 +4,6 @@ Name=Musique
 Comment=Lecteur de musique de Ferrite
 Exec=ferrite-apps music %f
 Icon=multimedia-audio-player
-MimeType=audio/mpeg;audio/flac;audio/ogg;audio/x-vorbis+ogg;audio/x-wav;audio/mp4;audio/aac;
+MimeType=audio/mpeg;audio/flac;audio/ogg;audio/x-vorbis+ogg;audio/vnd.wave;audio/x-wav;audio/mp4;audio/aac;
 Categories=AudioVideo;Audio;Player;
 NoDisplay=true

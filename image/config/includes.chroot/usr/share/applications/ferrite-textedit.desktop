@@ -4,6 +4,6 @@ Name=TextEdit
 Comment=Éditeur de texte de Ferrite
 Exec=ferrite-apps textedit %f
 Icon=accessories-text-editor
-MimeType=text/plain;text/markdown;
+MimeType=text/plain;text/markdown;text/x-log;text/csv;text/rust;application/toml;application/json;application/yaml;application/x-shellscript;text/x-python3;text/x-python;text/javascript;text/x-csrc;text/x-chdr;text/x-c++src;text/x-c++hdr;text/css;application/xml;
 Categories=Utility;TextEditor;
 NoDisplay=true

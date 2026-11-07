@@ -275,19 +275,10 @@ impl App {
     pub const MUSIC: App = App("music");
     pub const CLOCK: App = App("clock");
 
-    /// Application Ferrite qui ouvre `file` : Visionneuse pour une image, Lecteur vidéo
-    /// pour une vidéo, Fichiers (sur le fichier) pour le reste.
+    /// Application Ferrite qui ouvre `file`, d'après la liste commune des formats
+    /// (`ferrite_system::formats`) ; Fichiers (sur le fichier) pour le reste.
     pub fn for_file(file: &std::path::Path) -> App {
-        let extension = file
-            .extension()
-            .map(|extension| extension.to_string_lossy().to_lowercase())
-            .unwrap_or_default();
-        match extension.as_str() {
-            "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" => App("viewer"),
-            "mp4" | "mkv" | "webm" | "mov" | "avi" => App("video"),
-            "pdf" => App("pdf"),
-            _ => App::FILES,
-        }
+        ferrite_system::formats::builtin_for(file).map_or(App::FILES, |app| App(app.command()))
     }
     pub const TRASH: App = App(TRASH_COMMAND);
 
@@ -421,7 +412,10 @@ mod tests {
         assert_eq!(app("/home/a/Images/Capture du 6 nov.PNG"), "ferrite-viewer");
         assert_eq!(app("/home/a/Vidéos/Enregistrement.mp4"), "ferrite-video");
         assert_eq!(app("/home/a/doc.pdf"), "ferrite-pdf");
-        assert_eq!(app("/home/a/notes.txt"), "ferrite-files");
+        assert_eq!(app("/home/a/notes.txt"), "ferrite-textedit");
+        assert_eq!(app("/home/a/chanson.flac"), "ferrite-music");
+        // La Visionneuse ne lit pas les GIF : Fichiers s'en charge.
+        assert_eq!(app("/home/a/anim.gif"), "ferrite-files");
     }
 
     #[test]

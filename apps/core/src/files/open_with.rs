@@ -8,13 +8,15 @@ use std::{
 };
 
 use eframe::egui::{self, Color32, FontId, RichText, TextureHandle};
-use ferrite_system::{applications::DesktopEntry, defaults};
+use ferrite_system::{
+    applications::DesktopEntry,
+    catalog, defaults,
+    formats::{self, Builtin},
+};
 
 use super::{Action, Dialog, FilesState, file_name, path_icon, thumbs};
 use crate::style::{self, IconStyle, Icons};
 
-/// Identifiant de TextEdit, l'éditeur de Ferrite (il n'a pas de fichier `.desktop`).
-const TEXTEDIT: &str = "textedit";
 /// Côté des logos dans la liste.
 const LOGO: f32 = 28.0;
 /// Hauteur d'une ligne.
@@ -35,14 +37,27 @@ impl OpenWith {
         } else {
             defaults::mime_of(&path)
         };
+        // Tous les noms du type : « video/x-msvideo » annoncé par une application vaut
+        // pour un « .avi » (« video/vnd.avi »).
+        let mimes: Vec<String> = match formats::format_of(&path).filter(|_| !path.is_dir()) {
+            Some(format) => format.mimes.iter().map(|mime| (*mime).to_owned()).collect(),
+            None => mime.iter().cloned().collect(),
+        };
         let (mut suggested, mut others): (Vec<_>, Vec<_>) = installed
             .into_iter()
-            .partition(|app| mime.as_ref().is_some_and(|mime| app.mime_types.contains(mime)));
-        let textedit = textedit_entry();
-        if !path.is_dir() && is_text(mime.as_deref()) {
-            suggested.insert(0, textedit);
-        } else if !path.is_dir() {
-            others.insert(0, textedit);
+            .partition(|app| app.mime_types.iter().any(|declared| mimes.contains(declared)));
+        // L'application de Ferrite de ce format en tête (ses `.desktop` sont cachés des
+        // menus, donc absents de `installed`) ; TextEdit pour un texte ou un fichier sans
+        // type connu, sinon en tête des autres.
+        if !path.is_dir() {
+            let own =
+                formats::builtin_for(&path).or_else(|| is_text(mime.as_deref()).then_some(Builtin::TextEdit));
+            if let Some(app) = own {
+                suggested.insert(0, ferrite_entry(app));
+            }
+            if own != Some(Builtin::TextEdit) {
+                others.insert(0, ferrite_entry(Builtin::TextEdit));
+            }
         }
         Self {
             path,
@@ -63,15 +78,16 @@ fn is_text(mime: Option<&str>) -> bool {
     })
 }
 
-fn textedit_entry() -> DesktopEntry {
+/// Application de Ferrite, lancée par le même exécutable que Fichiers.
+fn ferrite_entry(app: Builtin) -> DesktopEntry {
     DesktopEntry {
-        id: TEXTEDIT.into(),
-        name: "TextEdit".into(),
+        id: app.desktop_id().trim_end_matches(".desktop").into(),
+        name: app.name().into(),
         exec: vec![
             env::current_exe()
                 .map(|path| path.display().to_string())
                 .unwrap_or_default(),
-            TEXTEDIT.into(),
+            app.command().into(),
         ],
         terminal: false,
         icon: None,
@@ -108,8 +124,8 @@ impl AppLogos {
 
     /// Logo de `app` dans `rect` : celui de son thème, sinon une pastille à son initiale.
     fn paint(&mut self, ui: &egui::Ui, icons: &mut Icons, app: &DesktopEntry, rect: egui::Rect) {
-        if app.id == TEXTEDIT {
-            icons.paint(ui, "app-text-editor", rect, IconStyle::Color);
+        if let Some(own) = catalog::by_app_id(&app.id) {
+            icons.paint(ui, own.icon, rect, IconStyle::Color);
             return;
         }
         if let Some(texture) = app.icon.as_deref().and_then(|file| self.texture(ui.ctx(), file)) {
@@ -292,9 +308,28 @@ mod tests {
         );
         assert_eq!(
             choice.suggested.first().map(|app| app.id.as_str()),
-            Some(TEXTEDIT)
+            Some("ferrite-textedit")
         );
         assert_eq!(choice.others.len(), 2);
+    }
+
+    #[test]
+    fn l_application_de_ferrite_du_format_en_tete() {
+        let choice = OpenWith::new(
+            PathBuf::from("/nexiste/pas/film.avi"),
+            vec![app("vlc", &["video/x-msvideo"]), app("gimp", &["image/png"])],
+        );
+        let suggested: Vec<&str> = choice.suggested.iter().map(|app| app.id.as_str()).collect();
+        assert_eq!(suggested, ["ferrite-video", "vlc"]);
+        assert_eq!(
+            choice.others.first().map(|app| app.id.as_str()),
+            Some("ferrite-textedit")
+        );
+        let pdf = OpenWith::new(PathBuf::from("/nexiste/pas/guide.pdf"), Vec::new());
+        assert_eq!(
+            pdf.suggested.first().map(|app| app.name.as_str()),
+            Some("Lecteur PDF")
+        );
     }
 
     #[test]

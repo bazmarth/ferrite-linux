@@ -2113,3 +2113,24 @@ Vérifié : le paquet existe dans Debian 13 (25.03.0) ; seul `pdf_viewer/poppler
 ces commandes ; CI.
 Pas vérifié : une ISO reconstruite (`tools/usb.sh`, sudo, environ 30 minutes, la liste des
 paquets ayant changé) et le Lecteur PDF dedans.
+
+## 2026-11-07 — Fichiers : chaque extension à la bonne application
+
+Demande de l'utilisateur : chaque extension doit correspondre à son application d'ouverture
+par défaut. Avant, cinq listes différentes (Fichiers, bureau, Paramètres, `.desktop`,
+`mimeapps.list`) n'étaient pas d'accord : PDF passés par `xdg-open`, `.py`/`.js`/`.c` non
+reconnus comme textes, GIF envoyés à la Visionneuse (qui ne les lit pas), `.avi` et `.wav`
+inconnus (Debian les nomme `video/vnd.avi` et `audio/vnd.wave`), `.ts` pris pour une
+traduction Qt, « Ouvrir avec » sans les applications de Ferrite (sauf TextEdit).
+- `ferrite_system::formats` : la seule table extension → types MIME → application de
+  Ferrite (TextEdit, Visionneuse, Lecteur PDF, Lecteur vidéo, Musique).
+- Fichiers (double-clic, « Ouvrir avec », ligne « Ouvrir avec » du panneau), le bureau
+  (clic sur une notification) et Paramètres → Applications par défaut la suivent.
+- `mime_of` : table d'abord, puis `globs2` (poids, puis motif le plus long : « .tar.gz »).
+  Le choix d'une autre application dans Paramètres vaut aussi pour les anciens noms de type.
+- Image : `MimeType` des `.desktop` et `/etc/xdg/mimeapps.list` complétés.
+Vérifié : CI (sans shellcheck) ; tests (une extension = une application, chaque application
+accepte vraiment ses extensions, `.desktop`, `mimeapps.list` et rubriques de Paramètres
+d'accord avec la table, « Ouvrir avec » d'un `.avi`).
+Pas vérifié : à l'écran ni sur le vrai bureau ; le `mimeapps.list` du PC n'est mis à jour
+qu'avec une nouvelle image.

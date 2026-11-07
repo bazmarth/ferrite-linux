@@ -8,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::applications::DesktopEntry;
+use crate::{applications::DesktopEntry, formats};
 
 /// Rubrique de Paramètres → Applications par défaut.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,7 +38,7 @@ pub const CATEGORIES: &[Category] = &[
     },
     Category {
         label: "Images",
-        // Les formats que la Visionneuse sait ouvrir.
+        // Les formats que la Visionneuse sait ouvrir (même liste que `formats`).
         mimes: &["image/png", "image/jpeg"],
         ferrite: Some(("ferrite-viewer.desktop", "Visionneuse")),
     },
@@ -46,12 +46,18 @@ pub const CATEGORIES: &[Category] = &[
         label: "Vidéos",
         mimes: &[
             "video/mp4",
+            "video/x-m4v",
             "video/x-matroska",
             "video/webm",
+            "video/vnd.avi",
             "video/x-msvideo",
             "video/quicktime",
-            "video/mpeg",
             "video/ogg",
+            "video/mpeg",
+            "video/x-ms-wmv",
+            "video/x-flv",
+            "video/3gpp",
+            "video/mp2t",
         ],
         ferrite: Some(("ferrite-video.desktop", "Lecteur vidéo")),
     },
@@ -61,6 +67,8 @@ pub const CATEGORIES: &[Category] = &[
             "audio/mpeg",
             "audio/flac",
             "audio/ogg",
+            "audio/x-vorbis+ogg",
+            "audio/vnd.wave",
             "audio/x-wav",
             "audio/mp4",
             "audio/aac",
@@ -74,7 +82,26 @@ pub const CATEGORIES: &[Category] = &[
     },
     Category {
         label: "Textes",
-        mimes: &["text/plain", "text/markdown"],
+        mimes: &[
+            "text/plain",
+            "text/markdown",
+            "text/x-log",
+            "text/csv",
+            "text/rust",
+            "application/toml",
+            "application/json",
+            "application/yaml",
+            "application/x-shellscript",
+            "text/x-python3",
+            "text/x-python",
+            "text/javascript",
+            "text/x-csrc",
+            "text/x-chdr",
+            "text/x-c++src",
+            "text/x-c++hdr",
+            "text/css",
+            "application/xml",
+        ],
         ferrite: Some(("ferrite-textedit.desktop", "TextEdit")),
     },
 ];
@@ -136,7 +163,7 @@ fn files() -> Vec<PathBuf> {
 }
 
 /// Application par défaut de `mime` dans le texte d'un `mimeapps.list`.
-fn default_in(text: &str, mime: &str) -> Option<String> {
+pub(crate) fn default_in(text: &str, mime: &str) -> Option<String> {
     let mut in_defaults = false;
     for line in text.lines() {
         let line = line.trim();
@@ -229,34 +256,55 @@ pub fn set(category: &Category, id: &str) -> Result<(), String> {
     fs::write(&file, with_defaults(&text, category.mimes, id)).map_err(|err| err.to_string())
 }
 
-/// Type MIME d'un fichier d'après son extension (base `/usr/share/mime/globs`).
+/// Type MIME d'un fichier d'après son nom : celui de `formats` pour les formats que
+/// Ferrite ouvre, sinon celui de la base `/usr/share/mime/globs2`.
 pub fn mime_of(path: &Path) -> Option<String> {
-    let name = path.file_name()?.to_string_lossy().to_lowercase();
-    let globs = fs::read_to_string("/usr/share/mime/globs").ok()?;
+    if let Some(format) = formats::format_of(path) {
+        return Some(format.mimes[0].to_owned());
+    }
+    let name = path.file_name()?.to_string_lossy().into_owned();
+    let globs = fs::read_to_string("/usr/share/mime/globs2").ok()?;
     mime_in_globs(&globs, &name)
 }
 
+/// Type d'après les lignes `poids:type:motif` de `globs2` : le poids le plus fort, puis
+/// le motif le plus long (« .tar.gz » avant « .gz »). Seuls les motifs `*.ext` et les
+/// noms exacts sont pris en compte ; la casse est ignorée sauf pour les noms exacts.
 fn mime_in_globs(globs: &str, name: &str) -> Option<String> {
+    let lower = name.to_lowercase();
     globs
         .lines()
         .filter(|line| !line.starts_with('#'))
-        .filter_map(|line| line.split_once(':'))
-        .find(|(_, glob)| {
-            glob.strip_prefix('*')
-                .is_some_and(|suffix| name.ends_with(suffix))
+        .filter_map(|line| {
+            let mut fields = line.split(':');
+            let weight: u32 = fields.next()?.parse().ok()?;
+            let mime = fields.next()?;
+            let glob = fields.next()?;
+            let matches = match glob.strip_prefix('*') {
+                Some(suffix) => !suffix.contains(['*', '?', '[']) && lower.ends_with(&suffix.to_lowercase()),
+                None => glob == name,
+            };
+            matches.then_some((weight, glob.len(), mime))
         })
-        .map(|(mime, _)| mime.to_owned())
+        .max_by_key(|(weight, length, _)| (*weight, *length))
+        .map(|(_, _, mime)| mime.to_owned())
 }
 
 /// Application choisie pour ouvrir `path`, si elle n'est pas de Ferrite (Fichiers passe
-/// alors la main à `xdg-open`, qui la lance).
+/// alors la main à `xdg-open`, qui la lance). Tous les noms du type sont consultés
+/// (« audio/vnd.wave » comme l'ancien « audio/x-wav »).
 pub fn foreign_default(path: &Path) -> Option<String> {
-    let mime = if path.is_dir() {
-        "inode/directory".to_owned()
+    let mimes: Vec<String> = if path.is_dir() {
+        vec!["inode/directory".to_owned()]
+    } else if let Some(format) = formats::format_of(path) {
+        format.mimes.iter().map(|mime| (*mime).to_owned()).collect()
     } else {
-        mime_of(path)?
+        vec![mime_of(path)?]
     };
-    default_for(&mime).filter(|id| !id.starts_with("ferrite-"))
+    mimes
+        .iter()
+        .find_map(|mime| default_for(mime))
+        .filter(|id| !id.starts_with("ferrite-"))
 }
 
 #[cfg(test)]
@@ -296,11 +344,47 @@ mod tests {
 
     #[test]
     fn type_d_un_fichier_par_son_extension() {
-        let globs = "# x\napplication/pdf:*.pdf\nimage/png:*.png\n";
+        let globs = "# x\n50:application/pdf:*.pdf\n50:application/gzip:*.gz\n50:application/x-compressed-tar:*.tar.gz\n10:text/x-makefile:Makefile\n";
         assert_eq!(
-            mime_in_globs(globs, "guide.pdf").as_deref(),
+            mime_in_globs(globs, "Guide.PDF").as_deref(),
             Some("application/pdf")
         );
+        assert_eq!(
+            mime_in_globs(globs, "copie.tar.gz").as_deref(),
+            Some("application/x-compressed-tar")
+        );
+        assert_eq!(
+            mime_in_globs(globs, "copie.gz").as_deref(),
+            Some("application/gzip")
+        );
+        assert_eq!(
+            mime_in_globs(globs, "Makefile").as_deref(),
+            Some("text/x-makefile")
+        );
         assert_eq!(mime_in_globs(globs, "notes"), None);
+        // Les formats de Ferrite ont leur type, sans lire la base.
+        assert_eq!(mime_of(Path::new("/x/film.ts")).as_deref(), Some("video/mp2t"));
+        assert_eq!(
+            mime_of(Path::new("/x/son.WAV")).as_deref(),
+            Some("audio/vnd.wave")
+        );
+    }
+
+    /// Chaque rubrique d'une application de Ferrite couvre exactement les types qu'elle
+    /// ouvre, pour que le choix fait dans Paramètres vaille pour toutes ses extensions.
+    #[test]
+    fn rubriques_d_accord_avec_les_formats() {
+        for app in formats::Builtin::ALL {
+            let category = CATEGORIES
+                .iter()
+                .find(|category| category.ferrite.map(|(id, _)| id) == Some(app.desktop_id()))
+                .unwrap_or_else(|| panic!("pas de rubrique pour {}", app.name()));
+            assert_eq!(category.ferrite.map(|(_, name)| name), Some(app.name()));
+            let mut expected = app.mimes();
+            let mut listed = category.mimes.to_vec();
+            expected.sort_unstable();
+            listed.sort_unstable();
+            assert_eq!(listed, expected, "rubrique {}", category.label);
+        }
     }
 }

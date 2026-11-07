@@ -22,6 +22,8 @@ use ferrite_ui::wallpaper;
 
 use crate::style;
 use engine::{Engine, EngineCommand, Status};
+/// Vérifié par les tests de Fichiers (chaque extension va à une application qui la lit).
+#[cfg(test)]
 pub use library::supported;
 use library::{Album, Cover, Library, Track, format_duration};
 use mpris::{Mpris, Published, Request};

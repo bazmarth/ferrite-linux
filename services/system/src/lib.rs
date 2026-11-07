@@ -18,6 +18,7 @@ pub mod config;
 pub mod defaults;
 pub mod display;
 pub mod drag;
+pub mod formats;
 pub mod idle;
 pub mod network;
 pub mod night;

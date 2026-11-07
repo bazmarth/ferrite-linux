@@ -17,7 +17,7 @@ use ferrite_system::{
     applications::{self, DesktopEntry},
     audio, bluetooth, command,
     config::{Accent, Appearance, Settings},
-    display, network,
+    display, network, power,
     rfkill::{self, Radio},
 };
 use ferrite_ui::wallpaper::{self, Builtin, Image, Source};
@@ -407,11 +407,7 @@ fn apply(change: Change) -> Result<(), String> {
         Change::Brightness(level) => display::set_brightness(level),
         Change::Airplane(on) => rfkill::set_airplane(on),
         Change::KeyboardLight(level) => display::set_keyboard_light(level),
-        Change::PowerSaver(enabled) => command::run(
-            "powerprofilesctl",
-            &["set", if enabled { "power-saver" } else { "balanced" }],
-        )
-        .map(drop),
+        Change::PowerSaver(enabled) => power::set_power_saver(enabled),
         Change::Power(power) => command::run(
             "systemctl",
             &[match power {
@@ -539,7 +535,7 @@ impl Ferrite {
             Change::KeyboardLight(level) => {
                 self.system.keyboard_light = self.system.keyboard_light.map(|(_, max)| (level, max));
             }
-            Change::PowerSaver(enabled) => self.power_saver = enabled,
+            Change::PowerSaver(enabled) => self.system.power_saver = self.system.power_saver.map(|_| enabled),
             Change::Brightness(level) => {
                 self.brightness_held_until = Some(Instant::now() + HOLD);
                 self.system.brightness = self.system.brightness.map(|_| level);

@@ -680,6 +680,8 @@ pub struct DesktopView {
     pub airplane: Option<bool>,
     /// Rétroéclairage du clavier : niveau et maximum.
     pub keyboard_light: Option<(u8, u8)>,
+    /// Économie d'énergie active (`None` : power-profiles-daemon absent).
+    pub power_saver: Option<bool>,
     /// Mode nuit : teinte active, et l'état écrit sur sa tuile.
     pub night: (bool, String),
     pub power: Option<PowerAction>,
@@ -696,7 +698,6 @@ pub struct DesktopView {
     pub bar_opaque: bool,
     /// Réglages rapides qui ne viennent pas du fil système.
     pub controls: ControlsView,
-    pub power_saver: bool,
     pub battery_percent: bool,
     pub bluetooth_icon: bool,
     pub clock_style: ClockStyle,
@@ -2234,10 +2235,10 @@ impl Panels {
         };
         let dark = if view.dark_theme { "Activé" } else { "Désactivé" };
         let dnd = on_off(view.notifications.do_not_disturb);
-        let saver = if view.power_saver {
-            "Activée"
-        } else {
-            "Désactivée"
+        let saver = match view.power_saver {
+            None => "Indisponible",
+            Some(true) => "Activée",
+            Some(false) => "Désactivée",
         };
         let airplane = match view.airplane {
             None => "Aucune radio",
@@ -2284,7 +2285,7 @@ impl Panels {
                 "cc-saver",
                 "Économie d’énergie",
                 saver,
-                view.power_saver,
+                view.power_saver == Some(true),
             ),
             (Control::Keyboard, "cc-keyboard", "Clavier", &view.keyboard, false),
             (
@@ -3874,7 +3875,7 @@ pub fn action_at(
                     DesktopAction::ToggleDarkMode
                 } else if on(Control::DoNotDisturb) {
                     DesktopAction::ToggleDoNotDisturb
-                } else if on(Control::Saver) {
+                } else if on(Control::Saver) && view.power_saver.is_some() {
                     DesktopAction::TogglePowerSaver
                 } else if on(Control::Keyboard) {
                     DesktopAction::ToggleKeyboardLayout
@@ -6237,6 +6238,7 @@ mod tests {
             brightness: Some(70),
             airplane: Some(false),
             keyboard_light: Some((1, 2)),
+            power_saver: Some(false),
             bar_visible: true,
             bar_height: 34,
             ..DesktopView::default()

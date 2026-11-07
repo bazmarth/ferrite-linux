@@ -211,8 +211,7 @@ pub struct Ferrite {
     pub desktop_shown: Vec<Window>,
     /// Dernier accrochage au clavier : Super+← répété passe de la moitié aux deux tiers, puis au tiers.
     pub last_snap: Option<(Window, crate::wm::Snap)>,
-    /// Économie d'énergie demandée, et clavier affiché dans le centre de contrôle.
-    pub power_saver: bool,
+    /// Clavier affiché dans le centre de contrôle.
     pub keyboard_label: String,
     /// Réglages des raccourcis du bureau, rechargés à chaque changement de configuration.
     pub keyboard_shortcuts: Settings,
@@ -485,7 +484,6 @@ impl Ferrite {
             last_usable_area: None,
             desktop_shown: Vec::new(),
             last_snap: None,
-            power_saver: false,
             keyboard_label: keyboard_label(&layout),
             keyboard_shortcuts: settings.clone(),
             power_key_inhibitor: None,

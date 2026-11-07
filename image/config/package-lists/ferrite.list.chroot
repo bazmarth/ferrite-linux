@@ -62,6 +62,8 @@ rtkit
 alsa-ucm-conf
 bluez
 upower
+# Profils d’énergie (tuile « Économie d’énergie », commande powerprofilesctl)
+power-profiles-daemon
 udisks2
 packagekit
 flatpak

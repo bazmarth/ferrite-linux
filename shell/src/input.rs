@@ -1653,7 +1653,9 @@ impl Ferrite {
             }
             DesktopAction::ToggleDarkMode => self.toggle_dark_mode(),
             DesktopAction::TogglePowerSaver => {
-                self.request_system_change(Change::PowerSaver(!self.power_saver));
+                if let Some(on) = self.system.power_saver {
+                    self.request_system_change(Change::PowerSaver(!on));
+                }
             }
             DesktopAction::OpenSettings => {
                 self.popover = None;

@@ -1297,6 +1297,7 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
         brightness: system.brightness,
         airplane: system.airplane,
         keyboard_light: system.keyboard_light,
+        power_saver: system.power_saver,
         night: night_view(state),
         power: state.pending_power,
         // Pas par-dessus l'écran verrouillé : elle attend le déverrouillage.
@@ -1335,7 +1336,6 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
         } else {
             Default::default()
         },
-        power_saver: state.power_saver,
         keyboard: state.keyboard_label.clone(),
         bar_height: state.dock_config.bar_height,
         page: state.workspaces.current(),

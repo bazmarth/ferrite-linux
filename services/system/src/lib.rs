@@ -21,6 +21,7 @@ pub mod drag;
 pub mod idle;
 pub mod network;
 pub mod night;
+pub mod power;
 pub mod rfkill;
 pub mod time;
 pub mod weather;
@@ -38,6 +39,8 @@ pub struct Snapshot {
     pub airplane: Option<bool>,
     /// Rétroéclairage du clavier : niveau et maximum.
     pub keyboard_light: Option<(u8, u8)>,
+    /// Profil « économie d'énergie » actif (`power-profiles-daemon`).
+    pub power_saver: Option<bool>,
 }
 
 impl Snapshot {
@@ -51,6 +54,7 @@ impl Snapshot {
             mic_muted: audio::input_muted(),
             airplane: rfkill::airplane(),
             keyboard_light: display::keyboard_light(),
+            power_saver: power::power_saver(),
         }
     }
 }

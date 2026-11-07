@@ -1987,3 +1987,22 @@ Vérifié : CI (sans shellcheck) ; deux tests (suggestions, TextEdit) ; captures
 sombre du dialogue sur un fichier sans extension.
 Pas vérifié : le clic sur une application dans le bureau réel ; un fichier image ou PDF (la
 rubrique « Suggérées » dépend des `.desktop` installés).
+
+## 2026-11-07 — Économie d'énergie : vrai profil de `powerprofilesctl`
+
+Demande de l'utilisateur : « implémenter powerprofilesctl ». La tuile envoyait
+`powerprofilesctl set` mais ne lisait jamais l'état : elle partait toujours de « Désactivée »,
+et l'outil n'était ni sur le PC ni dans l'image.
+- Nouveau module `services/system/src/power.rs` : trois profils (économie, équilibré,
+  performance), lecture par `powerprofilesctl get` (délai 2 s), changement par `set`.
+- `Snapshot::power_saver` (`Option<bool>`) relu avec le reste de l'état ; l'ancien drapeau
+  local `power_saver` du shell disparaît.
+- Tuile : « Activée » / « Désactivée » selon le vrai profil ; « Indisponible » et sans effet
+  au clic quand le démon manque. Le profil Performance compte comme « Désactivée » ; un clic
+  passe alors en économie, un second revient à Équilibré.
+- Image : paquet `power-profiles-daemon` ajouté (`ferrite.list.chroot`).
+Vérifié : CI (sans shellcheck) ; tests de lecture des profils ; capture en sombre (tuile
+« Indisponible », démon absent) ; puis démon installé sur le PC : `powerprofilesctl set`
+marche sans mot de passe (intel_pstate + platform_profile), et capture avec le profil
+économie actif (tuile « Activée », en couleur).
+Pas vérifié : le clic sur la tuile dans le bureau réel ; l'image ISO.

@@ -1961,3 +1961,29 @@ Vérifié : CI (sans shellcheck) ; captures du verrouillage ralenti à 6 s (bure
 avec bord noir, écran verrouillé agrandi qui se pose, fondu croisé), puis écran final net.
 Pas vérifié : le déverrouillage en image (il faut un mot de passe) ; la fluidité sur la vraie
 machine (une texture plein écran par image pendant 0,56 s).
+
+## 2026-11-07 — Widget Musique du bureau : la pochette ouvre le vrai lecteur
+
+Demande de l'utilisateur (vidéo) : une vidéo YouTube jouait dans Brave ; un clic sur la
+pochette du widget « En lecture » ouvrait l'app Musique (vide, rien en lecture) au lieu de Brave.
+- `DashboardOpenMusic` passe par `open_media_player` (celle de l'îlot, rendue `pub(crate)`) :
+  la fenêtre du lecteur qui joue (Brave, VLC, Musique…). Sans lecteur, l'app Musique comme avant.
+Vérifié : rustfmt, clippy et tests du shell (le reste de la CI échoue sur
+`apps/core/src/files/open_with.rs`, travail en cours d'une autre session).
+Pas vérifié : le clic sur le bureau réel avec Brave qui joue.
+
+## 2026-11-07 — Fichiers : dialogue « Ouvrir avec » refait, avec les logos
+
+Demande de l'utilisateur : « un design propre avec les logos des applications ».
+- Nouveau module `apps/core/src/files/open_with.rs` : en-tête avec l'icône du fichier, le titre
+  et le nom du fichier ; liste en deux rubriques, « Suggérées » (applications dont le
+  `MimeType` correspond au fichier, TextEdit en tête pour un fichier texte ou sans extension)
+  puis « Autres applications ».
+- Chaque ligne (40 px) montre le logo de l'application (fichier SVG/PNG résolu par
+  `applications::resolve_icon`, lu par `thumbs::decode`, gardé en texture), sinon une pastille
+  couleur d'accent avec l'initiale ; fond arrondi au survol, curseur main.
+- `app-text-editor` ajoutée aux icônes intégrées (logo de TextEdit).
+Vérifié : CI (sans shellcheck) ; deux tests (suggestions, TextEdit) ; captures en clair et en
+sombre du dialogue sur un fichier sans extension.
+Pas vérifié : le clic sur une application dans le bureau réel ; un fichier image ou PDF (la
+rubrique « Suggérées » dépend des `.desktop` installés).

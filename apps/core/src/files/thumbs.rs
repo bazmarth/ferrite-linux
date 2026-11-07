@@ -263,7 +263,7 @@ impl Thumbnails {
     }
 }
 
-fn decode(path: &Path) -> Option<egui::ColorImage> {
+pub(super) fn decode(path: &Path) -> Option<egui::ColorImage> {
     // Une vidéo n'est pas lue en entier : sa taille ne compte pas.
     if is_video(path) {
         return decode_video(path);

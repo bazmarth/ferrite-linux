@@ -855,6 +855,7 @@ macro_rules! icons {
 
 icons![
     "app-code",
+    "app-text-editor",
     "ferrite-logo",
     "ferrite-logo-light",
     "places-usb",

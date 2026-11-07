@@ -21,6 +21,7 @@
 mod analysis;
 mod devices;
 mod look;
+mod open_with;
 mod ops;
 mod places;
 mod thumbs;
@@ -175,7 +176,7 @@ enum Dialog {
     DeleteForever(Vec<PathBuf>),
     EmptyTrash,
     Properties(Box<Properties>),
-    OpenWith(PathBuf, Vec<DesktopEntry>),
+    OpenWith(Box<open_with::OpenWith>),
     Tag(TagEditor),
     DeleteTag(String),
 }
@@ -357,6 +358,8 @@ pub struct FilesState {
     /// Le dossier affiché est réservé à l'administrateur (lecture refusée).
     denied: bool,
     icons: Icons,
+    /// Logos des applications du dialogue « Ouvrir avec ».
+    app_logos: open_with::AppLogos,
     picker: Option<Picker>,
 }
 
@@ -415,6 +418,7 @@ impl Default for FilesState {
             message: None,
             loaded: None,
             icons: Icons::default(),
+            app_logos: open_with::AppLogos::default(),
             picker: None,
         };
         state.load_preferences();
@@ -1307,7 +1311,7 @@ panneau={}
             }
             Action::OpenWith(path) => {
                 let apps = ferrite_system::applications::installed();
-                self.dialog = Some(Dialog::OpenWith(path, apps));
+                self.dialog = Some(Dialog::OpenWith(Box::new(open_with::OpenWith::new(path, apps))));
             }
             Action::LaunchWith(path, app) => {
                 self.dialog = None;
@@ -2126,6 +2130,10 @@ panneau={}
             self.tag_dialog(ctx, actions);
             return;
         }
+        if matches!(self.dialog, Some(Dialog::OpenWith(_))) {
+            self.open_with_dialog(ctx, actions);
+            return;
+        }
         let Some(dialog) = &self.dialog else { return };
         let modal = egui::Modal::new(egui::Id::unique("fichiers-dialogue")).show(ctx, |ui| {
             ui.set_width(380.0);
@@ -2192,55 +2200,8 @@ panneau={}
                         None => {}
                     }
                 }
-                Dialog::OpenWith(path, apps) => {
-                    ui.heading("Ouvrir avec");
-                    ui.label(
-                        RichText::new(
-                            path.file_name()
-                                .map(|n| n.to_string_lossy().into_owned())
-                                .unwrap_or_default(),
-                        )
-                        .color(style::text_secondary()),
-                    );
-                    ui.add_space(8.0);
-                    egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
-                        if ui
-                            .add(egui::Button::new("TextEdit").frame_when_inactive(false))
-                            .clicked()
-                        {
-                            let app = DesktopEntry {
-                                id: "textedit".into(),
-                                name: "TextEdit".into(),
-                                exec: vec![
-                                    env::current_exe()
-                                        .map(|p| p.display().to_string())
-                                        .unwrap_or_default(),
-                                    "textedit".into(),
-                                ],
-                                terminal: false,
-                                icon: None,
-                                wm_class: None,
-                                categories: Vec::new(),
-                                mime_types: Vec::new(),
-                            };
-                            actions.push(Action::LaunchWith(path.clone(), app));
-                        }
-                        for app in apps {
-                            if ui
-                                .add(egui::Button::new(&app.name).frame_when_inactive(false))
-                                .clicked()
-                            {
-                                actions.push(Action::LaunchWith(path.clone(), app.clone()));
-                            }
-                        }
-                    });
-                    ui.add_space(8.0);
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("Annuler").clicked() {
-                            actions.push(Action::CloseDialog);
-                        }
-                    });
-                }
+                // Dessiné à part (voir `open_with_dialog`).
+                Dialog::OpenWith(_) => {}
             }
         });
         if modal.should_close() {

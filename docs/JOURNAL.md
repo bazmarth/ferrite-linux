@@ -1866,3 +1866,12 @@ boucle du bureau ; le verrou était relâché aussitôt et logind gardait la mai
 - Par défaut : veille. « Afficher le dialogue » : dialogue d'arrêt.
 Vérifié : CI (sans shellcheck) ; cause constatée sur la machine.
 Pas vérifié : l'appui réel sur le bouton avec le nouveau bureau (à copier par `tools/dev-on.sh`).
+
+## 2026-11-07 — Veille et réveil sans fondu
+
+Le fondu au noir avant la veille et le dévoilement au réveil se voyaient mal sur la vraie
+machine : retirés à la demande. L'écran passe au noir d'un coup avant la veille (verrouillé
+derrière), et revient d'un coup au réveil ou si la veille est refusée. Le fondu du simple
+verrouillage et du déverrouillage est inchangé.
+Vérifié : CI (sans shellcheck), test du fondu adapté.
+Pas vérifié : veille et réveil réels avec le nouveau bureau.

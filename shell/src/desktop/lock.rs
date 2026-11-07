@@ -31,8 +31,6 @@ const HELPERS: [&str; 2] = ["/usr/sbin/unix_chkpwd", "/sbin/unix_chkpwd"];
 const TRANSITION: Duration = ferrite_ui::tokens::motion::LONG;
 /// Assombrissement avant le verrouillage : assez lent pour se voir, sans faire attendre.
 const DARKEN_LOCK: Duration = Duration::from_millis(520);
-/// Avant la veille, l'écran s'éteint plus doucement, comme une lampe qu'on baisse.
-const DARKEN_SLEEP: Duration = Duration::from_millis(900);
 /// Après l'accueil : court passage au noir avant de retrouver le bureau.
 const DARKEN_UNLOCK: Duration = ferrite_ui::tokens::motion::NORMAL;
 /// Le noir se lève sur l'écran verrouillé ou sur le bureau.
@@ -728,9 +726,10 @@ pub enum ScreenFade {
 
 impl ScreenFade {
     fn darken(from: f32, then: AfterDark, reduce_motion: bool) -> Self {
+        // Veille : noir immédiat, sans fondu (il se voyait mal sur la vraie machine).
         let duration = match then {
             AfterDark::Lock => DARKEN_LOCK,
-            AfterDark::LockAndSleep => DARKEN_SLEEP,
+            AfterDark::LockAndSleep => Duration::ZERO,
             AfterDark::Unlock => DARKEN_UNLOCK,
         };
         ScreenFade::Darken {
@@ -844,14 +843,11 @@ impl Ferrite {
         self.drive_screen_fade();
     }
 
-    /// Le noir se lève sur l'écran présent (réveil, veille refusée, après un verrouillage).
+    /// Réveil ou veille refusée : l'écran présent revient d'un coup, sans fondu.
     pub fn reveal_screen(&mut self) {
         if !matches!(self.screen_fade, Some(ScreenFade::Darken { .. })) && self.screen_fade.is_some() {
-            let running = matches!(self.screen_fade, Some(ScreenFade::Reveal { .. }));
-            self.screen_fade = Some(ScreenFade::reveal(self.dock_config.reduce_motion));
-            if !running {
-                self.drive_screen_fade();
-            }
+            self.screen_fade = None;
+            self.request_redraw();
         }
     }
 
@@ -1232,8 +1228,13 @@ mod tests {
         assert!(!darken.finished());
 
         // Reprise d'un dévoilement : on repart de la part de noir présente.
-        let resumed = ScreenFade::darken(0.4, AfterDark::LockAndSleep, false);
+        let resumed = ScreenFade::darken(0.4, AfterDark::Lock, false);
         assert!((resumed.alpha() - 0.4).abs() < 0.01);
+
+        // Veille : noir immédiat.
+        let sleep = ScreenFade::darken(0.0, AfterDark::LockAndSleep, false);
+        assert!(sleep.finished());
+        assert_eq!(sleep.alpha(), 1.0);
 
         assert_eq!(ScreenFade::Dark.alpha(), 1.0);
         assert!(!ScreenFade::Dark.finished());

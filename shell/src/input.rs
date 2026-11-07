@@ -11,7 +11,7 @@ use smithay::{
         KeyboardKeyEvent, PointerAxisEvent, PointerButtonEvent, PointerMotionEvent,
     },
     input::{
-        keyboard::{FilterResult, Keysym},
+        keyboard::{FilterResult, KeyboardTarget, Keysym, ModifiersState},
         pointer::{AxisFrame, ButtonEvent, GrabStartData, MotionEvent, RelativeMotionEvent},
     },
     utils::{Logical, Point, SERIAL_COUNTER, Serial},
@@ -267,6 +267,19 @@ fn configured_shortcut(
     None
 }
 
+/// Touche gardée par le bureau (Super, Super+Espace…) : Smithay ne transmet pas à la
+/// fenêtre active le changement de modificateurs qu'elle cause. Sans ce rappel, après
+/// Super+Espace (changement de disposition, qui annonce Super enfoncé), la fenêtre croyait
+/// Super tenu jusqu'au prochain Maj ou Ctrl : Retour arrière n'effaçait plus rien dans
+/// Brave, Claude ou VS Code (Super+Retour arrière n'y fait rien).
+fn modifiers_to_announce(
+    intercepted: bool,
+    before: ModifiersState,
+    after: ModifiersState,
+) -> Option<ModifiersState> {
+    (intercepted && before != after).then_some(after)
+}
+
 fn works_while_locked(action: Action) -> bool {
     matches!(action, Action::SwitchVt(_) | Action::ToggleKeyboardLayout)
 }
@@ -381,6 +394,7 @@ impl Ferrite {
             return;
         };
         let pressed = event.state() == KeyState::Pressed;
+        let modifiers_before = keyboard.modifier_state();
         let action = keyboard.input::<Action, _>(
             self,
             event.key_code(),
@@ -615,6 +629,13 @@ impl Ferrite {
                 FilterResult::Forward
             },
         );
+        if let Some(modifiers) =
+            modifiers_to_announce(action.is_some(), modifiers_before, keyboard.modifier_state())
+            && let Some(focus) = keyboard.current_focus()
+        {
+            let seat = self.seat.clone();
+            focus.modifiers(&seat, self, modifiers, SERIAL_COUNTER.next_serial());
+        }
         self.update_key_repeat(event.key_code().raw(), pressed, action);
         self.run_key_action(action);
         // Le sélecteur se referme au relâchement d'Alt, que le client voit aussi.
@@ -2269,6 +2290,20 @@ impl Ferrite {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn modificateurs_d_une_touche_gardee_annonces_a_la_fenetre() {
+        let libre = ModifiersState::default();
+        let super_tenu = ModifiersState {
+            logo: true,
+            ..ModifiersState::default()
+        };
+        // Super relâché, gardé par le bureau : la fenêtre doit apprendre qu'il est levé.
+        assert_eq!(modifiers_to_announce(true, super_tenu, libre), Some(libre));
+        // Transmise à la fenêtre, Smithay s'en charge ; sans changement, rien à dire.
+        assert_eq!(modifiers_to_announce(false, super_tenu, libre), None);
+        assert_eq!(modifiers_to_announce(true, libre, libre), None);
+    }
 
     #[test]
     fn vitesse_du_defilement_selon_la_source() {

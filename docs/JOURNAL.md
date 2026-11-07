@@ -1875,3 +1875,17 @@ derrière), et revient d'un coup au réveil ou si la veille est refusée. Le fon
 verrouillage et du déverrouillage est inchangé.
 Vérifié : CI (sans shellcheck), test du fondu adapté.
 Pas vérifié : veille et réveil réels avec le nouveau bureau.
+
+## 2026-11-07 — Retour arrière qui n'effaçait plus après Super+Espace
+
+Après un changement de disposition par Super+Espace, Retour arrière n'effaçait souvent plus
+rien dans les applications (Claude, Brave, VS Code…), jusqu'au prochain Maj ou Ctrl.
+Cause : en changeant de disposition, Smithay annonce à la fenêtre active les modificateurs
+du moment (Super enfoncé) ; le relâchement de Super est gardé par le bureau, et Smithay ne
+transmet les modificateurs qu'avec une touche transmise. La fenêtre croyait Super tenu, et
+Super+Retour arrière n'y fait rien.
+- Toute touche gardée par le bureau qui change les modificateurs les annonce maintenant à
+  la fenêtre active (`modifiers_to_announce` dans `shell/src/input.rs`), comme sway.
+Vérifié : CI (sans shellcheck) ; sur la machine, le clavier envoie bien chaque appui
+(enregistrement `libinput debug-events`), juste après des Super+Espace.
+Pas vérifié : le bureau corrigé sur la machine (à copier par `tools/dev-on.sh`).

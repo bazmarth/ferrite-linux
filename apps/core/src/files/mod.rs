@@ -613,7 +613,7 @@ panneau={}
         let Some(dir) = self.current_dir().map(Path::to_path_buf) else {
             return;
         };
-        let result = env::current_exe().and_then(|exe| {
+        let result = ferrite_system::command::current_exe().and_then(|exe| {
             let mut command = Command::new("pkexec");
             command.arg("env");
             // pkexec vide l'environnement : la fenêtre doit retrouver l'écran.
@@ -1082,7 +1082,7 @@ panneau={}
         };
         if let Some(temporary_dir) = temporary_dir {
             let result = if let Some(app) = builtin {
-                env::current_exe().map(|exe| {
+                ferrite_system::command::current_exe().map(|exe| {
                     let mut command = Command::new(exe);
                     command.arg(app).arg(&path);
                     command
@@ -1103,10 +1103,12 @@ panneau={}
                 .map_err(|error| format!("Ouverture impossible : {error}"));
         }
         let result = if let Some(app) = builtin {
-            env::current_exe().map(Command::new).and_then(|mut command| {
-                command.arg(app).arg(&path);
-                spawn_detached(command)
-            })
+            ferrite_system::command::current_exe()
+                .map(Command::new)
+                .and_then(|mut command| {
+                    command.arg(app).arg(&path);
+                    spawn_detached(command)
+                })
         } else {
             let mut command = Command::new("xdg-open");
             command.arg(&path);
@@ -1505,7 +1507,8 @@ panneau={}
             }
             Action::TerminalHere => {
                 let dir = self.current_dir().map(Path::to_path_buf).unwrap_or_else(home);
-                let program = std::env::current_exe().unwrap_or_else(|_| "ferrite-apps".into());
+                let program =
+                    ferrite_system::command::current_exe().unwrap_or_else(|_| "ferrite-apps".into());
                 let mut command = Command::new(program);
                 command.arg("terminal").arg(dir);
                 if let Err(error) = spawn_detached(command) {

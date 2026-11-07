@@ -114,3 +114,35 @@ mod tests {
         );
     }
 }
+
+/// Chemin du programme en cours, pour relancer le même exécutable (TextEdit depuis
+/// Fichiers, par exemple). Si le fichier a été remplacé pendant que le programme tourne
+/// (mise à jour), Linux renvoie « …/ferrite-apps (deleted) » : on reprend alors le chemin
+/// d'origine, où se trouve la nouvelle version.
+pub fn current_exe() -> std::io::Result<std::path::PathBuf> {
+    let path = std::env::current_exe()?;
+    Ok(without_deleted(path))
+}
+
+fn without_deleted(path: std::path::PathBuf) -> std::path::PathBuf {
+    match path.to_str().and_then(|text| text.strip_suffix(" (deleted)")) {
+        Some(original) if !path.exists() => std::path::PathBuf::from(original),
+        _ => path,
+    }
+}
+
+#[cfg(test)]
+mod exe_tests {
+    use super::*;
+
+    #[test]
+    fn executable_remplace() {
+        let gone = std::path::PathBuf::from("/nulle-part/ferrite-apps (deleted)");
+        assert_eq!(
+            without_deleted(gone),
+            std::path::PathBuf::from("/nulle-part/ferrite-apps")
+        );
+        let normal = std::path::PathBuf::from("/usr/bin/ferrite-apps");
+        assert_eq!(without_deleted(normal.clone()), normal);
+    }
+}

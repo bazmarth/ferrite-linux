@@ -2282,3 +2282,18 @@ s'affichait en texte « [image: Watch the video] ».
 Vérifié : CI (sans shellcheck), test `image_dans_un_lien` ; capture du bureau imbriqué sur
 « 1.1 The CIA triad… » : la vignette de la vidéo s'affiche.
 Pas vérifié : le clic (ouverture de la vidéo dans le navigateur).
+
+## 2026-11-07 — Fichiers : ouvrir un fichier après une mise à jour de Ferrite
+
+Demande de l'utilisateur (vidéo) : un `.md` ne s'ouvrait pas depuis Fichiers (double-clic,
+« Ouvrir avec → TextEdit »).
+- Cause : Fichiers relance son propre exécutable (`ferrite-apps textedit …`). Lancé à 23:15,
+  il tournait encore quand `ferrite-apps` a été remplacé à 23:33 ; Linux donne alors
+  « …/ferrite-apps (deleted) » comme chemin, et le lancement échouait.
+- `ferrite_system::command::current_exe` retire ce suffixe quand le fichier n'existe pas ;
+  utilisé par Fichiers (ouvrir, Ouvrir avec, miniatures), TextEdit et le Terminal.
+Vérifié : CI (sans shellcheck), test `executable_remplace` ; `/proc/<pid>/exe` des fenêtres
+Fichiers ouvertes pointait bien vers « (deleted) » ; `ferrite-apps textedit` lancé à la main
+ouvre le fichier.
+Pas vérifié : dans le vrai bureau (les fenêtres Fichiers déjà ouvertes gardent l'ancien
+code : les fermer et les rouvrir après installation).

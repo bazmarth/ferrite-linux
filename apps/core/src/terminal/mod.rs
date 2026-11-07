@@ -373,7 +373,7 @@ impl TerminalState {
 
     /// Nouvelle fenêtre, dans le dossier de l'onglet courant : un processus à part.
     fn open_window(&mut self) {
-        let result = std::env::current_exe().and_then(|program| {
+        let result = ferrite_system::command::current_exe().and_then(|program| {
             let mut command = Command::new(program);
             command.arg("terminal");
             if let Some(directory) = self.session().and_then(Session::directory) {

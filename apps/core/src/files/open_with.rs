@@ -3,7 +3,6 @@
 
 use std::{
     collections::HashMap,
-    env,
     path::{Path, PathBuf},
 };
 
@@ -84,7 +83,7 @@ fn ferrite_entry(app: Builtin) -> DesktopEntry {
         id: app.desktop_id().trim_end_matches(".desktop").into(),
         name: app.name().into(),
         exec: vec![
-            env::current_exe()
+            ferrite_system::command::current_exe()
                 .map(|path| path.display().to_string())
                 .unwrap_or_default(),
             app.command().into(),

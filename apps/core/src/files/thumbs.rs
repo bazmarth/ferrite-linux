@@ -117,7 +117,7 @@ fn decode_video(path: &Path) -> Option<egui::ColorImage> {
     let _turn = VIDEO_TURN
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut child = Command::new(std::env::current_exe().ok()?)
+    let mut child = Command::new(ferrite_system::command::current_exe().ok()?)
         .arg("vignette-video")
         .arg(path)
         .stdin(Stdio::null())

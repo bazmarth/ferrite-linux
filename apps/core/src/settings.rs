@@ -20,6 +20,7 @@ mod defaults;
 mod face;
 mod meter;
 mod rows;
+mod updates;
 
 use self::rows::{Lead, Row, group, hero};
 use eframe::egui::{self, Color32, Frame, Margin, RichText, Stroke};
@@ -227,6 +228,18 @@ enum Update {
     /// Images trouvées pour le fond d'écran, puis la vignette de chacune.
     WallpaperFiles(Vec<PathBuf>),
     Thumbnail(PathBuf, Option<Image>),
+    /// Mises à jour disponibles (PackageKit), progression et fin d'une installation.
+    UpdatesList(Result<Vec<updates::Package>, String>),
+    UpdatesProgress(u32),
+    UpdatesInstalled(Result<(), String>),
+}
+
+/// Opération de la page Mises à jour en cours.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum UpdatesTask {
+    Checking,
+    /// Installation, avec son pourcentage quand il est connu.
+    Installing(Option<u32>),
 }
 
 /// Action demandée depuis une liste (réseaux, appareils), faite après son dessin.
@@ -291,6 +304,9 @@ pub struct SettingsState {
     timezones: Vec<String>,
     timezone_filter: String,
     about: Option<About>,
+    /// Mises à jour : dernière liste lue (ou erreur) et opération en cours.
+    updates: Option<Result<Vec<updates::Package>, String>>,
+    updates_task: Option<UpdatesTask>,
     loaded: Vec<Page>,
     /// Images proposées comme fond d'écran, leurs vignettes (`None` : illisible), les
     /// images dont la vignette est demandée, et le chemin tapé pour une autre image.
@@ -364,6 +380,8 @@ impl Default for SettingsState {
             timezones: Vec::new(),
             timezone_filter: String::new(),
             about: None,
+            updates: None,
+            updates_task: None,
             loaded: Vec::new(),
             wallpaper_files: None,
             thumbnails: HashMap::new(),
@@ -494,6 +512,25 @@ impl SettingsState {
                     Err(error) => self.fail(error),
                 },
                 Update::About(about) => self.about = Some(*about),
+                Update::UpdatesList(result) => {
+                    self.updates = Some(result);
+                    self.updates_task = None;
+                }
+                Update::UpdatesProgress(percent) => {
+                    if let Some(UpdatesTask::Installing(known)) = &mut self.updates_task {
+                        *known = Some(percent);
+                    }
+                }
+                Update::UpdatesInstalled(result) => {
+                    self.updates_task = None;
+                    match result {
+                        Ok(()) => {
+                            self.message = Some(Ok("Mises à jour installées.".to_owned()));
+                            self.check_updates(ctx, false);
+                        }
+                        Err(error) => self.fail(error),
+                    }
+                }
                 Update::Finished => self.running = self.running.saturating_sub(1),
                 Update::Done(Ok(message)) if message.is_empty() => {}
                 Update::Done(result) => self.message = Some(result),
@@ -544,9 +581,37 @@ impl SettingsState {
             | Page::Accounts
             | Page::Defaults
             | Page::Privacy
-            | Page::Accessibility
-            | Page::Updates => {}
+            | Page::Accessibility => {}
+            // Relire les dépôts ne demande pas de mot de passe (polkit) : la liste est
+            // toujours fraîche à l'ouverture.
+            Page::Updates => self.check_updates(ctx, true),
         }
+    }
+
+    /// Cherche les mises à jour ; `refresh` relit d'abord les dépôts (réseau).
+    fn check_updates(&mut self, ctx: &egui::Context, refresh: bool) {
+        self.updates_task = Some(UpdatesTask::Checking);
+        self.spawn_quiet(ctx, move || vec![Update::UpdatesList(updates::check(refresh))]);
+    }
+
+    /// Installe toutes les mises à jour listées (mot de passe demandé par l'agent polkit).
+    fn install_updates(&mut self, ctx: &egui::Context) {
+        let Some(Ok(list)) = &self.updates else {
+            return;
+        };
+        let ids: Vec<String> = list.iter().map(|package| package.id.clone()).collect();
+        self.message = None;
+        self.updates_task = Some(UpdatesTask::Installing(None));
+        let sender = self.sender.clone();
+        let ctx = ctx.clone();
+        thread::spawn(move || {
+            let result = updates::install(&ids, |percent| {
+                let _ = sender.send(Update::UpdatesProgress(percent));
+                ctx.request_repaint();
+            });
+            let _ = sender.send(Update::UpdatesInstalled(result));
+            ctx.request_repaint();
+        });
     }
 
     fn refresh_networks(&mut self, ctx: &egui::Context) {
@@ -661,7 +726,8 @@ impl SettingsState {
             Page::Privacy => self.privacy_page(ui),
             Page::Defaults => self.defaults_page(ui),
             Page::Notifications => self.notifications_page(ui),
-            Page::Printers | Page::Accessibility | Page::Updates => self.pending_page(ui),
+            Page::Updates => self.updates_page(ui),
+            Page::Printers | Page::Accessibility => self.pending_page(ui),
         }
     }
 
@@ -2173,6 +2239,85 @@ impl SettingsState {
         }
     }
 
+    /// Mises à jour du système (PackageKit) : recherche à l'ouverture, liste, et « Tout
+    /// installer » (mot de passe administrateur).
+    fn updates_page(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        let system = self
+            .about
+            .as_ref()
+            .map_or_else(|| "Debian GNU/Linux 13".to_owned(), |about| about.os.clone());
+        let busy = self.updates_task.is_some();
+        let list = match &self.updates {
+            Some(Ok(list)) => list.as_slice(),
+            _ => &[],
+        };
+        let status = match (self.updates_task, &self.updates) {
+            (Some(UpdatesTask::Checking), _) => "Recherche des mises à jour…".to_owned(),
+            (Some(UpdatesTask::Installing(Some(percent))), _) => format!("Installation… {percent} %"),
+            (Some(UpdatesTask::Installing(None)), _) => "Installation…".to_owned(),
+            (None, Some(Ok(_))) => updates::label(list),
+            (None, Some(Err(error))) => error.clone(),
+            (None, None) => system.clone(),
+        };
+        let up_to_date = !busy && matches!(&self.updates, Some(Ok(list)) if list.is_empty());
+        let mut search = false;
+        let mut install = false;
+        let icons = &mut self.icons;
+        group(ui, icons, "", |rows| {
+            let row = Row::new("Ferrite OS")
+                .hint(&status)
+                .ok(up_to_date)
+                .lead(Lead::Tile(Page::Updates.icon(), Page::Updates.color()));
+            search = rows
+                .row(row, |ui| {
+                    ui.add_enabled_ui(!busy, |ui| rows::button(ui, "Rechercher", false))
+                        .inner
+                        .clicked()
+                })
+                .0;
+        });
+        if !list.is_empty() {
+            group(ui, icons, "Disponibles", |rows| {
+                let title = updates::label(list);
+                let row = Row::new(&title)
+                    .bold(true)
+                    .hint("Le mot de passe administrateur sera demandé");
+                install = rows
+                    .row(row, |ui| {
+                        ui.add_enabled_ui(!busy, |ui| rows::button(ui, "Tout installer", true))
+                            .inner
+                            .clicked()
+                    })
+                    .0;
+                for package in list {
+                    let hint = if package.summary.is_empty() {
+                        package.version.clone()
+                    } else {
+                        format!("{} · {}", package.version, package.summary)
+                    };
+                    rows.row(Row::new(&package.name).hint(&hint), |ui| {
+                        if package.security {
+                            rows::value(ui, "Sécurité");
+                        }
+                    });
+                }
+            });
+        }
+        rows::group_note(
+            ui,
+            "Paquets du système : Debian et les dépôts ajoutés (Brave, VS Code…). Les \
+             programmes de Ferrite OS se mettent à jour à part, avec une nouvelle image.",
+        );
+        if search {
+            self.message = None;
+            self.check_updates(&ctx, true);
+        }
+        if install {
+            self.install_updates(&ctx);
+        }
+    }
+
     /// Rubriques pas encore branchées sur le système : la maquette, avec le même gabarit,
     /// ses réglages grisés et une note qui le dit. Les réglages qui existent déjà
     /// (animations, transparence) restent actifs.
@@ -2228,23 +2373,7 @@ impl SettingsState {
                     "Contraste élevé et touches rémanentes ne sont pas encore disponibles.",
                 );
             }
-            _ => {
-                let system = self
-                    .about
-                    .as_ref()
-                    .map_or_else(|| "Debian GNU/Linux 13".to_owned(), |about| about.os.clone());
-                group(ui, icons, "", |rows| {
-                    let row = Row::new("Ferrite OS")
-                        .hint(&system)
-                        .lead(Lead::Tile(Page::Updates.icon(), Page::Updates.color()))
-                        .unavailable();
-                    rows.row(row, |ui| rows::button(ui, "Rechercher", false));
-                });
-                group(ui, icons, "Options", |rows| {
-                    off(rows, Row::new("Rechercher automatiquement"), true);
-                });
-                rows::group_note(ui, PLANNED);
-            }
+            _ => {}
         }
         if settings != before {
             style::apply_preferences(ui.ctx(), &settings);

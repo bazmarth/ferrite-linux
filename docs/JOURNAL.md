@@ -2521,3 +2521,24 @@ D-Bus affichée sans son texte avec l'aperçu sur « Jamais », et pas affichée
 « Ne pas déranger ».
 Pas vérifié : le son (pas de PipeWire dans le bureau imbriqué), la bascule depuis le
 centre de contrôle reprise par Paramètres, le vrai bureau.
+
+## 2026-11-08 — Paramètres : rubrique Mises à jour branchée (PackageKit)
+
+Suite des rubriques en maquette. PackageKit est déjà dans l'image (`ferrite.list.chroot`).
+- `settings/updates.rs` : client PackageKit sur le bus système (zbus bloquant, dans un fil
+  à part). Une transaction par opération, signaux lus jusqu'à `Finished` (`Package`,
+  `ErrorCode`, `Percentage`). Indice `interactive=true` : polkit peut demander le mot de
+  passe. `check` (relit les dépôts puis liste), `install` (paquets signés seulement).
+- Page Mises à jour : recherche à l'ouverture (relire les dépôts ne demande pas de mot de
+  passe, règle polkit `system-sources-refresh`), bouton « Rechercher », résumé (« 3 mises à
+  jour disponibles, dont 1 de sécurité », ou « Le système est à jour » en vert), liste des
+  paquets (version, description, étiquette « Sécurité »), « Tout installer » avec le
+  pourcentage, puis nouvelle lecture. Ligne « Rechercher automatiquement » retirée (la
+  recherche se fait à l'ouverture de la page).
+- La note le dit : seuls les paquets du système sont concernés ; les programmes de Ferrite
+  OS se mettent à jour avec une nouvelle image (pas encore de paquet Ferrite).
+Vérifié : CI (sans shellcheck), tests `resume_de_la_liste` et `paquet_lu_depuis_son_identifiant` ;
+sur le PC, lecture seule : PackageKit relit les dépôts en 2 s et répond 0 mise à jour
+(`apt list --upgradable` aussi) ; capture du bureau imbriqué : « Le système est à jour ».
+Pas vérifié : la liste avec des paquets et « Tout installer » (aucune mise à jour en attente
+sur le PC) : demande du mot de passe par l'agent polkit, progression, message d'erreur.

@@ -2332,3 +2332,18 @@ quatre badges « Generative AI » affichés.
 Pas vérifié : les autres applications (Fichiers, Paramètres) et le vrai bureau.
 Reste : « ⚠️ » s'affiche en noir (le caractère ⚠ est pris dans une police avant l'emoji) ; la
 barre du haut et le Dock (ferrite-shell) n'utilisent pas ces polices.
+
+## 2026-11-08 — TextEdit : commentaires HTML cachés dans l'aperçu Markdown
+
+Demande de l'utilisateur (capture) : « <!-- CO-OP TRANSLATOR … --> » du README s'affichait.
+- `markdown::strip_comments` retire `<!-- … -->` avant l'analyse, même sur plusieurs lignes,
+  sauf dans les blocs de code et le code en ligne. Une ligne qui ne contenait qu'un
+  commentaire devient vide (elle sépare encore les paragraphes).
+Vérifié : CI (sans shellcheck), test `commentaires_retires` ; capture du bureau imbriqué sur
+un extrait du README : le commentaire n'apparaît plus, badges et titre intacts.
+Sur le PC (commandes tapées par l'utilisateur) : `systemd-zram-generator` installé, réglages
+copiés ; zram d'abord créé avec les valeurs de Debian (4 Go, lz4, le paquet l'avait démarré
+avant la copie), recréé par `systemctl start dev-zram0.swap` : 7,7 Go, zstd, priorité 100.
+`swapoff`/`swapon` de `/dev/sda3` : bureau à 0 Mo d'échange. `fstrim` : 29,1 Go sur `/`,
+128,4 Go sur FICHIERS (ntfs-3g le gère). Juste après, 50 écritures synchronisées en 0,9 s
+(0,07 s la veille) : nouvelle mesure prévue 30 min plus tard.

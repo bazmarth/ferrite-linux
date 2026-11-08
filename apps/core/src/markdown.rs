@@ -175,8 +175,80 @@ fn table_delimiter(line: &str) -> Option<Vec<Align>> {
 }
 
 pub fn parse(text: &str) -> Vec<Block> {
+    let text = strip_comments(text);
     let lines: Vec<&str> = text.split('\n').collect();
     parse_lines(&lines)
+}
+
+/// Retire les commentaires HTML « <!-- … --> » (même sur plusieurs lignes), sauf dans les
+/// blocs de code et le code en ligne. Une ligne qui ne contenait qu'un commentaire devient
+/// vide : elle sépare encore les paragraphes.
+fn strip_comments(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut in_comment = false;
+    let mut in_fence: Option<&str> = None;
+    for (index, line) in text.split('\n').enumerate() {
+        if index > 0 {
+            out.push('\n');
+        }
+        if !in_comment {
+            if let Some(open) = in_fence {
+                if fence(line) == Some(open) {
+                    in_fence = None;
+                }
+                out.push_str(line);
+                continue;
+            }
+            if let Some(open) = fence(line) {
+                in_fence = Some(open);
+                out.push_str(line);
+                continue;
+            }
+        }
+        let mut kept = String::new();
+        let mut rest = line;
+        let mut removed = in_comment;
+        while !rest.is_empty() {
+            if in_comment {
+                match rest.find("-->") {
+                    Some(end) => {
+                        rest = &rest[end + 3..];
+                        in_comment = false;
+                    }
+                    None => rest = "",
+                }
+                continue;
+            }
+            let comment = rest.find("<!--");
+            let code = rest.find('`');
+            match (comment, code) {
+                (Some(start), Some(tick)) if tick < start => {
+                    // Code en ligne : recopié tel quel jusqu'aux accents graves fermants.
+                    let run = rest[tick..].chars().take_while(|&c| c == '`').count();
+                    let ticks = &rest[tick..tick + run];
+                    let end = rest[tick + run..]
+                        .find(ticks)
+                        .map_or(rest.len(), |at| tick + run + at + run);
+                    kept.push_str(&rest[..end]);
+                    rest = &rest[end..];
+                }
+                (Some(start), _) => {
+                    kept.push_str(&rest[..start]);
+                    rest = &rest[start + 4..];
+                    in_comment = true;
+                    removed = true;
+                }
+                (None, _) => {
+                    kept.push_str(rest);
+                    rest = "";
+                }
+            }
+        }
+        if !(removed && kept.trim().is_empty()) {
+            out.push_str(&kept);
+        }
+    }
+    out
 }
 
 fn parse_lines(lines: &[&str]) -> Vec<Block> {
@@ -711,6 +783,15 @@ mod tests {
             ]
         );
         assert!(spans[0].link.is_empty());
+    }
+
+    #[test]
+    fn commentaires_retires() {
+        let text = "Avant\n<!-- CO-OP START -->\nTexte <!-- caché --> visible `<!-- code -->`\n<!-- sur\ndeux lignes -->\n```\n<!-- dans le code -->\n```\nAprès";
+        assert_eq!(
+            strip_comments(text),
+            "Avant\n\nTexte  visible `<!-- code -->`\n\n\n```\n<!-- dans le code -->\n```\nAprès"
+        );
     }
 
     #[test]

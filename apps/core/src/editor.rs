@@ -2077,6 +2077,9 @@ impl EditorState {
             .id_salt(("textedit-markdown-preview", document.id))
             .auto_shrink([false, false])
             .show(ui, |ui| {
+                // L'aperçu est du contenu : son texte se sélectionne et se copie
+                // (glisser, double-clic, Ctrl+C), contrairement aux libellés d'interface.
+                ui.style_mut().interaction.selectable_labels = true;
                 let width = ui.available_width();
                 let paper = (width - 56.0).clamp(120.0, 760.0);
                 ui.add_space(28.0);
@@ -2686,7 +2689,21 @@ fn table(
                         Align::Center => x + PAD_X + cell_width / 2.0,
                         Align::Right => x + PAD_X + cell_width,
                     };
-                    painter.galley(egui::pos2(anchor, y + PAD_Y), galley.clone(), body());
+                    // Texte de la cellule sélectionnable, comme le reste de l'aperçu.
+                    let pos = egui::pos2(anchor, y + PAD_Y);
+                    let response = ui.interact(
+                        galley.rect.translate(pos.to_vec2()),
+                        ui.scope_id().with(("cellule", index, column)),
+                        Sense::click_and_drag(),
+                    );
+                    egui::text_selection::LabelSelectionState::label_text_selection(
+                        ui,
+                        &response,
+                        pos,
+                        galley.clone(),
+                        body(),
+                        Stroke::NONE,
+                    );
                     x += cell_width + 2.0 * PAD_X;
                 }
                 y += row_height;
@@ -2732,7 +2749,7 @@ fn column_widths(natural: &[f32], narrow: &[f32], available: f32) -> Vec<f32> {
 }
 
 /// Bloc de code en carte : bandeau avec la langue (ou le commentaire de première ligne
-/// d'un script, comme « # Installation »), puis le code coloré.
+/// d'un script, comme « # Installation ») et le bouton « Copier », puis le code coloré.
 fn code_card(ui: &mut egui::Ui, language: &str, lines: &[String]) {
     let kind = FileKind::of(Path::new(&format!(
         "x.{}",
@@ -2752,6 +2769,7 @@ fn code_card(ui: &mut egui::Ui, language: &str, lines: &[String]) {
         _ if !language.is_empty() => (Some(kind_title(kind, language)), lines),
         _ => (None, lines),
     };
+    let code = body.join("\n");
     egui::Frame::new()
         .fill(code_block())
         .stroke(Stroke::new(1.0, border()))
@@ -2760,32 +2778,93 @@ fn code_card(ui: &mut egui::Ui, language: &str, lines: &[String]) {
             ui.set_width(ui.available_width());
             if let Some(title) = &title {
                 egui::Frame::new()
-                    .inner_margin(Margin::symmetric(16, 10))
+                    .inner_margin(Margin {
+                        left: 16,
+                        right: 8,
+                        top: 6,
+                        bottom: 6,
+                    })
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             let (rect, _) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), Sense::hover());
                             icons::paint_terminal(ui.painter(), rect);
                             ui.add_space(4.0);
-                            ui.label(
-                                RichText::new(title)
-                                    .size(13.5)
-                                    .family(style::strong_family())
-                                    .color(style::primary_text()),
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(title)
+                                        .size(13.5)
+                                        .family(style::strong_family())
+                                        .color(style::primary_text()),
+                                )
+                                .selectable(false),
                             );
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                copy_button(ui, &code);
+                            });
                         });
                     });
                 rule(ui);
             }
             egui::Frame::new()
-                .inner_margin(Margin::symmetric(16, 12))
+                .inner_margin(Margin {
+                    left: 16,
+                    right: if title.is_some() { 16 } else { 8 },
+                    top: if title.is_some() { 12 } else { 8 },
+                    bottom: 12,
+                })
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
-                    let code = body.join("\n");
-                    let mut job = highlight::layout_job(&code, kind, &FontId::monospace(13.0), &[], 0);
-                    job.wrap.max_width = ui.available_width();
-                    ui.add(egui::Label::new(job).wrap());
+                    let code_view = |ui: &mut egui::Ui| {
+                        let mut job = highlight::layout_job(&code, kind, &FontId::monospace(13.0), &[], 0);
+                        job.wrap.max_width = ui.available_width();
+                        ui.add(egui::Label::new(job).wrap());
+                    };
+                    if title.is_some() {
+                        code_view(ui);
+                    } else {
+                        // Sans bandeau : le bouton « Copier » se pose en haut à droite.
+                        ui.horizontal_top(|ui| {
+                            let button = 28.0 + ui.spacing().item_spacing.x;
+                            ui.allocate_ui(egui::vec2(ui.available_width() - button, 0.0), |ui| {
+                                ui.add_space(4.0);
+                                code_view(ui);
+                            });
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                                copy_button(ui, &code);
+                            });
+                        });
+                    }
                 });
         });
+}
+
+/// Durée pendant laquelle le bouton « Copier » montre une coche, en secondes.
+const COPIED_FEEDBACK: f64 = 1.5;
+
+/// Bouton presse-papier d'un bloc de code : copie `text`, puis montre une coche un moment.
+fn copy_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    let id = ui.scope_id().with(("copier", text));
+    let now = ui.input(|input| input.time);
+    let copied_at: Option<f64> = ui.data(|data| data.get_temp(id));
+    let copied = copied_at.is_some_and(|at| now - at < COPIED_FEEDBACK);
+    let (icon, hint) = if copied {
+        (Icon::Check, "Copié")
+    } else {
+        (Icon::Copy, "Copier")
+    };
+    let response = small_button(ui, icon, hint);
+    if response.clicked() {
+        ui.ctx().copy_text(text.to_owned());
+        ui.data_mut(|data| data.insert_temp(id, now));
+    }
+    if let Some(at) = copied_at {
+        let left = COPIED_FEEDBACK - (now - at);
+        if left > 0.0 {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_secs_f64(left));
+        }
+    }
+    response
 }
 
 /// Nom d'une langue de bloc de code : celui du langage reconnu, sinon tel qu'écrit.
@@ -3453,6 +3532,47 @@ mod tests {
         assert!(approx(max, 90.0));
         // Replié, le panneau n'a que la hauteur de son en-tête.
         assert!(approx(favorites_heights(0, 600.0).0, 49.0));
+    }
+
+    #[test]
+    fn le_bouton_copier_met_le_code_dans_le_presse_papier() {
+        use egui::{Event, Modifiers, PointerButton, Pos2, Rect, Vec2};
+
+        let context = egui::Context::default();
+        let screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 300.0));
+        let code = "sudo apt install ferrite-textedit\nferrite-textedit";
+        let frame = |events: Vec<Event>, time: f64| {
+            let input = egui::RawInput {
+                screen_rect: Some(screen),
+                events,
+                time: Some(time),
+                ..Default::default()
+            };
+            let mut button = Rect::NOTHING;
+            let mut output = context.run_ui(input, |root| {
+                egui::CentralPanel::default().show(root, |ui| {
+                    button = copy_button(ui, code).rect;
+                });
+            });
+            output.textures_delta.clear();
+            (button, output.platform_output)
+        };
+        let (button, _) = frame(Vec::new(), 0.0);
+        let click = |pressed| Event::PointerButton {
+            pos: button.center(),
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Modifiers::NONE,
+        };
+        frame(vec![Event::PointerMoved(button.center()), click(true)], 0.1);
+        let (_, output) = frame(vec![click(false)], 0.2);
+        assert!(
+            output
+                .commands
+                .iter()
+                .any(|command| matches!(command, egui::OutputCommand::CopyText(text) if text == code)),
+            "le code part dans le presse-papier"
+        );
     }
 
     #[test]

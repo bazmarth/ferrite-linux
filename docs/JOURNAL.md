@@ -2586,3 +2586,18 @@ bureau imbriqué avec `XDG_CURRENT_DESKTOP=GNOME` (trois boutons à droite) et s
 gauche comme avant).
 Pas vérifié : installation réelle et essai sous GNOME, Kali ou Ubuntu (pas de machine ni de
 conteneur ici) ; redimensionnement par les bords et bouton réduire sur un vrai GNOME.
+
+## 2026-11-08 — TextEdit : aperçu Markdown copiable, bouton « Copier » des blocs de code
+
+Demande de l'utilisateur : rendre le texte de l'aperçu Markdown copiable et ajouter une
+icône presse-papier pour copier facilement les commandes.
+- Aperçu : `selectable_labels` activé dans sa zone seulement (le reste de l'interface
+  garde des libellés non sélectionnables). Les cellules des tableaux, peintes à la main,
+  passent par `LabelSelectionState::label_text_selection` pour être sélectionnables aussi.
+- Blocs de code : bouton presse-papier (`Icon::Copy`) à droite du bandeau, ou en haut à
+  droite sans bandeau. Il copie le code (sans la ligne « # titre » d'un script) et montre
+  une coche (`Icon::Check`, « Copié ») pendant 1,5 s.
+Vérifié : CI (sans shellcheck) ; test `le_bouton_copier_met_le_code_dans_le_presse_papier`
+(clic simulé dans egui) ; capture du bureau imbriqué avec un fichier d'essai (deux blocs de
+code, un tableau).
+Pas vérifié : sélection à la souris et collage dans une autre application sur le vrai bureau.

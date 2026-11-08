@@ -218,6 +218,10 @@ pub enum Icon {
     Down,
     /// Flèche vers le haut avec sa tige : dossier parent.
     Parent,
+    /// Presse-papier : planchette et pince, pour « Copier ».
+    Copy,
+    /// Coche : action réussie (« Copié »).
+    Check,
 }
 
 /// Symbole `icon` centré dans `rect`, au trait de couleur `color`.
@@ -365,6 +369,20 @@ pub fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color32) {
         Icon::Parent => {
             painter.line_segment([p(0.0, -6.0), p(0.0, 6.5)], stroke);
             painter.line(vec![p(-5.0, -1.0), p(0.0, -6.0), p(5.0, -1.0)], stroke);
+        }
+        Icon::Copy => {
+            let board = Rect::from_min_max(p(-6.0, -6.5), p(6.0, 8.0));
+            painter.rect_stroke(board, 2.0, stroke, egui::StrokeKind::Middle);
+            let clip = Rect::from_min_max(p(-3.0, -8.5), p(3.0, -4.5));
+            painter.rect_filled(clip, 1.5, color);
+            painter.hline(c.x - 3.0..=c.x + 3.0, c.y + 0.5, stroke);
+            painter.hline(c.x - 3.0..=c.x + 1.5, c.y + 4.0, stroke);
+        }
+        Icon::Check => {
+            painter.line(
+                vec![p(-5.5, 0.5), p(-1.5, 4.5), p(5.5, -4.0)],
+                Stroke::new(1.9, color),
+            );
         }
     }
 }

@@ -198,17 +198,19 @@ fn run(options: Options) -> Result<u8, Box<dyn std::error::Error>> {
 
     let loop_result = event_loop.run(None, &mut state, |state| {
         // Après chaque tour de boucle : fenêtres fermées retirées, messages envoyés.
-        state.space.refresh();
-        state.sync_desktops();
-        state.lock_tick();
-        state.power_tick();
-        state.night_tick();
-        state.expire_notifications();
-        state.retile();
-        state.refit_to_area();
-        state.refresh_controls();
-        state.popups.cleanup();
-        let _ = state.display_handle.flush_clients();
+        render::profile::timed("tour de boucle", || {
+            state.space.refresh();
+            state.sync_desktops();
+            state.lock_tick();
+            state.power_tick();
+            state.night_tick();
+            state.expire_notifications();
+            state.retile();
+            state.refit_to_area();
+            state.refresh_controls();
+            state.popups.cleanup();
+            let _ = state.display_handle.flush_clients();
+        });
     });
     if let Err(err) = loop_result {
         if state.expected_exit {

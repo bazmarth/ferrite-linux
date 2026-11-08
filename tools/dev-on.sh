@@ -14,6 +14,7 @@ set -eu
 
 # shellcheck source=tools/lib.sh
 . "$(dirname -- "$0")/lib.sh"
+priorite_basse
 cd "$REPO"
 
 build=1

@@ -11,7 +11,7 @@ use std::{
     path::PathBuf,
     process::Command,
     sync::{
-        Arc, OnceLock,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicBool, AtomicU32, Ordering},
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -842,7 +842,6 @@ pub struct Panels {
     light: Font,
     mono: Font,
     icons: IconCache,
-    battery: RefCell<(Option<Instant>, Option<Battery>)>,
     system: RefCell<SystemMonitor>,
     cached: RefCell<Option<(VisualState, MemoryRenderBuffer, Option<PopoverLayer>)>>,
     /// Barre du haut, dessinée à part : elle change (opaque quand une fenêtre est
@@ -932,7 +931,6 @@ impl Panels {
             light,
             mono,
             icons: IconCache::default(),
-            battery: RefCell::new((None, None)),
             system: RefCell::new(SystemMonitor::default()),
             cached: RefCell::new(None),
             bar: RefCell::new(None),
@@ -1502,13 +1500,9 @@ impl Panels {
         copied.is_ok()
     }
 
-    /// État de la batterie, relu au plus toutes les [`BATTERY_REFRESH`].
+    /// État de la batterie, relu toutes les [`BATTERY_REFRESH`] par [`latest_battery`].
     fn battery(&self) -> Option<Battery> {
-        let mut cached = self.battery.borrow_mut();
-        if cached.0.is_none_or(|read| read.elapsed() >= BATTERY_REFRESH) {
-            *cached = (Some(Instant::now()), read_battery());
-        }
-        cached.1
+        latest_battery()
     }
 
     fn system_metrics(&self) -> SystemMetrics {
@@ -5961,6 +5955,31 @@ fn battery_dir() -> Option<&'static PathBuf> {
         batteries.into_iter().next()
     })
     .as_ref()
+}
+
+/// Dernier état lu de la batterie. Lire `capacity` interroge le contrôleur de la carte mère
+/// et prend parfois 0,2 s : un fil s'en charge toutes les [`BATTERY_REFRESH`], pour que le
+/// dessin de l'écran ne l'attende jamais. Seule la première lecture, au démarrage, est
+/// faite sur place.
+fn latest_battery() -> Option<Battery> {
+    static LATEST: OnceLock<Arc<Mutex<Option<Battery>>>> = OnceLock::new();
+    let latest = LATEST.get_or_init(|| {
+        let latest = Arc::new(Mutex::new(read_battery()));
+        if battery_dir().is_some() {
+            let shared = Arc::clone(&latest);
+            let _ = std::thread::Builder::new()
+                .name("batterie".to_owned())
+                .spawn(move || {
+                    loop {
+                        std::thread::sleep(BATTERY_REFRESH);
+                        let battery = read_battery();
+                        *shared.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = battery;
+                    }
+                });
+        }
+        latest
+    });
+    *latest.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 fn read_battery() -> Option<Battery> {

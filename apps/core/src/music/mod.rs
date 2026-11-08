@@ -943,7 +943,9 @@ impl MusicState {
                     style::accent(),
                     ctx.input(|input| input.time),
                 );
-                ctx.request_repaint();
+                // 30 images par seconde suffisent aux trois barres (et non une par
+                // rafraîchissement de l'écran, 90 sur ce PC).
+                ctx.request_repaint_after(std::time::Duration::from_millis(33));
             } else {
                 let number = track
                     .number

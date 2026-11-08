@@ -2258,6 +2258,29 @@ avec la barre du haut toujours visible) ; capture du bureau imbriqué : barre «
 WordCraft » avec fermer et agrandir.
 Pas vérifié : sur le vrai bureau (il faut le relancer).
 
+## 2026-11-07 — Visage : caméra retenue, texte honnête sur les photos
+
+Question de l'utilisateur : le déverrouillage par visage est-il fiable ? Relecture : bon
+pour reconnaître son visage et refuser les autres (seuil 0,6, deux images), mais deux
+failles corrigées ici.
+- `ferrite-visage` prenait la première caméra en niveaux de gris par ordre alphabétique
+  (`/dev/video10` avant `/dev/video2`) : une fausse caméra USB pouvait prendre la place de
+  la vraie. Désormais l'enregistrement retient l'emplacement matériel de la caméra
+  (`/sys/devices/…/3-6:1.2`, ligne `camera …` du fichier d'empreintes, préférence pour un
+  port « fixed ») et `verifier` n'en accepte aucune autre. Nœuds triés par numéro.
+- Un visage enregistré avant (sans caméra retenue) n'ouvre plus l'écran : `etat` répond
+  « ancien », Paramètres affiche « Visage à enregistrer de nouveau » (Recommencer, Effacer).
+- Le texte de Paramètres disait « Une photo ne suffit pas » : faux pour une photo imprimée
+  sur papier (le papier renvoie l'infrarouge). Il le dit maintenant, et conseille le mot
+  de passe seul si quelqu'un pourrait chercher à entrer.
+Vérifié : CI (sans shellcheck), tests (fichier avec et sans caméra) ; sur la vraie caméra,
+`essai` choisit bien `usb3/3-6/3-6:1.2`, `etat` répond « ancien » et `verifier` refuse
+(code 2) l'ancien fichier ; capture de la page Confidentialité.
+Pas vérifié : un nouvel enregistrement puis un déverrouillage (il faut le mot de passe
+administrateur : à refaire par l'utilisateur dans Paramètres → Confidentialité), et le
+vrai bureau (à relancer après `tools/dev-on.sh`). Reste ouvert : une photo imprimée peut
+toujours tromper la caméra (pas de détection de relief ni de mouvement).
+
 ## 2026-11-07 — TextEdit : images et liens de l'aperçu Markdown
 
 Demande de l'utilisateur (capture du cours Security-101) : afficher les images et rendre
@@ -2283,6 +2306,58 @@ Vérifié : CI (sans shellcheck), test `image_dans_un_lien` ; capture du bureau 
 « 1.1 The CIA triad… » : la vignette de la vidéo s'affiche.
 Pas vérifié : le clic (ouverture de la vidéo dans le navigateur).
 
+## 2026-11-07 — Gels du système : SSD SATA en économie d'énergie
+
+Demande de l'utilisateur : des gels du système.
+- Journal du bureau : la souris « en retard » jusqu'à 1,6 s, au lancement d'applications.
+  Sonde (état du fil principal de `ferrite-shell`, pression disque `/proc/pressure/io`) :
+  d'abord l'extension Continue de VS Code (2 Go écrits en quelques minutes dans son index),
+  désinstallée et mise à la corbeille à la demande de l'utilisateur ; ensuite, VS Code
+  fermé, le SSD système se figeait encore 1 à 3 s toutes les 10 à 20 s (rien d'achevé,
+  puis quelques centaines de Ko d'un coup), et le bureau restait figé 1,5 s dans un
+  `openat` pendant ces blocages.
+- SMART (`smartctl -a /dev/sda`) : disque sain (PASSED, aucun secteur réalloué, aucune
+  erreur, usure faible).
+- Cause : économie d'énergie du lien SATA (`min_power_with_partial`). Passé à la main en
+  `max_performance` : attente disque de 15 % à moins de 2 %, plus aucun gros blocage.
+- Image : règle `/etc/udev/rules.d/60-ferrite-sata-lpm.rules` (max_performance).
+Vérifié : `udevadm verify` sur la règle ; mesures avant/après sur le PC (réglage à la main).
+Pas vérifié : la règle après un redémarrage (à installer sur le PC, voir ci-dessous) ;
+une image construite. Reste ouvert : le bureau lit des fichiers dans son fil principal, un
+disque lent peut encore le figer (fichier exact pas encore attrapé par la sonde).
+
+## 2026-11-07 — Barre : batterie lue hors du dessin de l'écran
+
+Suite de la sonde des gels : le fil principal de `ferrite-shell` restait 0,2 s bloqué dans
+`acpi_battery_get_state` en lisant `BAT0/capacity` (le contrôleur de la carte mère répond
+lentement), toutes les 20 s, pendant le dessin de la barre.
+- `panels::latest_battery` : un fil « batterie » relit l'état toutes les 20 s ; le dessin
+  reprend la dernière valeur. Seule la première lecture, au démarrage, reste sur place.
+Vérifié : CI (sans shellcheck) ; capture du bureau imbriqué : batterie à 79 % dans la barre
+(comme `/sys`).
+Pas vérifié : sur le vrai bureau (à relancer) ; la mise à jour du pourcentage pendant la
+séance.
+
+## 2026-11-07 — Saccades : boucle de rappels d'image, Musique, étapes lentes chronométrées
+
+Demande de l'utilisateur : regarder les autres ralentissements (blocages de 0,15 à 0,25 s
+du fil principal, en calcul). Profil du rendu (`$XDG_RUNTIME_DIR/ferrite-profil`) :
+- Musique soumettait 90 images/s au repos et jusqu'à 730/s ; le bureau préparait alors
+  600 à 760 images/s mais n'en affichait que 30 à 44 (au lieu de 90). Cause : une image
+  sans rien de neuf à l'écran (fenêtre cachée, image identique) déclenchait un rendu vide
+  qui renvoyait aussitôt les rappels `wl_surface.frame` → nouvelle image → nouveau rendu…
+  `backend/drm.rs` : sans image envoyée, les rappels attendent au moins `IDLE_REDRAW`
+  (16 ms).
+- Musique : l'égaliseur du morceau en cours redessinait à chaque rafraîchissement ;
+  `request_repaint_after(33 ms)`.
+- Préparations d'image de 140 à 220 ms, cause pas encore trouvée : `profile::timed` note
+  dans le journal (« étape lente du bureau ») toute étape de plus de 50 ms (image, vue du
+  bureau, panneaux, dock, widgets, fond d'écran, capture, partage d'écran, rendu GPU, tour
+  de boucle), même sans profil.
+Vérifié : CI (sans shellcheck) ; `tools/dev-on.sh` (binaires copiés).
+Pas vérifié : sur le vrai bureau (relance à faire) ; le nombre d'images de Musique après
+la correction ; aucune étape lente encore attrapée.
+
 ## 2026-11-07 — Fichiers : ouvrir un fichier après une mise à jour de Ferrite
 
 Demande de l'utilisateur (vidéo) : un `.md` ne s'ouvrait pas depuis Fichiers (double-clic,
@@ -2297,6 +2372,22 @@ Fichiers ouvertes pointait bien vers « (deleted) » ; `ferrite-apps textedit` l
 ouvre le fichier.
 Pas vérifié : dans le vrai bureau (les fenêtres Fichiers déjà ouvertes gardent l'ancien
 code : les fermer et les rouvrir après installation).
+
+## 2026-11-07 — Image : polices du traitement de texte
+
+Demande de l'utilisateur : ajouter des polices pour le traitement de texte (WordCraft).
+- `ferrite.list.chroot` : 22 paquets de polices. Même largeur que les polices Microsoft
+  (Liberation, Carlito, Caladea, Croscore, URW, Comic Neue), textes à empattements
+  (DejaVu, Linux Libertine, EB Garamond, Charis), sans empattements (Open Sans, Roboto,
+  Lato, Source Sans 3, Ubuntu, Cantarell, Quicksand), chasse fixe et maths (Noto Mono,
+  Fira Code, Courier Prime, STIX). Environ 90 Mo installés.
+- Pas pris : `ttf-mscorefonts-installer` (contrib, télécharge chez Microsoft, licence à
+  accepter) ; `fonts-noto-cjk` (chinois/japonais/coréen, 90 Mo).
+Vérifié : WordCraft (Flatpak) lit les polices du système dans `/run/host/fonts` et remplace
+Calibri par Carlito, Arial par Liberation Sans ; paquets présents dans Debian 13 ;
+`apt-get -s install` sans erreur ; pas de doublon dans la liste.
+Pas vérifié : une image construite ; l'affichage dans WordCraft (pour le PC actuel, voir la
+commande d'installation).
 
 ## 2026-11-07 — TextEdit : images en ligne dans l'aperçu Markdown (badges)
 
@@ -2314,6 +2405,20 @@ Vérifié : CI (sans shellcheck), deux tests (SVG reconnu, badge dessiné) ; cap
 imbriqué sur le README : les six badges s'affichent sur deux lignes, texte compris.
 Pas vérifié : sans réseau (doit afficher l'étiquette), le clic sur un badge.
 Reste : les commentaires HTML (`<!-- … -->`) du README s'affichent en texte.
+
+## 2026-11-08 — Gels pendant les compilations : priorité basse, target vidé
+
+Mesure au retour de l'utilisateur : système en attente du disque 71 % du temps. La partition
+du projet (sda4, NTFS, même SSD que le système) avait reçu 24 Go d'écritures et 19 Go de
+lectures depuis 22:30 (CI, `dev-on.sh`, autres sessions) ; `target/` pesait 51 Go.
+- `tools/lib.sh` : `priorite_basse` (nice 15, disque en classe « idle »), appelée par
+  `ci.sh`, `dev-on.sh`, `vm-build.sh`, `usb.sh`.
+- `cargo clean` (à la demande de l'utilisateur), en priorité basse.
+- Après relance du bureau : images préparées = images affichées (90/s), la boucle de
+  rappels a disparu. Un « rendu GPU » de 1,5 s noté une fois (00:06:43), cause inconnue.
+Vérifié : `sh -n` des scripts ; un enfant lancé après `priorite_basse` est bien en nice 15
+et ionice idle.
+Pas vérifié : shellcheck (absent) ; le ressenti pendant une compilation.
 
 ## 2026-11-08 — Applications : emoji en couleur ; adresses avec parenthèses
 
@@ -2333,6 +2438,17 @@ Pas vérifié : les autres applications (Fichiers, Paramètres) et le vrai burea
 Reste : « ⚠️ » s'affiche en noir (le caractère ⚠ est pris dans une police avant l'emoji) ; la
 barre du haut et le Dock (ferrite-shell) n'utilisent pas ces polices.
 
+## 2026-11-08 — Gels de 35 s : mémoire du bureau dans l'échange du disque
+
+Retour de l'utilisateur : gels toujours. Étapes lentes notées par `profile::timed` pendant
+une compilation d'une autre session : « image » 35 103 ms (00:41:00), « rendu GPU »
+4 093 ms. `ferrite-shell` avait 268 Mo en échange (disque) pour 200 Mo en mémoire ; 2,5 Go
+d'échange utilisés en tout.
+- Image : paquet `systemd-zram-generator`, `etc/systemd/zram-generator.conf`,
+  `etc/sysctl.d/90-ferrite-zram.conf`.
+Pas vérifié : installation sur le PC (sudo, par l'utilisateur), effet pendant une
+compilation, image construite.
+
 ## 2026-11-08 — TextEdit : commentaires HTML cachés dans l'aperçu Markdown
 
 Demande de l'utilisateur (capture) : « <!-- CO-OP TRANSLATOR … --> » du README s'affichait.
@@ -2347,3 +2463,20 @@ avant la copie), recréé par `systemctl start dev-zram0.swap` : 7,7 Go, zstd, p
 `swapoff`/`swapon` de `/dev/sda3` : bureau à 0 Mo d'échange. `fstrim` : 29,1 Go sur `/`,
 128,4 Go sur FICHIERS (ntfs-3g le gère). Juste après, 50 écritures synchronisées en 0,9 s
 (0,07 s la veille) : nouvelle mesure prévue 30 min plus tard.
+
+## 2026-11-08 — Gels : mesures après zram ; toute compilation en priorité basse
+
+Mesure prévue après l'installation de zram (PC redémarré depuis) :
+- 50 écritures synchronisées : 0,06 s sur `/`, 0,03 s sur FICHIERS (0,9 s juste après
+  `fstrim`, 0,07 s avant) ; pire écriture 16 ms. Attente du disque 1,5 % sur 5 min.
+- Échange : zram 250 Mo, `/dev/sda3` 17 Mo ; `ferrite-shell` 6 Mo en échange (268 Mo avant).
+- Étapes lentes du bureau depuis 00:55 : aucune au-dessus de 0,1 s, alors qu'une autre
+  session compilait `ferrite-shell` et `ferrite-apps` en release.
+- Cette compilation tournait en priorité normale : lancée par `cargo` directement, elle
+  échappait à `priorite_basse`. Nouveau `tools/rustc-bas.sh`, branché par
+  `.cargo/config.toml` (`build.rustc-wrapper`) : chaque rustc du dépôt passe en nice 15 et
+  disque « idle ».
+Vérifié : CI (sans shellcheck) ; rustc observé en nice 15 / idle pendant une compilation ;
+binaires release déjà compilés gardés (aucune recompilation après l'ajout du relais).
+Pas vérifié : le relais dans le conteneur de `vm-build.sh` (prévu : sans `ionice`, il garde
+seulement nice) ; le ressenti de l'utilisateur pendant une grosse compilation.

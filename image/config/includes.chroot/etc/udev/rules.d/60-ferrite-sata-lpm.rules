@@ -1,0 +1,4 @@
+# Disques SATA : pas d'économie d'énergie du lien (max_performance). Avec le réglage par
+# défaut de Debian (min_power_with_partial), le SSD système se figeait 1 à 3 s plusieurs
+# fois par minute, et tout le bureau avec lui. Un peu plus de consommation sur batterie.
+ACTION=="add|change", SUBSYSTEM=="scsi_host", KERNEL=="host*", TEST=="link_power_management_policy", ATTR{link_power_management_policy}="max_performance"

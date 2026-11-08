@@ -5,6 +5,7 @@
 #   tools/ci.sh --image    puis construction de l'image live (demande sudo, plusieurs minutes)
 set -eu
 . "$(dirname -- "$0")/lib.sh"
+priorite_basse
 cd "$REPO"
 
 info "cargo fmt"

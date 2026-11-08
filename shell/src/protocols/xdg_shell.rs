@@ -63,7 +63,7 @@ impl XdgShellHandler for Ferrite {
 
     /// L'identifiant de la fenêtre arrive : la règle des barres de titre est revue.
     fn app_id_changed(&mut self, surface: ToplevelSurface) {
-        crate::protocols::decoration::app_id_changed(&surface);
+        crate::protocols::decoration::app_id_changed(&self.display_handle, &surface);
     }
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {

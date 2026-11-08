@@ -16,6 +16,7 @@
 # il y crée des fichiers spéciaux et des liens que le disque Windows ne gère pas.
 set -eu
 . "$(dirname -- "$0")/lib.sh"
+priorite_basse
 
 # Étape 1, en utilisateur normal : compilation de ferrite-shell (Rust est installé pour
 # l'utilisateur, pas pour root), puis relance du script en root.

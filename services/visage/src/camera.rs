@@ -23,17 +23,64 @@ impl Drop for Camera {
     }
 }
 
-/// Périphérique `/dev/videoN` qui sait donner du GRAY8.
-pub fn find_infrared() -> Option<String> {
+/// Caméra infrarouge choisie : son nœud `/dev/videoN` et son emplacement matériel.
+pub struct Found {
+    pub device: String,
+    /// Emplacement stable dans `/sys/devices` (port USB interne), retenu à
+    /// l'enregistrement : une autre caméra branchée plus tard n'est jamais utilisée.
+    pub place: String,
+}
+
+/// Caméra infrarouge à utiliser. Avec `wanted` (vérification), seule la caméra de cet
+/// emplacement convient. Sans (enregistrement), une caméra intégrée à l'ordinateur passe
+/// avant une caméra branchée.
+pub fn find_infrared(wanted: Option<&str>) -> Option<Found> {
     gst::init().ok()?;
-    let mut devices: Vec<String> = std::fs::read_dir("/dev")
-        .ok()?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path().to_string_lossy().into_owned())
-        .filter(|path| path.starts_with("/dev/video"))
+    let mut found: Vec<(bool, Found)> = video_nodes()
+        .into_iter()
+        .filter_map(|(number, device)| {
+            let place = place_of(number)?;
+            Some((is_fixed(&place), Found { device, place }))
+        })
+        .filter(|(_, found)| wanted.is_none_or(|wanted| found.place == wanted))
+        .filter(|(_, found)| gives_gray(&found.device))
         .collect();
-    devices.sort();
-    devices.into_iter().find(|device| gives_gray(device))
+    // Tri stable : l'ordre des numéros est gardé, une caméra intégrée passe devant.
+    found.sort_by_key(|(fixed, _)| !fixed);
+    found.into_iter().next().map(|(_, found)| found)
+}
+
+/// Nœuds `/dev/videoN`, rangés par numéro (`video10` après `video2`).
+fn video_nodes() -> Vec<(u32, String)> {
+    let mut nodes: Vec<(u32, String)> = std::fs::read_dir("/dev")
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .filter_map(|entry| {
+            let name = entry.file_name().into_string().ok()?;
+            let number = name.strip_prefix("video")?.parse().ok()?;
+            Some((number, format!("/dev/{name}")))
+        })
+        .collect();
+    nodes.sort();
+    nodes
+}
+
+/// Emplacement matériel de `/dev/videoN` (lien `device` de sysfs, résolu).
+fn place_of(number: u32) -> Option<String> {
+    let link = format!("/sys/class/video4linux/video{number}/device");
+    std::fs::canonicalize(link)
+        .ok()
+        .map(|path| path.to_string_lossy().into_owned())
+}
+
+/// Le port USB de cette caméra est-il marqué « fixed » (intégré à l'ordinateur) ?
+fn is_fixed(place: &str) -> bool {
+    // `place` est l'interface (…/3-6/3-6:1.2) ; `removable` est sur l'appareil (…/3-6).
+    std::path::Path::new(place)
+        .parent()
+        .and_then(|usb| std::fs::read_to_string(usb.join("removable")).ok())
+        .is_some_and(|value| value.trim() == "fixed")
 }
 
 fn gives_gray(device: &str) -> bool {

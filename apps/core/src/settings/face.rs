@@ -49,10 +49,19 @@ impl Job {
     }
 }
 
+/// Réponse de `ferrite-visage etat`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Enrolled {
+    No,
+    /// Enregistré avant que la caméra soit retenue : à refaire.
+    Old,
+    Yes,
+}
+
 #[derive(Debug, Default)]
 pub struct FaceState {
-    /// Visage enregistré (lu une fois à l'ouverture de la page).
-    enrolled: Option<bool>,
+    /// État du visage (lu une fois à l'ouverture de la page).
+    enrolled: Option<Enrolled>,
     /// Enregistrement ou effacement en cours : ses étapes, et la dernière.
     steps: Option<Receiver<Step>>,
     job: Option<Job>,
@@ -86,11 +95,17 @@ fn failure(job: Job, code: Option<i32>) -> String {
     }
 }
 
-fn read_enrolled() -> bool {
-    Command::new(program())
+fn read_enrolled() -> Enrolled {
+    let answer = Command::new(program())
         .arg("etat")
         .output()
-        .is_ok_and(|output| String::from_utf8_lossy(&output.stdout).trim() == "enregistre")
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        .unwrap_or_default();
+    match answer.as_str() {
+        "enregistre" => Enrolled::Yes,
+        "ancien" => Enrolled::Old,
+        _ => Enrolled::No,
+    }
 }
 
 fn parse(line: &str) -> Option<Step> {
@@ -112,7 +127,8 @@ fn parse(line: &str) -> Option<Step> {
 impl SettingsState {
     pub(super) fn privacy_page(&mut self, ui: &mut egui::Ui) {
         let face = &mut self.face;
-        let enrolled = *face.enrolled.get_or_insert_with(read_enrolled);
+        let state = *face.enrolled.get_or_insert_with(read_enrolled);
+        let enrolled = state == Enrolled::Yes;
         // Étapes arrivées depuis le dernier dessin.
         let mut forgotten = false;
         if let Some(steps) = &face.steps {
@@ -141,7 +157,7 @@ impl SettingsState {
         let mut start = false;
         let mut forget = false;
         group(ui, &mut self.icons, "Déverrouillage par visage", |rows| {
-            let (status, hint) = match (&face.last, enrolling, enrolled) {
+            let (status, hint) = match (&face.last, enrolling, state) {
                 (Some(Step::Asking) | None, true, _) => (
                     "Mot de passe administrateur demandé…".to_owned(),
                     "Ajouter ou effacer un visage demande ce mot de passe",
@@ -156,11 +172,15 @@ impl SettingsState {
                 ),
                 (_, true, _) if face.job == Some(Job::Forget) => ("Effacement…".to_owned(), "Un instant"),
                 (_, true, _) => ("Allumage de la caméra…".to_owned(), "Regardez l’écran"),
-                (_, false, true) => (
+                (_, false, Enrolled::Yes) => (
                     "Visage enregistré".to_owned(),
                     "Une empreinte, jamais une photo. Le modifier demande le mot de passe administrateur",
                 ),
-                (_, false, false) => (
+                (_, false, Enrolled::Old) => (
+                    "Visage à enregistrer de nouveau".to_owned(),
+                    "La caméra utilisée est désormais retenue, pour plus de sûreté",
+                ),
+                (_, false, Enrolled::No) => (
                     "Aucun visage enregistré".to_owned(),
                     "Avec la caméra infrarouge de l’ordinateur",
                 ),
@@ -174,10 +194,10 @@ impl SettingsState {
                         ui.add(egui::Spinner::new().size(16.0));
                         return;
                     }
-                    if enrolled && rows::button(ui, "Effacer", false).clicked() {
+                    if state != Enrolled::No && rows::button(ui, "Effacer", false).clicked() {
                         forget = true;
                     }
-                    let label = if enrolled {
+                    let label = if state != Enrolled::No {
                         "Recommencer"
                     } else {
                         "Enregistrer mon visage"
@@ -206,7 +226,9 @@ impl SettingsState {
         crate::kit::note(
             ui,
             "Le visage ne sert qu’à l’écran verrouillé, jamais pour les droits administrateur. \
-             Une photo ne suffit pas : la caméra infrarouge ne voit pas les écrans. \
+             Une photo sur un téléphone ou un écran ne suffit pas : la caméra infrarouge ne \
+             les voit pas. Une photo imprimée sur papier peut en revanche tromper la caméra. \
+             Si quelqu’un pourrait chercher à entrer, gardez le mot de passe seul. \
              Ajouter ou effacer un visage demande le mot de passe administrateur.",
         );
         for (wanted, job) in [(start, Job::Enroll), (forget, Job::Forget)] {

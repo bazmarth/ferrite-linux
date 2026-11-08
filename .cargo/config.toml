@@ -1,0 +1,3 @@
+# Toute compilation du dépôt en priorité basse (voir tools/rustc-bas.sh).
+[build]
+rustc-wrapper = "tools/rustc-bas.sh"

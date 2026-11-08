@@ -239,6 +239,10 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
   effacer un visage passe par `pkexec` (mot de passe administrateur). Sinon, quiconque
   trouve la session ouverte pourrait ajouter son visage et rouvrir l'écran plus tard.
   `verifier` refuse un fichier qui n'appartient pas à root ou que d'autres peuvent écrire.
+  Complément du 2026-11-07 (soir) : l'emplacement matériel de la caméra (lien sysfs) est
+  retenu à l'enregistrement et seule cette caméra sert à `verifier` (une fausse caméra USB
+  ne peut pas la remplacer) ; un ancien fichier sans caméra doit être refait. Limite
+  connue et dite dans Paramètres : une photo imprimée sur papier peut tromper la caméra.
 
 - **2026-11-06 — Programmes administrateur sur XWayland (xhost root local).** `pkexec`
   retire l'accès à Wayland : GParted lancé en administrateur ne trouvait aucun écran.
@@ -335,3 +339,31 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
 - **2026-11-07 — Jauge du micro par GStreamer, seulement sur la page Son.** `pulsesrc ! level`
   (PipeWire répond par sa couche PulseAudio) : le micro est ouvert à l'affichage de la page
   Son et relâché dès qu'on la quitte.
+
+- **2026-11-07 — Disques SATA sans économie d'énergie du lien.** Le SSD système du PC
+  (iCoolax M.2 SATA, en bonne santé d'après SMART) se figeait 1 à 3 s plusieurs fois par
+  minute avec le réglage par défaut de Debian (`min_power_with_partial`) : petites écritures
+  bloquées jusqu'à 0,8 s, tout le système en attente du disque 15 % du temps, et le bureau
+  figé quand il lisait un fichier à ce moment-là. En `max_performance`, l'attente tombe sous
+  2 %. Règle udev `60-ferrite-sata-lpm.rules` (appliquée à chaque contrôleur SATA, sans
+  dépendre de l'initramfs) ; un peu plus de consommation sur batterie.
+
+- **2026-11-08 — Compilations en priorité basse.** Le dépôt est sur la partition NTFS
+  « FICHIERS », sur le même SSD lent que le système : une compilation (target/ à 51 Go,
+  24 Go écrits en 1 h 30 de travail) saturait le disque jusqu'à 71 % du temps et figeait le
+  bureau. `priorite_basse` (`tools/lib.sh`, `renice 15` + `ionice -c 3`) est appelée par
+  `ci.sh`, `dev-on.sh`, `vm-build.sh` et `usb.sh` : compilations un peu plus lentes, bureau
+  fluide. Les scripts qui lancent le bureau (`shell-dev.sh`, `vm*.sh`) ne l'ont pas, pour ne
+  pas ralentir ce qu'on regarde.
+  Complément du 2026-11-08 : d'autres sessions lançaient `cargo build` directement, en
+  priorité normale. `.cargo/config.toml` passe désormais chaque appel de rustc par
+  `tools/rustc-bas.sh` (`build.rustc-wrapper`), qui le met en nice 15 et disque « idle » :
+  toute compilation du dépôt est concernée, d'où qu'elle vienne (éditeur compris). Ne
+  change ni les binaires ni ce qui est déjà compilé.
+
+- **2026-11-08 — Échange zram, prioritaire sur le disque.** Pendant une compilation, 268 Mo
+  de la mémoire de `ferrite-shell` étaient partis dans l'échange du disque (même SSD lent,
+  déjà saturé) : une image a mis 35 s à se préparer. `systemd-zram-generator`
+  (`zram-size = ram / 2`, zstd, priorité 100) et `vm.swappiness = 180`,
+  `vm.page-cluster = 0` (comme Fedora et Pop!_OS). L'échange du disque reste en secours.
+  Écarté : `mlockall` dans le bureau (limite `memlock` de 8 Mo pour l'utilisateur).

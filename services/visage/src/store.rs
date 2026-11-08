@@ -1,4 +1,5 @@
-//! Empreintes enregistrées : une ligne de nombres par image.
+//! Empreintes enregistrées : une ligne `camera <emplacement>` (la caméra infrarouge qui a
+//! servi, seule acceptée ensuite), puis une ligne de nombres par image.
 //!
 //! Elles sont gardées hors du dossier personnel, dans `/var/lib/ferrite/visage/<uid>`, que
 //! seul l'administrateur peut écrire : ajouter ou effacer un visage passe par `pkexec`
@@ -57,13 +58,35 @@ fn group_in_passwd(passwd: &str, uid: u32) -> Option<u32> {
     })
 }
 
-/// Visage enregistré pour le compte qui lance le programme.
-pub fn exists() -> bool {
-    own_uid().is_some_and(|uid| path_for(Path::new(DIR), uid).is_file())
+/// Visage enregistré : la caméra qui a servi et les empreintes.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Enrollment {
+    /// Emplacement matériel de la caméra (absent dans les fichiers d'avant le 2026-11-07,
+    /// qui doivent être refaits).
+    pub camera: Option<String>,
+    pub prints: Vec<Vec<f32>>,
+}
+
+/// État du visage du compte qui lance le programme.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Status {
+    Absent,
+    /// Enregistré avant que la caméra soit retenue : à refaire.
+    Old,
+    Enrolled,
+}
+
+pub fn status() -> Status {
+    match load() {
+        Ok(enrollment) if enrollment.prints.is_empty() => Status::Absent,
+        Ok(Enrollment { camera: Some(_), .. }) => Status::Enrolled,
+        // Sans caméra retenue, ou fichier mal protégé : à enregistrer de nouveau.
+        _ => Status::Old,
+    }
 }
 
 /// Enregistre les empreintes du compte `uid` (en root).
-pub fn save(dir: &Path, uid: u32, prints: &[Vec<f32>]) -> Result<(), String> {
+pub fn save(dir: &Path, uid: u32, enrollment: &Enrollment) -> Result<(), String> {
     fs::DirBuilder::new()
         .recursive(true)
         .mode(0o755)
@@ -80,7 +103,7 @@ pub fn save(dir: &Path, uid: u32, prints: &[Vec<f32>]) -> Result<(), String> {
         .mode(0o600)
         .open(&temporary)
         .map_err(|err| err.to_string())?;
-    file.write_all(encode(prints).as_bytes())
+    file.write_all(encode(enrollment).as_bytes())
         .and_then(|()| file.sync_all())
         .map_err(|err| err.to_string())?;
     drop(file);
@@ -92,13 +115,13 @@ pub fn save(dir: &Path, uid: u32, prints: &[Vec<f32>]) -> Result<(), String> {
     fs::rename(&temporary, &path).map_err(|err| err.to_string())
 }
 
-/// Empreintes du compte qui lance le programme (vide si aucune).
-pub fn load() -> Result<Vec<Vec<f32>>, String> {
+/// Visage du compte qui lance le programme (vide si aucun).
+pub fn load() -> Result<Enrollment, String> {
     let Some(path) = own_uid()
         .map(|uid| path_for(Path::new(DIR), uid))
         .filter(|path| path.is_file())
     else {
-        return Ok(Vec::new());
+        return Ok(Enrollment::default());
     };
     // Un fichier qu'un autre que root pourrait avoir écrit n'est pas cru.
     let meta = fs::metadata(&path).map_err(|err| err.to_string())?;
@@ -119,25 +142,40 @@ pub fn forget(dir: &Path, uid: u32) -> Result<(), String> {
     Ok(())
 }
 
-fn encode(prints: &[Vec<f32>]) -> String {
-    prints
+fn encode(enrollment: &Enrollment) -> String {
+    let camera = enrollment
+        .camera
+        .as_ref()
+        .map(|place| format!("camera {place}\n"))
+        .unwrap_or_default();
+    let prints: String = enrollment
+        .prints
         .iter()
         .map(|print| {
             let values: Vec<String> = print.iter().map(f32::to_string).collect();
             values.join(" ") + "\n"
         })
-        .collect()
+        .collect();
+    camera + &prints
 }
 
-fn decode(text: &str) -> Vec<Vec<f32>> {
-    text.lines()
+fn decode(text: &str) -> Enrollment {
+    let camera = text
+        .lines()
+        .find_map(|line| line.strip_prefix("camera "))
+        .map(|place| place.trim().to_owned())
+        .filter(|place| !place.is_empty());
+    let prints = text
+        .lines()
+        .filter(|line| !line.starts_with("camera "))
         .map(|line| {
             line.split_whitespace()
                 .filter_map(|value| value.parse().ok())
                 .collect::<Vec<f32>>()
         })
         .filter(|print| print.len() == 128)
-        .collect()
+        .collect();
+    Enrollment { camera, prints }
 }
 
 #[cfg(test)]
@@ -146,10 +184,24 @@ mod tests {
 
     #[test]
     fn aller_retour_des_empreintes() {
-        let prints = vec![vec![0.25_f32; 128], vec![-0.5_f32; 128]];
-        assert_eq!(decode(&encode(&prints)), prints);
+        let enrollment = Enrollment {
+            camera: Some("/sys/devices/pci0000:00/0000:00:14.0/usb3/3-6/3-6:1.2".to_owned()),
+            prints: vec![vec![0.25_f32; 128], vec![-0.5_f32; 128]],
+        };
+        assert_eq!(decode(&encode(&enrollment)), enrollment);
         // Une ligne abîmée est ignorée.
-        assert_eq!(decode("1 2 3\n").len(), 0);
+        assert!(decode("1 2 3\n").prints.is_empty());
+    }
+
+    #[test]
+    fn ancien_fichier_sans_camera() {
+        let old = encode(&Enrollment {
+            camera: None,
+            prints: vec![vec![0.5_f32; 128]],
+        });
+        let read = decode(&old);
+        assert_eq!(read.camera, None);
+        assert_eq!(read.prints.len(), 1);
     }
 
     #[test]
@@ -170,11 +222,14 @@ mod tests {
     #[test]
     fn enregistrer_puis_effacer_dans_un_dossier() {
         let dir = std::env::temp_dir().join(format!("ferrite-visage-essai-{}", std::process::id()));
-        let prints = vec![vec![0.5_f32; 128]];
+        let enrollment = Enrollment {
+            camera: Some("/sys/devices/essai".to_owned()),
+            prints: vec![vec![0.5_f32; 128]],
+        };
         // Sans être root, `chown` échoue : seul l'enregistrement du fichier est vérifié ici.
-        let _ = save(&dir, 4242, &prints);
+        let _ = save(&dir, 4242, &enrollment);
         if let Ok(text) = fs::read_to_string(path_for(&dir, 4242)) {
-            assert_eq!(decode(&text), prints);
+            assert_eq!(decode(&text), enrollment);
         }
         forget(&dir, 4242).unwrap();
         assert!(!path_for(&dir, 4242).exists());

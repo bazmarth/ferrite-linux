@@ -1054,16 +1054,27 @@ impl Ferrite {
                 elapsed,
             );
             self.dock_descent_speed.set(speed);
+            // Même mesure vers le haut, pour la barre du haut masquée.
+            let ascent = crate::desktop::dock::descent_speed(
+                self.bar_ascent_speed.get(),
+                previous.y - location.y,
+                elapsed,
+            );
+            self.bar_ascent_speed.set(ascent);
             if let Some(output) = self.space.outputs().next()
                 && let Some(output_geo) = self.space.output_geometry(output)
-                && crate::desktop::dock::fast_approach(
+            {
+                let grace = now + crate::desktop::dock::REVEAL_APPROACH_GRACE;
+                if crate::desktop::dock::fast_approach(
                     speed,
                     location,
                     (output_geo.loc.y + output_geo.size.h) as f64,
-                )
-            {
-                self.dock_fast_approach_until
-                    .set(Some(now + crate::desktop::dock::REVEAL_APPROACH_GRACE));
+                ) {
+                    self.dock_fast_approach_until.set(Some(grace));
+                }
+                if crate::desktop::dock::fast_approach_top(ascent, location, output_geo.loc.y as f64) {
+                    self.bar_fast_approach_until.set(Some(grace));
+                }
             }
         }
         // Coins actifs : le pointeur qui arrive dans un angle de l'écran déclenche son action.

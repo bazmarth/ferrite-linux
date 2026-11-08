@@ -9,6 +9,14 @@ info() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 ok() { printf '\033[1;32m ok\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31merreur :\033[0m %s\n' "$*" >&2; exit 1; }
 
+# Compilation en priorité basse, pour le processeur comme pour le disque : sur un SSD lent,
+# une compilation (target/ pèse des dizaines de Go) saturait le disque et figeait tout le
+# bureau. Le script et tout ce qu'il lance (cargo, rustc) passent après le reste.
+priorite_basse() {
+    renice -n 15 -p $$ >/dev/null 2>&1 || true
+    ionice -c 3 -p $$ >/dev/null 2>&1 || true
+}
+
 # Trouve le micrologiciel UEFI empaqueté selon la distribution.
 set_ovmf_files() {
     if [ -f /usr/share/edk2/ovmf/OVMF_CODE.fd ] && [ -f /usr/share/edk2/ovmf/OVMF_VARS.fd ]; then

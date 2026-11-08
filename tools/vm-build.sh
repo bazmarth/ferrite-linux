@@ -10,6 +10,7 @@
 # Cargo et les produits de compilation (volumes Podman). Seul ce qui a changé est recompilé.
 set -eu
 . "$(dirname -- "$0")/lib.sh"
+priorite_basse
 
 command -v podman >/dev/null 2>&1 || die "Podman absent (Fedora : sudo dnf install podman)"
 

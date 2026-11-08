@@ -427,6 +427,13 @@ pub(crate) fn fast_approach(speed: f64, to: Point<f64, Logical>, bottom: f64) ->
     bottom - to.y <= REVEAL_APPROACH_ZONE && speed >= REVEAL_APPROACH_SPEED
 }
 
+/// La souris monte-t-elle assez vite, près du haut de l'écran, pour rappeler la barre
+/// masquée ? Même règle que le Dock, vers l'autre bord : `speed` est la vitesse de
+/// montée, mesurée par [`descent_speed`] sur le déplacement inversé.
+pub(crate) fn fast_approach_top(speed: f64, to: Point<f64, Logical>, top: f64) -> bool {
+    to.y - top <= REVEAL_APPROACH_ZONE && speed >= REVEAL_APPROACH_SPEED
+}
+
 /// Ce qui décide si le Dock est visible.
 #[derive(Debug, Clone, Copy)]
 pub struct Visibility<'a> {
@@ -1017,6 +1024,21 @@ mod tests {
         // Remonter ou s'arrêter fait retomber la vitesse.
         assert_eq!(descent_speed(speed, -5.0, Duration::from_millis(200)), 0.0);
         assert!(descent_speed(speed, -2.0, Duration::from_millis(1)) < speed);
+    }
+
+    #[test]
+    fn approche_rapide_vers_le_haut() {
+        let mut speed = 0.0;
+        for _ in 0..50 {
+            speed = descent_speed(speed, 2.0, Duration::from_millis(1));
+        }
+        assert!(fast_approach_top(speed, Point::from((640.0, 5.0)), 0.0));
+        assert!(!fast_approach_top(speed, Point::from((640.0, 100.0)), 0.0));
+        let mut slow = 0.0;
+        for _ in 0..50 {
+            slow = descent_speed(slow, 0.2, Duration::from_millis(1));
+        }
+        assert!(!fast_approach_top(slow, Point::from((640.0, 5.0)), 0.0));
     }
 
     #[test]

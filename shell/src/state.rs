@@ -140,6 +140,10 @@ pub struct Ferrite {
     pub dock_fast_approach_until: std::cell::Cell<Option<Instant>>,
     /// Vitesse de descente lissée de la souris (pixels logiques par seconde).
     pub dock_descent_speed: std::cell::Cell<f64>,
+    /// Vitesse de montée lissée de la souris, et fin du délai laissé pour rejoindre la
+    /// barre du haut masquée après une approche rapide.
+    pub bar_ascent_speed: std::cell::Cell<f64>,
+    pub bar_fast_approach_until: std::cell::Cell<Option<Instant>>,
     /// Le Dock était-il affiché à la dernière image.
     pub dock_was_shown: std::cell::Cell<bool>,
     /// Menu d'une icône du Dock (clic droit) : application, choix, et position.
@@ -450,6 +454,8 @@ impl Ferrite {
             dock_pointer_motion_at: Default::default(),
             dock_fast_approach_until: Default::default(),
             dock_descent_speed: Default::default(),
+            bar_ascent_speed: Default::default(),
+            bar_fast_approach_until: Default::default(),
             dock_was_shown: Default::default(),
             dock_menu: None,
             window_animations: Default::default(),

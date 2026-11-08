@@ -13,6 +13,9 @@ use std::{
 use tracing::info;
 
 const REPORT: Duration = Duration::from_secs(5);
+/// Au-delà, une étape du fil principal est notée dans le journal, même sans profil : à
+/// 90 images par seconde, une image dure 11 ms ; 50 ms se voient déjà comme une saccade.
+const SLOW: Duration = Duration::from_millis(50);
 const CHECK: Duration = Duration::from_secs(1);
 
 struct Stats {
@@ -45,6 +48,22 @@ thread_local! {
 
 fn flag() -> Option<PathBuf> {
     std::env::var_os("XDG_RUNTIME_DIR").map(|dir| PathBuf::from(dir).join("ferrite-profil"))
+}
+
+/// Exécute une étape du fil principal et la note dans le journal si elle dure plus de
+/// [`SLOW`] (pour retrouver la cause d'une saccade sans profileur).
+pub fn timed<T>(name: &'static str, step: impl FnOnce() -> T) -> T {
+    let start = Instant::now();
+    let result = step();
+    let spent = start.elapsed();
+    if spent >= SLOW {
+        tracing::warn!(
+            etape = name,
+            ms = spent.as_millis() as u64,
+            "étape lente du bureau"
+        );
+    }
+    result
 }
 
 /// Une image préparée en `spent`.

@@ -134,7 +134,9 @@ pub fn output_elements(
     draw_cursor: bool,
 ) -> Vec<OutputElement> {
     let start = std::time::Instant::now();
-    let elements = build_output_elements(renderer, state, assets, output, draw_cursor);
+    let elements = profile::timed("image", || {
+        build_output_elements(renderer, state, assets, output, draw_cursor)
+    });
     profile::frame(start.elapsed());
     elements
 }
@@ -225,26 +227,30 @@ fn build_output_elements(
     );
     if reveal > 0.0 && !locked {
         let bounces = state.dock_bounce_heights(&items);
-        assets.dock.push_elements(
-            renderer,
-            &assets.decorations.shaders.dock,
-            output,
-            output_geo,
-            scale,
-            &items,
-            state.dock_config,
-            &dock_layout,
-            &bounces,
-            &mut elements,
-        );
+        profile::timed("dock", || {
+            assets.dock.push_elements(
+                renderer,
+                &assets.decorations.shaders.dock,
+                output,
+                output_geo,
+                scale,
+                &items,
+                state.dock_config,
+                &dock_layout,
+                &bounces,
+                &mut elements,
+            )
+        });
     }
     let overview_target = if state.overview { 1.0 } else { 0.0 };
     let overview_shown =
         crate::desktop::dock::DockMotion::step(&state.overview_shown, overview_target, OVERVIEW_TRANSITION);
-    let view = desktop_view(state);
-    assets
-        .panels
-        .push_element(renderer, output, output_geo, scale, &view, &mut elements);
+    let view = profile::timed("vue du bureau", || desktop_view(state));
+    profile::timed("panneaux", || {
+        assets
+            .panels
+            .push_element(renderer, output, output_geo, scale, &view, &mut elements)
+    });
     let now = std::time::Instant::now();
     let visible_pages = state.workspaces.visible_pages(now);
     // Super+W ou édition : les widgets passent devant les fenêtres.
@@ -446,9 +452,11 @@ fn build_output_elements(
         );
         let alpha =
             (1.0 - (1.0 - WIDGETS_FADED_ALPHA) * crate::desktop::dock::ease(faded) as f32) * widgets_page;
-        assets
-            .panels
-            .push_dashboard(renderer, output, output_geo, scale, &view, alpha, &mut elements);
+        profile::timed("widgets", || {
+            assets
+                .panels
+                .push_dashboard(renderer, output, output_geo, scale, &view, alpha, &mut elements)
+        });
     }
 
     if !locked {
@@ -458,11 +466,13 @@ fn build_output_elements(
 
     // Fond à la résolution physique de l'écran : net à toute échelle.
     let physical = output_geo.size.to_f64().to_physical(scale);
-    let (wallpaper, source) = assets.wallpaper.buffer(
-        &state.wallpaper,
-        physical.w.round() as i32,
-        physical.h.round() as i32,
-    );
+    let (wallpaper, source) = profile::timed("fond d'écran", || {
+        assets.wallpaper.buffer(
+            &state.wallpaper,
+            physical.w.round() as i32,
+            physical.h.round() as i32,
+        )
+    });
     match MemoryRenderBufferRenderElement::from_buffer(
         renderer,
         Point::from((0.0, 0.0)),
@@ -1045,9 +1055,6 @@ fn push_cursor(
     }
 }
 
-/// Hauteur de la bande du haut qui rappelle une barre masquée.
-const BAR_REVEAL_EDGE: f64 = 2.0;
-
 /// Double flèche qui correspond aux bords tirés.
 fn resize_shape(edges: wm::ResizeEdge) -> CursorShape {
     use wm::ResizeEdge;
@@ -1255,15 +1262,20 @@ impl Ferrite {
     }
 
     /// La barre du haut est-elle affichée ? Masquée (plein écran ou réglage de
-    /// Paramètres), elle revient quand la souris touche le bord du haut, et reste tant
-    /// qu'elle est dessus ou qu'un menu est ouvert. Il faut toucher le bord lui-même :
-    /// la barre de titre d'une fenêtre agrandie, juste dessous, reste accessible.
+    /// Paramètres), elle revient comme le Dock : quand on glisse vite la souris vers le
+    /// haut de l'écran, pas quand elle y passe doucement (la barre de titre d'une
+    /// fenêtre agrandie, juste dessous, reste accessible). Elle reste ensuite tant que
+    /// la souris est dessus ou qu'un menu est ouvert.
     pub fn bar_visible(&self) -> bool {
         let height = self.dock_config.bar_height as f64;
         let revealed = self.bar_revealed.get();
+        let approached = self
+            .bar_fast_approach_until
+            .get()
+            .is_some_and(|until| std::time::Instant::now() < until);
         let pointer_calls = self
             .pointer_location()
-            .is_some_and(|pointer| pointer.y < BAR_REVEAL_EDGE || (revealed && pointer.y < height));
+            .is_some_and(|pointer| (approached || revealed) && pointer.y < height);
         self.bar_revealed.set(pointer_calls);
         if pointer_calls || self.popover.is_some() || self.pending_power.is_some() {
             return true;

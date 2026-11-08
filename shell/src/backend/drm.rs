@@ -10,7 +10,12 @@
 //!
 //! Plusieurs écrans et le branchement à chaud viendront ensuite.
 
-use std::{cell::RefCell, error::Error, rc::Rc, time::Duration};
+use std::{
+    cell::RefCell,
+    error::Error,
+    rc::Rc,
+    time::{Duration, Instant},
+};
 
 use smithay::{
     backend::{
@@ -85,6 +90,8 @@ struct Drm {
     /// Essais au repos de suite sans rien à redessiner : au-delà de [`IDLE_STREAK`], ils
     /// s'espacent à [`IDLE_SLOW`].
     idle_streak: u32,
+    /// Derniers rappels d'image (`wl_surface.frame`) envoyés aux fenêtres.
+    callbacks_at: Option<Instant>,
 }
 
 pub fn init(
@@ -203,6 +210,7 @@ pub fn init(
         blanked: false,
         render_scheduled: None,
         idle_streak: 0,
+        callbacks_at: None,
     }));
     let handle = event_loop.handle();
 
@@ -480,13 +488,22 @@ fn render(drm: &mut Drm, state: &mut Ferrite) -> bool {
         output,
         assets,
         frame_pending,
+        callbacks_at,
         ..
     } = drm;
     state.run_genie_demo();
-    render::take_screenshot(renderer, state, assets, output);
-    render::serve_screencopy(renderer, state, assets, output);
+    use render::profile::timed;
+    timed("capture d'écran", || {
+        render::take_screenshot(renderer, state, assets, output)
+    });
+    timed("partage d'écran", || {
+        render::serve_screencopy(renderer, state, assets, output)
+    });
     let elements = render::output_elements(renderer, state, assets, output, true);
-    let sent = match compositor.render_frame(renderer, &elements, [0.0, 0.0, 0.0, 1.0], FrameFlags::DEFAULT) {
+    let frame = timed("rendu GPU", || {
+        compositor.render_frame(renderer, &elements, [0.0, 0.0, 0.0, 1.0], FrameFlags::DEFAULT)
+    });
+    let sent = match frame {
         Ok(result) if !result.is_empty => match compositor.queue_frame(()) {
             Ok(()) => {
                 *frame_pending = true;
@@ -505,9 +522,15 @@ fn render(drm: &mut Drm, state: &mut Ferrite) -> bool {
         }
     };
 
-    let elapsed = state.start_time.elapsed();
-    for window in state.space.elements() {
-        window.send_frame(output, elapsed, Some(Duration::ZERO), |_, _| Some(output.clone()));
+    // Rien de neuf à l'écran (fenêtre cachée, image identique) : les rappels attendent au
+    // moins [`IDLE_REDRAW`]. Sinon une application qui redessine dès son rappel (Musique)
+    // relance aussitôt un rendu vide, puis un rappel… des centaines de fois par seconde.
+    if sent || callbacks_at.is_none_or(|at| at.elapsed() >= IDLE_REDRAW) {
+        *callbacks_at = Some(Instant::now());
+        let elapsed = state.start_time.elapsed();
+        for window in state.space.elements() {
+            window.send_frame(output, elapsed, Some(Duration::ZERO), |_, _| Some(output.clone()));
+        }
     }
     sent
 }

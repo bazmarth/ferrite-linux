@@ -42,6 +42,9 @@ intel-media-va-driver
 xwayland
 
 # Services système utilisés par le bureau
+# Échange compressé en mémoire (zram) : le bureau n'attend plus un SSD lent pour relire
+# sa mémoire (voir etc/systemd/zram-generator.conf)
+systemd-zram-generator
 network-manager
 wpasupplicant
 rfkill
@@ -136,6 +139,35 @@ fonts-noto-color-emoji
 # Symboles et emoji du Terminal, qui ne sait pas dessiner les polices en couleur
 fonts-symbola
 fonts-jetbrains-mono
+
+# Polices du traitement de texte (WordCraft et les autres applications Flatpak les lisent
+# dans /run/host/fonts). Mêmes largeurs que les polices de Microsoft, pour qu'un .docx garde
+# sa mise en page : Arial, Times New Roman, Courier New (Liberation), Calibri (Carlito),
+# Cambria (Caladea), Helvetica, Times, Palatino, Bookman… (URW), Comic Sans (Comic Neue).
+fonts-liberation
+fonts-crosextra-carlito
+fonts-crosextra-caladea
+fonts-croscore
+fonts-urw-base35
+fonts-comic-neue
+# Polices de texte avec empattements (livres, lettres, mémoires)
+fonts-dejavu-extra
+fonts-linuxlibertine
+fonts-ebgaramond
+fonts-sil-charis
+# Polices sans empattements courantes dans les modèles de documents
+fonts-open-sans
+fonts-roboto
+fonts-lato
+fonts-adobe-sourcesans3
+fonts-ubuntu
+fonts-cantarell
+fonts-quicksand
+# Chasse fixe (code, machine à écrire) et formules mathématiques
+fonts-noto-mono
+fonts-firacode
+fonts-courier-prime
+fonts-stix
 
 # Outils de diagnostic (critères de la phase 1)
 libinput-tools

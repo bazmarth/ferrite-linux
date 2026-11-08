@@ -4,13 +4,18 @@
 //! agrandir à droite), même quand le client demande à dessiner son cadre, car beaucoup en
 //! demandent un sans y mettre de bouton (ArtCraft et les applications egui ou winit sans
 //! cadre). Gardent le leur : les applications Ferrite (barre unifiée au même style) et les
-//! applications de `cadre_propre` (navigateurs Chromium, dont les onglets sont la barre).
+//! applications de `cadre_propre` (navigateurs Chromium, dont les onglets sont la barre) et
+//! toute application bâtie sur Chromium (Electron : Claude, VS Code, ChatGPT…), qui dessine
+//! toujours une vraie barre avec ses boutons ; lui imposer la nôtre empilait deux barres.
 //! Les applications GTK n'utilisent pas ce protocole : elles dessinent leur cadre, avec
 //! l'ordre des boutons publié par `system.rs` (`button-layout`).
+
+use std::path::{Path, PathBuf};
 
 use smithay::{
     delegate_xdg_decoration,
     reexports::wayland_protocols::xdg::decoration::zv1::server::zxdg_toplevel_decoration_v1::Mode,
+    reexports::wayland_server::{DisplayHandle, Resource},
     wayland::shell::xdg::{ToplevelSurface, decoration::XdgDecorationHandler},
 };
 
@@ -23,7 +28,7 @@ impl XdgDecorationHandler for Ferrite {
 
     fn request_mode(&mut self, toplevel: ToplevelSurface, mode: Mode) {
         tracing::info!(app_id = %app_id(&toplevel), ?mode, "décorations demandées");
-        set_mode(&toplevel, imposed(&toplevel, mode));
+        set_mode(&toplevel, imposed(&self.display_handle, &toplevel, mode));
     }
 
     fn unset_mode(&mut self, toplevel: ToplevelSurface) {
@@ -45,17 +50,55 @@ pub fn app_id(toplevel: &ToplevelSurface) -> String {
 }
 
 /// Mode retenu : la barre de Ferrite, sauf pour les applications qui gardent leur cadre.
-fn imposed(toplevel: &ToplevelSurface, mode: Mode) -> Mode {
+fn imposed(display: &DisplayHandle, toplevel: &ToplevelSurface, mode: Mode) -> Mode {
     if mode != Mode::ClientSide {
         return mode;
     }
     let id = app_id(toplevel);
     // L'identifiant n'est pas encore connu : la demande est gardée, revue à son arrivée.
-    if id.is_empty() || keeps_own_frame(&id, &ferrite_system::config::Settings::load().own_frame_apps()) {
+    if id.is_empty()
+        || keeps_own_frame(&id, &ferrite_system::config::Settings::load().own_frame_apps())
+        || is_chromium_client(display, toplevel)
+    {
         mode
     } else {
         Mode::ServerSide
     }
+}
+
+/// Le client est-il un programme bâti sur Chromium (navigateur ou Electron) ? Ces
+/// programmes dessinent toujours une barre complète (titre, boutons) quand ils demandent
+/// leur propre cadre. Reconnus aux fichiers que Chromium pose à côté de son exécutable ;
+/// `/proc/<pid>/root` voit aussi l'intérieur d'un Flatpak. Simple lecture de `/proc`, faite
+/// une fois par demande de décorations.
+fn is_chromium_client(display: &DisplayHandle, toplevel: &ToplevelSurface) -> bool {
+    let Some(pid) = toplevel
+        .wl_surface()
+        .client()
+        .and_then(|client| client.get_credentials(display).ok())
+        .map(|credentials| credentials.pid)
+    else {
+        return false;
+    };
+    let proc_dir = PathBuf::from(format!("/proc/{pid}"));
+    let Ok(exe) = std::fs::read_link(proc_dir.join("exe")) else {
+        return false;
+    };
+    let chromium = is_chromium_dir(&proc_dir.join("root"), &exe);
+    if chromium {
+        tracing::info!(app_id = %app_id(toplevel), exe = %exe.display(), "Chromium : cadre du client gardé");
+    }
+    chromium
+}
+
+/// Le dossier de l'exécutable `exe` (vu depuis la racine `root`) contient-il les fichiers de
+/// Chromium ?
+fn is_chromium_dir(root: &Path, exe: &Path) -> bool {
+    let Some(dir) = exe.parent() else {
+        return false;
+    };
+    let dir = root.join(dir.strip_prefix("/").unwrap_or(dir));
+    dir.join("v8_context_snapshot.bin").is_file() && dir.join("resources.pak").is_file()
 }
 
 /// L'application `id` garde-t-elle son propre cadre ?
@@ -68,10 +111,10 @@ fn keeps_own_frame(id: &str, own_frame: &[String]) -> bool {
 }
 
 /// L'identifiant arrive souvent après la demande de décorations : la règle est revue.
-pub fn app_id_changed(toplevel: &ToplevelSurface) {
+pub fn app_id_changed(display: &DisplayHandle, toplevel: &ToplevelSurface) {
     let current = toplevel.with_pending_state(|state| state.decoration_mode);
     if let Some(mode) = current {
-        let wanted = imposed(toplevel, mode);
+        let wanted = imposed(display, toplevel, mode);
         if wanted != mode {
             tracing::info!(app_id = %app_id(toplevel), "barre de titre Ferrite posée");
             set_mode(toplevel, wanted);
@@ -99,5 +142,19 @@ mod tests {
         assert!(keeps_own_frame("Chromium-browser", &own));
         assert!(!keeps_own_frame("ai.storyteller.artcraft-launcher", &own));
         assert!(!keeps_own_frame("foot", &own));
+    }
+
+    #[test]
+    fn chromium_reconnu_a_ses_fichiers() {
+        let root = std::env::temp_dir().join(format!("ferrite-chromium-{}", std::process::id()));
+        let dir = root.join("opt/appli");
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = Path::new("/opt/appli/appli");
+        assert!(!is_chromium_dir(&root, exe));
+        std::fs::write(dir.join("v8_context_snapshot.bin"), b"").unwrap();
+        assert!(!is_chromium_dir(&root, exe));
+        std::fs::write(dir.join("resources.pak"), b"").unwrap();
+        assert!(is_chromium_dir(&root, exe));
+        std::fs::remove_dir_all(&root).unwrap();
     }
 }

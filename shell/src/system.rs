@@ -81,6 +81,8 @@ pub enum Event {
     Dock(DockConfig),
     Theme(Appearance, Accent),
     ScrollInverted(bool),
+    /// Notifications : ne pas déranger, son, aperçu dans la bannière.
+    Notifications(crate::desktop::notifications::Preferences),
     /// Vitesses de défilement (molette, pavé tactile), en pour cent.
     ScrollSpeed(u32, u32),
     /// Taille du curseur, et thème de curseurs s'il a changé (déjà lu ; `Some(None)` :
@@ -263,6 +265,7 @@ fn worker(receiver: mpsc::Receiver<Change>, events: channel::Sender<Event>, nest
     let mut known_theme = None;
     let mut known_dark = None;
     let mut known_scroll_inverted = None;
+    let mut known_notifications = None;
     let mut known_scroll_speed = None;
     let mut known_cursor: Option<(String, u32)> = None;
     let mut known_text_size = None;
@@ -334,6 +337,13 @@ fn worker(receiver: mpsc::Receiver<Change>, events: channel::Sender<Event>, nest
             let place = ferrite_system::weather::Place::from_settings(&settings);
             if events.send(Event::Night(night, place)).is_err() {
                 return;
+            }
+            let notifications = crate::desktop::notifications::Preferences::from_settings(&settings);
+            if known_notifications != Some(notifications) {
+                known_notifications = Some(notifications);
+                if events.send(Event::Notifications(notifications)).is_err() {
+                    return;
+                }
             }
             let scroll_inverted = settings.scroll_inverted();
             if known_scroll_inverted != Some(scroll_inverted) {
@@ -516,6 +526,7 @@ impl Ferrite {
                 self.accent = accent;
             }
             Event::ScrollInverted(inverted) => self.scroll_inverted = inverted,
+            Event::Notifications(preferences) => self.notifications.set_preferences(preferences),
             Event::ScrollSpeed(wheel, touchpad) => self.scroll_speed = (wheel, touchpad),
             Event::CursorSize(size, theme) => {
                 self.cursor_size = size;

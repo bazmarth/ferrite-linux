@@ -23,6 +23,9 @@ pub const KEYBOARD_LAYOUTS: &[(&str, &str)] = &[
     ("es", "Espagnol"),
 ];
 
+/// Clé du réglage « Ne pas déranger » (voir [`Settings::do_not_disturb`]).
+pub const DO_NOT_DISTURB: &str = "ne_pas_deranger";
+
 pub const SHORTCUT_CTRL: u8 = 1;
 pub const SHORTCUT_ALT: u8 = 2;
 pub const SHORTCUT_SHIFT: u8 = 4;
@@ -693,6 +696,22 @@ impl Settings {
 
     pub fn set_flag(&mut self, key: &str, value: bool) {
         self.set(key, if value { "oui" } else { "non" });
+    }
+
+    /// « Ne pas déranger » : pas de bannière ni de son, sauf pour les alertes urgentes.
+    /// Réglé dans Paramètres → Notifications ou le centre de contrôle.
+    pub fn do_not_disturb(&self) -> bool {
+        self.flag(DO_NOT_DISTURB, false)
+    }
+
+    /// Son joué à l'arrivée d'une notification.
+    pub fn notification_sound(&self) -> bool {
+        self.flag("notifications_son", true)
+    }
+
+    /// Texte de la notification montré dans la bannière (sinon seulement son titre).
+    pub fn notification_preview(&self) -> bool {
+        self.flag("notifications_apercu", true)
     }
 
     /// Côté des icônes du Dock, en pixels logiques.

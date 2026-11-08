@@ -499,7 +499,13 @@ impl Ferrite {
             keyboard_label: keyboard_label(&layout),
             keyboard_shortcuts: settings.clone(),
             power_key_inhibitor: None,
-            notifications: Default::default(),
+            notifications: {
+                let mut center = crate::desktop::notifications::Center::default();
+                center.set_preferences(crate::desktop::notifications::Preferences::from_settings(
+                    &settings,
+                ));
+                center
+            },
             notification_link: None,
             switcher: None,
             region_select: None,

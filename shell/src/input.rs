@@ -1660,7 +1660,17 @@ impl Ferrite {
             DesktopAction::NotificationAction(id, index) => self.notification_action(id, index),
             DesktopAction::NotificationsClear => self.clear_notifications(),
             DesktopAction::ToggleDoNotDisturb => {
-                self.notifications.do_not_disturb = !self.notifications.do_not_disturb;
+                let on = !self.notifications.do_not_disturb;
+                self.notifications.do_not_disturb = on;
+                // Gardé pour le prochain démarrage et montré dans Paramètres ; écrit hors du
+                // fil principal (un disque lent ne doit pas figer le bureau).
+                std::thread::spawn(move || {
+                    let mut settings = ferrite_system::config::Settings::load();
+                    settings.set_flag(ferrite_system::config::DO_NOT_DISTURB, on);
+                    if let Err(error) = settings.save() {
+                        tracing::warn!(%error, "« Ne pas déranger » non enregistré");
+                    }
+                });
             }
             DesktopAction::ToggleDarkMode => self.toggle_dark_mode(),
             DesktopAction::TogglePowerSaver => {

@@ -2496,3 +2496,28 @@ sans sélecteur, ⚠ ❤ ☀ restent en noir dans l'aperçu.
 Pas vérifié : le vrai bureau. Hors champ : les autres textes des applications (noms de
 fichiers, étiquettes) et les emoji composés (« 1️⃣ », drapeaux régionaux à plusieurs
 caractères hors 🇫🇷 déjà vérifié).
+Mesure 30 min après (01:23) : système en attente du disque 118 ms sur 60 s (0,2 %),
+50 écritures synchronisées en 72 à 82 ms (comme avant les gels), échange du disque à
+16 Mo, 1,5 Go dans zram (dont 233 Mo du bureau). Étapes lentes en 30 min : « panneaux »
+527 ms une fois (00:54:54, panneau inconnu), « rendu GPU » 51 ms une fois.
+
+## 2026-11-08 — Paramètres : rubrique Notifications branchée
+
+Suite du développement (rubriques encore en maquette dans Paramètres). « Ne pas déranger »
+existait dans le centre de contrôle, mais en mémoire seulement (perdu au redémarrage, absent
+de Paramètres) ; le reste de la rubrique était grisé.
+- Réglages `ne_pas_deranger`, `notifications_son` (oui par défaut) et `notifications_apercu`
+  (oui par défaut), lus par `Settings::do_not_disturb`, `notification_sound`,
+  `notification_preview`.
+- Bureau : `notifications::Preferences`, relues dans la seconde après un changement (fil des
+  réglages) et dès le démarrage. Son coupé : aucune notification ne sonne, même urgente.
+  Aperçu « Jamais » : la bannière (îlot) ne montre que le titre ; l'historique garde le texte.
+  La bascule du centre de contrôle enregistre le réglage, hors du fil principal.
+- Paramètres → Notifications : vraie page (interrupteurs et choix « Toujours / Jamais »).
+  Ligne « Sur l'écran verrouillé » retirée : l'écran verrouillé ne montre pas de bannière.
+Vérifié : CI (sans shellcheck), test `son_coupe_dans_les_reglages` ; captures du bureau
+imbriqué avec des réglages à part : page lue depuis le fichier ; notification envoyée par
+D-Bus affichée sans son texte avec l'aperçu sur « Jamais », et pas affichée du tout avec
+« Ne pas déranger ».
+Pas vérifié : le son (pas de PipeWire dans le bureau imbriqué), la bascule depuis le
+centre de contrôle reprise par Paramètres, le vrai bureau.

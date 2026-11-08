@@ -94,14 +94,64 @@ struct Item {
     until: Option<Instant>,
 }
 
+/// Réglages de Paramètres → Notifications.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Preferences {
+    pub do_not_disturb: bool,
+    pub sound: bool,
+    pub preview: bool,
+}
+
+impl Default for Preferences {
+    fn default() -> Self {
+        Self {
+            do_not_disturb: false,
+            sound: true,
+            preview: true,
+        }
+    }
+}
+
+impl Preferences {
+    pub fn from_settings(settings: &ferrite_system::config::Settings) -> Self {
+        Self {
+            do_not_disturb: settings.do_not_disturb(),
+            sound: settings.notification_sound(),
+            preview: settings.notification_preview(),
+        }
+    }
+}
+
 /// Notifications connues, de la plus ancienne à la plus récente.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Center {
     items: Vec<Item>,
     pub do_not_disturb: bool,
+    /// Son à l'arrivée d'une bannière.
+    pub sound: bool,
+    /// Texte de la notification dans la bannière.
+    pub preview: bool,
+}
+
+impl Default for Center {
+    fn default() -> Self {
+        let preferences = Preferences::default();
+        Self {
+            items: Vec::new(),
+            do_not_disturb: preferences.do_not_disturb,
+            sound: preferences.sound,
+            preview: preferences.preview,
+        }
+    }
 }
 
 impl Center {
+    pub fn set_preferences(&mut self, preferences: Preferences) {
+        self.do_not_disturb = preferences.do_not_disturb;
+        self.sound = preferences.sound;
+        self.preview = preferences.preview;
+    }
+
     /// Ajoute une notification, ou remplace à sa place celle de même identifiant. Renvoie
     /// vrai si elle mérite un son : nouvelle, montrée en bulle, et l'application le veut.
     pub fn notify(&mut self, notice: Notice, now: Instant) -> bool {
@@ -112,7 +162,7 @@ impl Center {
             bubble,
             until,
         };
-        let sound = bubble && item.notice.sound;
+        let sound = bubble && self.sound && item.notice.sound;
         let new = match self
             .items
             .iter_mut()
@@ -586,6 +636,24 @@ mod tests {
             },
             now
         ));
+    }
+
+    #[test]
+    fn son_coupe_dans_les_reglages() {
+        let now = Instant::now();
+        let mut center = Center::default();
+        let settings =
+            ferrite_system::config::Settings::parse("notifications_son = non\nne_pas_deranger = oui");
+        center.set_preferences(Preferences::from_settings(&settings));
+        assert!(center.do_not_disturb && !center.sound && center.preview);
+        // Même l'alerte urgente arrive sans son ; sa bulle s'affiche quand même.
+        let urgente = Notice {
+            sound: true,
+            critical: true,
+            ..notice(1)
+        };
+        assert!(!center.notify(urgente, now));
+        assert_eq!(center.bubbles().count(), 1);
     }
 
     #[test]

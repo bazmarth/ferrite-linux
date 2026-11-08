@@ -660,9 +660,8 @@ impl SettingsState {
             Page::Energy => self.energy_page(ui),
             Page::Privacy => self.privacy_page(ui),
             Page::Defaults => self.defaults_page(ui),
-            Page::Notifications | Page::Printers | Page::Accessibility | Page::Updates => {
-                self.pending_page(ui)
-            }
+            Page::Notifications => self.notifications_page(ui),
+            Page::Printers | Page::Accessibility | Page::Updates => self.pending_page(ui),
         }
     }
 
@@ -2127,6 +2126,53 @@ impl SettingsState {
         });
     }
 
+    /// Notifications : « Ne pas déranger » (aussi dans le centre de contrôle), aperçu et son
+    /// des bannières. Le bureau relit ces réglages dans la seconde.
+    fn notifications_page(&mut self, ui: &mut egui::Ui) {
+        let mut settings = Settings::load();
+        let before = settings.clone();
+        let icons = &mut self.icons;
+        group(ui, icons, "", |rows| {
+            flag_row(
+                rows,
+                &mut settings,
+                Row::new("Ne pas déranger")
+                    .hint("Ni bannière ni son ; les alertes urgentes passent quand même"),
+                ferrite_system::config::DO_NOT_DISTURB,
+                false,
+            );
+        });
+        group(ui, icons, "Bannières", |rows| {
+            let mut preview = settings.notification_preview();
+            let row = Row::new("Afficher l’aperçu").hint("Texte de la notification sous son titre");
+            let (changed, _) = rows.row(row, |ui| {
+                rows::pick(
+                    ui,
+                    "notif-apercu",
+                    &mut preview,
+                    &[(true, "Toujours"), (false, "Jamais")],
+                )
+            });
+            if changed {
+                settings.set_flag("notifications_apercu", preview);
+            }
+            flag_row(
+                rows,
+                &mut settings,
+                Row::new("Son des notifications"),
+                "notifications_son",
+                true,
+            );
+        });
+        rows::group_note(
+            ui,
+            "Les notifications restent toutes dans l’historique, ouvert depuis l’horloge de la barre.",
+        );
+        if settings != before {
+            self.save(&settings);
+        }
+    }
+
     /// Rubriques pas encore branchées sur le système : la maquette, avec le même gabarit,
     /// ses réglages grisés et une note qui le dit. Les réglages qui existent déjà
     /// (animations, transparence) restent actifs.
@@ -2143,24 +2189,6 @@ impl SettingsState {
             });
         };
         match self.page {
-            Page::Notifications => {
-                group(ui, icons, "", |rows| {
-                    off(
-                        rows,
-                        Row::new("Ne pas déranger").hint("Masque les bannières et coupe les sons"),
-                        false,
-                    );
-                });
-                group(ui, icons, "Bannières", |rows| {
-                    rows.row(Row::new("Afficher l’aperçu").unavailable(), |ui| {
-                        let mut choice = 0;
-                        rows::pick(ui, "notif-apercu", &mut choice, &[(0, "Toujours")]);
-                    });
-                    off(rows, Row::new("Sur l’écran verrouillé"), true);
-                    off(rows, Row::new("Son des notifications"), true);
-                });
-                rows::group_note(ui, PLANNED);
-            }
             Page::Printers => {
                 group(ui, icons, "", |rows| {
                     let row = Row::new("Aucune imprimante")

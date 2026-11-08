@@ -1571,11 +1571,17 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
 /// Bulles à afficher et, si son panneau est ouvert, l'historique des notifications.
 fn notifications_view(state: &Ferrite) -> NotificationsView {
     let now = std::time::SystemTime::now();
-    let view = |notice: &crate::desktop::notifications::Notice| NotificationView {
+    // Aperçu coupé (Paramètres → Notifications) : la bannière ne montre que le titre ;
+    // l'historique garde le texte.
+    let view = |notice: &crate::desktop::notifications::Notice, preview: bool| NotificationView {
         id: notice.id,
         app: notice.app.clone(),
         summary: notice.summary.clone(),
-        body: notice.body.replace('\n', " "),
+        body: if preview {
+            notice.body.replace('\n', " ")
+        } else {
+            String::new()
+        },
         when: crate::desktop::notifications::age_label(notice.received, now),
         actions: notice.actions.iter().map(|(_, label)| label.clone()).collect(),
         icon: notice.icon_file.clone().map(AppIcon::File).or_else(|| {
@@ -1588,10 +1594,18 @@ fn notifications_view(state: &Ferrite) -> NotificationsView {
         bubbles: if state.overview {
             Vec::new()
         } else {
-            state.notifications.bubbles().map(view).collect()
+            state
+                .notifications
+                .bubbles()
+                .map(|notice| view(notice, state.notifications.preview))
+                .collect()
         },
         history: if state.popover == Some(Popover::Notifications) {
-            state.notifications.history().map(view).collect()
+            state
+                .notifications
+                .history()
+                .map(|notice| view(notice, true))
+                .collect()
         } else {
             Vec::new()
         },

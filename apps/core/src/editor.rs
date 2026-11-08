@@ -2770,6 +2770,8 @@ fn code_card(ui: &mut egui::Ui, language: &str, lines: &[String]) {
         _ => (None, lines),
     };
     let code = body.join("\n");
+    // Ce que le bouton « Copier » met dans le presse-papier : les commandes seules.
+    let copied = without_comments(&code, kind);
     egui::Frame::new()
         .fill(code_block())
         .stroke(Stroke::new(1.0, border()))
@@ -2799,7 +2801,7 @@ fn code_card(ui: &mut egui::Ui, language: &str, lines: &[String]) {
                                 .selectable(false),
                             );
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                copy_button(ui, &code);
+                                copy_button(ui, &copied);
                             });
                         });
                     });
@@ -2830,7 +2832,7 @@ fn code_card(ui: &mut egui::Ui, language: &str, lines: &[String]) {
                                 code_view(ui);
                             });
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-                                copy_button(ui, &code);
+                                copy_button(ui, &copied);
                             });
                         });
                     }
@@ -2865,6 +2867,56 @@ fn copy_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
         }
     }
     response
+}
+
+/// `code` sans ses commentaires, pour le copier : une ligne qui n'était qu'un commentaire
+/// disparaît, un commentaire en fin de ligne est retiré (avec les espaces qui le
+/// précèdent). Un « # » dans une chaîne ou collé à un mot (`a#b`) reste. Un bloc sans
+/// langue est lu comme du shell : ce sont presque toujours des commandes.
+fn without_comments(code: &str, kind: FileKind) -> String {
+    let kind = if kind == FileKind::Text {
+        FileKind::Shell
+    } else {
+        kind
+    };
+    let comments: Vec<std::ops::Range<usize>> = highlight::spans(code, kind)
+        .into_iter()
+        .filter(|(_, role)| *role == highlight::Kind::Comment)
+        .map(|(range, _)| range)
+        .collect();
+    let mut lines = Vec::new();
+    let mut start = 0;
+    for line in code.split('\n') {
+        let end = start + line.len();
+        let mut kept = String::new();
+        let mut cursor = start;
+        let mut had_comment = false;
+        for range in comments
+            .iter()
+            .filter(|range| range.start < end && range.end > start)
+        {
+            had_comment = true;
+            kept.push_str(&code[cursor..range.start.max(cursor)]);
+            cursor = range.end.min(end).max(cursor);
+        }
+        kept.push_str(&code[cursor..end]);
+        if had_comment {
+            let trimmed = kept.trim_end();
+            if !trimmed.trim_start().is_empty() {
+                lines.push(trimmed.to_owned());
+            }
+        } else {
+            lines.push(kept);
+        }
+        start = end + 1;
+    }
+    while lines.first().is_some_and(|line| line.trim().is_empty()) {
+        lines.remove(0);
+    }
+    while lines.last().is_some_and(|line| line.trim().is_empty()) {
+        lines.pop();
+    }
+    lines.join("\n")
 }
 
 /// Nom d'une langue de bloc de code : celui du langage reconnu, sinon tel qu'écrit.
@@ -3532,6 +3584,24 @@ mod tests {
         assert!(approx(max, 90.0));
         // Replié, le panneau n'a que la hauteur de son en-tête.
         assert!(approx(favorites_heights(0, 600.0).0, 49.0));
+    }
+
+    #[test]
+    fn la_copie_laisse_les_commentaires() {
+        let code = "# Mettre à jour\nsudo apt update   # liste des paquets\n\n// pas du shell\necho \"a # b\" c#d\n#!/bin/sh";
+        assert_eq!(
+            without_comments(code, FileKind::Shell),
+            "sudo apt update\n\n// pas du shell\necho \"a # b\" c#d"
+        );
+        // Bloc sans langue : lu comme du shell.
+        assert_eq!(
+            without_comments("# Compiler\ncargo build", FileKind::Text),
+            "cargo build"
+        );
+        assert_eq!(
+            without_comments("// début\nlet x = 1; // fin\n/* bloc */", FileKind::Rust),
+            "let x = 1;"
+        );
     }
 
     #[test]

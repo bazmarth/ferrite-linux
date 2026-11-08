@@ -2601,3 +2601,14 @@ Vérifié : CI (sans shellcheck) ; test `le_bouton_copier_met_le_code_dans_le_pr
 (clic simulé dans egui) ; capture du bureau imbriqué avec un fichier d'essai (deux blocs de
 code, un tableau).
 Pas vérifié : sélection à la souris et collage dans une autre application sur le vrai bureau.
+
+## 2026-11-08 — TextEdit : « Copier » laisse les commentaires
+
+Demande de l'utilisateur : ne pas copier les commentaires des commandes.
+- `without_comments` : s'appuie sur `highlight::spans` (rôle commentaire, qui tient compte
+  des chaînes). Ligne qui n'est qu'un commentaire retirée, commentaire de fin de ligne
+  retiré avec ses espaces ; « # » dans une chaîne ou collé à un mot gardé. Bloc sans
+  langue lu comme du shell. L'aperçu affiche toujours les commentaires ; la sélection à la
+  souris copie tout.
+Vérifié : CI (sans shellcheck) ; test `la_copie_laisse_les_commentaires`.
+Pas vérifié : collage dans un vrai terminal.

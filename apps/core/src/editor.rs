@@ -84,6 +84,12 @@ fn body() -> Color32 {
 const RAIL_WIDTH: f32 = 56.0;
 const EXPLORER_WIDTH: f32 = 272.0;
 const TAB_HEIGHT: f32 = 44.0;
+/// Hauteur d'une ligne de l'explorateur (fichier, dossier, en-tête des favoris).
+const ROW_HEIGHT: f32 = 30.0;
+/// Marge au-dessus de l'en-tête des favoris, sous le trait de séparation.
+const FAVORITES_TOP: i8 = 6;
+/// Marge sous la liste des favoris.
+const FAVORITES_BOTTOM: i8 = 12;
 const SEARCH_ID: &str = "textedit-recherche-fichiers";
 
 #[derive(Debug)]
@@ -1416,52 +1422,72 @@ impl EditorState {
         }
     }
 
-    /// Favoris en bas de l'explorateur : chacun devient le dossier affiché.
+    /// Favoris en bas de l'explorateur : chacun devient le dossier affiché. La séparation
+    /// avec l'arborescence se tire à la souris ; replié, le panneau se réduit à son en-tête.
     fn favorites(&self, ui: &mut egui::Ui, root: &Path, commands: &mut Vec<Command>) {
         let places = favorite_places();
         if places.is_empty() {
             return;
         }
-        egui::Panel::bottom(ui.scope_id().with("textedit-favoris"))
-            .resizable(false)
-            .frame(Frame::new().inner_margin(Margin {
+        let open = self.favorites_open;
+        // Replié, le panneau garde une identité à part : la hauteur choisie pour la liste
+        // n'est pas écrasée par la taille de l'en-tête seul.
+        let id = if open {
+            "textedit-favoris"
+        } else {
+            "textedit-favoris-replie"
+        };
+        let (default_size, min_size, max_size) = favorites_heights(places.len(), ui.available_height());
+        let mut panel =
+            egui::Panel::bottom(ui.scope_id().with(id)).frame(Frame::new().inner_margin(Margin {
                 left: 0,
                 right: 0,
-                top: 6,
-                bottom: 12,
-            }))
-            .show(ui, |ui| {
-                let full = ui.max_rect();
-                ui.painter().hline(
-                    full.left() + 16.0..=full.right() - 16.0,
-                    full.top() - 6.0,
-                    Stroke::new(1.0, border()),
-                );
-                ui.spacing_mut().item_spacing.y = 0.0;
-                let header = Row {
-                    chevron: Some(self.favorites_open),
-                    text: "Favoris",
-                    strong: true,
-                    ..Row::default()
-                };
-                if header.show(ui).clicked() {
-                    commands.push(Command::ToggleFavorites);
-                }
-                if self.favorites_open {
-                    for (name, path) in places {
-                        let row = Row {
-                            depth: 1,
-                            icon: RowIcon::Symbol(Icon::FolderOutline),
-                            text: name,
-                            selected: root == path,
-                            ..Row::default()
-                        };
-                        if row.show(ui).clicked() {
-                            commands.push(Command::SetRoot(path));
+                top: FAVORITES_TOP,
+                bottom: FAVORITES_BOTTOM,
+            }));
+        panel = if open {
+            panel
+                .resizable(true)
+                .default_size(default_size)
+                .min_size(min_size)
+                .max_size(max_size)
+        } else {
+            panel.exact_size(min_size)
+        };
+        panel.show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            let header = Row {
+                chevron: Some(open),
+                text: "Favoris",
+                strong: true,
+                ..Row::default()
+            };
+            if header.show(ui).clicked() {
+                commands.push(Command::ToggleFavorites);
+            }
+            if open {
+                // Tirée plus courte que la liste, la séparation laisse faire défiler les
+                // favoris au lieu de les couper.
+                egui::ScrollArea::vertical()
+                    .id_salt("textedit-favoris-liste")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        for (name, path) in places {
+                            let row = Row {
+                                depth: 1,
+                                icon: RowIcon::Symbol(Icon::FolderOutline),
+                                text: name,
+                                selected: root == path,
+                                ..Row::default()
+                            };
+                            if row.show(ui).clicked() {
+                                commands.push(Command::SetRoot(path));
+                            }
                         }
-                    }
-                }
-            });
+                    });
+            }
+        });
     }
 
     /// Onglets des documents ouverts, et « + » pour en créer un.
@@ -2969,7 +2995,8 @@ struct Row<'a> {
 
 impl Row<'_> {
     fn show(self, ui: &mut egui::Ui) -> egui::Response {
-        let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 30.0), Sense::click());
+        let (rect, response) =
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), ROW_HEIGHT), Sense::click());
         let response = if self.muted {
             response
         } else {
@@ -3216,6 +3243,17 @@ fn search_files(root: &Path, query: &str) -> Vec<PathBuf> {
     found
 }
 
+/// Hauteurs du panneau des favoris : hauteur voulue (la liste entière), minimum (l'en-tête
+/// seul) et maximum (60 % de la place disponible), en points.
+///
+/// Le trait de séparation du panneau occupe un point de plus, au-dessus de la marge haute.
+fn favorites_heights(rows: usize, available: f32) -> (f32, f32, f32) {
+    let header = ROW_HEIGHT + f32::from(FAVORITES_TOP) + f32::from(FAVORITES_BOTTOM) + 1.0;
+    let max = (available * 0.6).max(header);
+    let wanted = (header + ROW_HEIGHT * rows as f32).clamp(header, max);
+    (wanted, header, max)
+}
+
 /// Dossiers favoris qui existent : dossier personnel, Bureau, Documents, Téléchargements.
 fn favorite_places() -> Vec<(&'static str, PathBuf)> {
     let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
@@ -3398,6 +3436,107 @@ mod tests {
         editor.open(dir.join("a.txt"));
         assert!(editor.save(editor.active, Then::Nothing));
         assert_eq!(editor.listing(&dir).len(), 2);
+    }
+
+    #[test]
+    fn la_separation_des_favoris_se_tire() {
+        let approx = |left: f32, right: f32| (left - right).abs() < 0.01;
+        // Liste entière, minimum à l'en-tête, maximum à 60 % de la place.
+        let (wanted, min, max) = favorites_heights(3, 600.0);
+        assert!(approx(wanted, 139.0));
+        assert!(approx(min, 49.0));
+        assert!(approx(max, 360.0));
+        // Fenêtre basse : la hauteur voulue ne dépasse pas le maximum.
+        let (wanted, min, max) = favorites_heights(3, 150.0);
+        assert!(approx(wanted, 90.0));
+        assert!(approx(min, 49.0));
+        assert!(approx(max, 90.0));
+        // Replié, le panneau n'a que la hauteur de son en-tête.
+        assert!(approx(favorites_heights(0, 600.0).0, 49.0));
+    }
+
+    #[test]
+    fn tirer_la_separation_des_favoris_agrandit_le_panneau() {
+        use egui::{Event, Modifiers, PointerButton, Pos2, Rect, Vec2};
+
+        let context = egui::Context::default();
+        let mut editor = EditorState::default();
+        let screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 800.0));
+        let frame = |editor: &EditorState, events: Vec<Event>, time: f64| -> egui::Id {
+            let input = egui::RawInput {
+                screen_rect: Some(screen),
+                events,
+                time: Some(time),
+                ..Default::default()
+            };
+            let mut scope = egui::Id::NULL;
+            let output = context.run_ui(input, |root| {
+                egui::CentralPanel::default().show(root, |ui| {
+                    scope = ui.scope_id();
+                    editor.favorites(ui, Path::new("/tmp"), &mut Vec::new());
+                });
+            });
+            output.drop_without_applying_deltas();
+            scope
+        };
+
+        let scope = frame(&editor, Vec::new(), 0.0);
+        // Le panneau reçoit un identifiant déjà salé, que le panneau sale à nouveau.
+        let id = scope.with_salt(egui::IdSalt::new(scope.with("textedit-favoris")));
+        let panel = egui::PanelState::load(&context, id).expect("le panneau des favoris est posé");
+        let before = panel.size().y;
+        assert!(before > ROW_HEIGHT, "l'en-tête et la liste sont visibles");
+
+        // Pression sur le trait de séparation…
+        let start = panel.outer_rect.center_top();
+        let press = |pos| Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        };
+        frame(&editor, vec![Event::PointerMoved(start), press(start)], 0.1);
+        // … puis glissement de 40 points vers le haut, et relâchement.
+        let end = start - Vec2::new(0.0, 40.0);
+        frame(&editor, vec![Event::PointerMoved(end)], 0.2);
+        frame(
+            &editor,
+            vec![Event::PointerButton {
+                pos: end,
+                button: PointerButton::Primary,
+                pressed: false,
+                modifiers: Modifiers::NONE,
+            }],
+            0.3,
+        );
+
+        let after = egui::PanelState::load(&context, id)
+            .expect("le panneau des favoris est toujours posé")
+            .size()
+            .y;
+        assert!(
+            (after - (before + 40.0)).abs() < 1.5,
+            "la séparation suit la souris : {before} puis {after}"
+        );
+
+        // Replié, le panneau se réduit à son en-tête…
+        editor.favorites_open = false;
+        let closed_scope = frame(&editor, Vec::new(), 0.4);
+        let closed_id =
+            closed_scope.with_salt(egui::IdSalt::new(closed_scope.with("textedit-favoris-replie")));
+        let closed = egui::PanelState::load(&context, closed_id)
+            .expect("le panneau replié est posé")
+            .size()
+            .y;
+        assert!((closed - 49.0).abs() < 0.5, "en-tête seul : {closed}");
+        // … et déplié, il retrouve la hauteur choisie, pas celle de l'en-tête.
+        editor.favorites_open = true;
+        frame(&editor, Vec::new(), 0.5);
+        let reopened = egui::PanelState::load(&context, id)
+            .expect("le panneau déplié est toujours posé")
+            .size()
+            .y;
+        assert!((reopened - after).abs() < 0.5, "hauteur retrouvée : {reopened}");
     }
 
     #[test]

@@ -355,6 +355,122 @@ impl eframe::App for FerriteApp {
         ui.painter()
             .rect_filled(ui.max_rect(), egui::CornerRadius::ZERO, style::background());
         self.view.update(ui);
+        if !style::inside_ferrite() {
+            resize_edges(ui);
+        }
+    }
+}
+
+/// Bords de la fenêtre qui la redimensionnent (fenêtre sans décorations hors de Ferrite),
+/// et un trait fin qui la détache des fenêtres voisines.
+fn resize_edges(ui: &mut egui::Ui) {
+    use egui::{CursorIcon, ResizeDirection};
+    let rect = ui.max_rect();
+    let (maximized, fullscreen) = ui.input(|input| {
+        let viewport = input.viewport();
+        (
+            viewport.maximized.unwrap_or(false),
+            viewport.fullscreen.unwrap_or(false),
+        )
+    });
+    if maximized || fullscreen {
+        return;
+    }
+    ui.painter().rect_stroke(
+        rect,
+        egui::CornerRadius::ZERO,
+        egui::Stroke::new(1.0, style::separator()),
+        egui::StrokeKind::Inside,
+    );
+    const EDGE: f32 = 5.0;
+    const CORNER: f32 = 14.0;
+    let (left, right, top, bottom) = (rect.left(), rect.right(), rect.top(), rect.bottom());
+    let zones = [
+        (
+            egui::Rect::from_min_max(egui::pos2(left, top), egui::pos2(left + CORNER, top + EDGE)),
+            ResizeDirection::NorthWest,
+            CursorIcon::ResizeNorthWest,
+        ),
+        (
+            egui::Rect::from_min_max(egui::pos2(left, top), egui::pos2(left + EDGE, top + CORNER)),
+            ResizeDirection::NorthWest,
+            CursorIcon::ResizeNorthWest,
+        ),
+        (
+            egui::Rect::from_min_max(egui::pos2(right - CORNER, top), egui::pos2(right, top + EDGE)),
+            ResizeDirection::NorthEast,
+            CursorIcon::ResizeNorthEast,
+        ),
+        (
+            egui::Rect::from_min_max(egui::pos2(right - EDGE, top), egui::pos2(right, top + CORNER)),
+            ResizeDirection::NorthEast,
+            CursorIcon::ResizeNorthEast,
+        ),
+        (
+            egui::Rect::from_min_max(egui::pos2(left, bottom - EDGE), egui::pos2(left + CORNER, bottom)),
+            ResizeDirection::SouthWest,
+            CursorIcon::ResizeSouthWest,
+        ),
+        (
+            egui::Rect::from_min_max(egui::pos2(left, bottom - CORNER), egui::pos2(left + EDGE, bottom)),
+            ResizeDirection::SouthWest,
+            CursorIcon::ResizeSouthWest,
+        ),
+        (
+            egui::Rect::from_min_max(
+                egui::pos2(right - CORNER, bottom - EDGE),
+                egui::pos2(right, bottom),
+            ),
+            ResizeDirection::SouthEast,
+            CursorIcon::ResizeSouthEast,
+        ),
+        (
+            egui::Rect::from_min_max(
+                egui::pos2(right - EDGE, bottom - CORNER),
+                egui::pos2(right, bottom),
+            ),
+            ResizeDirection::SouthEast,
+            CursorIcon::ResizeSouthEast,
+        ),
+        (
+            egui::Rect::from_min_max(egui::pos2(left, top), egui::pos2(right, top + EDGE)),
+            ResizeDirection::North,
+            CursorIcon::ResizeNorth,
+        ),
+        (
+            egui::Rect::from_min_max(egui::pos2(left, bottom - EDGE), egui::pos2(right, bottom)),
+            ResizeDirection::South,
+            CursorIcon::ResizeSouth,
+        ),
+        (
+            egui::Rect::from_min_max(egui::pos2(left, top), egui::pos2(left + EDGE, bottom)),
+            ResizeDirection::West,
+            CursorIcon::ResizeWest,
+        ),
+        (
+            egui::Rect::from_min_max(egui::pos2(right - EDGE, top), egui::pos2(right, bottom)),
+            ResizeDirection::East,
+            CursorIcon::ResizeEast,
+        ),
+    ];
+    // Le premier bord touché l'emporte : les coins avant les côtés.
+    let pointer = ui.input(|input| input.pointer.hover_pos());
+    let Some((zone, direction, cursor)) =
+        pointer.and_then(|at| zones.into_iter().find(|(zone, ..)| zone.contains(at)))
+    else {
+        return;
+    };
+    let response = ui.interact(
+        zone,
+        ui.scope_id().with(("bord", format!("{direction:?}"))),
+        egui::Sense::drag(),
+    );
+    if response.hovered() || response.dragged() {
+        ui.ctx().set_cursor_icon(cursor);
+    }
+    if response.drag_started() {
+        ui.ctx()
+            .send_viewport_cmd(egui::ViewportCommand::BeginResize(direction));
     }
 }
 

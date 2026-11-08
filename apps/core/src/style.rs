@@ -700,8 +700,10 @@ pub fn toolbar_with(
     line: Color32,
     add: impl FnOnce(&mut egui::Ui),
 ) {
-    let left: i8 = if buttons { 46 } else { 14 };
-    let right: i8 = 46;
+    // Hors de Ferrite, les trois boutons (réduire, agrandir, fermer) sont à droite.
+    let native = inside_ferrite();
+    let left: i8 = if buttons && native { 46 } else { 14 };
+    let right: i8 = if native { 46 } else { 106 };
     egui::Panel::top(ui.scope_id().with("ferrite-header"))
         .resizable(false)
         .exact_size(TOOLBAR_HEIGHT)
@@ -725,10 +727,18 @@ pub fn toolbar_with(
             // Fond déplaçable, enregistré avant les boutons pour qu'ils restent prioritaires.
             drag_area(ui, full, "barre");
             let inset = ferrite_ui::theme::WINDOW_BUTTON_INSET as f32;
-            if buttons {
-                close_button(ui, egui::pos2(full.left() + inset, full.center().y));
+            if !native {
+                let at =
+                    |rank: f32| egui::pos2(full.right() - inset - rank * WINDOW_BUTTON_GAP, full.center().y);
+                close_button(ui, at(0.0));
+                zoom_button(ui, at(1.0));
+                minimize_button(ui, at(2.0));
+            } else {
+                if buttons {
+                    close_button(ui, egui::pos2(full.left() + inset, full.center().y));
+                }
+                zoom_button(ui, egui::pos2(full.right() - inset, full.center().y));
             }
-            zoom_button(ui, egui::pos2(full.right() - inset, full.center().y));
             // Centré en hauteur, sans étirer les éléments (pastilles, onglets).
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), add);
         });
@@ -758,6 +768,9 @@ pub fn sidebar(
             let top = egui::Rect::from_min_size(full.min, egui::vec2(full.width(), TOOLBAR_HEIGHT));
             if buttons {
                 drag_area(ui, top, "colonne");
+            }
+            // Hors de Ferrite, le bouton fermer est à droite, dans la barre d'outils.
+            if buttons && inside_ferrite() {
                 close_button(
                     ui,
                     egui::pos2(
@@ -813,13 +826,43 @@ pub fn drag_area(ui: &mut egui::Ui, rect: egui::Rect, salt: &str) {
     }
 }
 
+/// Écart entre les centres des boutons de fenêtre côte à côte (hors de Ferrite).
+const WINDOW_BUTTON_GAP: f32 = 30.0;
+
+/// Vrai dans la session Ferrite : ferrite-shell y donne bords, ombre et redimensionnement,
+/// et le Dock remplace le bouton réduire. Ailleurs (GNOME, KDE, Xfce…), la fenêtre garde sa
+/// propre barre, sans barre de titre imposée, avec réduire, agrandir et fermer à droite.
+pub fn inside_ferrite() -> bool {
+    static INSIDE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *INSIDE.get_or_init(|| {
+        std::env::var("XDG_CURRENT_DESKTOP").is_ok_and(|desktop| {
+            desktop
+                .split(':')
+                .any(|name| name.eq_ignore_ascii_case("ferrite"))
+        })
+    })
+}
+
+/// Rôle d'un bouton de fenêtre.
+#[derive(Clone, Copy, PartialEq)]
+enum WindowButton {
+    Close,
+    Zoom,
+    Minimize,
+}
+
 /// Bouton de fenêtre : pastille de 22 px et symbole, rouge (fermer) ou couleur d'accent
-/// (agrandir) au survol, estompé si la fenêtre n'a pas le focus.
-fn window_button(ui: &mut egui::Ui, center: egui::Pos2, close: bool) -> egui::Response {
+/// (agrandir, réduire) au survol, estompé si la fenêtre n'a pas le focus.
+fn window_button(ui: &mut egui::Ui, center: egui::Pos2, kind: WindowButton) -> egui::Response {
+    let close = kind == WindowButton::Close;
     use ferrite_ui::theme::WINDOW_BUTTON_RADIUS;
     let radius = WINDOW_BUTTON_RADIUS as f32;
     let rect = egui::Rect::from_center_size(center, egui::vec2(2.0 * radius + 2.0, 2.0 * radius + 2.0));
-    let salt = if close { "fermer" } else { "agrandir" };
+    let salt = match kind {
+        WindowButton::Close => "fermer",
+        WindowButton::Zoom => "agrandir",
+        WindowButton::Minimize => "reduire",
+    };
     let response = ui.interact(rect, ui.scope_id().with(salt), egui::Sense::click());
     let focused = ui.input(|input| input.viewport().focused.unwrap_or(true));
     let active_palette = palette();
@@ -844,7 +887,9 @@ fn window_button(ui: &mut egui::Ui, center: egui::Pos2, close: bool) -> egui::Re
     let painter = ui.painter();
     painter.circle_filled(center, radius, fill);
     let at = |x: f32, y: f32| center + egui::vec2(x, y);
-    if close {
+    if kind == WindowButton::Minimize {
+        painter.line_segment([at(-3.5, 0.0), at(3.5, 0.0)], Stroke::new(1.6, ink));
+    } else if close {
         let stroke = Stroke::new(1.6, ink);
         painter.line_segment([at(-3.0, -3.0), at(3.0, 3.0)], stroke);
         painter.line_segment([at(3.0, -3.0), at(-3.0, 3.0)], stroke);
@@ -866,17 +911,24 @@ fn window_button(ui: &mut egui::Ui, center: egui::Pos2, close: bool) -> egui::Re
 
 /// Bouton « fermer », à gauche de la barre de la fenêtre.
 pub fn close_button(ui: &mut egui::Ui, center: egui::Pos2) {
-    if window_button(ui, center, true).clicked() {
+    if window_button(ui, center, WindowButton::Close).clicked() {
         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
     }
 }
 
 /// Bouton « agrandir », à droite de la barre de la fenêtre.
 pub fn zoom_button(ui: &mut egui::Ui, center: egui::Pos2) {
-    if window_button(ui, center, false).clicked() {
+    if window_button(ui, center, WindowButton::Zoom).clicked() {
         let maximized = ui.input(|input| input.viewport().maximized.unwrap_or(false));
         ui.ctx()
             .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+    }
+}
+
+/// Bouton « réduire » (hors de Ferrite seulement : dans Ferrite, le Dock s'en charge).
+pub fn minimize_button(ui: &mut egui::Ui, center: egui::Pos2) {
+    if window_button(ui, center, WindowButton::Minimize).clicked() {
+        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Minimized(true));
     }
 }
 

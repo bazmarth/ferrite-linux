@@ -2542,3 +2542,47 @@ sur le PC, lecture seule : PackageKit relit les dépôts en 2 s et répond 0 mis
 (`apt list --upgradable` aussi) ; capture du bureau imbriqué : « Le système est à jour ».
 Pas vérifié : la liste avec des paquets et « Tout installer » (aucune mise à jour en attente
 sur le PC) : demande du mot de passe par l'agent polkit, progression, message d'erreur.
+
+## 2026-11-08 — TextEdit : séparation des favoris réglable
+
+Demande de l'utilisateur : « dans textedit rendre la separation entre explorateur et
+favorise redimensionnable ». Le trait entre l'arborescence et les favoris se tire à la
+souris.
+- Panneau des favoris redimensionnable : poignée sur le trait (curseur haut-bas), de
+  l'en-tête seul (49 points) à 60 % de la hauteur de l'explorateur. Ouvert, il prend
+  d'abord la hauteur de sa liste.
+- Liste plus haute que la place : elle défile (`ScrollArea`) au lieu d'être coupée.
+- Replié par le chevron, le panneau change d'identifiant : la hauteur choisie pour la liste
+  n'est pas écrasée par celle de l'en-tête, et revient au dépliage.
+- `favorites_heights` calcule hauteur voulue, minimum et maximum ; `ROW_HEIGHT`,
+  `FAVORITES_TOP` et `FAVORITES_BOTTOM` remplacent les valeurs écrites en dur. L'ancien
+  trait dessiné à la main est retiré : le trait du panneau egui sert de poignée et
+  s'éclaire au survol.
+Vérifié : CI (sans shellcheck) ; tests `la_separation_des_favoris_se_tire` (hauteurs) et
+`tirer_la_separation_des_favoris_agrandit_le_panneau` (glissement de 40 points simulé dans
+egui, repli puis dépliage qui retrouve la hauteur) ; capture du bureau imbriqué : la
+disposition par défaut ne change pas.
+Pas vérifié : le glissement à la souris sur le vrai bureau (écran éteint pendant la
+vérification ; capture faite après l'avoir rallumé par un inhibiteur d'inactivité).
+
+## 2026-11-08 — TextEdit : paquet .deb autonome
+
+Demande de l'utilisateur : un .deb de TextEdit installable sur GNOME, Kali, Ubuntu…, sans
+barre de titre imposée, avec sa propre barre et les boutons réduire, agrandir et fermer à
+droite.
+- `tools/deb-textedit.sh` : compile en release et écrit
+  `build/ferrite-textedit_VERSION_amd64.deb` (binaire dans `/usr/lib/ferrite-textedit`,
+  commande `/usr/bin/ferrite-textedit`, entrée de menu `ferrite-textedit.desktop` au nom de
+  l'app_id, icône hicolor). Dépendances : glibc lue dans le binaire (2.39 : Debian 13,
+  Ubuntu 24.04 ou plus récent, Kali ; pas Debian 12 ni Ubuntu 22.04), GStreamer, Wayland,
+  EGL/GL, X11.
+- Hors de Ferrite (`style::inside_ferrite`, d'après `XDG_CURRENT_DESKTOP`) : toutes les
+  applications gardent leur barre, sans décorations du système ; réduire, agrandir et
+  fermer sont à droite de la barre d'outils (plus de fermer dans la colonne) ; bords de 5
+  points pour redimensionner et trait fin autour de la fenêtre (`resize_edges`). Dans
+  Ferrite, rien ne change.
+Vérifié : CI (sans shellcheck) ; contenu et droits du paquet (`dpkg-deb -c`) ; captures du
+bureau imbriqué avec `XDG_CURRENT_DESKTOP=GNOME` (trois boutons à droite) et sans (fermer à
+gauche comme avant).
+Pas vérifié : installation réelle et essai sous GNOME, Kali ou Ubuntu (pas de machine ni de
+conteneur ici) ; redimensionnement par les bords et bouton réduire sur un vrai GNOME.

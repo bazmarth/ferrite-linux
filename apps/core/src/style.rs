@@ -475,6 +475,18 @@ pub(crate) fn font_definitions() -> FontDefinitions {
         .entry(FontFamily::Monospace)
         .or_default()
         .insert(0, "ferrite-mono".into());
+    // Emoji en couleur, juste après la police principale : avant les emoji en noir et
+    // blanc fournis par egui.
+    if let Some(emoji) = color_emoji() {
+        fonts.font_data.insert("ferrite-emoji".into(), emoji);
+        for family in [FontFamily::Proportional, FontFamily::Monospace] {
+            fonts
+                .families
+                .entry(family)
+                .or_default()
+                .insert(1, "ferrite-emoji".into());
+        }
+    }
     fonts.font_data.insert(
         "ferrite-mono-bold".into(),
         Arc::new(FontData::from_static(include_bytes!(
@@ -499,6 +511,24 @@ pub(crate) fn font_definitions() -> FontDefinitions {
     strong.extend(fonts.families[&FontFamily::Proportional].iter().cloned());
     fonts.families.insert(FontFamily::Name("strong".into()), strong);
     fonts
+}
+
+/// Police d'emoji en couleur du système (Noto Color Emoji, paquet
+/// `fonts-noto-color-emoji`), lue une fois par programme. Rien si elle manque.
+fn color_emoji() -> Option<Arc<FontData>> {
+    static EMOJI: std::sync::OnceLock<Option<Arc<FontData>>> = std::sync::OnceLock::new();
+    EMOJI
+        .get_or_init(|| {
+            [
+                "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
+                "/usr/share/fonts/noto/NotoColorEmoji.ttf",
+                "/usr/share/fonts/google-noto-color-emoji-fonts/NotoColorEmoji.ttf",
+            ]
+            .iter()
+            .find_map(|path| std::fs::read(path).ok())
+            .map(|bytes| Arc::new(FontData::from_owned(bytes)))
+        })
+        .clone()
 }
 
 fn apply_theme(context: &egui::Context) {

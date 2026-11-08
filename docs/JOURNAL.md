@@ -2314,3 +2314,21 @@ Vérifié : CI (sans shellcheck), deux tests (SVG reconnu, badge dessiné) ; cap
 imbriqué sur le README : les six badges s'affichent sur deux lignes, texte compris.
 Pas vérifié : sans réseau (doit afficher l'étiquette), le clic sur un badge.
 Reste : les commentaires HTML (`<!-- … -->`) du README s'affichent en texte.
+
+## 2026-11-08 — Applications : emoji en couleur ; adresses avec parenthèses
+
+Demandes de l'utilisateur (captures) : les emoji s'affichaient en case « NO GLYPH », et des
+badges du README (« Generative AI (.NET) ») restaient en texte.
+- `style::font_definitions` ajoute Noto Color Emoji du système (paquet
+  `fonts-noto-color-emoji`, déjà dans l'image) juste après Inter et JetBrains Mono, pour
+  toutes les applications egui. egui 0.37 dessine les glyphes en couleur avec la fonction
+  `color_fonts` d'epaint, activée par une dépendance directe (`epaint`, sans nouvelle
+  bibliothèque).
+- `markdown::link_at` : l'adresse d'un lien ou d'une image peut contenir des parenthèses
+  équilibrées. `curl` reçoit `--globoff` (crochets d'une adresse pris tels quels).
+Vérifié : CI (sans shellcheck), test `adresse_avec_parentheses` ; captures du bureau
+imbriqué : emoji en couleur dans l'éditeur et l'aperçu (🚀 🌐 😀 🦀 👍🏽 🇫🇷 ✅ 🔒 📚 🎥), les
+quatre badges « Generative AI » affichés.
+Pas vérifié : les autres applications (Fichiers, Paramètres) et le vrai bureau.
+Reste : « ⚠️ » s'affiche en noir (le caractère ⚠ est pris dans une police avant l'emoji) ; la
+barre du haut et le Dock (ferrite-shell) n'utilisent pas ces polices.

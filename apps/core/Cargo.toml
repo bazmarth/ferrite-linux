@@ -13,6 +13,8 @@ path = "src/main.rs"
 [dependencies]
 alacritty_terminal = "0.26"
 eframe = { version = "0.37", default-features = false, features = ["clipboard", "default_fonts", "glow", "wayland", "x11"] }
+# Seulement pour sa fonction `color_fonts` : emoji en couleur (Noto Color Emoji).
+epaint = { version = "0.37", default-features = false, features = ["color_fonts"] }
 ferrite-system = { path = "../../services/system" }
 ferrite-ui = { path = "../../ui" }
 gstreamer = "0.25"

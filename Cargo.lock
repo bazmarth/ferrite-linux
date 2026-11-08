@@ -1171,6 +1171,7 @@ version = "0.1.0"
 dependencies = [
  "alacritty_terminal",
  "eframe",
+ "epaint",
  "ferrite-system",
  "ferrite-ui",
  "gstreamer",
@@ -1586,6 +1587,7 @@ dependencies = [
  "hashbrown 0.17.1",
  "log",
  "peniko",
+ "png",
  "skrifa",
  "smallvec",
  "vello_common",
@@ -4776,6 +4778,7 @@ dependencies = [
  "guillotiere",
  "log",
  "peniko",
+ "png",
  "smallvec",
  "thiserror 2.0.21",
 ]
@@ -4789,6 +4792,7 @@ dependencies = [
  "bytemuck",
  "glifo",
  "hashbrown 0.17.1",
+ "png",
  "vello_common",
 ]
 

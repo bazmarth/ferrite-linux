@@ -63,7 +63,7 @@ fn download(url: &str, file: &Path) -> Option<()> {
     fs::create_dir_all(file.parent()?).ok()?;
     let partial = file.with_extension("part");
     let status = Command::new("curl")
-        .args(["-fsSL", "--max-time", "20", "--max-filesize"])
+        .args(["-fsSL", "--globoff", "--max-time", "20", "--max-filesize"])
         .arg(MAX_BYTES.to_string())
         .arg("-o")
         .arg(&partial)

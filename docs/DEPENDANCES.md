@@ -19,6 +19,7 @@ Chaque dépendance avec sa licence et la raison de sa présence. Les versions ex
 | `zbus` 5 (`blocking-api`) | ferrite-shell, ferrite-apps, xdg-desktop-portal-ferrite | MIT | serveur `org.freedesktop.Notifications`, logind (veille, bouton d'alimentation), agent polkit, MPRIS (îlot, Musique), portail `FileChooser` ; imposé par le plan |
 | `alacritty_terminal` 0.26 | ferrite-apps | Apache-2.0 | émulation du Terminal ; imposé par le plan |
 | `eframe` 0.37 | ferrite-apps | MIT/Apache-2.0 | fenêtres natives Wayland de toutes les applications Ferrite ; rendu GLES et prise en charge clavier/souris |
+| `epaint` 0.37 (déjà tiré par eframe) | ferrite-apps | MIT/Apache-2.0 | seulement pour activer `color_fonts` : emoji en couleur (police Noto Color Emoji du système) ; aucune bibliothèque nouvelle |
 | `winit` 0.30.13 (copie dans `third_party/winit`) | ferrite-apps (par eframe) | Apache-2.0 | remplace la version de crates.io (`[patch.crates-io]`) pour transmettre le pincement du pavé tactile sous Wayland ; détails dans `third_party/winit/FERRITE.md` |
 | `async-channel` 2 | ferrite-shell | MIT/Apache-2.0 | réponses de l'agent polkit attendues sans bloquer la boucle |
 | `libc` 0.2 | ferrite-shell | MIT/Apache-2.0 | `statvfs` : espace disque libre affiché par le bureau |

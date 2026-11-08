@@ -543,8 +543,24 @@ fn link_at(chars: &[char], i: usize) -> Option<(usize, usize, usize)> {
     if j >= chars.len() || chars.get(j + 1) != Some(&'(') {
         return None;
     }
-    let close = chars[j + 2..].iter().position(|&c| c == ')')? + j + 2;
-    Some((i + 1, j, close + 1))
+    // L'adresse peut contenir des parenthèses équilibrées : « badge/IA%20(.NET)-violet ».
+    let mut depth = 0;
+    let mut close = None;
+    let mut k = j + 2;
+    while k < chars.len() {
+        match chars[k] {
+            '\\' => k += 1,
+            '(' => depth += 1,
+            ')' if depth == 0 => {
+                close = Some(k);
+                break;
+            }
+            ')' => depth -= 1,
+            _ => {}
+        }
+        k += 1;
+    }
+    Some((i + 1, j, close? + 1))
 }
 
 /// Adresse d'un lien « [texte](adresse "titre") » : sans le titre ni les chevrons.
@@ -695,6 +711,19 @@ mod tests {
             ]
         );
         assert!(spans[0].link.is_empty());
+    }
+
+    #[test]
+    fn adresse_avec_parentheses() {
+        let blocks = parse("[![IA (.NET)](https://b.io/badge/IA%20(.NET)-93?s=1)](https://g.com/x)\n");
+        match blocks.first() {
+            Some(Block::Image { alt, path, link }) => {
+                assert_eq!(alt, "IA (.NET)");
+                assert_eq!(path, "https://b.io/badge/IA%20(.NET)-93?s=1");
+                assert_eq!(link, "https://g.com/x");
+            }
+            other => panic!("pas une image : {other:?}"),
+        }
     }
 
     #[test]

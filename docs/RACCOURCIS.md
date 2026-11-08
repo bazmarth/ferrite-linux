@@ -64,6 +64,12 @@ dialogue.
 
 | Application | Action | Clavier |
 |---|---|---|
+| Calendrier | Nouvel événement / nouvelle tâche | Ctrl + N / Ctrl + T |
+| Calendrier | Rechercher (titres, lieux, descriptions, notes) | Ctrl + F ; Échap efface |
+| Calendrier | Vue Jour / Semaine / Mois / Agenda | Ctrl + 1 / 2 / 3 / 4 |
+| Calendrier | Période précédente / suivante, revenir à aujourd'hui | ← / →, T (hors d'un champ) |
+| Calendrier | Enregistrer le dialogue | Ctrl + Entrée ; Échap annule |
+| Calendrier | Nouvel événement à une heure précise | double-clic dans la grille (Jour, Semaine) ou sur un jour (Mois) |
 | Fichiers | Nouvel onglet / fermer l'onglet | Ctrl + T / Ctrl + W (ou clic du milieu) |
 | Fichiers | Onglet suivant / précédent | Ctrl + Tab / Ctrl + Maj + Tab |
 | Fichiers | Chercher (dossier et sous-dossiers) | taper une lettre hors d'un champ ; Échap efface |

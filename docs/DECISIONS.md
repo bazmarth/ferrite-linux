@@ -367,3 +367,21 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
   (`zram-size = ram / 2`, zstd, priorité 100) et `vm.swappiness = 180`,
   `vm.page-cluster = 0` (comme Fedora et Pop!_OS). L'échange du disque reste en secours.
   Écarté : `mlockall` dans le bureau (limite `memlock` de 8 Mo pour l'utilisateur).
+
+- **2026-11-08 — Calendrier : heure locale « flottante » et fichiers texte.** Les dates
+  sont gardées en heure locale sans fuseau (un rendez-vous à 9 h reste à 9 h après un
+  changement d'heure ou de fuseau), comme la plupart des agendas personnels ; l'heure
+  actuelle vient de `date +%z`, relu chaque minute. Pas de nouvelle dépendance (ni chrono
+  ni serde) : calcul des jours maison (Howard Hinnant) testé, et fichiers `clé=valeur` en
+  français dans `~/.local/share/ferrite/calendrier/` (`agenda`, `rappels`), lisibles et
+  écrits par renommage atomique. Écarté pour l'instant : import/export iCalendar (.ics).
+- **2026-11-08 — Rappels du Calendrier par un service à part.** `ferrite-apps rappels`
+  (sans fenêtre, un par dossier de données grâce à un verrou) est lancé par le bureau à
+  l'ouverture de session et par le Calendrier ; il regarde chaque minute les rappels dus
+  et les envoie au centre de notifications (`org.freedesktop.Notifications`) avec
+  « Ouvrir », « Reporter 10 min » et « OK ». L'état (envoyé, reporté, acquitté) est dans
+  le fichier `rappels`, écrit sous verrou par le service et par l'application : rien n'est
+  annoncé deux fois, et un rappel manqué ordinateur éteint est rattrapé au retour s'il date
+  de moins d'un jour et que l'événement n'est pas fini. Le service s'arrête avec le bus de
+  session. Le Calendrier n'est pas épinglé au Dock d'origine (comme l'Horloge) : le Dock
+  des utilisateurs ne change pas.

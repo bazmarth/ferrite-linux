@@ -2612,3 +2612,29 @@ Demande de l'utilisateur : ne pas copier les commentaires des commandes.
   souris copie tout.
 Vérifié : CI (sans shellcheck) ; test `la_copie_laisse_les_commentaires`.
 Pas vérifié : collage dans un vrai terminal.
+
+## 2026-11-08 — Calendrier : nouvelle application
+
+Demande de l'utilisateur : une application Calendrier complète (événements, tâches,
+rappels, productivité), intégrée à Ferrite, sur la branche `benchmark/calendar-claude`.
+- `apps/core/src/calendar/` (`ferrite-apps calendar`, `app_id` `ferrite-calendar`, au menu
+  Applications) : vues Mois, Semaine, Jour (grille horaire, chevauchements en colonnes,
+  trait de l'heure actuelle), Agenda ; Aujourd'hui (anneau de progression), À venir,
+  En retard (« Tout reporter à aujourd'hui »), Tâches (listes, filtres, tri, progression) ;
+  recherche ; catégories masquables ; petit calendrier dans la colonne, qui se replie sous
+  780 points de large.
+- Événements : titre, lieu, description, catégorie, journée entière, plusieurs jours,
+  répétition (jour, semaine avec jours choisis, mois, an, intervalle, fin par date ou
+  nombre), modification ou suppression d'une occurrence seule ou de toute la série.
+- Tâches : liste, échéance (date, heure facultative), priorité, terminée, événement lié,
+  rappels.
+- Rappels : plusieurs par événement ou tâche ; service `ferrite-apps rappels` lancé par le
+  bureau (voir DECISIONS) ; bandeau « Rappels en attente » avec Reporter et OK.
+- Rubriques d'ouverture : `ferrite-apps calendar aujourdhui|taches|a-venir|en-retard|jour|
+  semaine|mois|agenda|nouvel-evenement|nouvelle-tache|AAAA-MM-JJ`.
+Vérifié : CI (sans shellcheck ; `tools/ci.sh` et `check-colors.sh` lancés par `sh`, le
+dossier de travail n'ayant pas le droit d'exécution) ; 33 tests du Calendrier ; captures du
+bureau imbriqué (bus à part) en clair et en sombre, fenêtre large et étroite (`--scale
+3.4`) ; une vraie notification de rappel reçue par le bureau imbriqué, avec ses boutons.
+Pas vérifié : clics réels (création, glisser, boutons des notifications) sur le vrai bureau ;
+lancement du service à l'ouverture d'une vraie session (ISO non reconstruite).

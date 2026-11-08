@@ -87,7 +87,7 @@ fn reminders_editor(ui: &mut egui::Ui, id: &str, reminders: &mut Vec<u32>, all_d
         ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
         let mut removed = None;
         for (index, minutes) in reminders.iter().enumerate() {
-            let text = format!("{}  ✕", reminder_label(*minutes, all_day));
+            let text = format!("{}  ×", reminder_label(*minutes, all_day));
             if kit::button(ui, &text, false)
                 .on_hover_text("Retirer ce rappel")
                 .clicked()

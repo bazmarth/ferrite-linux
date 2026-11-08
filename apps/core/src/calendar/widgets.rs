@@ -378,7 +378,7 @@ impl TimeInput {
             let field = ui.add(
                 egui::TextEdit::singleline(&mut self.text)
                     .id_salt(("heure", id))
-                    .desired_width(52.0)
+                    .desired_width(64.0)
                     .hint_text("hh:mm"),
             );
             if field.changed()

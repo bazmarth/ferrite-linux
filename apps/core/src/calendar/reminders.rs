@@ -86,6 +86,11 @@ impl Reminder {
         match self.target {
             Target::Event(id, at) => {
                 let event = agenda.event(id)?;
+                // Événement déjà terminé : plus rien à rappeler (rattrapage après un arrêt).
+                let start = if event.all_day { at.date.at(0) } else { at };
+                if start.add_minutes(event.duration()) <= now {
+                    return None;
+                }
                 let mut parts = Vec::new();
                 parts.push(when(at, now, event.all_day));
                 if !event.all_day {
@@ -102,10 +107,16 @@ impl Reminder {
                 if task.done {
                     return None;
                 }
-                let deadline = if task.due_time.is_some() {
-                    format!("Échéance {} à {}", day_word(at, now), clock(at.minute))
+                let late = task.is_overdue(now);
+                let lead = if late {
+                    "En retard, échéance"
                 } else {
-                    format!("Échéance {}", day_word(at, now))
+                    "Échéance"
+                };
+                let deadline = if task.due_time.is_some() {
+                    format!("{lead} {} à {}", day_word(at, now), clock(at.minute))
+                } else {
+                    format!("{lead} {}", day_word(at, now))
                 };
                 Some((title_or_default(&task.title, "Tâche"), deadline))
             }
@@ -371,8 +382,13 @@ fn open_calendar() {
     }
 }
 
-/// Suit les boutons des notifications : « Reporter », « OK », clic, fermeture.
-fn listen(connection: zbus::blocking::Connection, sent: Arc<Mutex<HashMap<u32, String>>>, path: PathBuf) {
+/// Suit les boutons des notifications : « Reporter », « OK », clic, fermeture. Vrai quand
+/// le bus s'est fermé.
+fn listen(
+    connection: zbus::blocking::Connection,
+    sent: Arc<Mutex<HashMap<u32, String>>>,
+    path: PathBuf,
+) -> bool {
     let rule = match zbus::MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
         .interface(BUS_NAME)
@@ -381,14 +397,14 @@ fn listen(connection: zbus::blocking::Connection, sent: Arc<Mutex<HashMap<u32, S
         Ok(rule) => rule.build(),
         Err(error) => {
             eprintln!("rappels : boutons non suivis : {error}");
-            return;
+            return false;
         }
     };
     let messages = match zbus::blocking::MessageIterator::for_match_rule(rule, &connection, None) {
         Ok(messages) => messages,
         Err(error) => {
             eprintln!("rappels : boutons non suivis : {error}");
-            return;
+            return false;
         }
     };
     for message in messages.flatten() {
@@ -432,6 +448,8 @@ fn listen(connection: zbus::blocking::Connection, sent: Arc<Mutex<HashMap<u32, S
             eprintln!("rappels : état non enregistré : {error}");
         }
     }
+    // Fin des messages : le bus est fermé.
+    true
 }
 
 /// Service de rappels (`ferrite-apps rappels`) : tourne jusqu'à la fin de la session.
@@ -457,7 +475,12 @@ pub fn run_service() -> i32 {
         let path = book_path.clone();
         let spawned = std::thread::Builder::new()
             .name("rappels-boutons".to_owned())
-            .spawn(move || listen(connection, sent, path));
+            .spawn(move || {
+                // Le bus de session s'est fermé : la session est finie, le service aussi.
+                if listen(connection, sent, path) {
+                    std::process::exit(0);
+                }
+            });
         if let Err(error) = spawned {
             eprintln!("rappels : boutons non suivis : {error}");
         }
@@ -618,9 +641,10 @@ mod tests {
         book.mark_sent(&reminders_between(&agenda, morning, morning)[0].key(), morning);
         let reread = Book::parse(&book.format());
         assert_eq!(reread, book);
-        // Éteint de 8 h à midi : 8 h 45 et la tâche de 9 h sont rattrapés, 8 h non.
-        let noon = date(2026, 11, 9).at(12 * 60);
-        assert_eq!(reread.due(&agenda, noon).len(), 2);
+        // Éteint de 8 h à 9 h 05 (rendez-vous en cours) : 8 h 45 et la tâche de 9 h sont
+        // rattrapés, 8 h non (déjà annoncé).
+        let back = date(2026, 11, 9).at(9 * 60 + 5);
+        assert_eq!(reread.due(&agenda, back).len(), 2);
         // Au-delà d'un jour, plus rien n'est rattrapé de la veille.
         let later = date(2026, 11, 11).at(7 * 60);
         assert!(
@@ -659,6 +683,24 @@ mod tests {
                 .unwrap()
                 .describe(&agenda, now)
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn un_evenement_termine_ne_rappelle_plus() {
+        let agenda = agenda();
+        // Dentiste de 9 h à 9 h 30 : à 9 h 40, ses rappels manqués ne sont plus annoncés.
+        let after = date(2026, 11, 9).at(9 * 60 + 40);
+        let due = Book::default().due(&agenda, after);
+        assert!(
+            due.iter().all(|r| matches!(r.target, Target::Task(..))),
+            "{due:?}"
+        );
+        let task = Reminder::parse_key("t:2:2026-11-09T09:00:0").unwrap();
+        let late = date(2026, 11, 10).at(8 * 60);
+        assert_eq!(
+            task.describe(&agenda, late).unwrap().1,
+            "En retard, échéance hier"
         );
     }
 

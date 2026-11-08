@@ -153,8 +153,8 @@ impl CalendarState {
     }
 
     /// Rubrique demandée au lancement ou par un autre lancement : « aujourdhui », « taches »,
-    /// « a-venir », « en-retard », « jour », « semaine », « mois », « agenda », ou une date
-    /// « 2026-11-09 ».
+    /// « a-venir », « en-retard », « jour », « semaine », « mois », « agenda »,
+    /// « nouvel-evenement », « nouvelle-tache », ou une date « 2026-11-09 ».
     pub fn open(&mut self, target: &str) {
         let today = date::now().date;
         match target {
@@ -166,6 +166,12 @@ impl CalendarState {
             "semaine" => self.show_mode(Mode::Week),
             "mois" => self.show_mode(Mode::Month),
             "agenda" => self.show_mode(Mode::Agenda),
+            "nouvel-evenement" => {
+                let now = date::now();
+                let start = now.date.at((now.minute / 60 + 1).min(23) * 60);
+                self.apply(Action::NewEvent(start, false));
+            }
+            "nouvelle-tache" => self.apply(Action::NewTask(Some(today))),
             other => {
                 if let Some(day) = Date::parse_input(other, today) {
                     self.cursor = day;
@@ -176,10 +182,22 @@ impl CalendarState {
         }
     }
 
+    /// Heure montrée en haut de la grille : 7 h, ou un peu avant l'heure actuelle si le jour
+    /// montré est aujourd'hui (le soir, la grille ne s'ouvre pas sur la matinée).
+    fn first_hour(cursor: Date) -> u32 {
+        let now = date::now();
+        if cursor.week_start() == now.date.week_start() {
+            let before = if now.minute < 9 * 60 { 60 } else { 120 };
+            now.minute.saturating_sub(before) / 60 * 60
+        } else {
+            7 * 60
+        }
+    }
+
     fn show_mode(&mut self, mode: Mode) {
         self.page = Page::Calendar;
         if mode != self.mode && matches!(mode, Mode::Day | Mode::Week) {
-            self.scroll_to = Some(7 * 60);
+            self.scroll_to = Some(Self::first_hour(self.cursor));
         }
         self.mode = mode;
     }
@@ -381,10 +399,31 @@ impl CalendarState {
     fn go_today(&mut self) {
         self.cursor = date::now().date;
         self.shown = self.cursor;
-        self.scroll_to = Some(date::now().minute.saturating_sub(90));
+        self.scroll_to = Some(Self::first_hour(self.cursor));
     }
 
     /// Titre de la barre selon la vue.
+    /// Titre court, pour une fenêtre étroite : « nov. 2026 », « 2 – 8 nov. », « dim. 8 nov. ».
+    fn short_title(&self) -> String {
+        if self.page != Page::Calendar {
+            return self.title();
+        }
+        let month = |date: Date| date::MONTHS_SHORT[date.month as usize - 1];
+        match self.mode {
+            Mode::Month => format!("{} {}", month(self.cursor), self.cursor.year),
+            Mode::Day | Mode::Agenda => self.cursor.short(),
+            Mode::Week => {
+                let first = self.cursor.week_start();
+                let last = first.add_days(6);
+                if first.month == last.month {
+                    format!("{} – {} {}", first.day, last.day, month(last))
+                } else {
+                    format!("{} {} – {} {}", first.day, month(first), last.day, month(last))
+                }
+            }
+        }
+    }
+
     fn title(&self) -> String {
         match self.page {
             Page::Today => "Aujourd’hui".to_owned(),
@@ -537,7 +576,12 @@ impl CalendarState {
                     }
                     match self.page {
                         Page::Calendar => {
-                            if !waiting.is_empty() && self.mode != Mode::Agenda {
+                            // Dans une fenêtre basse, la grille garde sa place : les rappels
+                            // restent dans « Aujourd'hui » et dans les notifications.
+                            if !waiting.is_empty()
+                                && self.mode != Mode::Agenda
+                                && ui.available_height() > 620.0
+                            {
                                 views::waiting_reminders(ui, &mut view, &waiting);
                             }
                             match self.mode {
@@ -649,25 +693,50 @@ impl CalendarState {
             }
         }
         ui.add_space(8.0);
-        let compact = width < 620.0;
-        let title_room = (width - if self.page == Page::Calendar { 560.0 } else { 300.0 }).max(80.0);
         let title = self.title();
-        let font = FontId::new(if compact { 14.0 } else { 16.0 }, style::strong_family());
-        let (rect, _) = ui.allocate_exact_size(egui::vec2(title_room.min(320.0), 30.0), Sense::hover());
+        let calendar = self.page == Page::Calendar && self.search.trim().is_empty();
+        let font = FontId::new(16.0, style::strong_family());
+        let title_width = ui
+            .painter()
+            .layout_no_wrap(title.clone(), font.clone(), style::primary_text())
+            .size()
+            .x;
+        // Place prise à droite : recherche (avec ses marges), puis segments ou menu des vues.
+        let right = |compact: bool| {
+            (if compact { 100.0 } else { 190.0 })
+                + 20.0
+                + if calendar {
+                    if compact { 90.0 } else { 300.0 }
+                } else {
+                    0.0
+                }
+        };
+        // Segments des vues seulement si le titre tient à côté ; sinon un menu.
+        let compact = width < 620.0 || ui.available_width() - right(false) - 12.0 < title_width;
+        let title_room = (ui.available_width() - right(compact) - 4.0).max(40.0);
+        let (rect, _) = ui.allocate_exact_size(
+            egui::vec2(title_room.min(title_width + 2.0), 30.0),
+            Sense::hover(),
+        );
         let shown = {
             let painter = ui.painter();
+            let fits = |text: &str| {
+                painter
+                    .layout_no_wrap(text.to_owned(), font.clone(), style::primary_text())
+                    .size()
+                    .x
+                    <= rect.width()
+            };
+            let title = if fits(&title) {
+                title.clone()
+            } else {
+                self.short_title()
+            };
+            let mut chars: Vec<char> = title.chars().collect();
             let mut text = title.clone();
-            while painter
-                .layout_no_wrap(text.clone(), font.clone(), style::primary_text())
-                .size()
-                .x
-                > rect.width()
-                && text.chars().count() > 2
-            {
-                text.pop();
-                text = text.trim_end_matches('…').to_owned();
-                text.pop();
-                text.push('…');
+            while !fits(&text) && chars.len() > 1 {
+                chars.pop();
+                text = chars.iter().collect::<String>().trim_end().to_owned() + "…";
             }
             text
         };
@@ -678,11 +747,16 @@ impl CalendarState {
             font,
             style::primary_text(),
         );
-        if self.page == Page::Calendar && self.mode == Mode::Week && !compact {
+        // Numéro de semaine, s'il reste de la place.
+        if self.page == Page::Calendar
+            && self.mode == Mode::Week
+            && ui.available_width() - right(compact) > 70.0
+        {
+            ui.add_space(6.0);
             kit::note(ui, &format!("Sem. {}", self.cursor.iso_week()));
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let field_width = if compact { 120.0 } else { 190.0 };
+            let field_width = if compact { 100.0 } else { 190.0 };
             let field = ui.add(
                 egui::TextEdit::singleline(&mut self.search)
                     .hint_text("Rechercher")
@@ -700,7 +774,7 @@ impl CalendarState {
                 if compact {
                     egui::ComboBox::from_id_salt("vue-calendrier")
                         .selected_text(self.mode.label())
-                        .width(90.0)
+                        .width(78.0)
                         .show_ui(ui, |ui| {
                             for mode in Mode::ALL {
                                 if ui.selectable_label(self.mode == mode, mode.label()).clicked() {
@@ -1064,6 +1138,7 @@ mod tests {
         assert_eq!(state.title(), "7 – 13 décembre 2026");
         state.step(-1);
         assert_eq!(state.title(), "30 nov. – 6 déc. 2026");
+        assert_eq!(state.short_title(), "30 nov. – 6 déc.");
         state.show_mode(Mode::Day);
         state.step(1);
         assert_eq!(state.title(), "Mercredi 2 décembre 2026");

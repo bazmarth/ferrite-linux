@@ -25,7 +25,7 @@ pub const MONTHS: [&str; 12] = [
     "décembre",
 ];
 
-const MONTHS_SHORT: [&str; 12] = [
+pub const MONTHS_SHORT: [&str; 12] = [
     "janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc.",
 ];
 

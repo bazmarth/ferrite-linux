@@ -273,11 +273,7 @@ pub fn month(ui: &mut egui::Ui, view: &mut Painter, cursor: Date) {
         // Numéro du jour, rond d'accent aujourd'hui.
         let number = egui::pos2(rect.left() + 16.0, rect.top() + 14.0);
         let label = if day.day == 1 && !narrow {
-            format!(
-                "{} {}",
-                day.day,
-                date::MONTHS[day.month as usize - 1].get(..4).unwrap_or("")
-            )
+            format!("{} {}", day.day, date::MONTHS_SHORT[day.month as usize - 1])
         } else {
             day.day.to_string()
         };
@@ -648,7 +644,11 @@ pub fn time_grid(
                 y,
                 Stroke::new(1.0, style::separator()),
             );
-            if hour > 0 {
+            // L'étiquette de l'heure actuelle remplace celle d'une heure trop proche.
+            let near_now = first.days() <= today.days()
+                && today.days() < last.days()
+                && (i64::from(view.now.minute) - i64::from(hour) * 60).abs() < 15;
+            if hour > 0 && !near_now {
                 painter.text(
                     egui::pos2(grid.left() + GUTTER - 10.0, y),
                     egui::Align2::RIGHT_CENTER,

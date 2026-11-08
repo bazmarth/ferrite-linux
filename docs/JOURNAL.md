@@ -2480,3 +2480,19 @@ Vérifié : CI (sans shellcheck) ; rustc observé en nice 15 / idle pendant une 
 binaires release déjà compilés gardés (aucune recompilation après l'ajout du relais).
 Pas vérifié : le relais dans le conteneur de `vm-build.sh` (prévu : sans `ionice`, il garde
 seulement nice) ; le ressenti de l'utilisateur pendant une grosse compilation.
+
+## 2026-11-08 — TextEdit : « ⚠️ » et autres emoji à sélecteur en couleur
+
+Reste de l'entrée « emoji en couleur » : « ⚠️ » s'affichait en noir. egui choisit la police
+caractère par caractère et ignore le sélecteur U+FE0F : Inter a un « ⚠ » noir, pris avant
+Noto Color Emoji.
+- `style::emoji_family` (famille « emoji » : Noto Color Emoji d'abord, puis les polices du
+  texte ; même liste que le texte si la police d'emoji manque) et
+  `style::emoji_presentation`, qui place chaque caractère suivi de U+FE0F dans cette
+  famille. Appelée par l'éditeur (`highlight::layout_job`) et l'aperçu (`markdown_job`).
+Vérifié : CI (sans shellcheck), test `caractere_suivi_de_fe0f_en_emoji` ; capture du bureau
+imbriqué : ⚠️ ❤️ ☀️ ✈️ ☎️ ▶️ en couleur dans l'éditeur et l'aperçu (gras et code compris) ;
+sans sélecteur, ⚠ ❤ ☀ restent en noir dans l'aperçu.
+Pas vérifié : le vrai bureau. Hors champ : les autres textes des applications (noms de
+fichiers, étiquettes) et les emoji composés (« 1️⃣ », drapeaux régionaux à plusieurs
+caractères hors 🇫🇷 déjà vérifié).

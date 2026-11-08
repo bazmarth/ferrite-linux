@@ -104,6 +104,7 @@ pub fn layout_job(
             start = end;
         }
     }
+    crate::style::emoji_presentation(&mut job);
     job
 }
 

@@ -2937,6 +2937,7 @@ fn markdown_job(ui: &egui::Ui, spans: &[markdown::Span], size: f32, color: Color
         }
         job.append(&span.text, 0.0, format);
     }
+    style::emoji_presentation(&mut job);
     job
 }
 

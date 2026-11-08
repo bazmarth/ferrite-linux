@@ -510,7 +510,80 @@ pub(crate) fn font_definitions() -> FontDefinitions {
     let mut strong = vec!["ferrite-inter-semibold".to_owned()];
     strong.extend(fonts.families[&FontFamily::Proportional].iter().cloned());
     fonts.families.insert(FontFamily::Name("strong".into()), strong);
+    // Caractère suivi de U+FE0F (« ⚠️ », « ❤️ ») : emoji en couleur d'abord, même si Inter
+    // a une version en noir de ce caractère. Sans police d'emoji, même liste que le texte.
+    let mut emoji: Vec<String> = fonts
+        .font_data
+        .contains_key("ferrite-emoji")
+        .then(|| "ferrite-emoji".to_owned())
+        .into_iter()
+        .collect();
+    emoji.extend(
+        fonts.families[&FontFamily::Proportional]
+            .iter()
+            .filter(|name| *name != "ferrite-emoji")
+            .cloned(),
+    );
+    fonts.families.insert(emoji_family(), emoji);
     fonts
+}
+
+/// Famille des caractères en présentation emoji (suivis de U+FE0F).
+pub fn emoji_family() -> FontFamily {
+    FontFamily::Name("emoji".into())
+}
+
+/// Sélecteur de variante « emoji » : le caractère qui le précède veut être en couleur.
+const EMOJI_SELECTOR: char = '\u{FE0F}';
+
+/// Met chaque caractère suivi de U+FE0F dans la famille [`emoji_family`] : egui choisit la
+/// police caractère par caractère, sans regarder le sélecteur, et prendrait sinon la version
+/// en noir de « ⚠ » ou « ❤ » qu'ont Inter et JetBrains Mono.
+pub fn emoji_presentation(job: &mut egui::text::LayoutJob) {
+    if !job.text.contains(EMOJI_SELECTOR) {
+        return;
+    }
+    let text = &job.text;
+    let mut sections = Vec::with_capacity(job.sections.len() + 2);
+    for section in job.sections.drain(..) {
+        let range = section.byte_range.start.0..section.byte_range.end.0;
+        let mut pieces: Vec<(std::ops::Range<usize>, bool)> = Vec::new();
+        let mut start = range.start;
+        let mut chars = text[range.clone()].char_indices().peekable();
+        while let Some((at, ch)) = chars.next() {
+            if ch == EMOJI_SELECTOR {
+                continue;
+            }
+            if let Some(&(selector, EMOJI_SELECTOR)) = chars.peek() {
+                let (at, end) = (
+                    range.start + at,
+                    range.start + selector + EMOJI_SELECTOR.len_utf8(),
+                );
+                pieces.push((start..at, false));
+                pieces.push((at..end, true));
+                start = end;
+                chars.next();
+            }
+        }
+        pieces.push((start..range.end, false));
+        let mut first = true;
+        for (byte_range, emoji) in pieces {
+            if byte_range.is_empty() {
+                continue;
+            }
+            let mut piece = section.clone();
+            piece.byte_range = egui::text::ByteIndex(byte_range.start)..egui::text::ByteIndex(byte_range.end);
+            if !first {
+                piece.leading_space = 0.0;
+            }
+            if emoji {
+                piece.format.font_id.family = emoji_family();
+            }
+            sections.push(piece);
+            first = false;
+        }
+    }
+    job.sections = sections;
 }
 
 /// Police d'emoji en couleur du système (Noto Color Emoji, paquet
@@ -1314,5 +1387,34 @@ mod tests {
                 "{name} est vide"
             );
         }
+    }
+
+    #[test]
+    fn caractere_suivi_de_fe0f_en_emoji() {
+        let mut job = egui::text::LayoutJob::default();
+        let format = egui::TextFormat::simple(FontId::proportional(14.0), Color32::WHITE);
+        job.append("Attention ⚠\u{FE0F} ici ⚠ !", 2.0, format);
+        emoji_presentation(&mut job);
+        let pieces: Vec<(&str, bool, f32)> = job
+            .sections
+            .iter()
+            .map(|section| {
+                (
+                    &job.text[section.byte_range.start.0..section.byte_range.end.0],
+                    section.format.font_id.family == emoji_family(),
+                    section.leading_space,
+                )
+            })
+            .collect();
+        assert_eq!(
+            pieces,
+            [
+                ("Attention ", false, 2.0),
+                ("⚠\u{FE0F}", true, 0.0),
+                (" ici ⚠ !", false, 0.0),
+            ]
+        );
+        // La famille existe toujours, police d'emoji présente ou non.
+        assert!(font_definitions().families.contains_key(&emoji_family()));
     }
 }

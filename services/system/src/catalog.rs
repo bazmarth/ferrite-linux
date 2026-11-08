@@ -84,6 +84,15 @@ pub const APPS: &[AppInfo] = &[
         true,
     ),
     app(
+        "calendar",
+        "ferrite-calendar",
+        "Calendrier",
+        "app-calendar",
+        (1180, 760),
+        (480, 460),
+        false,
+    ),
+    app(
         "clock",
         "ferrite-clock",
         "Horloge",

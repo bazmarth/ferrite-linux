@@ -179,6 +179,11 @@ fn run(options: Options) -> Result<u8, Box<dyn std::error::Error>> {
     desktop::file_drag::listen(&event_loop.handle(), &state.socket_name.to_string_lossy());
     protocols::xwayland::start(&event_loop.handle(), &mut state);
     state.publish_environment();
+    // Rappels du Calendrier : un service par session (pas pour un bureau imbriqué, qui
+    // partage la session de celui qui l'a lancé).
+    if !has_display {
+        desktop::apps::App::start_reminders(&state.client_environment());
+    }
 
     if let Some((program, args)) = options.command.split_first() {
         // WAYLAND_DISPLAY est passé explicitement au client, sans toucher à notre

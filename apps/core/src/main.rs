@@ -1,7 +1,8 @@
 //! Applications de base Ferrite : Fichiers, TextEdit, Terminal, Calculatrice, Horloge,
-//! Paramètres, Moniteur d'activité, Visionneuse, lecteur PDF et Musique.
+//! Paramètres, Moniteur d'activité, Visionneuse, lecteur PDF, Musique et Calendrier.
 
 mod calculator;
+mod calendar;
 mod chooser;
 mod clock;
 mod details;
@@ -67,6 +68,7 @@ fn create(
         "textedit" => opened(Box::<EditorState>::default()),
         "terminal" => Box::new(TerminalState::new(context, launch)),
         "calculator" => Box::new(CalculatorState::default()),
+        "calendar" => opened(Box::<calendar::CalendarState>::default()),
         // `ferrite-apps clock minuteur` : l'Horloge ouvre directement cet onglet.
         "clock" => Box::new(ClockState::with_tab(
             target.as_deref().and_then(|path| path.to_str()),
@@ -114,6 +116,15 @@ impl AppView for EditorState {
     }
     fn open(&mut self, target: PathBuf) {
         EditorState::open(self, target);
+    }
+}
+
+impl AppView for calendar::CalendarState {
+    fn update(&mut self, ui: &mut egui::Ui) {
+        calendar::CalendarState::update(self, ui);
+    }
+    fn open(&mut self, target: PathBuf) {
+        calendar::CalendarState::open(self, &target.to_string_lossy());
     }
 }
 
@@ -204,6 +215,11 @@ fn main() -> eframe::Result {
             .nth(2)
             .is_some_and(|path| files::print_video_frame(Path::new(&path)));
         std::process::exit(if ok { 0 } else { 1 });
+    }
+    // Service des rappels du Calendrier, sans fenêtre : lancé par le bureau à l'ouverture
+    // de session (et par le Calendrier), il annonce les rappels même Calendrier fermé.
+    if env::args().nth(1).as_deref() == Some("rappels") {
+        std::process::exit(calendar::reminders::run_service());
     }
     let Some(info) = args.next().and_then(|arg| catalog::by_command(&arg)) else {
         let commands: Vec<&str> = catalog::APPS.iter().map(|app| app.command).collect();

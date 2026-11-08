@@ -332,6 +332,18 @@ impl App {
         }
     }
 
+    /// Service des rappels du Calendrier (`ferrite-apps rappels`), sans fenêtre : lancé à
+    /// l'ouverture de session pour que les rappels arrivent même Calendrier fermé. Il se
+    /// retire seul s'il tourne déjà.
+    pub fn start_reminders(env: &[(String, String)]) {
+        let mut command = ferrite_command("ferrite-apps");
+        command.arg("rappels");
+        command.envs(env.iter().map(|(key, value)| (key, value)));
+        if let Err(err) = spawn_detached(command) {
+            tracing::warn!(%err, "rappels du Calendrier indisponibles");
+        }
+    }
+
     /// Lance l'application comme client du compositeur.
     pub fn launch(self, env: &[(String, String)]) {
         self.launch_with(env, &[]);

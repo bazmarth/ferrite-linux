@@ -1240,6 +1240,27 @@ pub fn sidebar_heading(ui: &mut egui::Ui, text: &str) {
 
 /// Symboles au trait des pages de Paramètres, repris tels quels des planches.
 const GLYPHS: &[(&str, &str)] = &[
+    // Calendrier : colonne latérale.
+    (
+        "glyph-calendar",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M6 4 H18 a2 2 0 0 1 2 2 V19 a2 2 0 0 1 -2 2 H6 a2 2 0 0 1 -2 -2 V6 a2 2 0 0 1 2 -2 Z M4 9.5 H20 M8 2.5 V5.5 M16 2.5 V5.5" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "glyph-today",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8 a4 4 0 1 0 0.01 0 M12 2 V4 M12 20 V22 M2 12 H4 M20 12 H22 M4.9 4.9 L6.3 6.3 M17.7 17.7 L19.1 19.1 M4.9 19.1 L6.3 17.7 M17.7 6.3 L19.1 4.9" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "glyph-upcoming",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 12 H16 M11 6 L17 12 L11 18 M21 5 V19" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "glyph-overdue",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 3.5 L21.5 20 H2.5 Z M12 10 V14 M12 17 V17.1" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "glyph-tasks",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3.5 6 L5 7.5 L7.5 5 M3.5 12 L5 13.5 L7.5 11 M3.5 18 L5 19.5 L7.5 17 M11 6.5 H20.5 M11 12.5 H20.5 M11 18.5 H20.5" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
     (
         "glyph-wifi",
         r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M2 9 a15 15 0 0 1 20 0 M5.5 12.5 a10 10 0 0 1 13 0 M9 16 a5 5 0 0 1 6 0 M12 19.5 V19.6" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,

@@ -16,7 +16,7 @@ Chaque dépendance avec sa licence et la raison de sa présence. Les versions ex
 | `tracing`, `tracing-subscriber` | ferrite-shell | MIT | journal (celui de Smithay) ; niveau réglable par `RUST_LOG` |
 | `resvg` 0.49 (sans fonctions par défaut) | ferrite-shell, ferrite-apps | Apache-2.0/MIT | rendu des icônes SVG de `ferrite-theme` et `icons/SVG` (Dock, barre du haut, menus, Fichiers) ; sans `text` dans ferrite-shell (les icônes n'utilisent que des tracés). ferrite-apps active `text` et `system-fonts` pour les badges SVG de l'aperçu Markdown (ajoute `fontdb`, `fontconfig-parser`, `roxmltree`, `unicode-bidi`, `unicode-script`, `unicode-vo`, `xmlwriter`, `base64`, tous MIT/Apache) |
 | `ferrite-system` (interne) | ferrite-shell, ferrite-apps | MIT | services du système avec délai maximal ; aucune dépendance externe |
-| `zbus` 5 (`blocking-api`) | ferrite-shell, ferrite-apps, xdg-desktop-portal-ferrite | MIT | serveur `org.freedesktop.Notifications`, logind (veille, bouton d'alimentation), agent polkit, MPRIS (îlot, Musique), portail `FileChooser` ; imposé par le plan |
+| `zbus` 5 (`blocking-api`) | ferrite-shell, ferrite-apps, xdg-desktop-portal-ferrite | MIT | serveur `org.freedesktop.Notifications`, logind (veille, bouton d'alimentation), agent polkit, MPRIS (îlot, Musique), portail `FileChooser`, envoi Bluetooth (`obexd`) ; imposé par le plan |
 | `alacritty_terminal` 0.26 | ferrite-apps | Apache-2.0 | émulation du Terminal ; imposé par le plan |
 | `eframe` 0.37 | ferrite-apps | MIT/Apache-2.0 | fenêtres natives Wayland de toutes les applications Ferrite ; rendu GLES et prise en charge clavier/souris |
 | `epaint` 0.37 (déjà tiré par eframe) | ferrite-apps | MIT/Apache-2.0 | seulement pour activer `color_fonts` : emoji en couleur (police Noto Color Emoji du système) ; aucune bibliothèque nouvelle |
@@ -53,6 +53,7 @@ Liste : `image/config/package-lists/ferrite.list.chroot`. Points notables :
 | `power-profiles-daemon` | `powerprofilesctl` : tuile « Économie d'énergie » |
 | `pkexec`, `polkitd`, `accountsservice` | mot de passe administrateur (agent polkit du bureau), « Ouvrir en administrateur », enregistrement du visage |
 | `gnome-keyring`, `libpam-gnome-keyring`, `gcr` | coffre à mots de passe (Secret Service) des navigateurs et d'Electron |
+| `bluez-obexd` | `obexd` (bus de session) : « Envoyer par Bluetooth » dans Fichiers (profil Object Push) |
 | `ntfs-3g` | disques et clés formatés sous Windows |
 | `libgstreamer1.0-0`, `gstreamer1.0-plugins-base`, `-good`, `gstreamer1.0-libav` | Lecteur vidéo, Musique, caméra infrarouge ; libav pour le H.264 |
 | `libglib2.0-bin`, `gsettings-desktop-schemas`, `dconf-gsettings-backend` | thème clair/sombre et ordre des boutons annoncés aux applications GTK |

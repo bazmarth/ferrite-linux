@@ -9,6 +9,8 @@ use std::{
 
 use ferrite_system::{command, config::Accent};
 
+use super::file_art::{self, Emblem};
+
 /// Étiquettes proposées tant que l'utilisateur n'a rien changé, comme sur la planche.
 const DEFAULT_TAGS: [(&str, Accent); 3] = [
     ("Travail", Accent::Blue),
@@ -308,6 +310,114 @@ impl Tags {
     }
 }
 
+/// Couleur et emblème choisis pour un dossier ou un fichier (`None` : ceux d'origine).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Custom {
+    /// Indice dans `file_art::SWATCHES`.
+    pub color: Option<usize>,
+    pub emblem: Option<Emblem>,
+}
+
+/// Icônes personnalisées, gardées dans `~/.config/ferrite/icones` : une ligne
+/// « couleur<TAB>emblème<TAB>chemin » par élément (champ vide : celui d'origine).
+#[derive(Debug, Default)]
+pub struct Looks {
+    by_path: BTreeMap<PathBuf, Custom>,
+}
+
+fn looks_path() -> PathBuf {
+    ferrite_system::config::Settings::path().with_file_name("icones")
+}
+
+/// Lit le fichier des icônes personnalisées.
+pub fn parse_looks(text: &str) -> BTreeMap<PathBuf, Custom> {
+    let mut map = BTreeMap::new();
+    for line in text.lines() {
+        let mut fields = line.splitn(3, '\t');
+        let (Some(color), Some(emblem), Some(path)) = (fields.next(), fields.next(), fields.next()) else {
+            continue;
+        };
+        let custom = Custom {
+            color: file_art::swatch(color),
+            emblem: Emblem::from_key(emblem),
+        };
+        if !path.is_empty() && custom != Custom::default() {
+            map.insert(PathBuf::from(path), custom);
+        }
+    }
+    map
+}
+
+impl Looks {
+    pub fn load() -> Self {
+        Looks {
+            by_path: fs::read_to_string(looks_path())
+                .map(|text| parse_looks(&text))
+                .unwrap_or_default(),
+        }
+    }
+
+    fn save(&self) {
+        let text: String = self
+            .by_path
+            .iter()
+            .map(|(path, custom)| {
+                format!(
+                    "{}\t{}\t{}\n",
+                    custom.color.map_or("", |index| file_art::SWATCHES[index].0),
+                    custom.emblem.map_or("", Emblem::key),
+                    path.display()
+                )
+            })
+            .collect();
+        write_config(&looks_path(), &text);
+    }
+
+    pub fn get(&self, path: &Path) -> Option<&Custom> {
+        self.by_path.get(path)
+    }
+
+    /// Couleur et emblème affichés pour le dossier `path`.
+    pub fn folder(&self, path: &Path, home: &Path) -> (usize, Emblem) {
+        let (color, emblem) = file_art::folder_default(path, home);
+        let custom = self.get(path).copied().unwrap_or_default();
+        (custom.color.unwrap_or(color), custom.emblem.unwrap_or(emblem))
+    }
+
+    /// Couleur choisie pour l'étiquette du fichier `path`.
+    pub fn file_color(&self, path: &Path) -> Option<eframe::egui::Color32> {
+        self.get(path)?.color.map(|index| file_art::SWATCHES[index].2)
+    }
+
+    /// Change la couleur ou l'emblème de `path` ; `None` pour les deux rétablit l'origine.
+    pub fn set(&mut self, path: &Path, color: Option<usize>, emblem: Option<Emblem>) {
+        let mut custom = self.get(path).copied().unwrap_or_default();
+        if color.is_some() {
+            custom.color = color;
+        }
+        if emblem.is_some() {
+            custom.emblem = emblem;
+        }
+        if color.is_none() && emblem.is_none() {
+            custom = Custom::default();
+        }
+        if custom == Custom::default() {
+            self.by_path.remove(path);
+        } else {
+            self.by_path.insert(path.to_path_buf(), custom);
+        }
+        self.save();
+    }
+
+    /// Un élément déplacé ou renommé garde son icône.
+    pub fn moved(&mut self, from: &Path, to: &Path) {
+        if let Some(custom) = self.by_path.remove(from) {
+            self.by_path.insert(to.to_path_buf(), custom);
+            self.save();
+        }
+    }
+}
+
 fn write_config(path: &Path, text: &str) {
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
@@ -326,6 +436,14 @@ pub fn disk_usage(path: &Path) -> Option<(u64, u64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn icones_personnalisees() {
+        let map = parse_looks("vert\t\t/a/Projets\n\tetoile\t/a/b c\n\t\t/vide\nmauvais\n");
+        assert_eq!(map.len(), 2);
+        assert_eq!(map[Path::new("/a/Projets")].color, file_art::swatch("vert"));
+        assert_eq!(map[Path::new("/a/b c")].emblem, Some(Emblem::Etoile));
+    }
 
     #[test]
     fn liste_des_etiquettes() {

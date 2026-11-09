@@ -64,6 +64,8 @@ libspa-0.2-bluetooth
 rtkit
 alsa-ucm-conf
 bluez
+# Fichiers : « Envoyer par Bluetooth » (service obexd, profil Object Push)
+bluez-obexd
 upower
 # Profils d’énergie (tuile « Économie d’énergie », commande powerprofilesctl)
 power-profiles-daemon

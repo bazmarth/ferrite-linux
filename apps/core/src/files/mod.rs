@@ -21,12 +21,14 @@
 //! `Action`, appliquée une fois l'image construite.
 
 mod analysis;
+mod bluetooth;
 mod devices;
 pub(crate) mod file_art;
 mod look;
 mod open_with;
 mod ops;
 mod places;
+pub(crate) use places::Looks;
 mod search;
 mod thumbs;
 pub(crate) mod trash;
@@ -190,6 +192,7 @@ enum Dialog {
     EmptyTrash,
     Properties(Box<Properties>),
     OpenWith(Box<open_with::OpenWith>),
+    Bluetooth(Box<bluetooth::SendDialog>),
     Tag(TagEditor),
     DeleteTag(String),
 }
@@ -239,6 +242,8 @@ enum Update {
     Devices(Disks),
     /// Montage terminé (le mot de passe administrateur a pu être demandé entre-temps).
     Mounted(Result<PathBuf, String>),
+    /// Démontage terminé : nom de l'appareil, et l'erreur éventuelle.
+    Unmounted(String, Result<(), String>),
     FolderSize(PathBuf, (u64, u64)),
 }
 
@@ -251,7 +256,16 @@ enum Action {
     ToggleTheme,
     TogglePreview,
     Share(Vec<PathBuf>),
+    /// Ouvre le choix de l'appareil Bluetooth qui recevra ces fichiers.
+    AskBluetooth(Vec<PathBuf>),
+    /// Envoie les fichiers à l'appareil (adresse, nom).
+    SendBluetooth(Vec<PathBuf>, String, String),
+    /// Paramètres › Bluetooth, pour appairer un appareil.
+    BluetoothSettings,
     ToggleTag(PathBuf, String),
+    /// Couleur (indice de `file_art::SWATCHES`) ou emblème d'une icône ; les deux à
+    /// `None` rétablissent l'icône d'origine.
+    SetLook(PathBuf, Option<usize>, Option<file_art::Emblem>),
     /// Ouvre la fenêtre d'une étiquette (nouvelle si `None`), à poser sur le fichier donné.
     EditTag(Option<String>, Option<PathBuf>),
     SaveTag,
@@ -317,6 +331,8 @@ enum Action {
     CommitPath,
     Mount(Device),
     Eject(Device),
+    /// Démonte une partition (disque interne ou clé) sans l'éteindre.
+    Unmount(Device),
     CloseDialog,
     CancelJob(usize),
     Choose(PathBuf),
@@ -395,6 +411,8 @@ pub struct FilesState {
     lasso: Option<view::Lasso>,
     item_rects: Vec<(egui::Rect, PathBuf)>,
     tags: places::Tags,
+    /// Couleur et emblème choisis pour les dossiers et fichiers.
+    looks: places::Looks,
     thumbs: thumbs::Thumbnails,
     devices_checked: Option<Instant>,
     devices_pending: bool,
@@ -461,6 +479,7 @@ impl Default for FilesState {
             lasso: None,
             item_rects: Vec::new(),
             tags: places::Tags::load(),
+            looks: places::Looks::load(),
             thumbs: thumbs::Thumbnails::default(),
             devices_checked: None,
             devices_pending: false,
@@ -1138,7 +1157,10 @@ panneau={}
             && matches!(
                 &action,
                 Action::Share(_)
+                    | Action::AskBluetooth(_)
+                    | Action::SendBluetooth(_, _, _)
                     | Action::ToggleTag(_, _)
+                    | Action::SetLook(_, _, _)
                     | Action::QuickLook
                     | Action::StartDrag(_)
                     | Action::Drop { .. }
@@ -1197,6 +1219,31 @@ panneau={}
                     "Adresse du fichier copiée".to_owned()
                 });
             }
+            Action::AskBluetooth(paths) => {
+                self.dialog = Some(Dialog::Bluetooth(Box::new(bluetooth::SendDialog::new(
+                    paths, ctx,
+                ))));
+            }
+            Action::SendBluetooth(paths, address, device) => {
+                self.dialog = None;
+                let title = format!("Envoi à {device}");
+                self.run_job(&title, move |job| {
+                    bluetooth::send(&paths, &address, job)?;
+                    job.update(|progress| progress.success = Some(bluetooth::done_message(&paths, &device)));
+                    Ok(())
+                });
+            }
+            Action::BluetoothSettings => {
+                self.dialog = None;
+                let program =
+                    ferrite_system::command::current_exe().unwrap_or_else(|_| "ferrite-apps".into());
+                let mut command = Command::new(program);
+                command.args(["settings", "bluetooth"]);
+                if let Err(error) = spawn_detached(command) {
+                    self.error(format!("Paramètres : {error}"));
+                }
+            }
+            Action::SetLook(path, color, emblem) => self.looks.set(&path, color, emblem),
             Action::ToggleTag(path, tag) => {
                 self.tags.toggle(&path, &tag);
                 if matches!(self.location, Location::Tag(_)) {
@@ -1337,6 +1384,8 @@ panneau={}
                 if let Some((path, name, _)) = self.rename.take() {
                     match ops::rename(&path, &name) {
                         Ok(target) => {
+                            self.tags.moved(&path, &target);
+                            self.looks.moved(&path, &target);
                             self.refresh();
                             self.selected = BTreeSet::from([target]);
                         }
@@ -1570,6 +1619,23 @@ panneau={}
                     ctx.request_repaint();
                 });
             }
+            Action::Unmount(device) => {
+                if self
+                    .current_dir()
+                    .zip(device.mount.as_deref())
+                    .is_some_and(|(dir, mount)| dir.starts_with(mount))
+                {
+                    self.go(Location::Folder(home()));
+                }
+                // Le mot de passe peut être demandé : hors du fil de l'interface.
+                let sender = self.sender.clone();
+                let ctx = ctx.clone();
+                thread::spawn(move || {
+                    let result = devices::unmount(&device);
+                    let _ = sender.send(Update::Unmounted(device.label, result));
+                    ctx.request_repaint();
+                });
+            }
             Action::Eject(device) => {
                 if self
                     .current_dir()
@@ -1723,6 +1789,13 @@ panneau={}
                     self.go(Location::Folder(path));
                 }
                 Update::Mounted(Err(error)) => self.error(error),
+                Update::Unmounted(label, result) => {
+                    self.devices_checked = None;
+                    match result {
+                        Ok(()) => self.info(format!("« {label} » est démonté")),
+                        Err(error) => self.error(error),
+                    }
+                }
                 Update::FolderSize(path, size) => {
                     if let Some(Dialog::Properties(properties)) = &mut self.dialog
                         && properties.path == path
@@ -1765,12 +1838,15 @@ panneau={}
         }
         let mut finished = false;
         let mut errors = Vec::new();
+        let mut successes = Vec::new();
         self.jobs.retain(|job| {
             let progress = job.snapshot();
             if progress.finished {
                 finished = true;
                 if let Some(error) = progress.error {
                     errors.push(format!("{} : {error}", job.title));
+                } else if let Some(success) = progress.success {
+                    successes.push(success);
                 }
             }
             !progress.finished
@@ -1779,6 +1855,8 @@ panneau={}
             self.refresh();
             if let Some(error) = errors.pop() {
                 self.error(error);
+            } else if let Some(success) = successes.pop() {
+                self.info(success);
             }
         }
         // Le dossier suit les changements faits ailleurs (F5 force la relecture).
@@ -2103,7 +2181,21 @@ panneau={}
             } else {
                 vec![entry.path.clone()]
             };
-            item(ui, "Ajouter au bureau", "", true, Action::AddToDesktop(paths));
+            let sendable = bluetooth::sendable(&paths);
+            item(
+                ui,
+                "Ajouter au bureau",
+                "",
+                true,
+                Action::AddToDesktop(paths.clone()),
+            );
+            item(
+                ui,
+                "Envoyer par Bluetooth…",
+                "",
+                sendable,
+                Action::AskBluetooth(paths),
+            );
         }
         style::menu_separator(ui);
         item(ui, "Copier", "Ctrl+C", true, Action::Copy);
@@ -2420,6 +2512,10 @@ panneau={}
             self.open_with_dialog(ctx, actions);
             return;
         }
+        if matches!(self.dialog, Some(Dialog::Bluetooth(_))) {
+            self.bluetooth_dialog(ctx, actions);
+            return;
+        }
         let Some(dialog) = &self.dialog else { return };
         let modal = egui::Modal::new(egui::Id::unique("fichiers-dialogue")).show(ctx, |ui| {
             ui.set_width(380.0);
@@ -2486,8 +2582,8 @@ panneau={}
                         None => {}
                     }
                 }
-                // Dessiné à part (voir `open_with_dialog`).
-                Dialog::OpenWith(_) => {}
+                // Dessinés à part (voir `open_with_dialog` et `bluetooth_dialog`).
+                Dialog::OpenWith(_) | Dialog::Bluetooth(_) => {}
             }
         });
         if modal.should_close() {
@@ -2781,19 +2877,20 @@ fn builtin_app(path: &Path) -> Option<&'static str> {
     formats::builtin_for(path).map(Builtin::command)
 }
 
-/// Icône d'un élément dans `rect` : celle du thème pour un dossier, la page dessinée
-/// avec son extension (ZIP, RAR, PDF…) pour un fichier.
+/// Icône d'un élément dans `rect` : le dossier de couleur avec son emblème, ou la page
+/// avec son extension (ZIP, RAR, PDF…), selon les choix de l'utilisateur (`looks`).
 pub(crate) fn paint_path_icon(
-    icons: &mut Icons,
-    ui: &egui::Ui,
+    looks: &places::Looks,
+    painter: &egui::Painter,
     path: &Path,
     directory: bool,
     rect: egui::Rect,
 ) {
     if directory {
-        icons.paint(ui, path_icon(path, true), rect, IconStyle::Color);
+        let (color, emblem) = looks.folder(path, &home());
+        file_art::paint_folder(painter, rect, file_art::SWATCHES[color].2, emblem);
     } else {
-        file_art::paint(ui.painter(), rect, path);
+        file_art::paint(painter, rect, path, looks.file_color(path));
     }
 }
 

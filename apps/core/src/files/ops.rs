@@ -325,6 +325,8 @@ pub struct Progress {
     pub current: String,
     pub finished: bool,
     pub error: Option<String>,
+    /// Message affiché quand l'opération réussit (« Envoyé à… »).
+    pub success: Option<String>,
 }
 
 /// Opération en cours, partagée entre l'interface et le fil qui travaille.
@@ -348,13 +350,13 @@ impl Job {
         self.progress.lock().map(|p| p.clone()).unwrap_or_default()
     }
 
-    fn update(&self, change: impl FnOnce(&mut Progress)) {
+    pub(super) fn update(&self, change: impl FnOnce(&mut Progress)) {
         if let Ok(mut progress) = self.progress.lock() {
             change(&mut progress);
         }
     }
 
-    fn cancelled(&self) -> bool {
+    pub(super) fn cancelled(&self) -> bool {
         self.cancel.load(Ordering::Relaxed)
     }
 

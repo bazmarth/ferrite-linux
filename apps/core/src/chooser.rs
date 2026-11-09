@@ -18,7 +18,7 @@ use std::{
 use eframe::egui::{self, Frame, Margin, RichText, Sense};
 
 use crate::{
-    files::{format_date, format_size, paint_path_icon, path_icon},
+    files::{Looks, format_date, format_size, paint_path_icon, path_icon},
     kit,
     style::{self, Icons},
 };
@@ -161,6 +161,8 @@ pub struct ChooserState {
     name: String,
     filter: usize,
     icons: Icons,
+    /// Couleur et emblème choisis dans Fichiers.
+    looks: Looks,
     /// Fichier existant : un second appui le remplace.
     confirm_replace: Option<PathBuf>,
     error: Option<String>,
@@ -191,6 +193,7 @@ impl ChooserState {
             entries: Vec::new(),
             selected: Vec::new(),
             icons: Icons::default(),
+            looks: Looks::load(),
             confirm_replace: None,
             error: None,
             new_folder: None,
@@ -477,7 +480,7 @@ impl ChooserState {
                         rect.left_center() + egui::vec2(20.0, 0.0),
                         egui::vec2(22.0, 22.0),
                     );
-                    paint_path_icon(&mut self.icons, ui, &entry.path, entry.directory, icon);
+                    paint_path_icon(&self.looks, ui.painter(), &entry.path, entry.directory, icon);
                     let ink = if selected {
                         style::sidebar_selected_text()
                     } else {

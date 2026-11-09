@@ -2845,3 +2845,61 @@ bureau imbriqué, clair et sombre, sur un dossier de 28 types et un dossier d'ar
 Pas vérifié : vrai bureau ; vue Liste et sélecteur à l'œil ; les icônes du bureau (shell)
 gardent l'ancien dessin ; couleur et emblème personnalisables des dossiers de la planche
 non faits.
+
+## 2026-11-09 — Fichiers : dossiers en couleur, emblèmes, icônes personnalisables
+
+Demande de l'utilisateur : après les étiquettes d'extension, les dessins d'icône, la couleur
+et l'emblème de la planche « Fichiers — icônes personnalisables ».
+- Dossiers dessinés au pinceau (`file_art::paint_folder`) : dos et onglet, feuilles qui
+  dépassent, devant avec reflet, emblème gravé. Couleurs d'origine de la planche :
+  Documents bleu (document), Téléchargements vert, Images rose, Musique violet, Vidéos
+  orange, Bureau (écran), Public (personne), Modèles graphite, dossier perso (maison),
+  dossiers cachés gris, les autres bleus.
+- 10 couleurs (Jaune… Gris) et 15 emblèmes (Aucun, Étoile, Cœur, Document, Image, Musique,
+  Vidéo, Code, Téléchargement, Cadenas, Livre, Écran, Personne, Nuage, Maison) tracés au
+  trait.
+- Panneau d'aperçu (il défile maintenant) : « Couleur » pour un dossier ou un fichier
+  (couleur de l'étiquette), « Emblème » pour un dossier, « Rétablir l'icône d'origine ».
+- Choix gardés dans `~/.config/ferrite/icones` (« couleur<TAB>emblème<TAB>chemin ») ;
+  ils suivent un renommage ou un déplacement dans Fichiers (les étiquettes suivent
+  aussi le renommage, ce qui n'était pas le cas). Lus aussi par le sélecteur de fichiers.
+Vérifié : CI (sans shellcheck) ; tests (dossiers habituels, clés, fichier des icônes) ;
+captures du bureau imbriqué, clair et sombre, dossier perso fictif avec deux dossiers
+personnalisés, panneau ouvert sur un dossier (sélection et défilement forcés le temps de
+la capture, retirés ensuite).
+Pas vérifié : clics réels sur les pastilles et emblèmes (vrai bureau) ; la barre latérale
+garde les icônes du thème ; les icônes du bureau (shell) gardent l'ancien dessin.
+
+## 2026-11-09 — Fichiers : démonter un disque
+
+Demande de l'utilisateur : pouvoir démonter les disques. Avant, seules les clés USB avaient
+un bouton (Éjecter) ; une partition interne montée (FICHIERS, Fedora…) restait montée.
+- Barre latérale, Appareils : bouton à droite de chaque disque monté, « Éjecter » pour
+  une clé (démonte puis éteint), « Démonter » pour un disque interne (sans l'éteindre).
+- Clic droit sur un appareil : Ouvrir, Analyser l'espace, Démonter (monté) ou Monter (pas
+  monté), Éjecter (clé).
+- `devices::unmount` dans un fil à part (le mot de passe peut être demandé par l'agent
+  polkit pour un disque interne) ; si on était dans le disque, retour au dossier perso ;
+  messages clairs : disque occupé, démontage annulé.
+Vérifié : CI (sans shellcheck) ; test des messages ; capture : bouton à côté de FICHIERS
+(seul disque monté), aucun sur Système ni sur les disques non montés.
+Pas vérifié : un vrai démontage (pas essayé, FICHIERS porte le dépôt), fenêtre du mot de
+passe, menu du clic droit à l'œil.
+
+## 2026-11-09 — Fichiers : envoyer des fichiers par Bluetooth
+
+Demande de l'utilisateur : implémenter l'envoi de fichiers par Bluetooth.
+- Clic droit sur un ou plusieurs fichiers → « Envoyer par Bluetooth… » (grisé si la
+  sélection contient un dossier). Dialogue : appareils appairés qui peuvent recevoir
+  (téléphones puis ordinateurs ; casques, souris et claviers écartés), bouton « Allumer le
+  Bluetooth » s'il est éteint, lien vers Paramètres › Bluetooth si rien n'est appairé.
+- `files/bluetooth.rs` : envoi OBEX (profil Object Push) par `obexd` sur le bus de
+  session (zbus) ; un fichier après l'autre, avancement et bouton Annuler dans la bande du
+  bas, 90 s laissées au destinataire pour accepter, message « envoyé à … » à la fin,
+  erreurs en français (service absent, appareil qui refuse ou ne répond pas).
+- `ops::Progress::success` : message affiché quand une tâche réussit.
+- Image : paquet `bluez-obexd` ajouté (absent jusqu'ici : sans lui, rien ne part).
+Vérifié : CI (sans shellcheck) ; tests (choix des appareils, message de fin) ; capture du
+bureau imbriqué, dialogue ouvert (cas « Bluetooth éteint », celui du PC).
+Pas vérifié : un vrai envoi vers un téléphone (`bluez-obexd` n'est pas installé sur le PC,
+et le Bluetooth y était éteint) ; liste des appareils à l'écran ; thème sombre.

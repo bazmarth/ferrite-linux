@@ -179,13 +179,42 @@ pub fn mount(device: &Device) -> Result<PathBuf, String> {
         .ok_or_else(|| format!("Montage inattendu : {}", output.trim()))
 }
 
-/// Démonte et met hors tension : la clé peut être retirée.
-pub fn eject(device: &Device) -> Result<(), String> {
-    if device.mount.is_some() {
+/// Démonte la partition sans éteindre le disque. Une clé se démonte sans mot de passe ;
+/// une partition interne peut le demander (fenêtre de l'agent polkit du bureau).
+pub fn unmount(device: &Device) -> Result<(), String> {
+    let result = if device.removable {
         command::run(
             "udisksctl",
             &["unmount", "--no-user-interaction", "-b", &device.path],
-        )?;
+        )
+    } else {
+        command::run("udisksctl", &["unmount", "-b", &device.path])
+    };
+    result
+        .map(|_| ())
+        .map_err(|error| unmount_error(&device.label, &error.to_string()))
+}
+
+/// Message lisible pour un démontage refusé.
+fn unmount_error(label: &str, error: &str) -> String {
+    let lower = error.to_lowercase();
+    if lower.contains("busy") {
+        format!(
+            "« {label} » est en cours d’utilisation : fermez les fichiers et fenêtres ouverts dessus, puis réessayez."
+        )
+    } else if lower.contains("not authorized") || lower.contains("dismissed") {
+        format!("Démontage de « {label} » annulé.")
+    } else if lower.contains("not mounted") {
+        format!("« {label} » n’est pas monté.")
+    } else {
+        format!("Impossible de démonter « {label} » : {}", error.trim())
+    }
+}
+
+/// Démonte et met hors tension : la clé peut être retirée.
+pub fn eject(device: &Device) -> Result<(), String> {
+    if device.mount.is_some() {
+        unmount(device)?;
     }
     let _ = command::run(
         "udisksctl",
@@ -230,6 +259,15 @@ PATH="/dev/sdc1" PKNAME="sdc" LABEL="" SIZE="4G" RM="0" HOTPLUG="1" TYPE="part" 
         assert_eq!(friendly_label("MonDisque", "ext4", "1T", false), "MonDisque");
         assert_eq!(friendly_label("", "ext4", "165.9G", false), "Disque de 165,9 Go");
         assert_eq!(french_size("901M"), "901 Mo");
+    }
+
+    #[test]
+    fn messages_de_demontage() {
+        assert!(
+            unmount_error("FICHIERS", "Error unmounting /dev/sda4: target is busy")
+                .contains("en cours d’utilisation")
+        );
+        assert!(unmount_error("Clé", "GDBus.Error: Not authorized to perform operation").contains("annulé"));
     }
 
     #[test]

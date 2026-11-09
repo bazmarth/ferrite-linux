@@ -203,13 +203,14 @@ impl FilesState {
             return;
         };
         let icons = &mut self.icons;
+        let looks = &self.looks;
         let logos = &mut self.app_logos;
         let modal = egui::Modal::new(egui::Id::unique("fichiers-ouvrir-avec")).show(ctx, |ui| {
             ui.set_width(380.0);
             // En-tête : icône du fichier, titre, nom du fichier.
             ui.horizontal(|ui| {
                 let (rect, _) = ui.allocate_exact_size(egui::Vec2::splat(40.0), egui::Sense::hover());
-                paint_path_icon(icons, ui, &choice.path, choice.path.is_dir(), rect);
+                paint_path_icon(looks, ui.painter(), &choice.path, choice.path.is_dir(), rect);
                 ui.add_space(4.0);
                 ui.vertical(|ui| {
                     ui.add_space(1.0);

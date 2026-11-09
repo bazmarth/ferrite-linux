@@ -1,7 +1,9 @@
 //! Icônes des fichiers, d'après la planche « Fichiers » : une page blanche au coin plié,
 //! un motif selon la famille (fermeture éclair des archives, lecture des vidéos…) et une
 //! étiquette de couleur où l'extension est écrite (ZIP, RAR, 7Z, DEB, PDF…), pour
-//! reconnaître chaque type d'un coup d'œil. Les dossiers gardent les icônes du thème.
+//! reconnaître chaque type d'un coup d'œil. Les dossiers aussi sont dessinés : une
+//! chemise de couleur, une feuille qui dépasse et un emblème gravé (maison, document,
+//! téléchargement…). Couleur et emblème se changent dans le panneau d'aperçu.
 
 use std::path::Path;
 
@@ -134,8 +136,14 @@ pub(crate) fn badge(path: &Path) -> Option<Badge> {
 }
 
 /// Icône du fichier `path` dans le carré centré sur `rect`.
-pub(crate) fn paint(painter: &egui::Painter, rect: Rect, path: &Path) {
-    paint_badge(painter, rect, badge(path).as_ref());
+/// Icône du fichier `path` ; `color` remplace la couleur de l'étiquette choisie par
+/// l'utilisateur.
+pub(crate) fn paint(painter: &egui::Painter, rect: Rect, path: &Path, color: Option<Color32>) {
+    let mut badge = badge(path);
+    if let (Some(badge), Some(color)) = (badge.as_mut(), color) {
+        badge.color = color;
+    }
+    paint_badge(painter, rect, badge.as_ref());
 }
 
 /// Page d'après la planche (repère de 96 sur 96), étiquette et motif par-dessus.
@@ -332,6 +340,350 @@ fn paint_motif(
     }
 }
 
+// ----- Dossiers : couleur et emblème -----
+
+/// Couleurs proposées pour un dossier ou l'étiquette d'un fichier : clé enregistrée, nom
+/// affiché, teinte (celles de la planche).
+pub(crate) const SWATCHES: [(&str, &str, Color32); 10] = [
+    ("jaune", "Jaune", Color32::from_rgb(0xF2, 0xB0, 0x1E)),
+    ("orange", "Orange", Color32::from_rgb(0xF7, 0x67, 0x07)),
+    ("rouge", "Rouge", Color32::from_rgb(0xE0, 0x31, 0x31)),
+    ("rose", "Rose", Color32::from_rgb(0xD6, 0x33, 0x6C)),
+    ("violet", "Violet", Color32::from_rgb(0x70, 0x48, 0xE8)),
+    ("bleu", "Bleu", Color32::from_rgb(0x2F, 0x6F, 0xDB)),
+    ("sarcelle", "Sarcelle", Color32::from_rgb(0x0C, 0x85, 0x99)),
+    ("vert", "Vert", Color32::from_rgb(0x2F, 0x9E, 0x44)),
+    ("graphite", "Graphite", Color32::from_rgb(0x5C, 0x63, 0x70)),
+    ("gris", "Gris", Color32::from_rgb(0xAD, 0xB5, 0xBD)),
+];
+
+/// Indice d'une couleur de `SWATCHES` par sa clé.
+pub(crate) fn swatch(key: &str) -> Option<usize> {
+    SWATCHES.iter().position(|(k, _, _)| *k == key)
+}
+
+/// Dessin gravé sur un dossier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Emblem {
+    Aucun,
+    Etoile,
+    Coeur,
+    Document,
+    Image,
+    Musique,
+    Video,
+    Code,
+    Telechargement,
+    Cadenas,
+    Livre,
+    Ecran,
+    Personne,
+    Nuage,
+    Maison,
+}
+
+impl Emblem {
+    pub(crate) const ALL: [Emblem; 15] = [
+        Emblem::Aucun,
+        Emblem::Etoile,
+        Emblem::Coeur,
+        Emblem::Document,
+        Emblem::Image,
+        Emblem::Musique,
+        Emblem::Video,
+        Emblem::Code,
+        Emblem::Telechargement,
+        Emblem::Cadenas,
+        Emblem::Livre,
+        Emblem::Ecran,
+        Emblem::Personne,
+        Emblem::Nuage,
+        Emblem::Maison,
+    ];
+
+    /// Clé enregistrée dans le fichier de réglages.
+    pub(crate) fn key(self) -> &'static str {
+        match self {
+            Emblem::Aucun => "aucun",
+            Emblem::Etoile => "etoile",
+            Emblem::Coeur => "coeur",
+            Emblem::Document => "document",
+            Emblem::Image => "image",
+            Emblem::Musique => "musique",
+            Emblem::Video => "video",
+            Emblem::Code => "code",
+            Emblem::Telechargement => "telechargement",
+            Emblem::Cadenas => "cadenas",
+            Emblem::Livre => "livre",
+            Emblem::Ecran => "ecran",
+            Emblem::Personne => "personne",
+            Emblem::Nuage => "nuage",
+            Emblem::Maison => "maison",
+        }
+    }
+
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Emblem::Aucun => "Aucun",
+            Emblem::Etoile => "Étoile",
+            Emblem::Coeur => "Cœur",
+            Emblem::Document => "Document",
+            Emblem::Image => "Image",
+            Emblem::Musique => "Musique",
+            Emblem::Video => "Vidéo",
+            Emblem::Code => "Code",
+            Emblem::Telechargement => "Téléchargement",
+            Emblem::Cadenas => "Cadenas",
+            Emblem::Livre => "Livre",
+            Emblem::Ecran => "Écran",
+            Emblem::Personne => "Personne",
+            Emblem::Nuage => "Nuage",
+            Emblem::Maison => "Maison",
+        }
+    }
+
+    pub(crate) fn from_key(key: &str) -> Option<Emblem> {
+        Emblem::ALL.into_iter().find(|emblem| emblem.key() == key)
+    }
+}
+
+/// Couleur et emblème d'origine d'un dossier : les dossiers habituels du dossier perso
+/// ont les leurs (comme sur la planche), les dossiers cachés sont gris.
+pub(crate) fn folder_default(path: &Path, home: &Path) -> (usize, Emblem) {
+    let index = |key| swatch(key).unwrap_or(5);
+    if path == home {
+        return (index("bleu"), Emblem::Maison);
+    }
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default();
+    if name.starts_with('.') {
+        return (index("gris"), Emblem::Aucun);
+    }
+    if path.parent() != Some(home) {
+        return (index("bleu"), Emblem::Aucun);
+    }
+    match name {
+        "Bureau" | "Desktop" => (index("bleu"), Emblem::Ecran),
+        "Documents" => (index("bleu"), Emblem::Document),
+        "Téléchargements" | "Downloads" => (index("vert"), Emblem::Telechargement),
+        "Images" | "Pictures" => (index("rose"), Emblem::Image),
+        "Musique" | "Music" => (index("violet"), Emblem::Musique),
+        "Vidéos" | "Videos" => (index("orange"), Emblem::Video),
+        "Public" => (index("sarcelle"), Emblem::Personne),
+        "Modèles" | "Templates" => (index("graphite"), Emblem::Document),
+        _ => (index("bleu"), Emblem::Aucun),
+    }
+}
+
+/// Dossier d'après la planche (repère de 96 sur 80, centré dans `rect`) : dos et onglet,
+/// feuille qui dépasse, devant avec un reflet, emblème gravé.
+pub(crate) fn paint_folder(painter: &egui::Painter, rect: Rect, color: Color32, emblem: Emblem) {
+    let side = rect.width().min(rect.height());
+    let unit = side / 96.0;
+    let origin = rect.center() - vec2(48.0, 42.0) * unit;
+    let at = |x: f32, y: f32| origin + vec2(x, y) * unit;
+    let r = |v: f32| egui::CornerRadius::same((v * unit).round().clamp(1.0, 255.0) as u8);
+    let box_at = |x0: f32, y0: f32, x1: f32, y1: f32| Rect::from_min_max(at(x0, y0), at(x1, y1));
+    let dark = Color32::from_rgba_unmultiplied(0, 0, 0, 56);
+
+    // Ombre portée, dos, onglet.
+    painter.rect_filled(
+        box_at(6.0, 15.5, 90.0, 79.5),
+        r(8.0),
+        Color32::from_rgba_unmultiplied(0, 0, 0, 30),
+    );
+    painter.rect_filled(box_at(6.0, 6.0, 38.0, 24.0), r(8.0), color);
+    painter.add(Shape::convex_polygon(
+        vec![at(30.0, 6.0), at(34.0, 6.0), at(44.0, 16.0), at(30.0, 16.0)],
+        color,
+        Stroke::NONE,
+    ));
+    painter.rect_filled(box_at(6.0, 14.0, 90.0, 78.0), r(8.0), color);
+    painter.rect_filled(box_at(6.0, 6.0, 38.0, 24.0), r(8.0), dark);
+    painter.add(Shape::convex_polygon(
+        vec![at(30.0, 6.0), at(34.0, 6.0), at(44.0, 16.0), at(30.0, 16.0)],
+        dark,
+        Stroke::NONE,
+    ));
+    painter.rect_filled(box_at(6.0, 14.0, 90.0, 78.0), r(8.0), dark);
+
+    // Feuilles qui dépassent.
+    painter.rect_filled(
+        box_at(13.0, 13.0, 81.0, 55.0),
+        r(3.0),
+        Color32::from_rgb(0xDD, 0xE1, 0xE8),
+    );
+    painter.rect_filled(box_at(18.0, 19.0, 82.0, 61.0), r(3.0), Color32::WHITE);
+
+    // Devant et son reflet.
+    let front = box_at(6.0, 26.0, 90.0, 78.0);
+    painter.rect_filled(front, r(8.0), color);
+    let corner = (8.0 * unit).round().clamp(1.0, 255.0) as u8;
+    painter.rect_filled(
+        box_at(6.0, 26.0, 90.0, 34.0),
+        egui::CornerRadius {
+            nw: corner,
+            ne: corner,
+            sw: 0,
+            se: 0,
+        },
+        Color32::from_rgba_unmultiplied(255, 255, 255, 56),
+    );
+
+    // Emblème gravé : un liseré clair sous un trait sombre.
+    if emblem != Emblem::Aucun && side >= 20.0 {
+        let glyph = Rect::from_min_size(at(34.0, 38.0), vec2(28.0, 28.0) * unit);
+        let width = 2.4 * glyph.width() / 24.0;
+        paint_emblem(
+            painter,
+            glyph.translate(vec2(0.0, 1.2 * unit)),
+            emblem,
+            Stroke::new(width, Color32::from_rgba_unmultiplied(255, 255, 255, 140)),
+        );
+        paint_emblem(
+            painter,
+            glyph,
+            emblem,
+            Stroke::new(width, Color32::from_rgba_unmultiplied(0, 0, 0, 110)),
+        );
+    }
+}
+
+/// Emblème tracé au trait dans `rect` (repère de 24 sur 24, comme les icônes de la planche).
+pub(crate) fn paint_emblem(painter: &egui::Painter, rect: Rect, emblem: Emblem, stroke: Stroke) {
+    let unit = rect.width() / 24.0;
+    let at = |x: f32, y: f32| rect.min + vec2(x, y) * unit;
+    let line = |points: &[(f32, f32)]| {
+        painter.add(Shape::line(
+            points.iter().map(|&(x, y)| at(x, y)).collect(),
+            stroke,
+        ));
+    };
+    let closed = |points: Vec<Pos2>| {
+        painter.add(Shape::closed_line(points, stroke));
+    };
+    let rounded = |x0: f32, y0: f32, x1: f32, y1: f32, radius: f32| {
+        painter.rect_stroke(
+            Rect::from_min_max(at(x0, y0), at(x1, y1)),
+            radius * unit,
+            stroke,
+            egui::StrokeKind::Middle,
+        );
+    };
+    let arc_points = |cx: f32, cy: f32, radius: f32, from: f32, to: f32| -> Vec<Pos2> {
+        let mut points = Vec::new();
+        for step in 0..=12 {
+            let angle = (from + (to - from) * step as f32 / 12.0).to_radians();
+            points.push(at(cx + radius * angle.cos(), cy + radius * angle.sin()));
+        }
+        points
+    };
+    match emblem {
+        Emblem::Aucun => {
+            line(&[(7.0, 7.0), (17.0, 17.0)]);
+            line(&[(17.0, 7.0), (7.0, 17.0)]);
+        }
+        Emblem::Etoile => {
+            let points = (0..10)
+                .map(|i| {
+                    let radius = if i % 2 == 0 { 8.6 } else { 3.9 };
+                    let angle = (-90.0 + i as f32 * 36.0f32).to_radians();
+                    at(12.0 + radius * angle.cos(), 12.6 + radius * angle.sin())
+                })
+                .collect();
+            closed(points);
+        }
+        Emblem::Coeur => {
+            // Deux lobes en arc qui se rejoignent en pointe, comme la planche.
+            let mut points = vec![at(12.0, 20.0)];
+            points.extend(arc_points(8.3, 9.6, 4.0, 145.0, 345.0));
+            points.extend(arc_points(15.7, 9.6, 4.0, 195.0, 395.0));
+            points.push(at(12.0, 20.0));
+            painter.add(Shape::line(points, stroke));
+        }
+        Emblem::Document => {
+            closed(vec![
+                at(7.0, 3.5),
+                at(14.0, 3.5),
+                at(18.0, 7.5),
+                at(18.0, 20.5),
+                at(7.0, 20.5),
+            ]);
+            line(&[(14.0, 3.5), (14.0, 7.5), (18.0, 7.5)]);
+            line(&[(9.5, 12.0), (14.5, 12.0)]);
+            line(&[(9.5, 15.5), (14.5, 15.5)]);
+        }
+        Emblem::Image => {
+            rounded(4.0, 5.0, 20.0, 19.0, 2.0);
+            painter.circle_stroke(at(9.0, 10.0), 1.5 * unit, stroke);
+            line(&[(4.5, 17.0), (9.0, 13.0), (12.5, 16.0), (15.5, 13.5), (19.5, 17.0)]);
+        }
+        Emblem::Musique => {
+            line(&[(9.0, 17.5), (9.0, 6.0), (19.0, 4.0), (19.0, 15.5)]);
+            painter.circle_stroke(at(6.5, 17.5), 2.5 * unit, stroke);
+            painter.circle_stroke(at(16.5, 15.5), 2.5 * unit, stroke);
+        }
+        Emblem::Video => {
+            rounded(3.5, 6.0, 15.5, 18.0, 2.0);
+            line(&[(15.5, 10.5), (20.5, 7.5), (20.5, 16.5), (15.5, 13.5)]);
+        }
+        Emblem::Code => {
+            line(&[(9.0, 7.0), (4.0, 12.0), (9.0, 17.0)]);
+            line(&[(15.0, 7.0), (20.0, 12.0), (15.0, 17.0)]);
+        }
+        Emblem::Telechargement => {
+            line(&[(12.0, 4.0), (12.0, 15.0)]);
+            line(&[(7.5, 10.5), (12.0, 15.0), (16.5, 10.5)]);
+            line(&[(5.0, 19.5), (19.0, 19.5)]);
+        }
+        Emblem::Cadenas => {
+            rounded(5.0, 10.5, 19.0, 20.5, 2.5);
+            let mut shackle = vec![at(8.0, 10.5)];
+            shackle.extend(arc_points(12.0, 8.0, 4.0, 180.0, 360.0));
+            shackle.push(at(16.0, 10.5));
+            painter.add(Shape::line(shackle, stroke));
+        }
+        Emblem::Livre => {
+            line(&[
+                (4.5, 5.5),
+                (8.0, 4.6),
+                (12.0, 6.0),
+                (16.0, 4.6),
+                (19.5, 5.5),
+                (19.5, 18.5),
+                (16.0, 17.6),
+                (12.0, 19.0),
+                (8.0, 17.6),
+                (4.5, 18.5),
+                (4.5, 5.5),
+            ]);
+            line(&[(12.0, 6.0), (12.0, 19.0)]);
+        }
+        Emblem::Ecran => {
+            rounded(3.0, 4.0, 21.0, 16.0, 2.0);
+            line(&[(9.0, 20.0), (15.0, 20.0)]);
+            line(&[(12.0, 16.0), (12.0, 20.0)]);
+        }
+        Emblem::Personne => {
+            painter.circle_stroke(at(12.0, 8.0), 4.0 * unit, stroke);
+            painter.add(Shape::line(arc_points(12.0, 20.5, 7.5, 180.0, 360.0), stroke));
+        }
+        Emblem::Nuage => {
+            let mut points = arc_points(7.5, 14.0, 4.0, 90.0, 270.0);
+            points.extend(arc_points(12.0, 10.0, 5.0, 205.0, 335.0));
+            points.extend(arc_points(17.0, 13.5, 4.5, 270.0, 450.0));
+            closed(points);
+        }
+        Emblem::Maison => {
+            line(&[(4.0, 11.0), (12.0, 4.5), (20.0, 11.0)]);
+            line(&[(6.0, 9.5), (6.0, 19.5), (18.0, 19.5), (18.0, 9.5)]);
+            line(&[(10.0, 19.5), (10.0, 14.5), (14.0, 14.5), (14.0, 19.5)]);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -349,6 +701,27 @@ mod tests {
         assert_eq!(label("LISEZMOI"), None);
         assert_eq!(label(".bashrc"), None);
         assert_eq!(label(".config.json").as_deref(), Some("JSON"));
+    }
+
+    #[test]
+    fn dossiers_habituels_et_cles() {
+        let home = Path::new("/home/a");
+        assert_eq!(folder_default(home, home).1, Emblem::Maison);
+        assert_eq!(
+            folder_default(&home.join("Téléchargements"), home),
+            (swatch("vert").unwrap(), Emblem::Telechargement)
+        );
+        assert_eq!(
+            folder_default(&home.join(".cache"), home),
+            (swatch("gris").unwrap(), Emblem::Aucun)
+        );
+        assert_eq!(
+            folder_default(&home.join("Documents/Images"), home).1,
+            Emblem::Aucun
+        );
+        for emblem in Emblem::ALL {
+            assert_eq!(Emblem::from_key(emblem.key()), Some(emblem));
+        }
     }
 
     #[test]

@@ -440,23 +440,49 @@ impl FilesState {
                     .mount
                     .as_deref()
                     .is_some_and(|mount| self.current_dir() == Some(mount));
-                let mut eject = false;
-                let button = device.removable.then_some(&mut eject);
+                // Bouton à droite : Éjecter une clé, Démonter un disque interne monté.
+                let mut pressed = false;
+                let button =
+                    (device.removable || device.mount.is_some()).then_some((&mut pressed, device.removable));
                 let response = self.device(ui, look, &device.label, device.usage, button, selected);
                 if let Some(mount) = &device.mount {
                     targets.push((response.rect, Target::Folder(mount.clone())));
                 }
-                if let Some(mount) = device.mount.clone() {
-                    response.context_menu(|ui| {
-                        style::menu_style(ui);
-                        if style::menu_row(ui, "Analyser l’espace", "", false, true).clicked() {
-                            actions.push(Action::Analyze(mount));
-                            ui.close();
+                response.context_menu(|ui| {
+                    style::menu_style(ui);
+                    match device.mount.clone() {
+                        Some(mount) => {
+                            if style::menu_row(ui, "Ouvrir", "", false, true).clicked() {
+                                actions.push(Action::Navigate(mount.clone()));
+                                ui.close();
+                            }
+                            if style::menu_row(ui, "Analyser l’espace", "", false, true).clicked() {
+                                actions.push(Action::Analyze(mount));
+                                ui.close();
+                            }
+                            if style::menu_row(ui, "Démonter", "", false, true).clicked() {
+                                actions.push(Action::Unmount(device.clone()));
+                                ui.close();
+                            }
                         }
+                        None => {
+                            if style::menu_row(ui, "Monter", "", false, true).clicked() {
+                                actions.push(Action::Mount(device.clone()));
+                                ui.close();
+                            }
+                        }
+                    }
+                    if device.removable && style::menu_row(ui, "Éjecter", "", false, true).clicked() {
+                        actions.push(Action::Eject(device.clone()));
+                        ui.close();
+                    }
+                });
+                if pressed {
+                    actions.push(if device.removable {
+                        Action::Eject(device)
+                    } else {
+                        Action::Unmount(device)
                     });
-                }
-                if eject {
-                    actions.push(Action::Eject(device));
                 } else if response.clicked() {
                     actions.push(match &device.mount {
                         Some(mount) => Action::Navigate(mount.clone()),
@@ -590,9 +616,11 @@ impl FilesState {
         look: &Look,
         name: &str,
         usage: Option<(u64, u64)>,
-        eject: Option<&mut bool>,
+        // Bouton de droite (appuyé ?) et clé amovible (Éjecter) ou disque (Démonter).
+        button: Option<(&mut bool, bool)>,
         selected: bool,
     ) -> egui::Response {
+        let removable = button.as_ref().is_some_and(|(_, removable)| *removable);
         let height = if usage.is_some() { 58.0 } else { 34.0 };
         let (rect, response) =
             ui.allocate_exact_size(egui::vec2(ui.available_width(), height), Sense::click());
@@ -603,7 +631,7 @@ impl FilesState {
             ui.painter().rect_filled(rect, 9.0, style::tint(8));
         }
         let line = rect.top() + 17.0;
-        let icon = if eject.is_some() {
+        let icon = if removable {
             "places-usb"
         } else {
             "places-computer"
@@ -620,12 +648,12 @@ impl FilesState {
             if selected { look.sel_fg } else { look.fg },
             rect.right() - icon_rect.right() - 44.0,
         );
-        if let Some(eject) = eject {
+        if let Some((eject, _)) = button {
             let button =
                 egui::Rect::from_center_size(egui::pos2(rect.right() - 18.0, line), egui::Vec2::splat(24.0));
             let clicked = ui
                 .interact(button, response.id.with("ejecter"), Sense::click())
-                .on_hover_text("Éjecter");
+                .on_hover_text(if removable { "Éjecter" } else { "Démonter" });
             if clicked.hovered() {
                 ui.painter().rect_filled(button, 12.0, style::tint(12));
             }
@@ -1317,7 +1345,7 @@ impl FilesState {
                     );
                     match self.thumbs.get(&ctx, &entry.path) {
                         Some(texture) => paint_cover(ui, &texture, art, 6.0),
-                        None => paint_path_icon(&mut self.icons, ui, &entry.path, entry.directory, art),
+                        None => paint_path_icon(&self.looks, ui.painter(), &entry.path, entry.directory, art),
                     }
                     let left = art.right() + 10.0;
                     let room = rect.right() - left - 10.0;
@@ -1417,7 +1445,9 @@ impl FilesState {
                         let (art, _) = ui.allocate_exact_size(egui::Vec2::splat(32.0), Sense::hover());
                         match self.thumbs.get(&ctx, &entry.path) {
                             Some(texture) => paint_cover(ui, &texture, art, 6.0),
-                            None => paint_path_icon(&mut self.icons, ui, &entry.path, entry.directory, art),
+                            None => {
+                                paint_path_icon(&self.looks, ui.painter(), &entry.path, entry.directory, art)
+                            }
                         }
                         ui.add_space(6.0);
                         let (rect, _) =
@@ -1664,8 +1694,8 @@ impl FilesState {
                                 paint_thumbnail(ui, &texture, art.shrink2(egui::vec2(0.0, 8.0)), 8.0)
                             }
                             None => paint_path_icon(
-                                &mut self.icons,
-                                ui,
+                                &self.looks,
+                                ui.painter(),
                                 &entry.path,
                                 entry.directory,
                                 egui::Rect::from_center_size(art.center(), egui::Vec2::splat(72.0)),
@@ -1855,7 +1885,7 @@ impl FilesState {
                     egui::pos2(rect.left() + 24.0, rect.center().y),
                     egui::Vec2::splat(24.0),
                 );
-                paint_path_icon(&mut self.icons, ui, &entry.path, entry.directory, icon);
+                paint_path_icon(&self.looks, ui.painter(), &entry.path, entry.directory, icon);
                 let name_left = icon.right() + 10.0;
                 let mut child = ui.new_child(
                     egui::UiBuilder::new()
@@ -1984,243 +2014,272 @@ impl FilesState {
                 let full = ui.max_rect().expand2(egui::vec2(22.0, 24.0));
                 ui.painter()
                     .vline(full.left() + 0.5, full.y_range(), Stroke::new(1.0, look.line));
-                ui.spacing_mut().item_spacing.y = 18.0;
-                let width = ui.available_width();
+                // Couleur et emblème allongent le panneau : il défile.
+                egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 18.0;
+                    let width = ui.available_width();
 
-                // Scène : vignette (recadrée) ou grande icône.
-                let (stage, _) = ui.allocate_exact_size(egui::vec2(width, 170.0), Sense::hover());
-                ui.painter().rect_filled(stage, 16.0, look.stage);
-                let single = (selection.len() == 1).then(|| selection[0].clone());
-                let (icon, name, detail): (&'static str, String, String) = match (&single, selection.len()) {
-                    (Some(entry), _) => {
-                        let size = if entry.directory {
-                            let count = fs::read_dir(&entry.path).map(|dir| dir.count()).unwrap_or(0);
-                            format!("{count} élément{}", plural(count))
-                        } else {
-                            entry.size.map(format_size).unwrap_or_default()
-                        };
-                        (
-                            entry_icon(entry),
-                            entry.name.clone(),
-                            format!("{} · {size}", kind_label(entry)),
-                        )
-                    }
-                    (None, 0) => {
-                        let count = self.visible().len();
-                        let (icon, name) = match &self.location {
-                            Location::Folder(dir) => (
-                                folder_icon(dir, &home()),
-                                if *dir == home() {
-                                    "Dossier perso".into()
+                    // Scène : vignette (recadrée) ou grande icône.
+                    let (stage, _) = ui.allocate_exact_size(egui::vec2(width, 170.0), Sense::hover());
+                    ui.painter().rect_filled(stage, 16.0, look.stage);
+                    let single = (selection.len() == 1).then(|| selection[0].clone());
+                    let (icon, name, detail): (&'static str, String, String) =
+                        match (&single, selection.len()) {
+                            (Some(entry), _) => {
+                                let size = if entry.directory {
+                                    let count = fs::read_dir(&entry.path).map(|dir| dir.count()).unwrap_or(0);
+                                    format!("{count} élément{}", plural(count))
                                 } else {
-                                    file_name(dir)
-                                },
-                            ),
-                            Location::Archive { archive, directory } => (
-                                "places-folder",
-                                if directory.is_empty() {
-                                    file_name(archive)
-                                } else {
-                                    directory.rsplit('/').next().unwrap_or_default().to_owned()
-                                },
-                            ),
-                            Location::Trash => ("places-trash", "Corbeille".into()),
-                            Location::Recent => ("app-clock", "Récents".into()),
-                            Location::Tag(tag) => ("places-folder", tag.clone()),
-                            Location::Analysis { dir, .. } => ("status-storage", file_name(dir)),
+                                    entry.size.map(format_size).unwrap_or_default()
+                                };
+                                (
+                                    entry_icon(entry),
+                                    entry.name.clone(),
+                                    format!("{} · {size}", kind_label(entry)),
+                                )
+                            }
+                            (None, 0) => {
+                                let count = self.visible().len();
+                                let (icon, name) = match &self.location {
+                                    Location::Folder(dir) => (
+                                        folder_icon(dir, &home()),
+                                        if *dir == home() {
+                                            "Dossier perso".into()
+                                        } else {
+                                            file_name(dir)
+                                        },
+                                    ),
+                                    Location::Archive { archive, directory } => (
+                                        "places-folder",
+                                        if directory.is_empty() {
+                                            file_name(archive)
+                                        } else {
+                                            directory.rsplit('/').next().unwrap_or_default().to_owned()
+                                        },
+                                    ),
+                                    Location::Trash => ("places-trash", "Corbeille".into()),
+                                    Location::Recent => ("app-clock", "Récents".into()),
+                                    Location::Tag(tag) => ("places-folder", tag.clone()),
+                                    Location::Analysis { dir, .. } => ("status-storage", file_name(dir)),
+                                };
+                                (icon, name, format!("Dossier · {count} élément{}", plural(count)))
+                            }
+                            (None, count) => {
+                                let total: u64 = selection.iter().filter_map(|entry| entry.size).sum();
+                                (
+                                    "file-generic",
+                                    format!("{count} éléments"),
+                                    format!("Sélection · {}", format_size(total)),
+                                )
+                            }
                         };
-                        (icon, name, format!("Dossier · {count} élément{}", plural(count)))
-                    }
-                    (None, count) => {
-                        let total: u64 = selection.iter().filter_map(|entry| entry.size).sum();
-                        (
-                            "file-generic",
-                            format!("{count} éléments"),
-                            format!("Sélection · {}", format_size(total)),
-                        )
-                    }
-                };
-                match single
-                    .as_ref()
-                    .and_then(|entry| self.thumbs.get(&ctx, &entry.path))
-                {
-                    Some(texture) => paint_cover(ui, &texture, stage, 16.0),
-                    None => {
-                        let art = egui::Rect::from_center_size(stage.center(), egui::Vec2::splat(112.0));
-                        match single.as_ref().filter(|entry| !entry.directory) {
-                            Some(entry) => file_art::paint(ui.painter(), art, &entry.path),
-                            None => self.icons.paint(ui, icon, art, IconStyle::Color),
+                    match single
+                        .as_ref()
+                        .and_then(|entry| self.thumbs.get(&ctx, &entry.path))
+                    {
+                        Some(texture) => paint_cover(ui, &texture, stage, 16.0),
+                        None => {
+                            let art = egui::Rect::from_center_size(stage.center(), egui::Vec2::splat(112.0));
+                            let folder = match (&single, &self.location) {
+                                (None, Location::Folder(dir)) if selection.is_empty() => {
+                                    Some((dir.clone(), true))
+                                }
+                                (Some(entry), _) => Some((entry.path.clone(), entry.directory)),
+                                _ => None,
+                            };
+                            match folder {
+                                Some((path, directory)) => {
+                                    paint_path_icon(&self.looks, ui.painter(), &path, directory, art)
+                                }
+                                None => self.icons.paint(ui, icon, art, IconStyle::Color),
+                            }
                         }
                     }
-                }
 
-                ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing.y = 4.0;
-                    ui.add(
-                        egui::Label::new(RichText::new(&name).font(font(17.0, true)).color(look.fg)).wrap(),
-                    );
-                    ui.label(RichText::new(detail).font(font(13.0, false)).color(look.fg2));
-                });
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 4.0;
+                        ui.add(
+                            egui::Label::new(RichText::new(&name).font(font(17.0, true)).color(look.fg))
+                                .wrap(),
+                        );
+                        ui.label(RichText::new(detail).font(font(13.0, false)).color(look.fg2));
+                    });
 
-                // Ouvrir, Partager, autres actions.
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 8.0;
-                    let flex = (width - 36.0 - 16.0) / 2.0;
-                    let open = egui::Button::new(
-                        RichText::new("Ouvrir")
-                            .font(font(13.0, true))
-                            .color(Color32::WHITE),
-                    )
-                    .fill(look.accent)
-                    .corner_radius(10)
-                    .min_size(egui::vec2(flex, 36.0));
-                    if ui.add_enabled(single.is_some(), open).clicked()
-                        && let Some(entry) = &single
-                    {
-                        actions.push(Action::Open(entry.path.clone(), entry.directory));
-                    }
-                    let share =
-                        egui::Button::new(RichText::new("Partager").font(font(13.0, false)).color(look.fg))
-                            .fill(look.chip)
-                            .corner_radius(10)
-                            .min_size(egui::vec2(flex, 36.0));
-                    if ui
-                        .add_enabled(!selection.is_empty() && !self.in_archive(), share)
-                        .on_hover_text("Copie l’adresse du fichier, à coller dans un message")
-                        .clicked()
-                    {
-                        actions.push(Action::Share(
-                            selection.iter().map(|entry| entry.path.clone()).collect(),
-                        ));
-                    }
-                    let more = icon_button(
-                        ui,
-                        egui::vec2(36.0, 36.0),
-                        10,
-                        Some(look.chip),
-                        "Plus d’actions",
-                        |p, r| {
-                            for dx in [-4.5, 0.0, 4.5] {
-                                p.circle_filled(r.center() + egui::vec2(dx, 0.0), 1.4, look.icon);
-                            }
+                    // Ouvrir, Partager, autres actions.
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 8.0;
+                        let flex = (width - 36.0 - 16.0) / 2.0;
+                        let open = egui::Button::new(
+                            RichText::new("Ouvrir")
+                                .font(font(13.0, true))
+                                .color(Color32::WHITE),
+                        )
+                        .fill(look.accent)
+                        .corner_radius(10)
+                        .min_size(egui::vec2(flex, 36.0));
+                        if ui.add_enabled(single.is_some(), open).clicked()
+                            && let Some(entry) = &single
+                        {
+                            actions.push(Action::Open(entry.path.clone(), entry.directory));
+                        }
+                        let share = egui::Button::new(
+                            RichText::new("Partager").font(font(13.0, false)).color(look.fg),
+                        )
+                        .fill(look.chip)
+                        .corner_radius(10)
+                        .min_size(egui::vec2(flex, 36.0));
+                        if ui
+                            .add_enabled(!selection.is_empty() && !self.in_archive(), share)
+                            .on_hover_text("Copie l’adresse du fichier, à coller dans un message")
+                            .clicked()
+                        {
+                            actions.push(Action::Share(
+                                selection.iter().map(|entry| entry.path.clone()).collect(),
+                            ));
+                        }
+                        let more = icon_button(
+                            ui,
+                            egui::vec2(36.0, 36.0),
+                            10,
+                            Some(look.chip),
+                            "Plus d’actions",
+                            |p, r| {
+                                for dx in [-4.5, 0.0, 4.5] {
+                                    p.circle_filled(r.center() + egui::vec2(dx, 0.0), 1.4, look.icon);
+                                }
+                            },
+                        );
+                        if let Some(entry) = &single
+                            && !self.in_archive()
+                        {
+                            egui::Popup::menu(&more).show(|ui| self.item_menu(ui, entry, actions));
+                        }
+                    });
+
+                    // Informations.
+                    let rows: Vec<(&str, String)> = match &single {
+                        Some(entry) if entry.directory => {
+                            let count = fs::read_dir(&entry.path).map(|dir| dir.count()).unwrap_or(0);
+                            vec![
+                                ("Contenu", format!("{count} élément{}", plural(count))),
+                                ("Emplacement", display_location(&entry.path)),
+                                ("Partage", "Privé".into()),
+                            ]
+                        }
+                        Some(entry) => {
+                            let created = entry.path.metadata().ok().and_then(|m| m.created().ok());
+                            vec![
+                                ("Modifié", format_date(entry.modified)),
+                                ("Créé", format_date(created)),
+                                ("Emplacement", display_location(&entry.path)),
+                                ("Ouvrir avec", opener_label(entry).into()),
+                            ]
+                        }
+                        None => match self.current_dir() {
+                            Some(dir) => vec![
+                                (
+                                    "Contenu",
+                                    format!(
+                                        "{} élément{}",
+                                        self.visible().len(),
+                                        plural(self.visible().len())
+                                    ),
+                                ),
+                                ("Emplacement", display_location(&dir.join("x"))),
+                                ("Partage", "Privé".into()),
+                            ],
+                            None => Vec::new(),
                         },
-                    );
+                    };
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        let line = Stroke::new(1.0, look.line);
+                        let top = ui.cursor().top();
+                        ui.painter().hline(ui.max_rect().x_range(), top, line);
+                        for (label, value) in rows {
+                            let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 38.0), Sense::hover());
+                            ui.painter().text(
+                                egui::pos2(rect.left(), rect.center().y),
+                                egui::Align2::LEFT_CENTER,
+                                label,
+                                font(13.0, false),
+                                look.fg3,
+                            );
+                            text(
+                                ui,
+                                &value,
+                                egui::pos2(rect.right(), rect.center().y),
+                                egui::Align2::RIGHT_CENTER,
+                                font(13.0, false),
+                                look.fg,
+                                width - 100.0,
+                            );
+                            ui.painter().hline(rect.x_range(), rect.bottom() - 0.5, line);
+                        }
+                    });
+
+                    // Étiquettes du fichier.
                     if let Some(entry) = &single
                         && !self.in_archive()
                     {
-                        egui::Popup::menu(&more).show(|ui| self.item_menu(ui, entry, actions));
-                    }
-                });
-
-                // Informations.
-                let rows: Vec<(&str, String)> = match &single {
-                    Some(entry) if entry.directory => {
-                        let count = fs::read_dir(&entry.path).map(|dir| dir.count()).unwrap_or(0);
-                        vec![
-                            ("Contenu", format!("{count} élément{}", plural(count))),
-                            ("Emplacement", display_location(&entry.path)),
-                            ("Partage", "Privé".into()),
-                        ]
-                    }
-                    Some(entry) => {
-                        let created = entry.path.metadata().ok().and_then(|m| m.created().ok());
-                        vec![
-                            ("Modifié", format_date(entry.modified)),
-                            ("Créé", format_date(created)),
-                            ("Emplacement", display_location(&entry.path)),
-                            ("Ouvrir avec", opener_label(entry).into()),
-                        ]
-                    }
-                    None => match self.current_dir() {
-                        Some(dir) => vec![
-                            (
-                                "Contenu",
-                                format!("{} élément{}", self.visible().len(), plural(self.visible().len())),
-                            ),
-                            ("Emplacement", display_location(&dir.join("x"))),
-                            ("Partage", "Privé".into()),
-                        ],
-                        None => Vec::new(),
-                    },
-                };
-                ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing.y = 0.0;
-                    let line = Stroke::new(1.0, look.line);
-                    let top = ui.cursor().top();
-                    ui.painter().hline(ui.max_rect().x_range(), top, line);
-                    for (label, value) in rows {
-                        let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 38.0), Sense::hover());
-                        ui.painter().text(
-                            egui::pos2(rect.left(), rect.center().y),
-                            egui::Align2::LEFT_CENTER,
-                            label,
-                            font(13.0, false),
-                            look.fg3,
-                        );
-                        text(
-                            ui,
-                            &value,
-                            egui::pos2(rect.right(), rect.center().y),
-                            egui::Align2::RIGHT_CENTER,
-                            font(13.0, false),
-                            look.fg,
-                            width - 100.0,
-                        );
-                        ui.painter().hline(rect.x_range(), rect.bottom() - 0.5, line);
-                    }
-                });
-
-                // Étiquettes du fichier.
-                if let Some(entry) = &single
-                    && !self.in_archive()
-                {
-                    ui.vertical(|ui| {
-                        ui.spacing_mut().item_spacing.y = 8.0;
-                        ui.label(RichText::new("Étiquettes").font(font(12.0, true)).color(look.fg3));
-                        ui.horizontal_wrapped(|ui| {
-                            ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
-                            for tag in self.tags.of(&entry.path).to_vec() {
-                                let galley =
-                                    ui.painter()
-                                        .layout_no_wrap(tag.clone(), font(12.0, false), look.fg);
-                                let (rect, response) = ui.allocate_exact_size(
-                                    egui::vec2(galley.size().x + 34.0, 26.0),
+                        ui.vertical(|ui| {
+                            ui.spacing_mut().item_spacing.y = 8.0;
+                            ui.label(RichText::new("Étiquettes").font(font(12.0, true)).color(look.fg3));
+                            ui.horizontal_wrapped(|ui| {
+                                ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+                                for tag in self.tags.of(&entry.path).to_vec() {
+                                    let galley =
+                                        ui.painter()
+                                            .layout_no_wrap(tag.clone(), font(12.0, false), look.fg);
+                                    let (rect, response) = ui.allocate_exact_size(
+                                        egui::vec2(galley.size().x + 34.0, 26.0),
+                                        Sense::click(),
+                                    );
+                                    ui.painter().rect_filled(rect, 13.0, look.chip);
+                                    ui.painter().circle_filled(
+                                        egui::pos2(rect.left() + 14.0, rect.center().y),
+                                        4.0,
+                                        tag_color(&self.tags, &tag),
+                                    );
+                                    ui.painter().galley(
+                                        egui::pos2(
+                                            rect.left() + 24.0,
+                                            rect.center().y - galley.size().y / 2.0,
+                                        ),
+                                        galley,
+                                        look.fg,
+                                    );
+                                    if response.on_hover_text("Retirer l’étiquette").clicked() {
+                                        actions.push(Action::ToggleTag(entry.path.clone(), tag));
+                                    }
+                                }
+                                let galley = ui.painter().layout_no_wrap(
+                                    "+ Ajouter".into(),
+                                    font(12.0, false),
+                                    look.fg2,
+                                );
+                                let (rect, add) = ui.allocate_exact_size(
+                                    egui::vec2(galley.size().x + 20.0, 26.0),
                                     Sense::click(),
                                 );
-                                ui.painter().rect_filled(rect, 13.0, look.chip);
-                                ui.painter().circle_filled(
-                                    egui::pos2(rect.left() + 14.0, rect.center().y),
-                                    4.0,
-                                    tag_color(&self.tags, &tag),
-                                );
-                                ui.painter().galley(
-                                    egui::pos2(rect.left() + 24.0, rect.center().y - galley.size().y / 2.0),
-                                    galley,
-                                    look.fg,
-                                );
-                                if response.on_hover_text("Retirer l’étiquette").clicked() {
-                                    actions.push(Action::ToggleTag(entry.path.clone(), tag));
-                                }
-                            }
-                            let galley =
+                                dashed_pill(ui.painter(), rect, look.fg3);
                                 ui.painter()
-                                    .layout_no_wrap("+ Ajouter".into(), font(12.0, false), look.fg2);
-                            let (rect, add) = ui.allocate_exact_size(
-                                egui::vec2(galley.size().x + 20.0, 26.0),
-                                Sense::click(),
-                            );
-                            dashed_pill(ui.painter(), rect, look.fg3);
-                            ui.painter()
-                                .galley(rect.center() - galley.size() / 2.0, galley, look.fg2);
-                            egui::Popup::menu(&add).show(|ui| {
-                                style::menu_style(ui);
-                                self.tag_choices(ui, &entry.path, actions);
+                                    .galley(rect.center() - galley.size() / 2.0, galley, look.fg2);
+                                egui::Popup::menu(&add).show(|ui| {
+                                    style::menu_style(ui);
+                                    self.tag_choices(ui, &entry.path, actions);
+                                });
                             });
                         });
-                    });
-                }
+                    }
 
-                ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+                    // Couleur et emblème de l'icône, comme l'inspecteur de la planche.
+                    if let Some(entry) = &single
+                        && !self.in_archive()
+                    {
+                        self.look_editor(ui, look, entry, width, actions);
+                    }
+
                     ui.label(
                         RichText::new("Espace : aperçu rapide · Entrée : renommer")
                             .font(font(12.0, false))
@@ -2228,6 +2287,143 @@ impl FilesState {
                     );
                 });
             });
+    }
+
+    /// Pastilles de couleur, emblèmes (dossiers) et « Rétablir l'icône d'origine ».
+    fn look_editor(
+        &self,
+        ui: &mut egui::Ui,
+        look: &Look,
+        entry: &FileEntry,
+        width: f32,
+        actions: &mut Vec<Action>,
+    ) {
+        let custom = self.looks.get(&entry.path).copied().unwrap_or_default();
+        let (color, emblem) = if entry.directory {
+            let (color, emblem) = self.looks.folder(&entry.path, &home());
+            (Some(color), Some(emblem))
+        } else {
+            (custom.color, None)
+        };
+        let heading = |ui: &mut egui::Ui, title: &str, value: &str| {
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 18.0), Sense::hover());
+            ui.painter().text(
+                rect.left_center(),
+                egui::Align2::LEFT_CENTER,
+                title,
+                font(12.0, true),
+                look.fg3,
+            );
+            ui.painter().text(
+                rect.right_center(),
+                egui::Align2::RIGHT_CENTER,
+                value,
+                font(12.0, false),
+                look.fg2,
+            );
+        };
+
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 8.0;
+            let current = color.map_or("D’origine", |index| file_art::SWATCHES[index].1);
+            heading(ui, "Couleur", current);
+            let cell = width / 5.0;
+            for row in file_art::SWATCHES.chunks(5).enumerate() {
+                let (band, _) = ui.allocate_exact_size(egui::vec2(width, 40.0), Sense::hover());
+                for (column, (_, name, swatch)) in row.1.iter().enumerate() {
+                    let index = row.0 * 5 + column;
+                    let center = egui::pos2(band.left() + cell * (column as f32 + 0.5), band.center().y);
+                    let hit = egui::Rect::from_center_size(center, egui::Vec2::splat(36.0));
+                    let response = ui
+                        .interact(hit, ui.scope_id().with(("couleur", index)), Sense::click())
+                        .on_hover_text(*name)
+                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                    let chosen = color == Some(index);
+                    let radius = if response.hovered() { 15.5 } else { 14.0 };
+                    if chosen {
+                        ui.painter()
+                            .circle_stroke(center, 18.0, Stroke::new(2.0, look.accent));
+                    }
+                    ui.painter().circle_filled(center, radius, *swatch);
+                    if chosen {
+                        ui.painter().add(egui::Shape::line(
+                            vec![
+                                center + egui::vec2(-5.5, 0.5),
+                                center + egui::vec2(-1.5, 4.5),
+                                center + egui::vec2(6.0, -4.0),
+                            ],
+                            Stroke::new(2.4, Color32::WHITE),
+                        ));
+                    }
+                    if response.clicked() {
+                        actions.push(Action::SetLook(entry.path.clone(), Some(index), None));
+                    }
+                }
+            }
+        });
+
+        if let Some(emblem) = emblem {
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 8.0;
+                heading(ui, "Emblème", emblem.name());
+                let gap = 8.0;
+                let cell = (width - gap * 4.0) / 5.0;
+                for (row, chunk) in file_art::Emblem::ALL.chunks(5).enumerate() {
+                    let (band, _) = ui.allocate_exact_size(egui::vec2(width, 40.0), Sense::hover());
+                    for (column, choice) in chunk.iter().enumerate() {
+                        let rect = egui::Rect::from_min_size(
+                            egui::pos2(band.left() + column as f32 * (cell + gap), band.top()),
+                            egui::vec2(cell, 40.0),
+                        );
+                        let response = ui
+                            .interact(rect, ui.scope_id().with(("embleme", row, column)), Sense::click())
+                            .on_hover_text(choice.name())
+                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        let chosen = *choice == emblem;
+                        let fill = if chosen {
+                            look.sel_bg
+                        } else if response.hovered() {
+                            look.stage
+                        } else {
+                            look.chip
+                        };
+                        ui.painter().rect_filled(rect, 10.0, fill);
+                        if chosen {
+                            ui.painter().rect_stroke(
+                                rect,
+                                10.0,
+                                Stroke::new(2.0, look.accent),
+                                egui::StrokeKind::Inside,
+                            );
+                        }
+                        file_art::paint_emblem(
+                            ui.painter(),
+                            egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(20.0)),
+                            *choice,
+                            Stroke::new(2.0, if chosen { look.sel_fg } else { look.fg }),
+                        );
+                        if response.clicked() {
+                            actions.push(Action::SetLook(entry.path.clone(), None, Some(*choice)));
+                        }
+                    }
+                }
+            });
+        }
+
+        let reset = egui::Button::new(
+            RichText::new("Rétablir l’icône d’origine")
+                .font(font(13.0, false))
+                .color(look.fg),
+        )
+        .fill(look.chip)
+        .corner_radius(10)
+        .min_size(egui::vec2(width, 34.0));
+        if ui
+            .add_enabled(custom != places::Custom::default(), reset)
+            .clicked()
+        {
+            actions.push(Action::SetLook(entry.path.clone(), None, None));
+        }
     }
 
     // ----- Aperçu rapide (Espace) -----
@@ -2268,8 +2464,8 @@ impl FilesState {
                         });
                 } else {
                     paint_path_icon(
-                        &mut self.icons,
-                        ui,
+                        &self.looks,
+                        ui.painter(),
                         &entry.path,
                         entry.directory,
                         egui::Rect::from_center_size(stage.center(), egui::Vec2::splat(160.0)),
@@ -2806,6 +3002,7 @@ impl FilesState {
                     for path in &paths {
                         if let Some(name) = path.file_name() {
                             self.tags.moved(path, &dir.join(name));
+                            self.looks.moved(path, &dir.join(name));
                         }
                     }
                     self.run_job("Déplacement", move |job| ops::move_into(&paths, &dir, job));

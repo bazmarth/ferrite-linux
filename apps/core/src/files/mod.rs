@@ -252,6 +252,8 @@ enum Update {
 #[derive(Debug, Clone)]
 enum Action {
     Navigate(PathBuf),
+    /// Ouvre le dossier qui contient ce fichier et l'y sélectionne (résultat de recherche).
+    Reveal(PathBuf),
     Show(Location),
     ShowTrash,
     ToggleTheme,
@@ -420,6 +422,10 @@ pub struct FilesState {
     sender: Sender<Update>,
     receiver: Receiver<Update>,
     message: Option<(String, bool)>,
+    /// Moment où le message de la barre d'état s'efface tout seul.
+    message_until: Option<Instant>,
+    /// Élément à faire défiler jusqu'à l'écran au prochain affichage.
+    scroll_to: Option<PathBuf>,
     /// Date de modification du dossier lors de sa dernière lecture.
     loaded: Option<SystemTime>,
     /// Le dossier affiché est réservé à l'administrateur (lecture refusée).
@@ -487,6 +493,8 @@ impl Default for FilesState {
             sender,
             receiver,
             message: None,
+            message_until: None,
+            scroll_to: None,
             loaded: None,
             icons: Icons::default(),
             app_logos: open_with::AppLogos::default(),
@@ -509,6 +517,10 @@ const ANALYSIS_LARGEST: usize = 100;
 const RECENT_STRIP: usize = 6;
 /// Identifiant du champ « Rechercher » de la barre d'outils.
 const SEARCH_FIELD: &str = "fichiers-recherche";
+/// Durée d'affichage d'une erreur dans la barre d'état.
+const ERROR_DURATION: Duration = Duration::from_secs(8);
+/// Durée d'affichage d'une information dans la barre d'état.
+const INFO_DURATION: Duration = Duration::from_secs(5);
 /// Au-delà, le contenu des sous-dossiers n'est pas compté.
 const MAX_COUNTED_FOLDERS: usize = 400;
 const MAX_COUNTED_CHILDREN: usize = 10_000;
@@ -702,6 +714,19 @@ panneau={}
         self.refresh();
     }
 
+    /// Ouvre le dossier qui contient `path`, l'y sélectionne et fait défiler jusqu'à lui.
+    fn reveal(&mut self, path: PathBuf) {
+        let Some(parent) = path.parent() else {
+            return;
+        };
+        self.go(Location::Folder(parent.to_path_buf()));
+        if self.location == Location::Folder(parent.to_path_buf()) {
+            self.anchor = self.entries.iter().position(|entry| entry.path == path);
+            self.selected = BTreeSet::from([path.clone()]);
+            self.scroll_to = Some(path);
+        }
+    }
+
     fn go_back(&mut self) {
         if let Some(location) = self.back.pop() {
             let previous = std::mem::replace(&mut self.location, location);
@@ -837,10 +862,26 @@ panneau={}
 
     fn error(&mut self, message: impl Into<String>) {
         self.message = Some((message.into(), true));
+        self.message_until = Some(Instant::now() + ERROR_DURATION);
     }
 
     fn info(&mut self, message: impl Into<String>) {
         self.message = Some((message.into(), false));
+        self.message_until = Some(Instant::now() + INFO_DURATION);
+    }
+
+    /// Efface le message de la barre d'état une fois son temps écoulé.
+    fn expire_message(&mut self, ctx: &egui::Context) {
+        let Some(until) = self.message_until else {
+            return;
+        };
+        let now = Instant::now();
+        if now >= until {
+            self.message = None;
+            self.message_until = None;
+        } else {
+            ctx.request_repaint_after(until - now);
+        }
     }
 
     fn refresh(&mut self) {
@@ -1190,6 +1231,7 @@ panneau={}
         }
         match action {
             Action::Navigate(path) => self.go(Location::Folder(path)),
+            Action::Reveal(path) => self.reveal(path),
             Action::NewTab(path) => {
                 let location = path.map_or_else(|| self.location.clone(), Location::Folder);
                 self.new_tab(location);
@@ -2173,6 +2215,19 @@ panneau={}
                 "›",
                 single,
                 Action::OpenWith(entry.path.clone()),
+            );
+        }
+        // Trouvé plus bas par la recherche, ou listé hors de son dossier (Récents, étiquette).
+        if self.picker.is_none()
+            && (self.found_in(entry).is_some()
+                || matches!(self.location, Location::Recent | Location::Tag(_)))
+        {
+            item(
+                ui,
+                "Ouvrir le dossier contenant",
+                "",
+                single,
+                Action::Reveal(entry.path.clone()),
             );
         }
         if self.picker.is_none() {

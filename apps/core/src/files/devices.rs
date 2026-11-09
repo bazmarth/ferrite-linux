@@ -167,10 +167,11 @@ pub fn mount(device: &Device) -> Result<PathBuf, String> {
         command::run(
             "udisksctl",
             &["mount", "--no-user-interaction", "-b", &device.path],
-        )?
+        )
     } else {
-        command::run("udisksctl", &["mount", "-o", "ro", "-b", &device.path])?
-    };
+        command::run("udisksctl", &["mount", "-o", "ro", "-b", &device.path])
+    }
+    .map_err(|error| mount_error(&device.label, &error.to_string()))?;
     // « Mounted /dev/sdb1 at /media/ferrite/CLE »
     output
         .split(" at ")
@@ -193,6 +194,20 @@ pub fn unmount(device: &Device) -> Result<(), String> {
     result
         .map(|_| ())
         .map_err(|error| unmount_error(&device.label, &error.to_string()))
+}
+
+/// Message lisible pour un montage refusé.
+fn mount_error(label: &str, error: &str) -> String {
+    let lower = error.to_lowercase();
+    if lower.contains("not authorized") || lower.contains("notauthorized") || lower.contains("dismissed") {
+        format!("Ouverture de « {label} » refusée : le mot de passe administrateur est nécessaire.")
+    } else if lower.contains("already mounted") {
+        format!("« {label} » est déjà ouvert.")
+    } else if lower.contains("wrong fs type") || lower.contains("unknown filesystem") {
+        format!("« {label} » utilise un format de disque non reconnu.")
+    } else {
+        format!("Impossible d’ouvrir « {label} ».")
+    }
 }
 
 /// Message lisible pour un démontage refusé.
@@ -226,6 +241,16 @@ pub fn eject(device: &Device) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn montage_refuse_lisible() {
+        let message = mount_error(
+            "Windows",
+            "Error mounting /dev/sda2: GDBus.Error:org.freedesktop.UDisks2.Error.NotAuthorizedCanObtain: Not authorized",
+        );
+        assert!(message.contains("mot de passe administrateur"));
+        assert!(!message.contains("GDBus"));
+    }
 
     #[test]
     fn lecture_de_lsblk() {

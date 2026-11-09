@@ -295,6 +295,7 @@ impl FilesState {
     pub fn update(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
         self.poll(&ctx);
+        self.expire_message(&ctx);
         self.sync_deep_search(&ctx);
         let look = look();
         let mut actions = Vec::new();
@@ -1502,11 +1503,15 @@ impl FilesState {
                         && room > 0.0
                     {
                         ui.label("·");
-                        if *error {
-                            ui.colored_label(style::error(), text);
-                        } else {
-                            ui.label(text);
-                        }
+                        // Le message s'arrête avant la partie droite (boutons, espace disque)
+                        // au lieu de passer dessous ; le texte entier reste au survol.
+                        let width = (ui.available_width() - 260.0).max(60.0);
+                        let color = if *error { style::error() } else { look.fg2 };
+                        ui.scope(|ui| {
+                            ui.set_max_width(width);
+                            ui.add(egui::Label::new(RichText::new(text).color(color)).truncate())
+                                .on_hover_text(text);
+                        });
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.spacing_mut().item_spacing.x = 8.0;
@@ -1669,6 +1674,10 @@ impl FilesState {
                             Sense::click_and_drag(),
                         );
                         self.item_rects.push((rect, entry.path.clone()));
+                        if self.scroll_to.as_ref() == Some(&entry.path) {
+                            ui.scroll_to_rect(rect, Some(egui::Align::Center));
+                            self.scroll_to = None;
+                        }
                         let selected = self.selected.contains(&entry.path);
                         if selected {
                             ui.painter().rect_filled(rect, 14.0, look.sel_bg);
@@ -1867,6 +1876,10 @@ impl FilesState {
                 );
                 let rect = egui::Rect::from_x_y_ranges(area.x_range(), row.y_range());
                 self.item_rects.push((rect, entry.path.clone()));
+                if self.scroll_to.as_ref() == Some(&entry.path) {
+                    ui.scroll_to_rect(rect, Some(egui::Align::Center));
+                    self.scroll_to = None;
+                }
                 let selected = self.selected.contains(&entry.path);
                 if selected {
                     ui.painter().rect_filled(rect, 9.0, look.sel_bg);

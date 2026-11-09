@@ -536,6 +536,11 @@ fn modified(path: &Path) -> Option<SystemTime> {
     fs::metadata(path).and_then(|metadata| metadata.modified()).ok()
 }
 
+/// Dernier changement dans l'une des Corbeilles (personnelle ou d'un disque).
+fn trash_stamp() -> Option<SystemTime> {
+    trash::files_dirs().iter().filter_map(|dir| modified(dir)).max()
+}
+
 impl FilesState {
     /// Sélecteur de fichier, ouvert dans `start` (ou le dossier personnel). En
     /// enregistrement, `name` est le nom proposé.
@@ -888,7 +893,7 @@ panneau={}
         self.rename = None;
         self.entries = match &self.location {
             Location::Trash => {
-                self.loaded = modified(&trash::files_dir());
+                self.loaded = trash_stamp();
                 trash::list()
                     .into_iter()
                     .map(|item| {
@@ -1555,10 +1560,8 @@ panneau={}
             Action::AskEmptyTrash => self.dialog = Some(Dialog::EmptyTrash),
             Action::ConfirmEmptyTrash => {
                 self.dialog = None;
-                if let Err(error) = trash::empty() {
-                    self.error(error);
-                }
-                self.refresh();
+                // Vider peut être long (gros dossiers) : fait à part, la fenêtre reste libre.
+                self.run_job("Vidage de la Corbeille", |_| trash::empty());
             }
             Action::NewFolder => {
                 if let Some(dir) = self.current_dir() {
@@ -1906,7 +1909,7 @@ panneau={}
         let stamp = match &self.location {
             Location::Folder(dir) => modified(dir),
             Location::Archive { archive, .. } => modified(archive),
-            Location::Trash => modified(&trash::files_dir()),
+            Location::Trash => trash_stamp(),
             Location::Recent | Location::Tag(_) | Location::Analysis { .. } => None,
         };
         // Analyse en cours : ses résultats sont relus régulièrement, et une dernière fois

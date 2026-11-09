@@ -462,7 +462,7 @@ pub fn copy_into(sources: &[PathBuf], dir: &Path, job: &Job) -> Result<(), Strin
             .map(|name| name.to_string_lossy().into_owned())
             .ok_or("Élément sans nom")?;
         let target = unique_destination(dir, &name);
-        copy_tree(source, &target, job)?;
+        copy_or_clean(source, &target, job)?;
     }
     Ok(())
 }
@@ -486,10 +486,20 @@ pub fn move_into(sources: &[PathBuf], dir: &Path, job: &Job) -> Result<(), Strin
             continue;
         }
         job.update(|progress| progress.total_bytes += tree_size(source).0);
-        copy_tree(source, &target, job)?;
+        copy_or_clean(source, &target, job)?;
         remove_tree(source)?;
     }
     Ok(())
+}
+
+/// Copie `source` vers `target` (une place neuve) ; en cas d'échec ou d'annulation, ce qui
+/// était déjà copié est effacé, pour ne pas laisser de copie incomplète.
+fn copy_or_clean(source: &Path, target: &Path, job: &Job) -> Result<(), String> {
+    let result = copy_tree(source, target, job);
+    if result.is_err() && target.symlink_metadata().is_ok() {
+        let _ = remove_tree(target);
+    }
+    result
 }
 
 fn copy_tree(source: &Path, target: &Path, job: &Job) -> Result<(), String> {
@@ -527,13 +537,15 @@ fn copy_tree(source: &Path, target: &Path, job: &Job) -> Result<(), String> {
                 let _ = fs::remove_file(target);
                 return Err("Annulé".into());
             }
-            let read = input.read(&mut buffer).map_err(|error| error.to_string())?;
+            let read = input
+                .read(&mut buffer)
+                .map_err(|error| format!("{} : {error}", source.display()))?;
             if read == 0 {
                 break;
             }
             output
                 .write_all(&buffer[..read])
-                .map_err(|error| error.to_string())?;
+                .map_err(|error| format!("{} : {error}", target.display()))?;
             job.update(|progress| progress.done_bytes += read as u64);
         }
         let _ = fs::set_permissions(target, metadata.permissions());

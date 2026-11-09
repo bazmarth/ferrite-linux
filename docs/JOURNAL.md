@@ -3118,6 +3118,32 @@ retour, collision) ; captures du glisser de deux icônes et du rectangle de sél
 Pas vérifié : à la vraie souris (glisser, Ctrl+clic, rectangle) ; changement de taille à
 l'écran (seulement par les tests) ; pincement.
 
+## 2026-11-09 — Fichiers : Corbeille de chaque disque, plus de copie qui gèle le PC
+
+Vu : `ferrite-claude` et `ferrite-deepseek` (sur FICHIERS, 14 Go) mis à la Corbeille →
+Fichiers figé, puis tout le PC. Cause : la Corbeille était seulement
+`~/.local/share/Trash` (disque système) ; entre deux disques, `trash::trash` copiait tout
+l'élément, dans la fenêtre même, vers le disque système (11 Go libres). Une copie
+interrompue (« Invalid argument (os error 22) ») laissait en plus sa partie déjà copiée.
+- `trash.rs` : un élément d'un autre disque va dans la Corbeille de ce disque
+  (`RACINE/.Trash-UID`, créée en 700 au besoin ; c'est la règle freedesktop, celle des
+  autres gestionnaires) : simple renommage, instantané. Disque sans Corbeille possible :
+  message qui renvoie à « Supprimer définitivement… ». Plus jamais de copie.
+- Liste, restauration, vidage et icône : toutes les Corbeilles (la personnelle et celles
+  des disques montés `/dev/…`, relues au plus toutes les 2 s). Chemin d'origine relatif à
+  la racine du disque accepté (écrit ainsi par d'autres gestionnaires).
+- Un lien symbolique part lui-même à la Corbeille (avant : sa cible).
+- Vider la Corbeille : tâche à part, la fenêtre reste libre.
+- `ops.rs` : copie ou déplacement raté ou annulé → la copie incomplète est effacée ;
+  erreurs de lecture et d'écriture avec le nom du fichier.
+Vérifié : CI (sans shellcheck) ; tests (montages, fiche relative, restauration, lien) ;
+essai réel `ferrite-apps corbeille` sur un dossier de 50 Mo d'un autre disque (`/tmp`) :
+3 ms, rien dans la Corbeille personnelle ; capture de la Corbeille : éléments des deux
+Corbeilles listés.
+Pas vérifié : à la souris sur FICHIERS (Suppr sur un gros dossier, Restaurer, Vider).
+Reste dans la Corbeille personnelle (laissé à l'utilisateur) : copies incomplètes
+`ferrite-claude` (~11 Go), `OS_DEBIAN`, `OS_DEBIAN (copie)`, `found.000`.
+
 ## 2026-11-09 — Paramètres : gestion des comptes et images de profil
 
 Demande : gérer les comptes depuis l'interface (ajout, suppression, mot de passe…), puis

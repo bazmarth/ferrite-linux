@@ -1330,6 +1330,7 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
         dark_theme,
         popover: state.popover,
         wifi: system.wifi,
+        wifi_signal: system.wifi_signal,
         bluetooth: system.bluetooth,
         volume: system
             .volume
@@ -1366,8 +1367,17 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
         controls: if state.popover == Some(Popover::Controls) {
             crate::desktop::panels::ControlsView {
                 page: state.controls.page,
-                networks: state.controls.network_rows(),
-                devices: state.controls.device_rows(),
+                // Radio coupée : les listes gardées de la dernière analyse ne s'affichent plus.
+                networks: if system.wifi == Some(true) {
+                    state.controls.network_rows()
+                } else {
+                    Vec::new()
+                },
+                devices: if system.bluetooth == Some(true) {
+                    state.controls.device_rows()
+                } else {
+                    Vec::new()
+                },
                 password: state.controls.password_row(),
                 scanning: state.controls.scanning,
                 current_network: state.controls.current_network().map(str::to_owned),

@@ -13,6 +13,43 @@ pub fn wifi_enabled() -> Option<bool> {
     Some(radio.trim() == "enabled")
 }
 
+/// Ondes allumées pour une force de signal de 0 à 100 : 1 faible, 2 correct, 3 bon.
+pub fn signal_level(signal: u8) -> u8 {
+    match signal {
+        0..=39 => 1,
+        40..=69 => 2,
+        _ => 3,
+    }
+}
+
+/// Force du signal (0 à 100) du réseau Wi-Fi connecté, `None` sans connexion. Lit la
+/// dernière analyse de NetworkManager, sans en relancer une.
+pub fn wifi_signal() -> Option<u8> {
+    let output = command::run(
+        "nmcli",
+        &[
+            "-t",
+            "-f",
+            "IN-USE,SIGNAL",
+            "device",
+            "wifi",
+            "list",
+            "--rescan",
+            "no",
+        ],
+    )
+    .ok()?;
+    parse_wifi_signal(&output)
+}
+
+/// Analyse `nmcli -t -f IN-USE,SIGNAL device wifi list` : la ligne marquée `*`.
+pub fn parse_wifi_signal(output: &str) -> Option<u8> {
+    output.lines().find_map(|line| {
+        let (in_use, signal) = line.split_once(':')?;
+        (in_use.trim() == "*").then(|| signal.trim().parse().ok())?
+    })
+}
+
 pub fn set_wifi(enabled: bool) -> Result<(), Error> {
     command::run("nmcli", &["radio", "wifi", if enabled { "on" } else { "off" }]).map(drop)
 }
@@ -31,14 +68,9 @@ pub struct WifiNetwork {
 }
 
 impl WifiNetwork {
-    /// Niveau du signal, de 1 à 4 barres.
+    /// Niveau du signal, de 1 à 3 ondes.
     pub fn level(&self) -> u8 {
-        match self.signal {
-            0..=24 => 1,
-            25..=49 => 2,
-            50..=74 => 3,
-            _ => 4,
-        }
+        signal_level(self.signal)
     }
 
     /// Détails d'une connexion : « WPA3 · 5 GHz · 433 Mbit/s ».
@@ -597,6 +629,16 @@ mod tests {
     }
 
     #[test]
+    fn signal_du_reseau_connecte() {
+        assert_eq!(parse_wifi_signal(" :40\n*:72\n :90\n"), Some(72));
+        assert_eq!(parse_wifi_signal(" :40\n :90\n"), None);
+        assert_eq!(parse_wifi_signal(""), None);
+        assert_eq!(signal_level(15), 1);
+        assert_eq!(signal_level(55), 2);
+        assert_eq!(signal_level(70), 3);
+    }
+
+    #[test]
     fn liste_des_reseaux() {
         let output = "\
  :Voisins:40:WPA2
@@ -620,7 +662,7 @@ mod tests {
         let output = " :Maison:60:WPA2:2437 MHz:130 Mbit/s\n*:Maison:90:WPA2 WPA3:5180 MHz:433 Mbit/s\n";
         let network = &parse_wifi_list(output)[0];
         assert_eq!(network.summary(), "WPA3 · 5 GHz · 433 Mbit/s");
-        assert_eq!(network.level(), 4);
+        assert_eq!(network.level(), 3);
     }
 
     #[test]

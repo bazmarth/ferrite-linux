@@ -76,13 +76,11 @@ icons![
     "status-volume-1",
     "status-volume-2",
     "status-volume-3",
-    "status-volume-4",
-    "status-volume-5",
     "status-wifi-0",
     "status-wifi-1",
     "status-wifi-2",
     "status-wifi-3",
-    "status-wifi-4",
+    "status-wifi-off",
     "file-document",
     "file-spreadsheet",
     "file-presentation",
@@ -134,7 +132,7 @@ pub fn known(name: &str) -> Option<&'static str> {
 const GLYPHS: &[(&str, &str)] = &[
     (
         "cc-wifi",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M2 9 a15 15 0 0 1 20 0 M5.5 12.5 a10 10 0 0 1 13 0 M9 16 a5 5 0 0 1 6 0 M12 19.5 V19.6" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 19L9.45 16.45A3.6 3.6 0 0 1 14.55 16.45Z M5.35 12.35A9.4 9.4 0 0 1 18.65 12.35L16.1 14.9A5.8 5.8 0 0 0 7.9 14.9Z M1.25 8.25A15.2 15.2 0 0 1 22.75 8.25L20.2 10.8A11.6 11.6 0 0 0 3.8 10.8Z" fill="#000" stroke="#000" stroke-width="0.8" stroke-linejoin="round"/></svg>"##,
     ),
     (
         "cc-bluetooth",
@@ -162,11 +160,11 @@ const GLYPHS: &[(&str, &str)] = &[
     ),
     (
         "cc-volume",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 9 H8 L13 5 V19 L8 15 H4 Z M16.5 9 a4 4 0 0 1 0 6" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M5.3 9.1H7.7L12.5 5.5V18.5L7.7 14.9H5.3Q3.6 14.9 3.6 13.2V10.8Q3.6 9.1 5.3 9.1Z M14.8 9.8A2.9 2.9 0 0 1 14.8 14.2 M16.5 7.8A5.5 5.5 0 0 1 16.5 16.2" fill="none" stroke="#000" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
     ),
     (
         "cc-mute",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 9 H8 L13 5 V19 L8 15 H4 Z M16.5 9.5 L21 14 M21 9.5 L16.5 14" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M5.3 9.1H7.7L12.5 5.5V18.5L7.7 14.9H5.3Q3.6 14.9 3.6 13.2V10.8Q3.6 9.1 5.3 9.1Z M15.6 9.8L19.9 14.2M19.9 9.8L15.6 14.2" fill="none" stroke="#000" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
     ),
     (
         "cc-mic",
@@ -258,7 +256,7 @@ const GLYPHS: &[(&str, &str)] = &[
     ),
     (
         "glyph-wifi",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><g fill="none" stroke="#000" stroke-width="2.3" stroke-linecap="round"><path d="M2.6 9.4a13.4 13.4 0 0 1 18.8 0"/><path d="M6.1 12.9a8.4 8.4 0 0 1 11.8 0"/><path d="M9.6 16.4a3.4 3.4 0 0 1 4.8 0"/></g><circle cx="12" cy="19.6" r="1.7" fill="#000"/></svg>"##,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 19L9.45 16.45A3.6 3.6 0 0 1 14.55 16.45Z M5.35 12.35A9.4 9.4 0 0 1 18.65 12.35L16.1 14.9A5.8 5.8 0 0 0 7.9 14.9Z M1.25 8.25A15.2 15.2 0 0 1 22.75 8.25L20.2 10.8A11.6 11.6 0 0 0 3.8 10.8Z" fill="#000" stroke="#000" stroke-width="0.8" stroke-linejoin="round"/></svg>"##,
     ),
     (
         "glyph-bluetooth",
@@ -510,22 +508,30 @@ fn composite(pixels: &mut [u8], width: u32, height: u32, pixmap: &Pixmap, x: i32
     }
 }
 
-/// Nom de l'icône Wi-Fi : éteinte, ou pleine puissance quand la radio est active.
-pub fn wifi_icon(enabled: bool) -> &'static str {
-    if enabled { "status-wifi-4" } else { "status-wifi-0" }
+/// Nom de l'icône Wi-Fi : barrée radio coupée, ondes éteintes sans connexion, sinon
+/// autant d'ondes allumées que le signal le permet.
+pub fn wifi_icon(enabled: bool, signal: Option<u8>) -> &'static str {
+    match (enabled, signal) {
+        (false, _) => "status-wifi-off",
+        (true, None) => "status-wifi-0",
+        (true, Some(signal)) => wifi_level_icon(ferrite_system::network::signal_level(signal)),
+    }
 }
 
-/// Nom de l'icône du volume pour un niveau de 0 à 100.
+/// Icône Wi-Fi pour un niveau de 0 à 3 ondes.
+pub fn wifi_level_icon(level: u8) -> &'static str {
+    ["status-wifi-0", "status-wifi-1", "status-wifi-2", "status-wifi-3"][level.min(3) as usize]
+}
+
+/// Nom de l'icône du volume pour un niveau de 0 à 100 : coupé, puis 1 à 3 ondes allumées.
 pub fn volume_icon(level: u8) -> &'static str {
-    const NAMES: [&str; 6] = [
+    const NAMES: [&str; 4] = [
         "status-volume-0",
         "status-volume-1",
         "status-volume-2",
         "status-volume-3",
-        "status-volume-4",
-        "status-volume-5",
     ];
-    NAMES[step(level, 5)]
+    NAMES[step(level, 3)]
 }
 
 /// Nom de l'icône de batterie, arrondie à la dizaine.
@@ -621,10 +627,14 @@ mod tests {
     fn les_paliers_suivent_le_niveau() {
         assert_eq!(volume_icon(0), "status-volume-0");
         assert_eq!(volume_icon(1), "status-volume-1");
-        assert_eq!(volume_icon(65), "status-volume-4");
-        assert_eq!(volume_icon(100), "status-volume-5");
+        assert_eq!(volume_icon(33), "status-volume-1");
+        assert_eq!(volume_icon(65), "status-volume-2");
+        assert_eq!(volume_icon(100), "status-volume-3");
         assert_eq!(battery_icon(47, false), "status-battery-050");
         assert_eq!(battery_icon(3, true), "status-battery-charging-000");
-        assert_eq!(wifi_icon(false), "status-wifi-0");
+        assert_eq!(wifi_icon(false, Some(90)), "status-wifi-off");
+        assert_eq!(wifi_icon(true, None), "status-wifi-0");
+        assert_eq!(wifi_icon(true, Some(20)), "status-wifi-1");
+        assert_eq!(wifi_icon(true, Some(85)), "status-wifi-3");
     }
 }

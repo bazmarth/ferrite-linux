@@ -711,6 +711,8 @@ pub struct DesktopView {
     pub region_adjust: Option<(i32, i32, i32, i32)>,
     pub popover: Option<Popover>,
     pub wifi: Option<bool>,
+    /// Force du signal (0 à 100) du réseau Wi-Fi connecté.
+    pub wifi_signal: Option<u8>,
     pub bluetooth: Option<bool>,
     pub volume: Option<u8>,
     pub brightness: Option<u8>,
@@ -2147,7 +2149,7 @@ impl Panels {
                 Indicator::Bluetooth if view.bluetooth == Some(true) => "status-bluetooth-on",
                 Indicator::Bluetooth => "status-bluetooth-off",
                 Indicator::Network => match view.wifi {
-                    Some(enabled) => svg::wifi_icon(enabled),
+                    Some(enabled) => svg::wifi_icon(enabled, view.wifi_signal),
                     None => "status-network",
                 },
                 Indicator::Volume => svg::volume_icon(view.volume.unwrap_or(0)),
@@ -2786,20 +2788,13 @@ impl Panels {
                 canvas.fill(Rect::new(row.x, row.y, row.w, 1.0), 0.0, palette().separator);
             }
             let center = row.y + CONTROLS_LIST_ROW / 2.0;
-            for (index, height) in [4.0, 7.0, 10.0, 13.0].into_iter().enumerate() {
-                let bar = Rect::new(
-                    row.x + 16.0 + index as f64 * 6.0,
-                    center + 7.0 - height,
-                    4.0,
-                    height,
-                );
-                let color = if (index as u8) < network.level {
-                    primary_text()
-                } else {
-                    palette().track
-                };
-                canvas.fill(bar, 1.0, color);
-            }
+            // Force du signal : ondes allumées selon le niveau, les autres estompées.
+            canvas.icon(
+                svg::wifi_level_icon(network.level),
+                (row.x + 27.0, center),
+                24.0,
+                Style::Symbolic(primary_text()),
+            );
             let x = row.x + 48.0;
             let name = canvas.fit_text(&self.bold, &network.ssid, px(14.0), row.w - 48.0 - 64.0);
             canvas.label(&self.bold, &name, x, row.y + 8.0, px(14.0), primary_text());
@@ -2847,7 +2842,11 @@ impl Panels {
         self.draw_controls_bottom(
             canvas,
             layout,
-            "Analyse auto toutes les 10 s",
+            match view.wifi {
+                Some(true) => "Analyse auto toutes les 10 s",
+                Some(false) => "Activez-le avec l’interrupteur",
+                None => "",
+            },
             "Paramètres Wi-Fi…",
             false,
         );
@@ -2925,6 +2924,23 @@ impl Panels {
     fn draw_controls_bluetooth(&self, canvas: &mut Canvas, layout: &Layout, view: &DesktopView) {
         let controls = &view.controls;
         self.draw_controls_header(canvas, layout, "Bluetooth", view.bluetooth == Some(true));
+        if controls.devices.is_empty() {
+            let list = layout.bluetooth_empty();
+            canvas.fill(list, 14.0, palette().window_background);
+            let text = match view.bluetooth {
+                Some(true) => "Recherche d’appareils…",
+                Some(false) => "Bluetooth désactivé",
+                None => "Aucun adaptateur Bluetooth détecté",
+            };
+            canvas.label(
+                &self.regular,
+                text,
+                list.x + 16.0,
+                list.y + 16.0,
+                px(13.0),
+                text_secondary(),
+            );
+        }
         for (title, paired) in [("Mes appareils", true), ("Appareils à proximité", false)] {
             let Some((heading, list)) = layout.bluetooth_group(paired) else {
                 continue;
@@ -2992,8 +3008,10 @@ impl Panels {
             };
             canvas.button(button, text, fill, text_ink);
         }
-        let status = if view.bluetooth != Some(true) {
-            "Bluetooth désactivé"
+        let status = if view.bluetooth == Some(false) {
+            "Activez-le avec l’interrupteur"
+        } else if view.bluetooth.is_none() {
+            ""
         } else if controls.scanning {
             "Recherche d’appareils…"
         } else {
@@ -4818,6 +4836,9 @@ impl Layout {
                     + error
             }
             ControlsPage::Wifi => CONTROLS_LIST_TOP + self.wifi_list_height() + CONTROLS_LIST_BOTTOM,
+            ControlsPage::Bluetooth if self.controls_view.devices.is_empty() => {
+                CONTROLS_LIST_TOP + CONTROLS_LIST_ROW + 10.0 + CONTROLS_LIST_BOTTOM
+            }
             ControlsPage::Bluetooth => {
                 let groups = self.bluetooth_groups();
                 CONTROLS_LIST_TOP
@@ -4946,6 +4967,17 @@ impl Layout {
         let devices = &self.controls_view.devices;
         let paired = devices.iter().filter(|device| device.paired).count();
         [paired, devices.len() - paired]
+    }
+
+    /// Cadre du message quand aucun appareil ne s'affiche.
+    fn bluetooth_empty(&self) -> Rect {
+        let card = self.controls();
+        Rect::new(
+            card.x + CONTROLS_PAD,
+            card.y + CONTROLS_LIST_TOP,
+            card.w - 2.0 * CONTROLS_PAD,
+            CONTROLS_LIST_ROW,
+        )
     }
 
     /// Titre et fond du groupe des appareils associés, ou de ceux à proximité.

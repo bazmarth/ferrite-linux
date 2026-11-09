@@ -15,6 +15,7 @@ use crate::{
         apps::{App, AppKey},
         lock::MediaCommand,
         panels::{Osd, Popover},
+        svg,
     },
     state::Ferrite,
     system::Change,
@@ -81,13 +82,14 @@ impl FunctionKey {
 fn volume_osd(level: u8, muted: bool) -> Osd {
     if muted {
         Osd {
-            icon: "cc-mute",
+            icon: svg::volume_icon(0),
             label: "Son coupé",
             level: None,
         }
     } else {
         Osd {
-            icon: "cc-volume",
+            // Les ondes allumées suivent le niveau, comme dans la barre du haut.
+            icon: svg::volume_icon(level),
             label: "Volume",
             level: Some(level),
         }
@@ -237,7 +239,8 @@ mod tests {
     #[test]
     fn bulle_du_son() {
         assert_eq!(volume_osd(40, false).level, Some(40));
-        assert_eq!(volume_osd(40, true).icon, "cc-mute");
+        assert_eq!(volume_osd(40, true).icon, "status-volume-0");
+        assert_eq!(volume_osd(90, false).icon, "status-volume-3");
         assert_eq!(volume_osd(0, true).level, None);
     }
 }

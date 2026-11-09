@@ -1,10 +1,2 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 100 100" role="img" aria-label="Wi-Fi niveau 0">
-<defs>
- <linearGradient id="silver" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#DDE3EA"/></linearGradient>
- <linearGradient id="blue" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8BD0FF"/><stop offset="1" stop-color="#3687DB"/></linearGradient>
- <linearGradient id="green" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#B9F27B"/><stop offset="1" stop-color="#4CAF62"/></linearGradient>
- <linearGradient id="yellow" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FFE58B"/><stop offset="1" stop-color="#E6A51A"/></linearGradient>
- <linearGradient id="red" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#FF8989"/><stop offset="1" stop-color="#D94150"/></linearGradient>
- <linearGradient id="purple" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#E9C6FF"/><stop offset="1" stop-color="#9254CB"/></linearGradient>
- <linearGradient id="dark" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#56616D"/><stop offset="1" stop-color="#202833"/></linearGradient>
-</defs><g><path d="M16 42Q50 10 84 42" fill="none" stroke="#CBD2DB" stroke-width="9" stroke-linecap="round"/><path d="M28 54Q50 34 72 54" fill="none" stroke="#CBD2DB" stroke-width="9" stroke-linecap="round"/><path d="M39 65Q50 56 61 65" fill="none" stroke="#CBD2DB" stroke-width="9" stroke-linecap="round"/><circle cx="50" cy="77" r="6.5" fill="#CBD2DB"/></g></svg>
+<g><path d="M50 81L39.39 70.39A15 15 0 0 1 60.61 70.39Z" fill="#CBD2DB" stroke="#CBD2DB" stroke-width="3" stroke-linejoin="round"/><path d="M22.42 53.42A39 39 0 0 1 77.58 53.42L66.97 64.03A24 24 0 0 0 33.03 64.03Z" fill="#CBD2DB" stroke="#CBD2DB" stroke-width="3" stroke-linejoin="round"/><path d="M5.45 36.45A63 63 0 0 1 94.55 36.45L83.94 47.06A48 48 0 0 0 16.06 47.06Z" fill="#CBD2DB" stroke="#CBD2DB" stroke-width="3" stroke-linejoin="round"/></g></svg>

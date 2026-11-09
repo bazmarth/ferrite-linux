@@ -1,4 +1,2 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 100 100" role="img" aria-label="Wi-Fi">
-<g fill="none" stroke="#000" stroke-width="9" stroke-linecap="round"><path d="M14 42a52 52 0 0 1 72 0"/><path d="M27 56a33 33 0 0 1 46 0"/><path d="M40 70a14 14 0 0 1 20 0"/></g>
-<circle cx="50" cy="81" r="6.5" fill="#000"/>
-</svg>
+<g><path d="M50 81L39.39 70.39A15 15 0 0 1 60.61 70.39Z" fill="#000" stroke="#000" stroke-width="3" stroke-linejoin="round"/><path d="M22.42 53.42A39 39 0 0 1 77.58 53.42L66.97 64.03A24 24 0 0 0 33.03 64.03Z" fill="#000" stroke="#000" stroke-width="3" stroke-linejoin="round"/><path d="M5.45 36.45A63 63 0 0 1 94.55 36.45L83.94 47.06A48 48 0 0 0 16.06 47.06Z" fill="#000" stroke="#000" stroke-width="3" stroke-linejoin="round"/></g></svg>

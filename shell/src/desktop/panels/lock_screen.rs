@@ -1298,7 +1298,7 @@ impl Panels {
         }
         if state.view.wifi == Some(true) {
             canvas.icon(
-                "status-wifi-4",
+                svg::wifi_icon(true, state.view.wifi_signal),
                 (right - 9.0, 30.0),
                 18.0,
                 Style::Symbolic(tokens.fg),

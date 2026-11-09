@@ -138,7 +138,7 @@ fn run(options: Options) -> Result<u8, Box<dyn std::error::Error>> {
     }
     if options.demo_osd {
         let osd = desktop::panels::Osd {
-            icon: "cc-volume",
+            icon: desktop::svg::volume_icon(60),
             label: "Volume",
             level: Some(60),
         };

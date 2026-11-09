@@ -3262,3 +3262,30 @@ Vérifié : CI (sans shellcheck) ; tests (survol aller-retour, déplacement au c
 captures : dossier surligné puis ouvert après un faux message de survol envoyé à la fenêtre.
 Pas vérifié : à la vraie souris entre deux fenêtres et sur un onglet ; les touches à la
 main (pas d'envoi de touches dans le bureau imbriqué).
+
+## 2026-11-09 — Icônes du Wi-Fi et du son, Bluetooth coupé
+
+Demande : Wi-Fi dessiné en éventail plein (image fournie), version barrée quand il est
+coupé, ondes qui suivent la force du signal ; son au trait avec 3 ondes ; Bluetooth coupé
+qui montrait encore ses appareils avec des boutons « Connecter ».
+- Wi-Fi : `status-wifi-0..3` (pointe + 2 bandes, ondes éteintes estompées) et
+  `status-wifi-off` (barré, ondes coupées par un masque). `status-wifi-4` supprimé.
+  `ferrite_ui::icons::symbolic` laisse intacts `mask="url(#…)"` et `clip-path`.
+- Signal : `network::wifi_signal` (dernière analyse, `--rescan no`) dans `Snapshot` →
+  `DesktopView::wifi_signal`. Barre du haut et écran verrouillé : `svg::wifi_icon(radio,
+  signal)` ; radio active sans connexion = ondes éteintes. Niveaux : `signal_level`
+  (<40 : 1, <70 : 2, sinon 3), partagé par les listes du centre de contrôle et de
+  Paramètres (les barres verticales sont remplacées par l'éventail).
+- Pictogrammes `cc-wifi`, `glyph-wifi`, `settings-wifi` et la tuile de détails de
+  Paramètres : même éventail.
+- Son : `status-volume-0` (coupé, croix) et `-1..3` (ondes allumées par tiers) ;
+  `-4` et `-5` supprimés. La bulle du volume suit le niveau ; `cc-volume` et `cc-mute`
+  redessinés au trait arrondi.
+- Radio coupée : listes Wi-Fi et Bluetooth vides, cadre « … désactivé » et « Activez-le
+  avec l'interrupteur » en bas ; plus de boutons qui ont l'air actifs.
+Vérifié : clippy et tests du shell, de ferrite-system et ferrite-ui ; captures de la barre,
+de la liste Wi-Fi (niveaux différents), du Bluetooth coupé, du centre de contrôle et de la
+bulle du volume.
+Pas vérifié : ferrite-apps ne compile pas en ce moment (chantier `packagekit`/`store`
+d'une autre session) : la ligne Wi-Fi de Paramètres n'a été ni compilée ni vue ; icône
+barrée sur le vrai bureau (radio coupée).

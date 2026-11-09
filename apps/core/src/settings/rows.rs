@@ -27,7 +27,7 @@ pub enum Lead {
     None,
     /// Pastille colorée de 30 px et son symbole blanc.
     Tile(&'static str, u32),
-    /// Barres de signal, de 1 à 4.
+    /// Force du signal Wi-Fi, de 1 à 3 ondes.
     Bars(u8),
     /// Image ronde de 30 px (image de profil).
     Picture(egui::TextureId),
@@ -184,19 +184,19 @@ impl Group<'_> {
                 x += 42.0;
             }
             Lead::Bars(level) => {
-                let bottom = inner.center().y + 8.0;
-                for (index, height) in [4.0, 7.0, 10.0, 13.0].into_iter().enumerate() {
-                    let bar = egui::Rect::from_min_size(
-                        egui::pos2(x + 4.0 + index as f32 * 6.0, bottom - height),
-                        egui::vec2(4.0, height),
-                    );
-                    let color = if (index as u8) < level {
-                        style::primary_text()
-                    } else {
-                        style::track()
-                    };
-                    child.painter().rect_filled(bar, 1.0, color);
-                }
+                // Ondes Wi-Fi : allumées selon le niveau, les autres estompées.
+                let icon = egui::Rect::from_center_size(
+                    egui::pos2(x + 15.0, inner.center().y),
+                    egui::vec2(26.0, 26.0),
+                );
+                let name = ["status-wifi-0", "status-wifi-1", "status-wifi-2", "status-wifi-3"]
+                    [level.min(3) as usize];
+                self.icons.paint(
+                    &child,
+                    name,
+                    icon,
+                    style::IconStyle::Tinted(style::primary_text()),
+                );
                 x += 42.0;
             }
         }

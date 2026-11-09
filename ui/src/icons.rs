@@ -25,7 +25,9 @@ pub fn symbolic(source: &str, ink: Color) -> String {
     while let Some(index) = rest.find(['#', 'u']) {
         out.push_str(&rest[..index]);
         rest = &rest[index..];
-        if let Some(gradient) = rest.strip_prefix("url(#") {
+        // Masque ou découpe (Wi-Fi barré) : la référence reste telle quelle.
+        let cutout = out.ends_with("mask=\"") || out.ends_with("clip-path=\"");
+        if let Some(gradient) = rest.strip_prefix("url(#").filter(|_| !cutout) {
             // Dégradé coloré : partie active.
             let end = gradient.find(')').map_or(gradient.len(), |end| end + 1);
             out.push_str(&full);
@@ -77,5 +79,13 @@ mod tests {
         assert!(out.contains(r#"stroke="rgba(16,32,48,0.35)""#));
         assert!(out.contains(r#"fill="none""#));
         assert!(!out.contains("#273544"));
+    }
+
+    #[test]
+    fn un_masque_garde_sa_reference() {
+        let source = r##"<svg><defs><mask id="coupe"/></defs><g><g mask="url(#coupe)"><path fill="#273544"/></g></g></svg>"##;
+        let out = symbolic(source, Color::rgb(0x102030));
+        assert!(out.contains(r#"mask="url(#coupe)""#));
+        assert!(out.contains(r#"fill="rgba(16,32,48,1)""#));
     }
 }

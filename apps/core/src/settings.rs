@@ -1186,7 +1186,7 @@ impl SettingsState {
                 43.0,
                 |ui, rect| {
                     details::lead_tile(ui, rect, style::accent(), |painter, rect| {
-                        wifi_glyph(painter, rect, style::accent_text());
+                        wifi_glyph(painter, rect, style::accent_text(), network.level());
                     })
                 },
                 |ui| details::title_and_state(ui, t, &network.ssid, "Connecté", t.ok),
@@ -3738,24 +3738,30 @@ fn signal_label(signal: u8) -> String {
     .to_owned()
 }
 
-/// Ondes Wi-Fi dans `rect`, comme la planche : trois arcs centrés sous eux, et un point.
-fn wifi_glyph(painter: &egui::Painter, rect: egui::Rect, color: Color32) {
+/// Ondes Wi-Fi dans `rect`, en éventail comme la barre du haut : une pointe et deux
+/// bandes ; au-delà de `level`, les ondes sont estompées.
+fn wifi_glyph(painter: &egui::Painter, rect: egui::Rect, color: Color32, level: u8) {
     let scale = rect.width() / 24.0;
-    let at = |x: f32, y: f32| rect.min + egui::vec2(x, y) * scale;
-    let stroke = Stroke::new(2.0 * scale, color);
-    // Rayon et demi-largeur de chaque arc, de la planche (`M2 9 a15 15 0 0 1 20 0`…).
-    for (radius, half) in [(15.0_f32, 10.0_f32), (10.0, 6.5), (5.0, 3.0)] {
-        let rise = (radius * radius - half * half).sqrt();
-        let (start, end) = ((-rise).atan2(-half), (-rise).atan2(half));
-        let points: Vec<egui::Pos2> = (0..=20)
-            .map(|step| {
-                let angle = start + (end - start) * step as f32 / 20.0;
-                at(12.0 + radius * angle.cos(), 20.0 + radius * angle.sin())
-            })
+    let apex = rect.min + egui::vec2(12.0, 19.0) * scale;
+    let point = |radius: f32, angle: f32| apex + egui::vec2(angle.cos(), angle.sin()) * radius * scale;
+    let (start, end) = (-135_f32.to_radians(), -45_f32.to_radians());
+    let ink = |index: u8| {
+        if index < level {
+            color
+        } else {
+            color.gamma_multiply(0.35)
+        }
+    };
+    let mut tip = vec![apex];
+    tip.extend((0..=12).map(|step| point(3.8, start + (end - start) * step as f32 / 12.0)));
+    painter.add(egui::Shape::convex_polygon(tip, ink(0), Stroke::NONE));
+    // Chaque bande : un trait épais le long de l'arc, coupé droit vers la pointe.
+    for (index, radius) in [(1, 7.6_f32), (2, 13.4)] {
+        let points: Vec<egui::Pos2> = (0..=24)
+            .map(|step| point(radius, start + (end - start) * step as f32 / 24.0))
             .collect();
-        painter.add(egui::Shape::line(points, stroke));
+        painter.add(egui::Shape::line(points, Stroke::new(3.8 * scale, ink(index))));
     }
-    painter.circle_filled(at(12.0, 19.5), 1.5 * scale, color);
 }
 
 #[cfg(test)]

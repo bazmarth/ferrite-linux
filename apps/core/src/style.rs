@@ -1021,8 +1021,12 @@ icons![
     "status-storage",
     "status-usb",
     "status-user",
-    "status-volume-4",
-    "status-wifi-4",
+    "status-volume-3",
+    "status-wifi-0",
+    "status-wifi-1",
+    "status-wifi-2",
+    "status-wifi-3",
+    "status-wifi-off",
     "settings-computer",
     "settings-wifi",
     "settings-bluetooth",
@@ -1251,7 +1255,7 @@ const GLYPHS: &[(&str, &str)] = &[
     ),
     (
         "glyph-wifi",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M2 9 a15 15 0 0 1 20 0 M5.5 12.5 a10 10 0 0 1 13 0 M9 16 a5 5 0 0 1 6 0 M12 19.5 V19.6" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 19L9.45 16.45A3.6 3.6 0 0 1 14.55 16.45Z M5.35 12.35A9.4 9.4 0 0 1 18.65 12.35L16.1 14.9A5.8 5.8 0 0 0 7.9 14.9Z M1.25 8.25A15.2 15.2 0 0 1 22.75 8.25L20.2 10.8A11.6 11.6 0 0 0 3.8 10.8Z" fill="#000" stroke="#000" stroke-width="0.8" stroke-linejoin="round"/></svg>"##,
     ),
     (
         "glyph-bluetooth",

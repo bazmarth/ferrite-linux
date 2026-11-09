@@ -37,6 +37,8 @@ pub mod weather;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Snapshot {
     pub wifi: Option<bool>,
+    /// Force du signal (0 à 100) du réseau Wi-Fi connecté.
+    pub wifi_signal: Option<u8>,
     pub bluetooth: Option<bool>,
     pub volume: Option<audio::Volume>,
     pub brightness: Option<u8>,
@@ -52,8 +54,14 @@ pub struct Snapshot {
 impl Snapshot {
     /// Lit l'état de chaque service (quelques secondes au pire, jamais indéfiniment).
     pub fn read() -> Snapshot {
+        let wifi = network::wifi_enabled();
         Snapshot {
-            wifi: network::wifi_enabled(),
+            wifi,
+            wifi_signal: if wifi == Some(true) {
+                network::wifi_signal()
+            } else {
+                None
+            },
             bluetooth: bluetooth::powered(),
             volume: audio::volume(),
             brightness: display::brightness(),

@@ -2740,3 +2740,33 @@ dont un chemin disparu. Trois tests de `ferrite-apps` (archives, favoris de Text
 échouent dans le conteneur de cette session, aussi sans ces changements.
 Pas vérifié : clics réels (ouvrir, menus, sélecteur de dossiers, « Ajouter au bureau »
 dans Fichiers) sur le vrai bureau ; thème clair.
+
+## 2026-11-09 — Alertes de la batterie
+
+Demande de l'utilisateur : alertes batterie faible, chargeur branché, débranché.
+`shell/src/desktop/battery_alerts.rs` : un fil relit le chargeur toutes les 2 s et le
+niveau toutes les 30 s (ou au changement de chargeur), puis envoie une notification du
+bureau ; chaque alerte remplace la précédente. Alertes : « Chargeur branché »,
+« Chargeur débranché », « Batterie faible » (20 %, son), « Batterie presque vide » (10 %,
+reste affichée, traverse « Ne pas déranger »), « Batterie chargée » (une fois par
+branchement). Rebrancher réarme les seuils. `FERRITE_ALIMENTATION` remplace
+`/sys/class/power_supply` pour les essais.
+Vérifié : CI (sans shellcheck) ; 8 tests `battery_alerts` ; captures du bureau imbriqué
+avec une fausse batterie : « presque vide » à 8 %, puis « Chargeur branché » qui la
+remplace.
+Pas vérifié : vrai branchement/débranchement sur le ThinkBook ; aucun réglage pour
+couper ces alertes ni changer les seuils.
+
+## 2026-11-09 — Raccourcis du bureau sur tous les bureaux
+
+Vu sur une vidéo de l'utilisateur : les raccourcis (dossiers, applications) n'étaient
+visibles que sur le bureau des widgets ; ils faisaient partie de l'image des widgets.
+Ils ont maintenant leur propre image (`Panels::push_shortcuts`, gardée en cache tant que
+la liste, l'écran et les widgets ne changent pas), posée sous les fenêtres et les widgets
+sur tous les bureaux, cachée dans la vue d'ensemble et sur l'écran verrouillé
+(`DashboardView::shortcuts_shown`). Clic : `cards::shortcut_at`, sur tous les bureaux ;
+une fenêtre posée sur un raccourci prend désormais le clic (filtre de `desktop_action_at`).
+Sur le bureau des widgets, un raccourci recouvert par un widget reste caché et sans clic.
+Vérifié : CI (sans shellcheck) ; test des raccourcis étendu (autre bureau, vue d'ensemble) ;
+captures du bureau imbriqué (`--demo-page 0` et `1`) : raccourcis visibles sur les deux.
+Pas vérifié : vrai bureau, clics réels, raccourci sous une fenêtre ouverte.

@@ -1,6 +1,7 @@
 //! Éléments du bureau qui restent visibles au-dessus du fond d'écran.
 
 pub mod apps;
+pub mod battery_alerts;
 pub mod controls;
 pub mod dock;
 pub mod face;

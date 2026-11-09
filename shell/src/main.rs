@@ -111,7 +111,10 @@ fn run(options: Options) -> Result<u8, Box<dyn std::error::Error>> {
         Err(err) => warn!("historique du presse-papiers indisponible : {err}"),
     }
     match desktop::notifications::start(&event_loop.handle()) {
-        Ok(link) => state.notification_link = Some(link),
+        Ok(link) => {
+            desktop::battery_alerts::start(link.events.clone());
+            state.notification_link = Some(link);
+        }
         Err(err) => warn!("notifications indisponibles : {err}"),
     }
     match desktop::lock::start(&event_loop.handle()) {

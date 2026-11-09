@@ -18,9 +18,9 @@ use std::{
 use eframe::egui::{self, Frame, Margin, RichText, Sense};
 
 use crate::{
-    files::{format_date, format_size, path_icon},
+    files::{format_date, format_size, paint_path_icon, path_icon},
     kit,
-    style::{self, IconStyle, Icons},
+    style::{self, Icons},
 };
 
 /// Ce que l'application demande.
@@ -477,12 +477,7 @@ impl ChooserState {
                         rect.left_center() + egui::vec2(20.0, 0.0),
                         egui::vec2(22.0, 22.0),
                     );
-                    self.icons.paint(
-                        ui,
-                        path_icon(&entry.path, entry.directory),
-                        icon,
-                        IconStyle::Color,
-                    );
+                    paint_path_icon(&mut self.icons, ui, &entry.path, entry.directory, icon);
                     let ink = if selected {
                         style::sidebar_selected_text()
                     } else {

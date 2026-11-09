@@ -2825,3 +2825,23 @@ Vérifié : CI (sans shellcheck) ; tests `la_session_s_ouvre_sur_le_bureau_1` et
 (dernière colonne contre la marge gauche) ; capture du bureau imbriqué sans
 `--demo-page` : bureau 1 affiché avec ses icônes.
 Pas vérifié : vrai bureau (démarrage réel, restauration de session, glisser au bord gauche).
+
+## 2026-11-09 — Fichiers : chaque type de fichier écrit sur son icône
+
+Demande de l'utilisateur : refaire les icônes de Fichiers d'après la planche « Fichiers »
+(canevas de design), pour bien reconnaître chaque type (zip, rar…), extension écrite dessus.
+Avant, zip, iso et deb avaient la même icône, comme json, toml et sh.
+- `files/file_art.rs` : page blanche au coin plié dessinée au pinceau, étiquette de couleur
+  avec l'extension (ZIP, RAR, 7Z, TAR.GZ, DEB, RPM, PDF, DOCX, MP3…), motif par famille
+  (fermeture éclair des archives, lecture des vidéos, note, image, `</>`, invite `>_`,
+  disque des ISO). Une couleur par format d'archive. Sans extension : page seule. En
+  dessous de 26 points, étiquette sans texte (liste).
+- `paint_path_icon` : dossiers = icônes du thème, fichiers = ce dessin ; branché dans la
+  grille, la liste, les récents, la bande d'informations, l'aperçu, le sélecteur de
+  fichiers et « Ouvrir avec ». Les vignettes (photos, PDF) restent prioritaires.
+- `tools/check-colors.sh` : `files/file_art.rs` autorisé (couleur de chaque type).
+Vérifié : CI (sans shellcheck) ; tests d'étiquettes et de couleurs d'archives ; captures du
+bureau imbriqué, clair et sombre, sur un dossier de 28 types et un dossier d'archives.
+Pas vérifié : vrai bureau ; vue Liste et sélecteur à l'œil ; les icônes du bureau (shell)
+gardent l'ancien dessin ; couleur et emblème personnalisables des dossiers de la planche
+non faits.

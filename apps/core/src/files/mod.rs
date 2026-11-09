@@ -22,6 +22,7 @@
 
 mod analysis;
 mod devices;
+pub(crate) mod file_art;
 mod look;
 mod open_with;
 mod ops;
@@ -2778,6 +2779,22 @@ fn archive_virtual_path(archive: &Path, member: &str) -> PathBuf {
 /// fichiers `.desktop` de l'image.
 fn builtin_app(path: &Path) -> Option<&'static str> {
     formats::builtin_for(path).map(Builtin::command)
+}
+
+/// Icône d'un élément dans `rect` : celle du thème pour un dossier, la page dessinée
+/// avec son extension (ZIP, RAR, PDF…) pour un fichier.
+pub(crate) fn paint_path_icon(
+    icons: &mut Icons,
+    ui: &egui::Ui,
+    path: &Path,
+    directory: bool,
+    rect: egui::Rect,
+) {
+    if directory {
+        icons.paint(ui, path_icon(path, true), rect, IconStyle::Color);
+    } else {
+        file_art::paint(ui.painter(), rect, path);
+    }
 }
 
 /// Icône du dossier `icons/SVG` selon la nature de l'entrée.

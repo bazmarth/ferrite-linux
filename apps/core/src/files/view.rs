@@ -1317,7 +1317,7 @@ impl FilesState {
                     );
                     match self.thumbs.get(&ctx, &entry.path) {
                         Some(texture) => paint_cover(ui, &texture, art, 6.0),
-                        None => self.icons.paint(ui, entry_icon(entry), art, IconStyle::Color),
+                        None => paint_path_icon(&mut self.icons, ui, &entry.path, entry.directory, art),
                     }
                     let left = art.right() + 10.0;
                     let room = rect.right() - left - 10.0;
@@ -1417,7 +1417,7 @@ impl FilesState {
                         let (art, _) = ui.allocate_exact_size(egui::Vec2::splat(32.0), Sense::hover());
                         match self.thumbs.get(&ctx, &entry.path) {
                             Some(texture) => paint_cover(ui, &texture, art, 6.0),
-                            None => self.icons.paint(ui, entry_icon(entry), art, IconStyle::Color),
+                            None => paint_path_icon(&mut self.icons, ui, &entry.path, entry.directory, art),
                         }
                         ui.add_space(6.0);
                         let (rect, _) =
@@ -1663,11 +1663,12 @@ impl FilesState {
                             Some(texture) => {
                                 paint_thumbnail(ui, &texture, art.shrink2(egui::vec2(0.0, 8.0)), 8.0)
                             }
-                            None => self.icons.paint(
+                            None => paint_path_icon(
+                                &mut self.icons,
                                 ui,
-                                entry_icon(&entry),
+                                &entry.path,
+                                entry.directory,
                                 egui::Rect::from_center_size(art.center(), egui::Vec2::splat(72.0)),
-                                IconStyle::Color,
                             ),
                         }
                         let label_center = egui::pos2(rect.center().x, rect.bottom() - 28.0);
@@ -1854,7 +1855,7 @@ impl FilesState {
                     egui::pos2(rect.left() + 24.0, rect.center().y),
                     egui::Vec2::splat(24.0),
                 );
-                self.icons.paint(ui, entry_icon(&entry), icon, IconStyle::Color);
+                paint_path_icon(&mut self.icons, ui, &entry.path, entry.directory, icon);
                 let name_left = icon.right() + 10.0;
                 let mut child = ui.new_child(
                     egui::UiBuilder::new()
@@ -2044,12 +2045,13 @@ impl FilesState {
                     .and_then(|entry| self.thumbs.get(&ctx, &entry.path))
                 {
                     Some(texture) => paint_cover(ui, &texture, stage, 16.0),
-                    None => self.icons.paint(
-                        ui,
-                        icon,
-                        egui::Rect::from_center_size(stage.center(), egui::Vec2::splat(112.0)),
-                        IconStyle::Color,
-                    ),
+                    None => {
+                        let art = egui::Rect::from_center_size(stage.center(), egui::Vec2::splat(112.0));
+                        match single.as_ref().filter(|entry| !entry.directory) {
+                            Some(entry) => file_art::paint(ui.painter(), art, &entry.path),
+                            None => self.icons.paint(ui, icon, art, IconStyle::Color),
+                        }
+                    }
                 }
 
                 ui.vertical(|ui| {
@@ -2265,11 +2267,12 @@ impl FilesState {
                             ui.label(RichText::new(content).monospace().size(13.0).color(look.fg));
                         });
                 } else {
-                    self.icons.paint(
+                    paint_path_icon(
+                        &mut self.icons,
                         ui,
-                        entry_icon(&entry),
+                        &entry.path,
+                        entry.directory,
                         egui::Rect::from_center_size(stage.center(), egui::Vec2::splat(160.0)),
-                        IconStyle::Color,
                     );
                 }
                 ui.add_space(14.0);

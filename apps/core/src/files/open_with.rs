@@ -13,7 +13,7 @@ use ferrite_system::{
     formats::{self, Builtin},
 };
 
-use super::{Action, Dialog, FilesState, file_name, path_icon, thumbs};
+use super::{Action, Dialog, FilesState, file_name, paint_path_icon, thumbs};
 use crate::style::{self, IconStyle, Icons};
 
 /// Côté des logos dans la liste.
@@ -209,12 +209,7 @@ impl FilesState {
             // En-tête : icône du fichier, titre, nom du fichier.
             ui.horizontal(|ui| {
                 let (rect, _) = ui.allocate_exact_size(egui::Vec2::splat(40.0), egui::Sense::hover());
-                icons.paint(
-                    ui,
-                    path_icon(&choice.path, choice.path.is_dir()),
-                    rect,
-                    IconStyle::Color,
-                );
+                paint_path_icon(icons, ui, &choice.path, choice.path.is_dir(), rect);
                 ui.add_space(4.0);
                 ui.vertical(|ui| {
                     ui.add_space(1.0);

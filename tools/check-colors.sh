@@ -8,6 +8,7 @@
 #   video.rs                  lecteur toujours sombre, comme la maquette
 #   terminal/colors.rs        palette du terminal (couleurs ANSI)
 #   editor/icons.rs           couleur de chaque type de fichier
+#   files/file_art.rs         étiquette de couleur de chaque type de fichier
 #   editor/highlight.rs       coloration syntaxique
 #   monitor/mod.rs            couleur de chaque courbe (processeur, mémoire, réseau…)
 #   settings.rs               tuiles des rubriques et illustrations (écran, fonds)
@@ -15,7 +16,7 @@
 set -eu
 cd "$(dirname -- "$0")/.."
 
-allowed='style.rs|kit.rs|video.rs|terminal/colors.rs|editor/icons.rs|editor/highlight.rs|monitor/mod.rs|settings.rs|settings/rows.rs'
+allowed='style.rs|kit.rs|video.rs|terminal/colors.rs|editor/icons.rs|files/file_art.rs|editor/highlight.rs|monitor/mod.rs|settings.rs|settings/rows.rs'
 pattern='0x[0-9A-Fa-f]{6}\b|from_rgb\(\s*0x|from_rgba_unmultiplied\(\s*[0-9]|from_gray\(\s*[0-9]'
 
 found=$(grep -rnE "$pattern" apps/core/src --include='*.rs' \

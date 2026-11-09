@@ -99,6 +99,8 @@ pub enum Event {
     SleepFailed(String),
     /// Photo de l'écran de verrouillage, décodée (ou retirée).
     LockPicture(Option<crate::desktop::panels::LockPicture>),
+    /// Image de profil du compte, relue quand elle change.
+    LockAvatar(Option<crate::clipboard::Thumbnail>),
     /// Délais de verrouillage et de mise en veille automatiques.
     Idle(ferrite_system::idle::IdleSettings),
     /// Réglages du mode nuit et ville (pour le lever et le coucher du soleil).
@@ -274,6 +276,7 @@ fn worker(receiver: mpsc::Receiver<Change>, events: channel::Sender<Event>, nest
     let mut known_text_size = None;
     let mut known_wallpaper = None;
     let mut known_lock_picture: Option<String> = None;
+    let mut known_avatar: Option<Option<(std::path::PathBuf, Option<SystemTime>)>> = None;
     let mut wallpaper_generation = 0u64;
     let mut last_snapshot: Option<Instant> = None;
     let mut applications_stamp = None;
@@ -288,6 +291,23 @@ fn worker(receiver: mpsc::Receiver<Change>, events: channel::Sender<Event>, nest
                 .send(Event::Applications(applications::installed()))
                 .is_err()
             {
+                return;
+            }
+        }
+        // Image de profil (Paramètres → Comptes) : l'écran de verrouillage suit dans la
+        // seconde. Décodée ici, seulement quand le fichier change.
+        let avatar = crate::desktop::panels::avatar_path().map(|path| {
+            let modified = std::fs::metadata(&path)
+                .and_then(|metadata| metadata.modified())
+                .ok();
+            (path, modified)
+        });
+        if known_avatar.as_ref() != Some(&avatar) {
+            let picture = avatar
+                .as_ref()
+                .and_then(|(path, _)| crate::desktop::panels::load_avatar(path));
+            known_avatar = Some(avatar);
+            if events.send(Event::LockAvatar(picture)).is_err() {
                 return;
             }
         }
@@ -561,6 +581,7 @@ impl Ferrite {
                     self.cursor_theme = theme;
                 }
             }
+            Event::LockAvatar(picture) => self.lock_avatar = picture,
             Event::LockPicture(picture) => {
                 self.lock_picture = picture;
                 // Choisie pendant que l'écran est verrouillé : elle s'affiche tout de suite.

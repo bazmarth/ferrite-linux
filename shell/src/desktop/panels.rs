@@ -44,7 +44,9 @@ mod island;
 mod lock_screen;
 
 pub use cards::{tasks_scroll_limit, widget_at, widget_edges_at, widgets_areas};
-pub use lock_screen::{LOCK_BLUR_MAX, LOCK_WALLS, LockAction, LockPicture, lock_action_at};
+pub use lock_screen::{
+    LOCK_BLUR_MAX, LOCK_WALLS, LockAction, LockPicture, avatar_path, load_avatar, lock_action_at,
+};
 
 use cards::dashboard_action_at;
 pub use island::{IslandHit, IslandKind, IslandView, island_contains};
@@ -522,6 +524,8 @@ pub struct NotificationsView {
 pub struct LockView {
     pub user: String,
     pub initial: char,
+    /// Image de profil du compte, à la place de l'initiale.
+    pub avatar: Option<Thumbnail>,
     /// Nombre de caractères tapés : le mot de passe n'arrive jusqu'au dessin que tant
     /// que l'œil est tenu (`shown`).
     pub length: usize,
@@ -6761,6 +6765,7 @@ mod tests {
         desktop.lock = Some(LockView {
             user: "Utilisateur".to_owned(),
             initial: 'U',
+            avatar: None,
             length: 0,
             cursor: 0,
             shown: None,

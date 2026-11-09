@@ -1531,6 +1531,7 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
             });
             LockView {
                 initial: display.chars().next().unwrap_or('U'),
+                avatar: state.lock_avatar.clone(),
                 user: display,
                 length: lock.password_length(),
                 cursor: lock.cursor(),

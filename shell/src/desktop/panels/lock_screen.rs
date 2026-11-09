@@ -42,27 +42,56 @@ impl LockPicture {
         let screen = ferrite_ui::wallpaper::cover(&image, 160, 100);
         let clock_luma = zone_luma(&screen, 15..40, 50..110);
         let invitation_luma = zone_luma(&screen, 89..97, 58..102);
-        let pixels = small
-            .rgba
-            .chunks_exact(4)
-            .flat_map(|p| {
-                let alpha = u32::from(p[3]);
-                let premultiply = |value: u8| (u32::from(value) * alpha / 255) as u8;
-                [premultiply(p[2]), premultiply(p[1]), premultiply(p[0]), p[3]]
-            })
-            .collect();
         Some(Self {
             path: path.to_path_buf(),
             image: std::sync::Arc::new(image),
-            thumb: crate::clipboard::Thumbnail {
-                width: small.width,
-                height: small.height,
-                pixels: std::sync::Arc::new(pixels),
-            },
+            thumb: thumbnail(&small),
             clock_luma,
             invitation_luma,
         })
     }
+}
+
+/// Image RGBA en vignette BGRA prémultipliée, prête à être dessinée.
+fn thumbnail(image: &ferrite_ui::wallpaper::Image) -> crate::clipboard::Thumbnail {
+    let pixels = image
+        .rgba
+        .chunks_exact(4)
+        .flat_map(|p| {
+            let alpha = u32::from(p[3]);
+            let premultiply = |value: u8| (u32::from(value) * alpha / 255) as u8;
+            [premultiply(p[2]), premultiply(p[1]), premultiply(p[0]), p[3]]
+        })
+        .collect();
+    crate::clipboard::Thumbnail {
+        width: image.width,
+        height: image.height,
+        pixels: std::sync::Arc::new(pixels),
+    }
+}
+
+/// Image de profil du compte : celle qu'AccountsService garde (choisie dans Paramètres →
+/// Comptes), sinon `~/.face`.
+pub fn avatar_path() -> Option<std::path::PathBuf> {
+    let user = std::env::var("USER").ok().filter(|user| !user.is_empty())?;
+    let kept = std::path::Path::new("/var/lib/AccountsService/icons").join(&user);
+    if kept.is_file() {
+        return Some(kept);
+    }
+    let face = std::path::PathBuf::from(std::env::var_os("HOME")?).join(".face");
+    face.is_file().then_some(face)
+}
+
+/// Image de profil réduite pour l'avatar de la saisie (deux fois son côté, pour les écrans
+/// à forte densité). Décodée dans le fil système : jamais pendant le rendu.
+pub fn load_avatar(path: &std::path::Path) -> Option<crate::clipboard::Thumbnail> {
+    // Une image de profil n'est jamais plus lourde : un fichier énorme est ignoré.
+    if std::fs::metadata(path).ok()?.len() > 8 * 1024 * 1024 {
+        return None;
+    }
+    let image = ferrite_ui::wallpaper::decode(path).ok()?;
+    let side = (AVATAR * 2.0) as u32;
+    Some(thumbnail(&ferrite_ui::wallpaper::cover(&image, side, side)))
 }
 
 /// Luminosité moyenne d'une zone (lignes, colonnes) de `screen`.
@@ -1461,15 +1490,20 @@ impl Panels {
         let avatar = places.avatar();
         canvas.panel_shadow(avatar, 52.0);
         canvas.fill(avatar.expand(4.0), 56.0, tokens.ring);
-        canvas.gradient(avatar, 52.0, &[(0.0, 0x3CC7D1), (1.0, 0x2779E0)]);
-        canvas.centered(
-            &self.bold,
-            &lock.initial.to_string(),
-            center,
-            avatar.y + 27.0,
-            42.0,
-            Color::WHITE,
-        );
+        // Image de profil (Paramètres → Comptes), sinon l'initiale sur un dégradé.
+        if let Some(picture) = &lock.avatar {
+            canvas.image_cover(avatar, picture, AVATAR / 2.0);
+        } else {
+            canvas.gradient(avatar, 52.0, &[(0.0, 0x3CC7D1), (1.0, 0x2779E0)]);
+            canvas.centered(
+                &self.bold,
+                &lock.initial.to_string(),
+                center,
+                avatar.y + 27.0,
+                42.0,
+                Color::WHITE,
+            );
+        }
         canvas.centered(
             &self.bold,
             &lock.user,

@@ -3079,3 +3079,19 @@ capture de la page Comptes (lecture réelle des comptes par AccountsService).
 Pas vérifié : à la souris sur le vrai bureau (formulaires, fenêtre polkit, ajout et
 suppression réels, image choisie) ; trousseau après changement ; l'image n'apparaît pas
 encore sur l'écran de verrouillage.
+
+## 2026-11-09 — Verrouillage : image de profil à la place de l'initiale
+
+Demande : l'image de profil choisie dans Paramètres → Comptes doit apparaître sur l'écran
+de verrouillage.
+- Avatar de la saisie : image de profil en rond (anneau et ombre inchangés) ; sans image,
+  l'initiale sur le dégradé, comme avant.
+- Image lue dans `/var/lib/AccountsService/icons/UTILISATEUR` (copie d'AccountsService),
+  sinon `~/.face`. Décodée dans le fil système (`system.rs`), seulement quand le fichier
+  change (date relue chaque seconde), réduite à 208 px ; jamais pendant le rendu.
+- `LockView::avatar`, `State::lock_avatar`, `Event::LockAvatar` ; `load_avatar` et
+  `avatar_path` dans `lock_screen.rs` (vignette partagée avec la photo de fond).
+Vérifié : CI (sans shellcheck) ; capture `--demo-lock --demo-face scan` avec un `~/.face`
+de test (dossier personnel temporaire) : image ronde dans l'anneau du visage.
+Pas vérifié : sur le vrai bureau avec une image choisie dans Paramètres (droits de lecture
+du dossier d'AccountsService supposés ouverts à tous, comme sur Debian).

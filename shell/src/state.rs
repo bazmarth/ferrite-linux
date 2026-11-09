@@ -177,6 +177,8 @@ pub struct Ferrite {
     pub power_deadline: Option<std::time::Instant>,
     /// Photo de l'écran de verrouillage (réglage `verrouillage_fond` en chemin), décodée.
     pub lock_picture: Option<crate::desktop::panels::LockPicture>,
+    /// Image de profil du compte (avatar de l'écran de verrouillage).
+    pub lock_avatar: Option<crate::clipboard::Thumbnail>,
     /// Mode nuit : réglages, forçage depuis le centre de contrôle et teinte de l'écran.
     pub night: crate::desktop::night::Night,
     /// Inactivité : verrouillage et mise en veille automatiques.
@@ -483,6 +485,7 @@ impl Ferrite {
             pending_power: None,
             power_deadline: None,
             lock_picture: None,
+            lock_avatar: None,
             night: Default::default(),
             idle: Default::default(),
             appearance: settings.appearance(),

@@ -6441,6 +6441,12 @@ mod tests {
             action_at(output(), point(x, y), &desktop),
             Some(DesktopAction::Shortcut(0))
         );
+        // La grille couvre toute la largeur : la dernière colonne touche la marge gauche.
+        let last = grid.rect(ferrite_system::shortcuts::Cell {
+            column: grid.columns - 1,
+            row: 0,
+        });
+        assert!((last.x - 16.0).abs() < 0.01);
         let bigger = layout.shortcut_grid(96);
         assert!(bigger.cell.0 > grid.cell.0 && bigger.columns < grid.columns);
         // Glissée d'une case vers la gauche, elle vise la case voisine.

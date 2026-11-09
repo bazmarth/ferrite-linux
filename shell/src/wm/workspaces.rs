@@ -177,6 +177,17 @@ impl<T> Default for Workspaces<T> {
 }
 
 impl<T> Workspaces<T> {
+    /// Au démarrage de la session : le bureau des widgets à gauche, et l'on arrive sur le
+    /// premier bureau ordinaire (le bureau 1), là où sont les icônes et où s'ouvrent les
+    /// fenêtres.
+    pub fn at_start() -> Self {
+        Self {
+            desktops: vec![Vec::new(), Vec::new()],
+            current: 1,
+            ..Self::default()
+        }
+    }
+
     pub fn current(&self) -> usize {
         self.current
     }
@@ -767,6 +778,16 @@ mod tests {
         assert_eq!(pages.current(), 0);
         assert_eq!(pages.page_count(), 1);
         assert!(pages.parked(0).is_empty());
+    }
+
+    #[test]
+    fn la_session_s_ouvre_sur_le_bureau_1() {
+        let mut pages = Workspaces::<u32>::at_start();
+        assert_eq!(pages.current(), 1);
+        // Sans fenêtre, ni bureau en plus ni bureau en moins.
+        pages.sync(false, at(0));
+        assert_eq!(pages.page_count(), 2);
+        assert_eq!(pages.current(), 1);
     }
 
     #[test]

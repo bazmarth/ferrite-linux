@@ -80,20 +80,27 @@ impl Layout {
     }
 
     /// Grille des raccourcis pour des icônes de `icon` pixels : entre la barre et le Dock,
-    /// colonnes comptées depuis le bord droit.
+    /// colonnes comptées depuis le bord droit. Les cases s'élargissent un peu pour que la
+    /// grille couvre tout l'écran : pas de bande morte à gauche, où une icône lâchée irait
+    /// dans une case plus à droite que celle sous le pointeur.
     pub(super) fn shortcut_grid(&self, icon: u32) -> ShortcutGrid {
-        let cell = (
+        let least = (
             f64::from(icon) + SHORTCUT_CELL_EXTRA.0,
             f64::from(icon) + SHORTCUT_CELL_EXTRA.1,
         );
         let top = self.bar + SHORTCUT_MARGIN;
-        let bottom = self.h - self.dock_height - SHORTCUT_MARGIN;
+        let (width, height) = (
+            (self.w - 2.0 * SHORTCUT_MARGIN).max(least.0),
+            (self.h - self.dock_height - SHORTCUT_MARGIN - top).max(least.1),
+        );
+        let columns = ((width / least.0).floor() as u16).max(1);
+        let rows = ((height / least.1).floor() as u16).max(1);
         ShortcutGrid {
-            cell,
+            cell: (width / f64::from(columns), height / f64::from(rows)),
             right: self.w - SHORTCUT_MARGIN,
             top,
-            columns: (((self.w - 2.0 * SHORTCUT_MARGIN) / cell.0).floor() as u16).max(1),
-            rows: (((bottom - top) / cell.1).floor() as u16).max(1),
+            columns,
+            rows,
         }
     }
 

@@ -204,8 +204,9 @@ impl crate::state::Ferrite {
             .max()
             .unwrap_or(session.active_workspace)
             .max(session.active_workspace);
-        self.workspaces.ensure_page(last_workspace);
-        self.go_to_page(session.active_workspace);
+        self.workspaces.ensure_page(last_workspace.max(1));
+        // On n'arrive jamais sur le bureau des widgets, même quitté dessus.
+        self.go_to_page(session.active_workspace.max(1));
 
         let mut launches = Vec::new();
         let mut seen = Vec::new();

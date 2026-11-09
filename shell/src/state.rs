@@ -490,7 +490,7 @@ impl Ferrite {
             cursor_size: settings.cursor_size(),
             wallpaper: WallpaperChoice::default(),
             space: Space::default(),
-            workspaces: Default::default(),
+            workspaces: crate::wm::workspaces::Workspaces::at_start(),
             swipe: None,
             pinching: false,
             overview: false,

@@ -2810,3 +2810,18 @@ Vérifié : CI (sans shellcheck) ; tests de grille, de dépôt et de format ; ca
 imbriqué : bureau des widgets sans icônes, bureau 2 avec une icône posée en (4,2), même
 bureau en taille 96.
 Pas vérifié : glisser, Ctrl+molette, pincement et menu Applications à la main (vrai bureau).
+
+## 2026-11-09 — Grille des icônes pleine largeur, démarrage sur le bureau 1
+
+Vu sur une vidéo de l'utilisateur (glisser essayé sur le vrai bureau, il marche) : près du
+bord gauche, la case visée était une case à droite de l'icône. La grille partait du bord
+droit et laissait une bande morte à gauche, où l'icône lâchée allait dans la dernière
+colonne. Les cases s'élargissent (et s'allongent) maintenant juste assez pour que la grille
+couvre l'écran, entre la barre et le Dock.
+Demande de l'utilisateur : arriver sur le bureau 1, pas sur les widgets.
+`Workspaces::at_start` : deux bureaux, on est sur le 1 ; la restauration de session ne
+revient jamais sur le bureau des widgets.
+Vérifié : CI (sans shellcheck) ; tests `la_session_s_ouvre_sur_le_bureau_1` et grille
+(dernière colonne contre la marge gauche) ; capture du bureau imbriqué sans
+`--demo-page` : bureau 1 affiché avec ses icônes.
+Pas vérifié : vrai bureau (démarrage réel, restauration de session, glisser au bord gauche).

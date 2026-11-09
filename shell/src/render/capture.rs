@@ -15,6 +15,15 @@ pub enum Mode {
     Screen,
     Window,
     Area,
+    /// Zone dont le texte est reconnu et copié (voir `desktop::ocr`).
+    Text,
+}
+
+impl Mode {
+    /// Le mode se choisit par une zone à ajuster (Sélection et Texte).
+    pub const fn selects_area(self) -> bool {
+        matches!(self, Mode::Area | Mode::Text)
+    }
 }
 
 /// Capture à faire à la prochaine image.
@@ -24,6 +33,8 @@ pub struct Request {
     pub save: bool,
     pub clipboard: bool,
     pub cursor: bool,
+    /// Texte reconnu et copié, au lieu de l'image.
+    pub text: bool,
 }
 
 /// Sélection de la zone à capturer : `start` est connu une fois le bouton enfoncé.

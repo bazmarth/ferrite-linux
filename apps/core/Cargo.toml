@@ -20,7 +20,10 @@ ferrite-ui = { path = "../../ui" }
 gstreamer = "0.25"
 gstreamer-app = "0.25"
 gstreamer-video = "0.25"
+# Compression zlib des images PNG mises en PDF (Fichiers › Créer un PDF) ; déjà tirée par png.
+miniz_oxide = "0.8"
 png = "0.18"
+qrcode = { version = "0.14.1", default-features = false }
 resvg = { version = "0.49", default-features = false, features = ["text", "system-fonts"] }
 symphonia = { version = "0.5", features = ["mp3", "aac", "isomp4", "alac"] }
 tracing = "0.1"

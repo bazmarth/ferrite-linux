@@ -838,6 +838,7 @@ impl Ferrite {
                     save: true,
                     clipboard: false,
                     cursor: false,
+                    text: false,
                 });
             }
         }

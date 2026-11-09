@@ -27,6 +27,7 @@ pub(crate) mod file_art;
 mod look;
 mod open_with;
 mod ops;
+mod pdf;
 mod places;
 pub(crate) mod reception;
 pub(crate) use places::Looks;
@@ -265,6 +266,10 @@ enum Action {
     SendBluetooth(Vec<PathBuf>, String, String),
     /// Paramètres › Bluetooth, pour appairer un appareil.
     BluetoothSettings,
+    /// Crée un PDF de ces photos, dans le dossier affiché.
+    MakePdf(Vec<PathBuf>),
+    /// Assemble ces PDF en un seul, dans le dossier affiché.
+    MergePdfs(Vec<PathBuf>),
     ToggleTag(PathBuf, String),
     /// Couleur (indice de `file_art::SWATCHES`) ou emblème d'une icône ; les deux à
     /// `None` rétablissent l'icône d'origine.
@@ -1206,6 +1211,8 @@ panneau={}
                 Action::Share(_)
                     | Action::AskBluetooth(_)
                     | Action::SendBluetooth(_, _, _)
+                    | Action::MakePdf(_)
+                    | Action::MergePdfs(_)
                     | Action::ToggleTag(_, _)
                     | Action::SetLook(_, _, _)
                     | Action::QuickLook
@@ -1495,6 +1502,18 @@ panneau={}
             }
             Action::Extract(archive) => {
                 self.run_job("Extraction", move |job| ops::extract_archive(&archive, job));
+            }
+            Action::MakePdf(images) => {
+                if let Some(dir) = self.current_dir().map(Path::to_path_buf) {
+                    self.run_job("Création du PDF", move |job| {
+                        pdf::images_to_pdf(&images, &dir, job)
+                    });
+                }
+            }
+            Action::MergePdfs(pdfs) => {
+                if let Some(dir) = self.current_dir().map(Path::to_path_buf) {
+                    self.run_job("Assemblage des PDF", move |job| pdf::merge_pdfs(&pdfs, &dir, job));
+                }
             }
             Action::Trash => {
                 let selection = self.selection();
@@ -2253,8 +2272,21 @@ panneau={}
                 "Envoyer par Bluetooth…",
                 "",
                 sendable,
-                Action::AskBluetooth(paths),
+                Action::AskBluetooth(paths.clone()),
             );
+            // Photos → un PDF ; plusieurs PDF → un seul. Dans le dossier affiché.
+            if self.current_dir().is_some() {
+                if paths.iter().all(|path| pdf::is_image(path)) {
+                    let label = if paths.len() > 1 {
+                        "Créer un PDF des photos"
+                    } else {
+                        "Créer un PDF"
+                    };
+                    item(ui, label, "", true, Action::MakePdf(paths));
+                } else if paths.len() > 1 && paths.iter().all(|path| pdf::is_pdf(path)) {
+                    item(ui, "Assembler les PDF", "", true, Action::MergePdfs(paths));
+                }
+            }
         }
         style::menu_separator(ui);
         item(ui, "Copier", "Ctrl+C", true, Action::Copy);

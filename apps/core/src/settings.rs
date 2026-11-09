@@ -212,6 +212,8 @@ enum Update {
     Known(Vec<KnownWifi>),
     Options(Option<WifiOptions>),
     Details(Result<Vec<(String, String)>, String>, Option<network::WifiFlags>),
+    /// Mot de passe du réseau Wi-Fi, pour le partager par QR code.
+    WifiShare(Result<network::WifiSecret, String>),
     Hotspot(Result<String, String>),
     ScanDone,
     BluetoothName(Option<String>),
@@ -290,6 +292,11 @@ pub struct SettingsState {
     /// Adresse et serveurs du réseau actuel, affichés par « Détails », avec ses options.
     details: Option<Vec<(String, String)>>,
     wifi_flags: Option<network::WifiFlags>,
+    /// Partage du réseau Wi-Fi affiché : nom, puis mot de passe et QR code une fois lus.
+    wifi_share: Option<(String, Option<WifiShare>)>,
+    /// Démonstration pour les captures (`ferrite-apps settings wifi-partage`) : détails du
+    /// réseau ouverts et QR code d'un faux mot de passe. 1 : à ouvrir ; 2 : demandé.
+    demo_share: u8,
     /// Appareil Bluetooth dont les détails sont ouverts (son adresse).
     bluetooth_details: Option<String>,
     hotspot: bool,
@@ -377,6 +384,8 @@ impl Default for SettingsState {
             wifi_options: None,
             details: None,
             wifi_flags: None,
+            wifi_share: None,
+            demo_share: 0,
             bluetooth_details: None,
             hotspot: false,
             wifi_scanned: None,
@@ -423,6 +432,12 @@ impl Default for SettingsState {
 impl SettingsState {
     /// Ouvre la rubrique demandée au lancement (« wifi », « son »…).
     pub fn open_page(&mut self, name: &str) {
+        let name = if name == "wifi-partage" {
+            self.demo_share = 1;
+            "wifi"
+        } else {
+            name
+        };
         if let Some(page) = Page::from_key(name) {
             self.go(page);
         }
@@ -499,6 +514,14 @@ impl SettingsState {
                 },
                 Update::Known(known) => self.known = known,
                 Update::Options(options) => self.wifi_options = options,
+                Update::WifiShare(result) => {
+                    if let Some((ssid, slot)) = self.wifi_share.as_mut() {
+                        *slot = Some(result.map(|secret| {
+                            let text = network::wifi_qr_text(ssid, &secret);
+                            (secret.password, qr_texture(ctx, &text))
+                        }));
+                    }
+                }
                 Update::Details(result, flags) => match result {
                     Ok(details) => {
                         self.details = Some(details);
@@ -1048,6 +1071,10 @@ impl SettingsState {
             }
         });
         let name = current.as_ref().map(|network| network.ssid.clone());
+        if self.demo_share == 1 && current.is_some() && self.details.is_none() {
+            self.demo_share = 2;
+            choice = Some(Choice::Details);
+        }
         match choice {
             Some(Choice::Details) => {
                 let device = self
@@ -1139,7 +1166,17 @@ impl SettingsState {
             self.details = None;
             return;
         };
+        if self.demo_share == 2 && self.wifi_share.is_none() {
+            let secret = network::WifiSecret {
+                key_mgmt: "wpa-psk".to_owned(),
+                password: "exemple-mot-de-passe".to_owned(),
+                hidden: false,
+            };
+            let texture = qr_texture(ctx, &network::wifi_qr_text(&network.ssid, &secret));
+            self.wifi_share = Some((network.ssid.clone(), Some(Ok((secret.password, texture)))));
+        }
         let mut flags = self.wifi_flags;
+        let mut show_share = false;
         let (mut closed, mut footer, mut changed) = (false, details::Footer::default(), None);
         let escape = details::show(ctx, "details-wifi", |ui, t| {
             closed = details::header(
@@ -1180,6 +1217,30 @@ impl SettingsState {
                     rows.copy(&label, value);
                 }
             });
+            let share = self.wifi_share.as_ref().filter(|(ssid, _)| *ssid == network.ssid);
+            details::section(ui, t, 18.0, "Partager", None, |rows| match share {
+                None => {
+                    if rows.value(
+                        "Mot de passe",
+                        "",
+                        false,
+                        Some("QR code à scanner avec l’appareil photo d’un téléphone"),
+                        Some("Afficher"),
+                    ) {
+                        show_share = true;
+                    }
+                }
+                Some((_, None)) => {
+                    rows.value("Mot de passe", "Lecture…", false, None, None);
+                }
+                Some((_, Some(Ok((password, texture))))) => {
+                    rows.picture(texture, 200.0, "Scannez avec l’appareil photo du téléphone");
+                    rows.copy("Mot de passe", password);
+                }
+                Some((_, Some(Err(error)))) => {
+                    rows.value("Mot de passe", "Illisible", false, Some(error), None);
+                }
+            });
             if let Some(flags) = flags.as_mut() {
                 details::section(ui, t, 18.0, "Options", None, |rows| {
                     if rows.switch(
@@ -1210,6 +1271,11 @@ impl SettingsState {
         if let Some((flag, enabled)) = changed {
             self.act(ctx, "", move || network::set_wifi_flag(&ssid, flag, enabled));
         }
+        if show_share {
+            self.wifi_share = Some((network.ssid.clone(), None));
+            let name = network.ssid.clone();
+            self.spawn(ctx, move || vec![Update::WifiShare(network::wifi_secret(&name))]);
+        }
         let ssid = network.ssid;
         if footer.left {
             self.wifi_scanned = None;
@@ -1220,6 +1286,8 @@ impl SettingsState {
         }
         if closed || escape || footer.left || footer.button.is_some() {
             self.details = None;
+            // Le mot de passe n'est plus montré une fois la fenêtre fermée.
+            self.wifi_share = None;
         }
     }
 
@@ -3720,6 +3788,30 @@ const DEFAULT_DOCK: [&str; 5] = [
     "ferrite-calculator",
     "ferrite-settings",
 ];
+
+/// Mot de passe d'un réseau Wi-Fi et son QR code, ou l'erreur de lecture.
+type WifiShare = Result<(String, egui::TextureHandle), String>;
+
+/// QR code de `text`, en noir sur blanc avec sa marge de quatre modules.
+fn qr_texture(ctx: &egui::Context, text: &str) -> egui::TextureHandle {
+    let image = match qrcode::QrCode::new(text.as_bytes()) {
+        Ok(code) => {
+            let width = code.width();
+            let colors = code.to_colors();
+            let side = width + 8;
+            let mut image = egui::ColorImage::filled([side, side], Color32::WHITE);
+            for (index, color) in colors.iter().enumerate() {
+                if *color == qrcode::Color::Dark {
+                    image[(index % width + 4, index / width + 4)] = Color32::BLACK;
+                }
+            }
+            image
+        }
+        Err(_) => egui::ColorImage::filled([1, 1], Color32::WHITE),
+    };
+    // Modules nets, sans lissage, à toute taille.
+    ctx.load_texture("qr-wifi", image, egui::TextureOptions::NEAREST)
+}
 
 /// Nom complet (champ GECOS de `/etc/passwd`) et identifiant de l'utilisateur.
 fn current_user() -> (String, String) {

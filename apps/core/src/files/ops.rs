@@ -277,7 +277,7 @@ pub fn extract_archive(archive: &Path, job: &Job) -> Result<(), String> {
     result
 }
 
-fn run_command(mut command: Command, job: &Job, failure: &str) -> Result<(), String> {
+pub(super) fn run_command(mut command: Command, job: &Job, failure: &str) -> Result<(), String> {
     command.stdout(Stdio::null()).stderr(Stdio::piped());
     let mut child = command.spawn().map_err(|error| format!("{failure} : {error}"))?;
     let mut stderr = child.stderr.take().ok_or("Sortie d’erreur indisponible")?;

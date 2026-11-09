@@ -21,6 +21,8 @@ Chaque dépendance avec sa licence et la raison de sa présence. Les versions ex
 | `eframe` 0.37 | ferrite-apps | MIT/Apache-2.0 | fenêtres natives Wayland de toutes les applications Ferrite ; rendu GLES et prise en charge clavier/souris |
 | `epaint` 0.37 (déjà tiré par eframe) | ferrite-apps | MIT/Apache-2.0 | seulement pour activer `color_fonts` : emoji en couleur (police Noto Color Emoji du système) ; aucune bibliothèque nouvelle |
 | `winit` 0.30.13 (copie dans `third_party/winit`) | ferrite-apps (par eframe) | Apache-2.0 | remplace la version de crates.io (`[patch.crates-io]`) pour transmettre le pincement du pavé tactile sous Wayland ; détails dans `third_party/winit/FERRITE.md` |
+| `qrcode` 0.14 (sans fonctions par défaut, aucune dépendance) | ferrite-apps | MIT/Apache-2.0 | Paramètres › Wi-Fi › Détails : QR code pour partager le réseau |
+| `miniz_oxide` 0.8 (déjà tirée par `png`) | ferrite-apps | MIT/Zlib/Apache-2.0 | Fichiers › Créer un PDF : images PNG compressées sans perte (zlib) |
 | `async-channel` 2 | ferrite-shell | MIT/Apache-2.0 | réponses de l'agent polkit attendues sans bloquer la boucle |
 | `libc` 0.2 | ferrite-shell | MIT/Apache-2.0 | `statvfs` : espace disque libre affiché par le bureau |
 | `gstreamer`, `gstreamer-app`, `gstreamer-video` 0.25 | ferrite-apps, ferrite-visage | MIT/Apache-2.0 (GStreamer : LGPL, liaison dynamique) | Lecteur vidéo, vignettes des vidéos dans Fichiers, lecture de la caméra infrarouge |
@@ -57,6 +59,7 @@ Liste : `image/config/package-lists/ferrite.list.chroot`. Points notables :
 | `gnome-keyring`, `libpam-gnome-keyring`, `gcr` | coffre à mots de passe (Secret Service) des navigateurs et d'Electron |
 | `bluez-obexd` | `obexd` (bus de session) : « Envoyer par Bluetooth » dans Fichiers (profil Object Push) |
 | `cups`, `cups-browsed`, `ipp-usb` | Paramètres › Imprimantes : service d’impression, imprimantes du réseau trouvées seules, imprimantes USB récentes sans pilote |
+| `tesseract-ocr`, `tesseract-ocr-fra` | Capture › Texte : reconnaissance du texte d'une zone de l'écran (français et anglais), copié dans le presse-papiers |
 | `ntfs-3g` | disques et clés formatés sous Windows |
 | `libgstreamer1.0-0`, `gstreamer1.0-plugins-base`, `-good`, `gstreamer1.0-libav` | Lecteur vidéo, Musique, caméra infrarouge ; libav pour le H.264 |
 | `libglib2.0-bin`, `gsettings-desktop-schemas`, `dconf-gsettings-backend` | thème clair/sombre et ordre des boutons annoncés aux applications GTK |

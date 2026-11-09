@@ -45,7 +45,9 @@ fn capture_request(
         region,
         save: state.screenshot_save,
         clipboard: state.screenshot_clipboard,
-        cursor: state.screenshot_cursor,
+        // Le texte se lit sans le pointeur, qui pourrait cacher une lettre.
+        cursor: state.screenshot_cursor && state.screenshot_mode != crate::render::capture::Mode::Text,
+        text: state.screenshot_mode == crate::render::capture::Mode::Text,
     }
 }
 
@@ -1915,9 +1917,13 @@ impl Ferrite {
         self.region_adjust = None;
         self.window_select = false;
         self.window_select_hover = None;
+        if mode == Mode::Text {
+            // Le texte se copie, il ne se filme pas.
+            self.screenshot_video = false;
+        }
         match mode {
             Mode::Screen => {}
-            Mode::Area => {
+            Mode::Area | Mode::Text => {
                 let area = self.screenshot_area.or_else(|| {
                     let output = self.capture_output()?;
                     let (w, h) = (output.size.w / 2, output.size.h / 2);
@@ -1966,7 +1972,7 @@ impl Ferrite {
         use crate::render::capture::Mode;
         let region = match self.screenshot_mode {
             Mode::Screen => None,
-            Mode::Area => match self.region_adjust {
+            Mode::Area | Mode::Text => match self.region_adjust {
                 Some(adjust) => Some(adjust.rect),
                 None => return,
             },
@@ -2081,7 +2087,9 @@ impl Ferrite {
             Some(CaptureHit::Pointer) => self.screenshot_cursor = !self.screenshot_cursor,
             Some(CaptureHit::Close) => self.close_capture(),
             Some(CaptureHit::Photo) => self.screenshot_video = false,
-            Some(CaptureHit::Video) => self.screenshot_video = true,
+            Some(CaptureHit::Video) => {
+                self.screenshot_video = self.screenshot_mode != Mode::Text;
+            }
             Some(CaptureHit::Toolbar) => {}
             None => match self.screenshot_mode {
                 Mode::Screen => {}
@@ -2090,7 +2098,7 @@ impl Ferrite {
                         self.window_select_hover = Some(window);
                     }
                 }
-                Mode::Area => {
+                Mode::Area | Mode::Text => {
                     let grip = self
                         .region_adjust
                         .and_then(|adjust| crate::render::capture::region_grip(adjust.rect, location));

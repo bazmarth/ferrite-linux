@@ -3216,3 +3216,25 @@ ouvrent les binaires de /usr/local/bin (ferrite-apps du 3 novembre, pas de porta
 modèles du visage) ; tools/dev-on.sh ne met à jour que le compte qui le lance. Ajout de
 `tools/installer-systeme.sh` (sudo) : binaires, scripts, modèles, portail et .desktop pour
 tous les comptes. Pas vérifié : la session de baz après ce script.
+
+## 2026-11-09 — Petits outils : QR code du Wi-Fi, PDF dans Fichiers, texte d'une capture
+
+Demande : partager le Wi-Fi par QR code, créer et assembler des PDF, copier le texte d'une
+image à l'écran.
+- Paramètres › Wi-Fi › Détails : section « Partager », « Afficher » lit le mot de passe
+  (`nmcli -s`, sans droits d'administrateur) et montre le QR code `WIFI:` (crate `qrcode`)
+  et le mot de passe à copier ; oubliés à la fermeture. `network::wifi_secret`,
+  `wifi_qr_text`. Capture : `ferrite-apps settings wifi-partage` (faux mot de passe).
+- Fichiers, clic droit : « Créer un PDF » (photos JPEG/PNG, une page A4 par image dans
+  l'ordre des noms, à l'italienne si besoin ; JPEG sans recompression et orientation EXIF
+  respectée ; PNG en zlib) et « Assembler les PDF » (`pdfunite`). `files/pdf.rs`, écriture
+  du PDF maison, tâche à part.
+- Capture : 4ᵉ mode « Texte » (barre élargie) : la zone choisie passe à tesseract (fra+eng,
+  image doublée si petite), le texte va dans le presse-papiers, notification avec le début.
+  Sans tesseract : notification qui nomme les paquets. `desktop/ocr.rs`. Paquets
+  `tesseract-ocr` et `tesseract-ocr-fra` ajoutés à l'image.
+Vérifié : CI (sans shellcheck) ; tests (JPEG et EXIF, 8 orientations, structure du PDF,
+QR et échappements, langues de tesseract, nettoyage du texte) ; vrai PDF de deux images
+lu par pdfinfo et pdftoppm ; captures de la barre de capture et du QR code.
+Pas vérifié : le QR code scanné par un téléphone ; le menu de Fichiers à la souris ;
+« Assembler les PDF » ; la reconnaissance du texte (tesseract pas installé sur le PC).

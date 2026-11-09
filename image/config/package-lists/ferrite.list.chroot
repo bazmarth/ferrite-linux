@@ -83,6 +83,9 @@ pkexec
 accountsservice
 # Écran de connexion : greetd lance ferrite-greeter (choix du compte, mot de passe par PAM)
 greetd
+# Capture › Texte : reconnaissance du texte d'une zone de l'écran (français, anglais)
+tesseract-ocr
+tesseract-ocr-fra
 
 # Compatibilité avec les applications Linux : portails (dialogues de fichiers, ouverture
 # de liens, captures) et outil de mise à jour de l'environnement D-Bus

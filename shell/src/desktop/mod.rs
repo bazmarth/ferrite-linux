@@ -15,6 +15,7 @@ pub mod lock;
 pub mod media;
 pub mod night;
 pub mod notifications;
+pub mod ocr;
 pub mod panels;
 pub mod polkit;
 pub mod recording;

@@ -363,6 +363,89 @@ pub fn wifi_flags(name: &str) -> Result<WifiFlags, Error> {
     Ok(parse_wifi_flags(&output))
 }
 
+/// Ce qu'il faut pour rejoindre un réseau Wi-Fi enregistré (partage par QR code).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WifiSecret {
+    /// Gestion des clés de NetworkManager (`wpa-psk`, `sae`, `none`…), vide si ouvert.
+    pub key_mgmt: String,
+    pub password: String,
+    pub hidden: bool,
+}
+
+/// Mot de passe du réseau enregistré `name`. NetworkManager le donne à l'utilisateur de
+/// la session active, sans mot de passe administrateur.
+pub fn wifi_secret(name: &str) -> Result<WifiSecret, Error> {
+    let output = command::run(
+        "nmcli",
+        &[
+            "-s",
+            "-g",
+            "802-11-wireless-security.key-mgmt,802-11-wireless-security.psk,802-11-wireless.hidden",
+            "connection",
+            "show",
+            "id",
+            name,
+        ],
+    )?;
+    Ok(parse_wifi_secret(&output))
+}
+
+/// Analyse la sortie de [`wifi_secret`] : une valeur par ligne, `:` et `\` échappés.
+pub fn parse_wifi_secret(output: &str) -> WifiSecret {
+    let mut lines = output.lines().map(unescape_terse);
+    WifiSecret {
+        key_mgmt: lines.next().unwrap_or_default(),
+        password: lines.next().unwrap_or_default(),
+        hidden: lines.next().as_deref() == Some("yes"),
+    }
+}
+
+fn unescape_terse(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut chars = value.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            if let Some(next) = chars.next() {
+                out.push(next);
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Texte du QR code d'un réseau Wi-Fi (format `WIFI:` lu par l'appareil photo des
+/// téléphones).
+pub fn wifi_qr_text(ssid: &str, secret: &WifiSecret) -> String {
+    fn escape(text: &str) -> String {
+        let mut out = String::with_capacity(text.len());
+        for c in text.chars() {
+            if matches!(c, '\\' | ';' | ',' | ':' | '"') {
+                out.push('\\');
+            }
+            out.push(c);
+        }
+        out
+    }
+    let kind = match secret.key_mgmt.as_str() {
+        _ if secret.password.is_empty() => "nopass",
+        "none" | "ieee8021x" => "WEP",
+        _ => "WPA",
+    };
+    let mut text = format!("WIFI:T:{kind};S:{};", escape(ssid));
+    if kind != "nopass" {
+        text.push_str("P:");
+        text.push_str(&escape(&secret.password));
+        text.push(';');
+    }
+    if secret.hidden {
+        text.push_str("H:true;");
+    }
+    text.push(';');
+    text
+}
+
 /// Analyse `nmcli -g connection.autoconnect,connection.metered connection show` ; une
 /// connexion devinée limitée (`guess-yes`) compte comme limitée.
 pub fn parse_wifi_flags(output: &str) -> WifiFlags {
@@ -477,6 +560,19 @@ pub fn split_terse(line: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mot_de_passe_wifi_et_qr_code() {
+        let secret = parse_wifi_secret("wpa-psk\nmot\\:de;passe\nno\n");
+        assert_eq!(secret.password, "mot:de;passe");
+        assert!(!secret.hidden);
+        assert_eq!(
+            wifi_qr_text("Café \"Wi-Fi\"", &secret),
+            "WIFI:T:WPA;S:Café \\\"Wi-Fi\\\";P:mot\\:de\\;passe;;"
+        );
+        let open = parse_wifi_secret("\n\nyes\n");
+        assert_eq!(wifi_qr_text("Gare", &open), "WIFI:T:nopass;S:Gare;H:true;;");
+    }
 
     #[test]
     fn mot_de_passe_enregistre() {

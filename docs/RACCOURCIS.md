@@ -56,6 +56,7 @@ sans redémarrer. L'écran s'assombrit progressivement avant le verrouillage et 
 | Capture : écran de capture (Sélection, Écran ou Fenêtre) | Impr. écran |
 | Capture : ouvrir directement en mode Sélection | Maj + Impr. écran, ou Super + Maj + S (touche de capture Lenovo sans Fn) |
 | Capture : prendre l'image / fermer | Entrée ou Espace / Échap |
+| Capture : copier le texte d'une zone | Impr. écran → « Texte », tracer la zone, Entrée |
 | Changer de disposition clavier (aussi sur l'écran verrouillé, avec indication à l'écran) | Super + Espace |
 | Écran de connexion : compte précédent / suivant | ↑ / ↓ ou Tab |
 | Quitter le bureau | Ctrl + Alt + Retour arrière |

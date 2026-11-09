@@ -445,6 +445,29 @@ impl Rows<'_> {
         }
     }
 
+    /// Image carrée de `side` points centrée sur sa ligne (QR code), et sa légende.
+    pub fn picture(&mut self, texture: &egui::TextureHandle, side: f32, caption: &str) {
+        let t = self.t;
+        let rect = self.line(side + 52.0);
+        let ui = &mut *self.ui;
+        let image = Rect::from_center_size(
+            Pos2::new(rect.center().x, rect.top() + 14.0 + side / 2.0),
+            vec2(side, side),
+        );
+        egui::Image::from_texture(egui::load::SizedTexture::new(texture.id(), image.size()))
+            .corner_radius(8)
+            .paint_at(ui, image);
+        text(
+            ui,
+            Pos2::new(rect.center().x, image.bottom() + 10.0),
+            Align2::CENTER_TOP,
+            caption,
+            font(13.0, false),
+            t.fg3,
+            rect.width() - 32.0,
+        );
+    }
+
     /// Option à interrupteur, avec son explication. Vrai si elle change.
     pub fn switch(&mut self, label: &str, hint: &str, on: &mut bool) -> bool {
         let t = self.t;

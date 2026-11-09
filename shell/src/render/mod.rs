@@ -1110,7 +1110,7 @@ impl Ferrite {
 
     /// Écran de capture : le curseur annonce le coin ou le bord qu'on va saisir.
     fn capture_cursor(&self) -> CursorShape {
-        use crate::render::capture::{Mode, RegionGrip};
+        use crate::render::capture::RegionGrip;
         let Some(pointer) = self.pointer_location() else {
             return CursorShape::Arrow;
         };
@@ -1125,7 +1125,7 @@ impl Ferrite {
         if self.region_select.is_some() {
             return CursorShape::Crosshair;
         }
-        if on_toolbar || self.screenshot_mode != Mode::Area {
+        if on_toolbar || !self.screenshot_mode.selects_area() {
             return CursorShape::Arrow;
         }
         let grip = self.region_adjust.and_then(|adjust| {
@@ -1885,7 +1885,45 @@ fn render_screenshot(
         .clipboard
         .then(|| state.clipboard_sender.clone())
         .flatten();
+    let clipboard_sender_text = state.clipboard_sender.clone();
     let copy = request.clipboard;
+    if request.text {
+        // Mode Texte : reconnaissance dans un fil à part, puis copie du texte.
+        std::thread::spawn(move || {
+            use crate::desktop::notifications::{Event, local_notice};
+            let notice = match crate::desktop::ocr::recognize(&image, width, height) {
+                Ok(text) if text.trim().is_empty() => local_notice(
+                    "Aucun texte trouvé",
+                    "Essayez une zone plus grande, ou un texte plus net.",
+                ),
+                Ok(text) => {
+                    let preview = crate::desktop::ocr::preview(&text);
+                    let content = crate::clipboard::Content::Text(text.into());
+                    match clipboard_sender_text {
+                        Some(sender)
+                            if sender
+                                .send((content, Some("Texte de l’écran".to_owned())))
+                                .is_ok() =>
+                        {
+                            local_notice("Texte copié", &preview)
+                        }
+                        _ => local_notice(
+                            "Copie du texte impossible",
+                            "Le presse-papiers n’est pas disponible.",
+                        ),
+                    }
+                }
+                Err(error) => {
+                    warn!("texte de l'écran non reconnu : {}", error.body);
+                    local_notice(error.summary, &error.body)
+                }
+            };
+            if let Some(events) = events {
+                let _ = events.send(Event::Notify(notice));
+            }
+        });
+        return Ok(());
+    }
     capture::capture_in_background(image, width, height, request.save, move |result| {
         use crate::desktop::notifications::{Event, file_notice, local_notice};
         let notice = match result {

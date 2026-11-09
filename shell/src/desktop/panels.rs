@@ -790,10 +790,11 @@ pub enum CaptureHit {
 }
 
 /// Modes de capture, dans l'ordre de la barre d'outils.
-const CAPTURE_MODES: [(crate::render::capture::Mode, &str); 3] = [
+const CAPTURE_MODES: [(crate::render::capture::Mode, &str); 4] = [
     (crate::render::capture::Mode::Area, "Sélection"),
     (crate::render::capture::Mode::Screen, "Écran"),
     (crate::render::capture::Mode::Window, "Fenêtre"),
+    (crate::render::capture::Mode::Text, "Texte"),
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2304,6 +2305,7 @@ impl Panels {
                 crate::render::capture::Mode::Area => capture_icon_selection(canvas, center, ink),
                 crate::render::capture::Mode::Screen => capture_icon_screen(canvas, center, ink),
                 crate::render::capture::Mode::Window => capture_icon_window(canvas, center, ink, fill),
+                crate::render::capture::Mode::Text => capture_icon_text(canvas, center, ink),
             }
             let width = canvas.text_width(&self.regular, label, px(12.0));
             canvas.label(
@@ -3927,6 +3929,22 @@ fn veil_around(canvas: &mut Canvas, layout: &Layout, zone: Rect) {
 }
 
 /// Rectangle en pointillés, coins marqués : le mode Sélection.
+/// Mode Texte : un « T » dans les coins d'une zone.
+fn capture_icon_text(canvas: &mut Canvas, (cx, cy): (f64, f64), ink: Color) {
+    let (left, top, right, bottom) = (cx - 11.0, cy - 9.0, cx + 11.0, cy + 9.0);
+    for (x, y, dx, dy) in [
+        (left, top, 1.0, 1.0),
+        (right, top, -1.0, 1.0),
+        (left, bottom, 1.0, -1.0),
+        (right, bottom, -1.0, -1.0),
+    ] {
+        canvas.line((x, y), (x + 4.0 * dx, y), 1.5, ink);
+        canvas.line((x, y), (x, y + 4.0 * dy), 1.5, ink);
+    }
+    canvas.line((cx - 5.5, cy - 4.5), (cx + 5.5, cy - 4.5), 2.0, ink);
+    canvas.line((cx, cy - 4.5), (cx, cy + 5.5), 2.0, ink);
+}
+
 fn capture_icon_selection(canvas: &mut Canvas, (cx, cy): (f64, f64), ink: Color) {
     let (left, top, right, bottom) = (cx - 11.0, cy - 9.0, cx + 11.0, cy + 9.0);
     for (start, end) in [
@@ -4626,7 +4644,8 @@ struct Layout {
 impl Layout {
     /// Barre d'outils de capture, centrée en bas de l'écran.
     fn capture_toolbar(&self) -> Rect {
-        let (w, h) = (300.0, 168.0);
+        // Quatre modes de 84 points, espacés de 6, et 18 de marge de chaque côté.
+        let (w, h) = (390.0, 168.0);
         Rect::new(
             ((self.w - w) / 2.0).max(8.0),
             (self.h - h - 40.0).max(self.bar + 12.0),

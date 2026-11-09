@@ -7,6 +7,8 @@
 //! - lâchés sur une icône du Dock, ils s'ouvrent dans cette application (la Corbeille les
 //!   met à la Corbeille) ; une icône survolée un instant fait venir son application au
 //!   premier plan, pour déposer dans sa fenêtre ;
+//! - une fenêtre de Fichiers survolée apprend où est le pointeur (`Visit`) : elle surligne
+//!   le dossier visé et l'ouvre si le pointeur s'y attarde ;
 //! - lâchés sur une fenêtre de Fichiers, ils y sont déplacés (copiés avec Ctrl ou Alt) ;
 //! - lâchés sur la fenêtre d'une autre application Ferrite, ils s'y ouvrent.
 
@@ -15,11 +17,12 @@ use std::{
     io::{Read, Write},
     os::{fd::OwnedFd, unix::net::UnixListener},
     path::PathBuf,
+    sync::{OnceLock, mpsc},
     thread,
     time::{Duration, Instant},
 };
 
-use ferrite_system::drag::{self, Deposit, Drag};
+use ferrite_system::drag::{self, Deposit, Drag, Visit};
 use smithay::reexports::wayland_server::Resource;
 use smithay::{
     desktop::Window,
@@ -60,6 +63,8 @@ pub struct FileDrag {
     hover: Option<(AppKey, Instant, bool)>,
     /// Dernière position du pointeur : au dépôt, le pointeur est verrouillé par Smithay.
     at: Point<f64, Logical>,
+    /// Processus de la fenêtre survolée, prévenu de la position du pointeur.
+    visiting: Option<u32>,
 }
 
 impl FileDrag {
@@ -123,6 +128,7 @@ impl Ferrite {
             dropped: false,
             hover: None,
             at: pointer.current_location(),
+            visiting: None,
         });
     }
 
@@ -150,6 +156,7 @@ impl Ferrite {
         if file.dropped {
             return;
         }
+        self.visit_window(location);
         let item = self
             .dock_item_at(location)
             .map(|(_, item)| item)
@@ -180,6 +187,34 @@ impl Ferrite {
         }
         if due && let Some((key, ..)) = self.file_drag.as_ref().and_then(|file| file.hover.clone()) {
             self.bring_app_forward(&key);
+        }
+    }
+
+    /// Dit à la fenêtre sous le pointeur où il est (Fichiers surligne et ouvre le dossier
+    /// visé), et à celle qu'il vient de quitter qu'il est parti.
+    fn visit_window(&mut self, location: Point<f64, Logical>) {
+        let visited = self.surface_under(location).and_then(|(surface, origin)| {
+            let pid = surface.client()?.get_credentials(&self.display_handle).ok()?.pid as u32;
+            (pid != std::process::id()).then_some((pid, location - origin))
+        });
+        let Some(file) = &mut self.file_drag else {
+            return;
+        };
+        if let Some(old) = file.visiting
+            && Some(old) != visited.map(|(pid, _)| pid)
+        {
+            tell(old, Visit::Left);
+        }
+        file.visiting = visited.map(|(pid, _)| pid);
+        if let Some((pid, at)) = visited {
+            tell(
+                pid,
+                Visit::Over {
+                    x: at.x as f32,
+                    y: at.y as f32,
+                    paths: file.drag.paths.clone(),
+                },
+            );
         }
     }
 
@@ -280,6 +315,43 @@ impl Ferrite {
     }
 }
 
+/// Fenêtre survolée quittée (glisser fini, lâché ou annulé).
+fn leave(file: &FileDrag) {
+    if let Some(pid) = file.visiting {
+        tell(pid, Visit::Left);
+    }
+}
+
+/// Envoie `visit` au processus `pid` depuis un fil à part : une fenêtre figée ne doit pas
+/// bloquer le bureau. Les messages gardent leur ordre ; d'une suite de survols de la même
+/// fenêtre, seul le dernier part.
+fn tell(pid: u32, visit: Visit) {
+    static WORKER: OnceLock<mpsc::Sender<(u32, Visit)>> = OnceLock::new();
+    let sender = WORKER.get_or_init(|| {
+        let (sender, receiver) = mpsc::channel::<(u32, Visit)>();
+        thread::spawn(move || {
+            while let Ok(first) = receiver.recv() {
+                let mut kept: Vec<(u32, Visit)> = Vec::new();
+                for (pid, visit) in std::iter::once(first).chain(receiver.try_iter()) {
+                    match kept.last_mut() {
+                        Some((last_pid, last @ Visit::Over { .. }))
+                            if *last_pid == pid && matches!(visit, Visit::Over { .. }) =>
+                        {
+                            *last = visit;
+                        }
+                        _ => kept.push((pid, visit)),
+                    }
+                }
+                for (pid, visit) in kept {
+                    visit.send(pid);
+                }
+            }
+        });
+        sender
+    });
+    let _ = sender.send((pid, visit));
+}
+
 /// Texte des fichiers glissés dans le format `mime_type`.
 fn payload(mime_type: &str, paths: &[PathBuf]) -> String {
     if mime_type == "text/uri-list" {
@@ -307,6 +379,8 @@ impl ServerDndGrabHandler for Ferrite {
 
     fn dropped(&mut self, _seat: Seat<Self>) {
         if let Some(file) = &mut self.file_drag {
+            leave(file);
+            file.visiting = None;
             file.dropped = true;
         }
     }
@@ -315,6 +389,7 @@ impl ServerDndGrabHandler for Ferrite {
         let Some(file) = self.file_drag.take() else {
             return;
         };
+        leave(&file);
         // Appelé pendant le relâchement, pointeur et données du siège encore verrouillés par
         // Smithay : redemander le pointeur ou donner le focus bloquerait ferrite-shell.
         let location = file.at;
@@ -323,7 +398,9 @@ impl ServerDndGrabHandler for Ferrite {
     }
 
     fn finished(&mut self, _seat: Seat<Self>) {
-        self.file_drag = None;
+        if let Some(file) = self.file_drag.take() {
+            leave(&file);
+        }
     }
 }
 

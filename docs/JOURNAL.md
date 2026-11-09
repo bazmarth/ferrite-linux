@@ -3238,3 +3238,27 @@ QR et échappements, langues de tesseract, nettoyage du texte) ; vrai PDF de deu
 lu par pdfinfo et pdftoppm ; captures de la barre de capture et du QR code.
 Pas vérifié : le QR code scanné par un téléphone ; le menu de Fichiers à la souris ;
 « Assembler les PDF » ; la reconnaissance du texte (tesseract pas installé sur le PC).
+
+## 2026-11-09 — Fichiers : dossiers et onglets « à ressort », clavier
+
+Demande : glisser-déposer entre fenêtres et onglets de Fichiers, un dossier survolé doit
+s'ouvrir ; flèches et Tab doivent naviguer (vidéo : fichier glissé sur l'onglet « Musique »,
+rien ne se passait).
+- Dossier visé 0,7 s pendant un glisser : il s'ouvre et le glisser continue dedans
+  (`SPRING_OPEN`, `FilesState::spring`). Vaut pour la grille, la liste, la barre latérale et
+  le chemin.
+- Onglets : un autre onglet ouvert sur un dossier est une cible (`Target::Tab`) : lâché
+  dessus, rangé dans son dossier ; visé 0,7 s, l'onglet passe devant.
+- Autre fenêtre de Fichiers : pendant un glisser repris par ferrite-shell, la fenêtre
+  survolée ne reçoit pas le pointeur ; ferrite-shell lui envoie sa position
+  (`drag::Visit`, « survoler » / « quitter », même prise que les dépôts), depuis un fil à
+  part qui ne garde que la dernière position. Fichiers surligne la cible et applique le même
+  ressort. Le vrai pointeur qui revient efface le survol (message perdu).
+- Clavier : flèches (↑ ↓ d'une rangée en grille), Début, Fin, Maj pour étendre ; Tab et
+  Maj+Tab : élément suivant / précédent. Tab est retiré des événements avant egui
+  (`raw_input_hook`, nouvelle méthode `AppView::raw_input`) quand aucun champ n'est actif,
+  sinon egui donnait le focus au premier bouton. L'aperçu rapide suit la sélection.
+Vérifié : CI (sans shellcheck) ; tests (survol aller-retour, déplacement au clavier) ;
+captures : dossier surligné puis ouvert après un faux message de survol envoyé à la fenêtre.
+Pas vérifié : à la vraie souris entre deux fenêtres et sur un onglet ; les touches à la
+main (pas d'envoi de touches dans le bureau imbriqué).

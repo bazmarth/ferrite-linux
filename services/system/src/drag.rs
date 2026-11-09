@@ -117,6 +117,60 @@ impl Deposit {
     }
 }
 
+/// Survol d'une fenêtre pendant un glisser repris par ferrite-shell : la fenêtre ne reçoit
+/// pas le pointeur, ferrite-shell lui dit où il est (pour surligner le dossier visé et
+/// l'ouvrir s'il s'y attarde), puis qu'il est parti.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Visit {
+    /// Pointeur en (`x`, `y`) dans la fenêtre, en points, avec les fichiers glissés.
+    Over {
+        x: f32,
+        y: f32,
+        paths: Vec<PathBuf>,
+    },
+    Left,
+}
+
+const VISIT_HEADER: &str = "survoler";
+const LEAVE_HEADER: &str = "quitter";
+
+impl Visit {
+    pub fn encode(&self) -> String {
+        match self {
+            Visit::Over { x, y, paths } => {
+                let mut text = format!("{VISIT_HEADER}\n{x} {y}\n");
+                for path in paths {
+                    text.push_str(&path.to_string_lossy());
+                    text.push('\n');
+                }
+                text
+            }
+            Visit::Left => format!("{LEAVE_HEADER}\n"),
+        }
+    }
+
+    pub fn decode(text: &str) -> Option<Visit> {
+        let mut lines = text.lines();
+        match lines.next()? {
+            LEAVE_HEADER => Some(Visit::Left),
+            VISIT_HEADER => {
+                let (x, y) = lines.next()?.split_once(' ')?;
+                let (x, y) = (x.parse().ok()?, y.parse().ok()?);
+                let paths = lines.filter(|line| !line.is_empty()).map(PathBuf::from).collect();
+                Some(Visit::Over { x, y, paths })
+            }
+            _ => None,
+        }
+    }
+
+    /// Prévient le processus `pid` (sur la même prise que les dépôts) ; faux s'il n'écoute pas.
+    pub fn send(&self, pid: u32) -> bool {
+        UnixStream::connect(deposit_socket_path(pid))
+            .and_then(|mut stream| stream.write_all(self.encode().as_bytes()))
+            .is_ok()
+    }
+}
+
 /// `text/uri-list` des fichiers, comme l'attendent les applications GTK, Qt et Firefox.
 pub fn uri_list(paths: &[PathBuf]) -> String {
     paths
@@ -164,6 +218,21 @@ mod tests {
         assert_eq!(Deposit::decode(&deposit.encode()), Some(deposit));
         assert_eq!(Deposit::decode("deposer\nautre\n1 2\n/tmp/a"), None);
         assert_eq!(Deposit::decode("glisser\nicone\n/tmp/a"), None);
+    }
+
+    #[test]
+    fn survol_aller_retour() {
+        let over = Visit::Over {
+            x: 10.5,
+            y: 300.0,
+            paths: vec![PathBuf::from("/tmp/un dossier")],
+        };
+        assert_eq!(Visit::decode(&over.encode()), Some(over));
+        assert_eq!(Visit::decode(&Visit::Left.encode()), Some(Visit::Left));
+        assert_eq!(Visit::decode("survoler\nx\n/tmp"), None);
+        // Les dépôts ne se confondent pas avec les survols, ni l'inverse.
+        assert_eq!(Visit::decode("deposer\ncopier\n1 2\n/tmp/a"), None);
+        assert_eq!(Deposit::decode(&Visit::Left.encode()), None);
     }
 
     #[test]

@@ -252,6 +252,11 @@ enum Update {
 /// Ce que l'utilisateur a demandé pendant le dessin.
 #[derive(Debug, Clone)]
 enum Action {
+    /// Flèches, Début, Fin et Tab : élément suivant, sélection étendue avec Maj.
+    Step {
+        to: Move,
+        extend: bool,
+    },
     Navigate(PathBuf),
     /// Ouvre le dossier qui contient ce fichier et l'y sélectionne (résultat de recherche).
     Reveal(PathBuf),
@@ -348,6 +353,14 @@ enum Action {
     CancelPicker,
 }
 
+/// Déplacement au clavier dans les éléments affichés.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Move {
+    By(isize),
+    First,
+    Last,
+}
+
 /// Onglet : un emplacement et son historique. Celui qui est affiché vit dans les champs de
 /// `FilesState` (sa place dans `tabs` n'est mise à jour qu'en changeant d'onglet).
 #[derive(Debug, Clone)]
@@ -383,6 +396,13 @@ pub struct FilesState {
     selected: BTreeSet<PathBuf>,
     /// Dernier élément cliqué, point de départ d'une sélection avec Maj.
     anchor: Option<usize>,
+    /// Élément où se trouve le clavier (bout mobile d'une sélection étendue avec Maj).
+    cursor: Option<PathBuf>,
+    /// Colonnes de la grille affichée (1 en liste), pour ↑ et ↓.
+    columns: usize,
+    /// Tab gardé pour Fichiers (Ctrl, Maj) : sans champ actif, il passe d'un élément à
+    /// l'autre au lieu de parcourir les boutons.
+    tab_keys: Vec<(bool, bool)>,
     back: Vec<Location>,
     forward: Vec<Location>,
     show_hidden: bool,
@@ -415,6 +435,10 @@ pub struct FilesState {
     drag: Option<view::Dragging>,
     /// Fichiers lâchés sur la fenêtre par ferrite-shell (voir `view::Deposits`).
     deposits: Option<view::Deposits>,
+    /// Glisser d'une autre fenêtre qui survole celle-ci, et dossier visé depuis quand
+    /// (il s'ouvre si le pointeur s'y attarde).
+    visitor: Option<view::Visitor>,
+    spring: Option<(view::Target, Instant)>,
     /// Sélection au rectangle en cours, et place des éléments relevée au dessin.
     lasso: Option<view::Lasso>,
     item_rects: Vec<(egui::Rect, PathBuf)>,
@@ -460,6 +484,9 @@ impl Default for FilesState {
             entries: Vec::new(),
             selected: BTreeSet::new(),
             anchor: None,
+            cursor: None,
+            columns: 1,
+            tab_keys: Vec::new(),
             back: Vec::new(),
             forward: Vec::new(),
             show_hidden: false,
@@ -488,6 +515,8 @@ impl Default for FilesState {
             quick: None,
             drag: None,
             deposits: None,
+            visitor: None,
+            spring: None,
             lasso: None,
             item_rects: Vec::new(),
             tags: places::Tags::load(),
@@ -1097,6 +1126,67 @@ panneau={}
             .collect()
     }
 
+    /// Déplace la sélection au clavier ; avec `extend`, de l'ancre jusqu'au nouvel élément.
+    fn step(&mut self, to: Move, extend: bool) {
+        let visible = self.visible();
+        let Some(last) = visible.len().checked_sub(1) else {
+            return;
+        };
+        let current = self
+            .cursor
+            .as_ref()
+            .and_then(|cursor| visible.iter().position(|&i| &self.entries[i].path == cursor))
+            .or_else(|| {
+                self.anchor
+                    .and_then(|anchor| visible.iter().position(|&i| i == anchor))
+            });
+        let next = match (to, current) {
+            (Move::First, _) => 0,
+            (Move::Last, _) => last,
+            (Move::By(by), Some(at)) => {
+                let wanted = at as isize + by;
+                // ↑ sur la première rangée, ↓ sous la dernière : on ne bouge pas, sauf
+                // vers le dernier élément d'une rangée incomplète.
+                if wanted < 0 {
+                    at
+                } else {
+                    (wanted as usize).min(if by > 1 && at / (by as usize) == last / (by as usize) {
+                        at
+                    } else {
+                        last
+                    })
+                }
+            }
+            (Move::By(by), None) => {
+                if by < 0 {
+                    last
+                } else {
+                    0
+                }
+            }
+        };
+        let index = visible[next];
+        let path = self.entries[index].path.clone();
+        let from = self
+            .anchor
+            .and_then(|anchor| visible.iter().position(|&i| i == anchor));
+        if extend && let Some(from) = from {
+            self.selected = visible[from.min(next)..=from.max(next)]
+                .iter()
+                .map(|&i| self.entries[i].path.clone())
+                .collect();
+        } else {
+            self.selected = BTreeSet::from([path.clone()]);
+            self.anchor = Some(index);
+        }
+        // L'aperçu rapide ouvert suit l'élément choisi.
+        if self.quick.is_some() {
+            self.quick = Some(path.clone());
+        }
+        self.cursor = Some(path.clone());
+        self.scroll_to = Some(path);
+    }
+
     fn selection(&self) -> Vec<PathBuf> {
         self.selected.iter().cloned().collect()
     }
@@ -1378,8 +1468,10 @@ panneau={}
                     self.open(path, directory);
                 }
             }
+            Action::Step { to, extend } => self.step(to, extend),
             Action::Select { index, ctrl, shift } => {
                 let path = self.entries[index].path.clone();
+                self.cursor = Some(path.clone());
                 if shift && let Some(anchor) = self.anchor {
                     let visible = self.visible();
                     let from = visible.iter().position(|&i| i == anchor);
@@ -1959,6 +2051,32 @@ panneau={}
         }
     }
 
+    /// Avant egui : sans champ de saisie actif, Tab revient à Fichiers (voir `tab_keys`).
+    pub fn raw_input(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
+        if self.rename.is_some()
+            || self.path_edit.is_some()
+            || self.dialog.is_some()
+            || ctx.memory(|memory| memory.focused().is_some())
+        {
+            return;
+        }
+        let tab_keys = &mut self.tab_keys;
+        input.events.retain(|event| match event {
+            egui::Event::Key {
+                key: Key::Tab,
+                pressed,
+                modifiers,
+                ..
+            } => {
+                if *pressed {
+                    tab_keys.push((modifiers.command, modifiers.shift));
+                }
+                false
+            }
+            _ => true,
+        });
+    }
+
     fn keyboard(&mut self, ui: &egui::Ui, actions: &mut Vec<Action>) {
         if self.rename.is_some() || self.path_edit.is_some() || self.dialog.is_some() {
             return;
@@ -1977,6 +2095,8 @@ panneau={}
                 .memory_mut(|memory| memory.surrender_focus(egui::Id::unique(SEARCH_FIELD)));
             return;
         }
+        let tab_keys = std::mem::take(&mut self.tab_keys);
+        let columns = self.columns.max(1) as isize;
         ui.input(|input| {
             let (ctrl, shift, alt) = (
                 input.modifiers.command,
@@ -2010,7 +2130,12 @@ panneau={}
                 if ctrl && pressed(Key::W) && count > 1 {
                     actions.push(Action::CloseTab(self.active_tab));
                 }
-                if ctrl && pressed(Key::Tab) && count > 1 {
+                let ctrl_tab = (ctrl && pressed(Key::Tab))
+                    .then_some(shift)
+                    .or_else(|| tab_keys.iter().find(|(ctrl, _)| *ctrl).map(|&(_, shift)| shift));
+                if let Some(shift) = ctrl_tab
+                    && count > 1
+                {
                     let next = if shift {
                         (self.active_tab + count - 1) % count
                     } else {
@@ -2021,6 +2146,36 @@ panneau={}
             }
             if typing {
                 return;
+            }
+            // Flèches (↑ ↓ d'une rangée en grille), Début, Fin ; Maj étend la sélection. Tab
+            // et Maj+Tab passent à l'élément suivant ou précédent.
+            if !ctrl && !alt {
+                let to = if pressed(Key::ArrowRight) && columns > 1 {
+                    Some(Move::By(1))
+                } else if pressed(Key::ArrowLeft) && columns > 1 {
+                    Some(Move::By(-1))
+                } else if pressed(Key::ArrowDown) {
+                    Some(Move::By(columns))
+                } else if pressed(Key::ArrowUp) {
+                    Some(Move::By(-columns))
+                } else if pressed(Key::Home) {
+                    Some(Move::First)
+                } else if pressed(Key::End) {
+                    Some(Move::Last)
+                } else {
+                    None
+                };
+                if let Some(to) = to {
+                    actions.push(Action::Step { to, extend: shift });
+                }
+            }
+            for &(ctrl, shift) in &tab_keys {
+                if !ctrl {
+                    actions.push(Action::Step {
+                        to: Move::By(if shift { -1 } else { 1 }),
+                        extend: false,
+                    });
+                }
             }
             if ctrl && pressed(Key::A) {
                 actions.push(Action::SelectAll);
@@ -3127,6 +3282,61 @@ pub(crate) fn format_date(time: Option<SystemTime>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn entry(name: &str) -> FileEntry {
+        FileEntry {
+            name: name.into(),
+            path: PathBuf::from(format!("/x/{name}")),
+            directory: false,
+            symlink: false,
+            modified: None,
+            size: None,
+            archive_member: None,
+            trash: None,
+        }
+    }
+
+    #[test]
+    fn deplacement_au_clavier() {
+        let mut files = FilesState {
+            entries: ["a", "b", "c", "d", "e", "f", "g"].map(entry).to_vec(),
+            ..FilesState::default()
+        };
+        files.columns = 3;
+        files.filter = Filter::All;
+        files.search.clear();
+        let selected = |files: &FilesState| -> Vec<String> {
+            files
+                .selected
+                .iter()
+                .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+                .collect()
+        };
+        // Rien de choisi : → part du premier élément.
+        files.step(Move::By(1), false);
+        assert_eq!(selected(&files), ["a"]);
+        files.step(Move::By(1), false);
+        assert_eq!(selected(&files), ["b"]);
+        // ↓ : une rangée plus bas ; ↓ encore : rangée incomplète, dernier élément.
+        files.step(Move::By(3), false);
+        assert_eq!(selected(&files), ["e"]);
+        files.step(Move::By(3), false);
+        assert_eq!(selected(&files), ["g"]);
+        // Dernière rangée : ↓ ne bouge plus ; ↑ sur la première non plus.
+        files.step(Move::By(3), false);
+        assert_eq!(selected(&files), ["g"]);
+        files.step(Move::First, false);
+        files.step(Move::By(-3), false);
+        assert_eq!(selected(&files), ["a"]);
+        // Maj : de l'ancre jusqu'au nouvel élément, dans les deux sens.
+        files.step(Move::By(1), true);
+        files.step(Move::By(1), true);
+        assert_eq!(selected(&files), ["a", "b", "c"]);
+        files.step(Move::By(-1), true);
+        assert_eq!(selected(&files), ["a", "b"]);
+        files.step(Move::Last, false);
+        assert_eq!(selected(&files), ["g"]);
+    }
 
     #[test]
     fn icones_des_documents_bureautiques() {

@@ -46,6 +46,8 @@ trait AppView {
     fn update(&mut self, ui: &mut egui::Ui);
     /// Fichier (ou rubrique) confié par un autre lancement de la même application.
     fn open(&mut self, _target: PathBuf) {}
+    /// Événements bruts, avant qu'egui ne s'en serve (une touche à garder pour soi).
+    fn raw_input(&mut self, _ctx: &egui::Context, _input: &mut egui::RawInput) {}
 }
 
 /// Crée la vue de l'application `info`, avec le fichier ou la rubrique demandé.
@@ -108,6 +110,9 @@ impl AppView for FilesState {
     }
     fn open(&mut self, target: PathBuf) {
         self.open_at(target);
+    }
+    fn raw_input(&mut self, ctx: &egui::Context, input: &mut egui::RawInput) {
+        FilesState::raw_input(self, ctx, input);
     }
 }
 
@@ -363,6 +368,10 @@ impl FerriteApp {
 }
 
 impl eframe::App for FerriteApp {
+    fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        self.view.raw_input(ctx, raw_input);
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.refresh_preferences(ui.ctx());
         self.handle_requests(&ui.ctx().clone());

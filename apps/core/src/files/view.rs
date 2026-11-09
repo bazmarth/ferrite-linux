@@ -11,7 +11,7 @@ use std::{
 };
 
 use eframe::egui::{FontFamily, FontId};
-use ferrite_system::drag::{self, Deposit};
+use ferrite_system::drag::{self, Deposit, Visit};
 
 use crate::details;
 
@@ -46,6 +46,8 @@ const LIST_COLUMNS: [f32; 3] = [120.0, 190.0, 150.0];
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Target {
     Folder(PathBuf),
+    /// Autre onglet, ouvert sur ce dossier : on y passe en s'y attardant.
+    Tab(usize, PathBuf),
     Trash,
 }
 
@@ -72,6 +74,9 @@ pub(super) struct Lasso {
 const LASSO_SCROLLBAR: f32 = 14.0;
 const LASSO_EDGE: f32 = 28.0;
 
+/// Temps d'arrêt sur un dossier, pendant un glisser, avant qu'il s'ouvre.
+const SPRING_OPEN: Duration = Duration::from_millis(700);
+
 /// Fichiers en train d'être glissés dans la fenêtre.
 #[derive(Debug, Clone)]
 pub(super) struct Dragging {
@@ -79,10 +84,23 @@ pub(super) struct Dragging {
     pub icon: &'static str,
 }
 
+/// Ce que ferrite-shell envoie à la fenêtre : un dépôt, ou le survol d'un glisser venu
+/// d'ailleurs.
+enum Received {
+    Deposit(Deposit),
+    Visit(Visit),
+}
+
+/// Glisser venu d'une autre fenêtre, vu par ferrite-shell : pointeur et fichiers glissés.
+pub(super) struct Visitor {
+    pointer: egui::Pos2,
+    paths: Vec<PathBuf>,
+}
+
 /// Dépôts confiés par ferrite-shell, reçus sur la prise propre à ce processus (chaque
 /// fenêtre de Fichiers en est un) ; la prise disparaît avec la fenêtre.
 pub(super) struct Deposits {
-    receiver: Receiver<Deposit>,
+    receiver: Receiver<Received>,
     path: PathBuf,
 }
 
@@ -98,9 +116,11 @@ impl Deposits {
                     for stream in listener.incoming().filter_map(Result::ok) {
                         let mut text = String::new();
                         if stream.take(1 << 20).read_to_string(&mut text).is_ok()
-                            && let Some(deposit) = Deposit::decode(&text)
+                            && let Some(received) = Deposit::decode(&text)
+                                .map(Received::Deposit)
+                                .or_else(|| Visit::decode(&text).map(Received::Visit))
                         {
-                            if sender.send(deposit).is_err() {
+                            if sender.send(received).is_err() {
                                 return;
                             }
                             ctx.request_repaint();
@@ -310,7 +330,7 @@ impl FilesState {
             self.toolbar(ui, &look, &mut actions, &mut targets)
         });
         if !picker && self.tabs.len() > 1 {
-            self.tab_bar(ui, &look, &mut actions);
+            self.tab_bar(ui, &look, &mut actions, &mut targets);
         }
         if picker {
             self.picker_bar(ui, &mut actions);
@@ -344,7 +364,7 @@ impl FilesState {
             .inner;
         self.lasso_frame(&ctx, &look, layer, area, offset);
         self.drag_frame(&ctx, &look, &targets, &mut actions);
-        self.deposits(&ctx, &targets, &mut actions);
+        self.deposits(&ctx, &look, &targets, &mut actions);
         self.quick_look(&ctx, &look, &mut actions);
         self.dialogs(&ctx, &mut actions);
 
@@ -884,7 +904,7 @@ impl FilesState {
     }
 
     /// Rangée d'onglets sous la barre d'outils, affichée dès qu'il y en a deux.
-    fn tab_bar(&mut self, ui: &mut egui::Ui, look: &Look, actions: &mut Vec<Action>) {
+    fn tab_bar(&mut self, ui: &mut egui::Ui, look: &Look, actions: &mut Vec<Action>, targets: &mut Targets) {
         let titles: Vec<String> = (0..self.tabs.len()).map(|index| self.tab_title(index)).collect();
         let active = self.active_tab;
         egui::Panel::top(ui.scope_id().with("onglets"))
@@ -911,6 +931,10 @@ impl FilesState {
                     let id = ui.scope_id().with(("onglet", index));
                     let response = ui.interact(rect, id, Sense::click());
                     let on = index == active;
+                    // Un autre onglet reçoit les fichiers glissés dans son dossier.
+                    if !on && let Location::Folder(dir) = &self.tabs[index].location {
+                        targets.push((rect, Target::Tab(index, dir.clone())));
+                    }
                     if on {
                         ui.painter()
                             .rect_filled(rect.translate(egui::vec2(0.0, 1.0)), 8.0, style::tint(20));
@@ -1657,6 +1681,7 @@ impl FilesState {
         }
         let inner = (ui.available_width() - 44.0).max(CELL_MIN);
         let columns = (((inner + CELL_GAP) / (CELL_MIN + CELL_GAP)).floor() as usize).max(1);
+        self.columns = columns;
         let cell_width = (inner - CELL_GAP * (columns - 1) as f32) / columns as f32;
         let ctx = ui.ctx().clone();
         let scrolled = egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
@@ -1798,6 +1823,7 @@ impl FilesState {
         targets: &mut Targets,
     ) -> (egui::Rect, egui::Vec2) {
         let visible = self.visible();
+        self.columns = 1;
         let in_trash = self.location == Location::Trash;
         let area = ui.max_rect().shrink2(egui::vec2(14.0, 0.0));
         let width = area.width();
@@ -2870,23 +2896,8 @@ impl FilesState {
             return;
         };
         let target = self.target_at(targets, pointer, &drag.paths);
-        let painter = ctx.layer_painter(egui::LayerId::new(
-            egui::Order::Tooltip,
-            egui::Id::unique("fichiers-glisser"),
-        ));
-        if let Some((rect, target)) = &target {
-            // Le dossier affiché lui-même n'est pas surligné : on dépose « ici ».
-            let here = matches!(target, Target::Folder(dir) if Some(dir.as_path()) == self.current_dir());
-            if !here {
-                painter.rect_filled(*rect, 10.0, look.drop.gamma_multiply(0.55));
-                painter.rect_stroke(
-                    *rect,
-                    10.0,
-                    Stroke::new(2.0, look.accent),
-                    egui::StrokeKind::Inside,
-                );
-            }
-        }
+        let painter = self.highlight(ctx, look, target.as_ref());
+        self.spring(ctx, target.as_ref().map(|(_, target)| target), actions);
         let icon = egui::Rect::from_center_size(pointer + egui::vec2(10.0, 14.0), egui::Vec2::splat(56.0));
         if let Some(texture) = self.icons.texture_for(ctx, drag.icon, icon.width()) {
             painter.image(
@@ -2924,6 +2935,69 @@ impl FilesState {
         }
     }
 
+    /// Surligne la cible visée (pas le dossier affiché lui-même : on dépose « ici ») ;
+    /// renvoie le pinceau du dessus, pour le fantôme.
+    fn highlight(
+        &self,
+        ctx: &egui::Context,
+        look: &Look,
+        target: Option<&(egui::Rect, Target)>,
+    ) -> egui::Painter {
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Tooltip,
+            egui::Id::unique("fichiers-glisser"),
+        ));
+        if let Some((rect, target)) = target {
+            let here = matches!(target, Target::Folder(dir) if Some(dir.as_path()) == self.current_dir());
+            if !here {
+                painter.rect_filled(*rect, 10.0, look.drop.gamma_multiply(0.55));
+                painter.rect_stroke(
+                    *rect,
+                    10.0,
+                    Stroke::new(2.0, look.accent),
+                    egui::StrokeKind::Inside,
+                );
+            }
+        }
+        painter
+    }
+
+    /// Dossier « à ressort » : visé sans bouger pendant `SPRING_OPEN`, il s'ouvre, et le
+    /// glisser continue dedans.
+    /// Un autre onglet visé passe au premier plan de la même façon.
+    fn spring(&mut self, ctx: &egui::Context, target: Option<&Target>, actions: &mut Vec<Action>) {
+        let target = match target {
+            Some(Target::Folder(dir)) if Some(dir.as_path()) != self.current_dir() => {
+                Target::Folder(dir.clone())
+            }
+            Some(tab @ Target::Tab(..)) => tab.clone(),
+            _ => {
+                self.spring = None;
+                return;
+            }
+        };
+        let now = Instant::now();
+        match &self.spring {
+            Some((aimed, since)) if *aimed == target => {
+                let waited = now.duration_since(*since);
+                if waited >= SPRING_OPEN {
+                    self.spring = None;
+                    actions.push(match target {
+                        Target::Tab(index, _) => Action::SwitchTab(index),
+                        Target::Folder(dir) => Action::Navigate(dir),
+                        Target::Trash => return,
+                    });
+                } else {
+                    ctx.request_repaint_after(SPRING_OPEN - waited);
+                }
+            }
+            _ => {
+                self.spring = Some((target, now));
+                ctx.request_repaint_after(SPRING_OPEN);
+            }
+        }
+    }
+
     /// Cible sous `pointer`, la plus précise d'abord ; jamais un des éléments `paths`.
     fn target_at(
         &self,
@@ -2937,7 +3011,9 @@ impl FilesState {
             .find(|(rect, target)| {
                 rect.contains(pointer)
                     && match target {
-                        Target::Folder(dir) => !paths.iter().any(|path| dir.starts_with(path)),
+                        Target::Folder(dir) | Target::Tab(_, dir) => {
+                            !paths.iter().any(|path| dir.starts_with(path))
+                        }
                         Target::Trash => self.location != Location::Trash,
                     }
             })
@@ -2947,13 +3023,28 @@ impl FilesState {
     /// Fichiers lâchés sur la fenêtre depuis une autre (le glisser était repris par
     /// ferrite-shell) : rangés comme un dépôt fait ici, sur ce qui est sous le pointeur, ou
     /// à défaut dans le dossier affiché.
-    fn deposits(&mut self, ctx: &egui::Context, targets: &Targets, actions: &mut Vec<Action>) {
+    fn deposits(&mut self, ctx: &egui::Context, look: &Look, targets: &Targets, actions: &mut Vec<Action>) {
         if self.picker.is_some() {
             return;
         }
         let deposits = self.deposits.get_or_insert_with(|| Deposits::listen(ctx));
-        let received: Vec<Deposit> = deposits.receiver.try_iter().collect();
-        for deposit in received {
+        let received: Vec<Received> = deposits.receiver.try_iter().collect();
+        for received in received {
+            let deposit = match received {
+                Received::Deposit(deposit) => deposit,
+                Received::Visit(Visit::Over { x, y, paths }) => {
+                    self.visitor = Some(Visitor {
+                        pointer: egui::pos2(x, y),
+                        paths,
+                    });
+                    continue;
+                }
+                Received::Visit(Visit::Left) => {
+                    self.visitor = None;
+                    continue;
+                }
+            };
+            self.visitor = None;
             let pointer = egui::pos2(deposit.x, deposit.y);
             let target = self
                 .target_at(targets, pointer, &deposit.paths)
@@ -2966,6 +3057,28 @@ impl FilesState {
                     copy: deposit.copy,
                 });
             }
+        }
+        // Un glisser d'une autre fenêtre passe au-dessus : même surlignage et même ressort
+        // qu'un glisser parti d'ici. Le vrai pointeur qui revient (le glisser est fini)
+        // efface ce survol, au cas où le dernier message se serait perdu.
+        if self.visitor.is_some()
+            && ctx.input(|input| {
+                input.events.iter().any(|event| {
+                    matches!(
+                        event,
+                        egui::Event::PointerMoved(_) | egui::Event::PointerButton { .. }
+                    )
+                })
+            })
+        {
+            self.visitor = None;
+        }
+        if let Some(visitor) = &self.visitor {
+            let target = self.target_at(targets, visitor.pointer, &visitor.paths);
+            self.highlight(ctx, look, target.as_ref());
+            self.spring(ctx, target.as_ref().map(|(_, target)| target), actions);
+        } else if self.drag.is_none() {
+            self.spring = None;
         }
     }
 
@@ -2990,7 +3103,12 @@ impl FilesState {
     /// Fichiers lâchés sur `target` : déplacés (copiés avec Ctrl ou Alt, ou vers un autre
     /// disque), ou mis à la Corbeille.
     pub(super) fn drop_on(&mut self, target: Target, paths: Vec<PathBuf>, copy: bool) {
+        let target = match target {
+            Target::Tab(_, dir) => Target::Folder(dir),
+            target => target,
+        };
         match target {
+            Target::Tab(..) => {}
             Target::Trash => {
                 for path in &paths {
                     if let Err(error) = trash::trash(path) {

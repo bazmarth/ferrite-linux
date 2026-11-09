@@ -81,6 +81,10 @@ dialogue.
 | Fichiers | Onglet suivant / précédent | Ctrl + Tab / Ctrl + Maj + Tab |
 | Fichiers | Chercher (dossier et sous-dossiers) | taper une lettre hors d'un champ ; Échap efface |
 | Fichiers | Aperçu rapide | Espace |
+| Fichiers | Élément voisin (↑ ↓ : rangée du dessus / dessous en grille) | flèches ; Maj étend la sélection |
+| Fichiers | Premier / dernier élément | Début / Fin |
+| Fichiers | Élément suivant / précédent | Tab / Maj + Tab |
+| Fichiers | Ouvrir un dossier ou un onglet pendant un glisser | s'y attarder 0,7 s |
 | Fichiers | Mettre à la Corbeille | Suppr |
 | Lecteur PDF | Chercher, résultat suivant / précédent | Ctrl + F, Entrée / Maj + Entrée |
 | Lecteur PDF | Miniatures des pages | F9 |

@@ -3095,3 +3095,33 @@ Vérifié : CI (sans shellcheck) ; capture `--demo-lock --demo-face scan` avec u
 de test (dossier personnel temporaire) : image ronde dans l'anneau du visage.
 Pas vérifié : sur le vrai bureau avec une image choisie dans Paramètres (droits de lecture
 du dossier d'AccountsService supposés ouverts à tous, comme sur Debian).
+
+## 2026-11-09 — Écran de connexion (greetd) et visage dans Comptes
+
+Demande : le compte « baz », ajouté dans Paramètres, ne se voyait nulle part (le PC ouvrait
+directement la session de bazoum) ; puis rattacher le déverrouillage par visage au compte.
+- `ferrite-shell --greeter` (`shell/src/desktop/greeter.rs`) : l'écran de verrouillage,
+  champ ouvert d'emblée, compte choisi avec son image de profil et son nom ; « Changer
+  d'utilisateur », ↑ ↓ et Tab passent au compte suivant. Mot de passe envoyé à greetd par sa
+  prise (`GREETD_SOCK`, JSON fait main, testé contre un faux greetd) ; accepté, l'écran se
+  ferme et greetd lance `ferrite-session --greetd`. Ni agent polkit, ni Xwayland, ni rappels.
+- `ferrite-session --greetd` : pas de verrouillage au démarrage (mot de passe déjà donné) ;
+  « Se déconnecter », quitter ou trois plantages ramènent à l'écran de connexion.
+- Image : paquet `greetd`, `/etc/greetd/config.toml` (console 7, session live ouverte seule),
+  `ferrite-greeter` (repli `agreety` si le bureau plante) ; `autologin.conf` de tty1 retiré ;
+  `install-dev/inside.sh` enlève l'ouverture automatique.
+- PC déjà installé : `tools/ecran-connexion.sh` (sudo ; greetd installé sans le démarrer,
+  binaire de tools/dev-on.sh), `--retirer` pour revenir à l'ancien démarrage.
+- Comptes : ligne « Déverrouillage par visage » dans « Mon compte » (état, « Configurer… »
+  vers Confidentialité). Les empreintes étaient déjà propres à chaque compte.
+Vérifié : CI (sans shellcheck ; `sh -n` des scripts) ; tests (comptes de passwd, choix en
+boucle, JSON, échange complet avec un faux greetd, mot de passe juste et faux) ; captures de
+l'écran de connexion imbriqué (compte, champ, aide) et de la page Comptes.
+Pas vérifié : avec le vrai greetd (ni en machine virtuelle ni sur le PC) : démarrage,
+connexion de bazoum et de baz, trousseau, déconnexion, repli agreety ; images de profil
+lues par `_greetd`.
+Suite : dans la session de baz, fenêtres mal affichées. Cause trouvée : les autres comptes
+ouvrent les binaires de /usr/local/bin (ferrite-apps du 3 novembre, pas de portail ni de
+modèles du visage) ; tools/dev-on.sh ne met à jour que le compte qui le lance. Ajout de
+`tools/installer-systeme.sh` (sudo) : binaires, scripts, modèles, portail et .desktop pour
+tous les comptes. Pas vérifié : la session de baz après ce script.

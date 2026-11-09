@@ -414,3 +414,13 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
   pour l'instant (ordre d'ajout) ; un raccourci recouvert par un widget n'est ni dessiné ni
   cliquable. Un raccourci dont l'application ou le chemin a disparu reste, nom estompé,
   avec seulement « Retirer du bureau ».
+- **2026-11-09 — Écran de connexion par greetd.** Plusieurs comptes : la connexion
+  automatique sur tty1 laisse place à greetd (console 7). L'écran de connexion est le bureau
+  lui-même en mode `--greeter` (l'écran de verrouillage, avec « Changer d'utilisateur », ↑ ↓
+  et Tab pour choisir le compte) ; le mot de passe va à greetd (PAM), jamais vérifié par
+  Ferrite. Comptes : `/etc/passwd`, UID 1000 à 59999 avec un vrai shell, par UID ; le dernier
+  ouvert est retenu dans le dossier de `_greetd`. Pas de visage à la connexion (le trousseau
+  veut le mot de passe ; règle du visage inchangée). Système live : session ouverte seule
+  (`[initial_session]`). Si l'écran plante : connexion texte `agreety`, jamais d'ordinateur
+  fermé. Changer d'utilisateur sans fermer la session d'un autre demanderait un second
+  greetd : plus tard.

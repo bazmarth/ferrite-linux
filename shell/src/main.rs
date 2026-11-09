@@ -147,6 +147,10 @@ fn run(options: Options) -> Result<u8, Box<dyn std::error::Error>> {
             std::time::Instant::now() + std::time::Duration::from_secs(3600),
         ));
     }
+    // Écran de connexion : l'écran verrouillé, pour toujours, avec le choix du compte.
+    if options.greeter {
+        state.open_greeter(desktop::greeter::Greeter::load());
+    }
     if options.demo_lock {
         state.demo_face = options.demo_face;
         state.lock_session();
@@ -165,13 +169,15 @@ fn run(options: Options) -> Result<u8, Box<dyn std::error::Error>> {
     // Ouverture de session (ferrite-session, connexion automatique) : le bureau démarre
     // verrouillé. Un bureau imbriqué, lancé depuis un terminal, hérite de la variable : il
     // ne se verrouille pas.
-    if !has_display && std::env::var_os("FERRITE_LOCK").is_some_and(|value| value == "1") {
+    if !has_display && !options.greeter && std::env::var_os("FERRITE_LOCK").is_some_and(|value| value == "1")
+    {
         state.lock_session();
         // Son d'ouverture (s'il est activé) : pas à une simple relance du bureau.
         ferrite_system::sounds::play(ferrite_system::sounds::Sound::Startup);
     }
-    // Un seul agent polkit par session : pas pour un bureau imbriqué.
-    if !has_display {
+    // Un seul agent polkit par session : pas pour un bureau imbriqué ni pour l'écran de
+    // connexion (aucune session ouverte).
+    if !has_display && !options.greeter {
         match desktop::polkit::start(&event_loop.handle()) {
             Ok(link) => state.polkit_link = Some(link),
             Err(err) => warn!(%err, "agent polkit indisponible"),
@@ -183,11 +189,13 @@ fn run(options: Options) -> Result<u8, Box<dyn std::error::Error>> {
     }
     info!(socket = ?state.socket_name, "ferrite-shell prêt");
     desktop::file_drag::listen(&event_loop.handle(), &state.socket_name.to_string_lossy());
-    protocols::xwayland::start(&event_loop.handle(), &mut state);
+    if !options.greeter {
+        protocols::xwayland::start(&event_loop.handle(), &mut state);
+    }
     state.publish_environment();
     // Rappels du Calendrier : un service par session (pas pour un bureau imbriqué, qui
     // partage la session de celui qui l'a lancé).
-    if !has_display {
+    if !has_display && !options.greeter {
         desktop::apps::App::start_reminders(&state.client_environment());
         desktop::apps::App::start_bluetooth_reception(&state.client_environment());
     }

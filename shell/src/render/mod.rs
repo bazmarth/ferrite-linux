@@ -1502,6 +1502,11 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
                 .next()
                 .map(|first| first.to_uppercase().chain(letters).collect::<String>())
                 .unwrap_or_else(|| "Utilisateur".to_owned());
+            // Écran de connexion : le compte choisi.
+            let display = match state.greeter.as_ref().and_then(|greeter| greeter.current()) {
+                Some(user) => user.name.clone(),
+                None => display,
+            };
             let reduce = state.dock_config.reduce_motion;
             let mut history = state.notifications.history();
             let latest = history.next();
@@ -1530,8 +1535,15 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
                 }
             });
             LockView {
-                initial: display.chars().next().unwrap_or('U'),
-                avatar: state.lock_avatar.clone(),
+                initial: display
+                    .chars()
+                    .next()
+                    .and_then(|first| first.to_uppercase().next())
+                    .unwrap_or('U'),
+                avatar: match &state.greeter {
+                    Some(greeter) => greeter.current().and_then(|user| user.avatar.clone()),
+                    None => state.lock_avatar.clone(),
+                },
                 user: display,
                 length: lock.password_length(),
                 cursor: lock.cursor(),
@@ -1543,6 +1555,11 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
                 message: lock.message,
                 face: lock.face,
                 face_ready: lock.face_ready,
+                switch_user: state
+                    .greeter
+                    .as_ref()
+                    .is_some_and(|greeter| greeter.users.len() > 1),
+                greeter: state.greeter.is_some(),
                 face_tick: lock.face_tick(reduce),
                 shake: if reduce { 0 } else { lock.shake() },
                 pulse: if reduce { 8 } else { lock.pulse() },

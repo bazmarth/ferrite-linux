@@ -7,6 +7,7 @@ pub mod dock;
 pub mod face;
 pub mod file_drag;
 pub mod function_keys;
+pub mod greeter;
 pub mod idle;
 pub mod island;
 pub mod launch;

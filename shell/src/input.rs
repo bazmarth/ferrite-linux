@@ -141,6 +141,8 @@ pub(crate) enum Action {
     /// Suppr, et déplacement du curseur (voir `lock_move_cursor`).
     LockDelete,
     LockMove(isize),
+    /// Écran de connexion : compte précédent (-1) ou suivant (1).
+    LockUser(isize),
     LockSubmit,
     LockReveal,
     /// Touche relâchée pendant le verrouillage ou l'authentification, ou touche sans
@@ -528,6 +530,10 @@ impl Ferrite {
                         Keysym::Right | Keysym::KP_Right => Action::LockMove(1),
                         Keysym::Home | Keysym::KP_Home => Action::LockMove(isize::MIN),
                         Keysym::End | Keysym::KP_End => Action::LockMove(isize::MAX),
+                        Keysym::Up | Keysym::KP_Up if state.greeter.is_some() => Action::LockUser(-1),
+                        Keysym::Down | Keysym::KP_Down | Keysym::Tab if state.greeter.is_some() => {
+                            Action::LockUser(1)
+                        }
                         Keysym::Return | Keysym::KP_Enter => Action::LockSubmit,
                         sym => match sym.key_char().filter(|c| !c.is_control()) {
                             Some(character) if !modifiers.ctrl && !modifiers.alt => {
@@ -897,6 +903,7 @@ impl Ferrite {
             Some(Action::LockDelete) => self.lock_delete(),
             Some(Action::LockMove(step)) => self.lock_move_cursor(step),
             Some(Action::LockSubmit) => self.lock_submit(),
+            Some(Action::LockUser(step)) => self.greeter_step(step),
             Some(Action::LockReveal) => self.lock_reveal(),
             Some(Action::LockIgnore) => {}
             Some(Action::AuthType(character)) => self.auth_type(character),
@@ -2211,6 +2218,7 @@ impl Ferrite {
             LockAction::Power => self.open_power_dialog(crate::state::PowerAction::Sleep),
             LockAction::Media(command) => self.press_media(command),
             LockAction::Face => self.lock_face_retry(),
+            LockAction::SwitchUser => self.greeter_step(1),
             LockAction::Consume => {}
         }
     }

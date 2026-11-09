@@ -541,6 +541,10 @@ pub struct LockView {
     /// Déverrouillage par visage : où il en est, et s'il peut être (re)lancé.
     pub face: LockFace,
     pub face_ready: bool,
+    /// Écran de connexion avec plusieurs comptes : « Changer d'utilisateur » passe au suivant.
+    pub switch_user: bool,
+    /// Écran de connexion (`--greeter`) plutôt que session verrouillée.
+    pub greeter: bool,
     /// Pas de l'animation du visage (anneau qui tourne autour de l'avatar).
     pub face_tick: u16,
     /// Secousse du champ après un refus, en dixièmes de point.
@@ -6776,6 +6780,8 @@ mod tests {
             message: LockMessage::Hint,
             face: LockFace::Idle,
             face_ready: false,
+            switch_user: false,
+            greeter: false,
             face_tick: 0,
             shake: 0,
             pulse: 0,

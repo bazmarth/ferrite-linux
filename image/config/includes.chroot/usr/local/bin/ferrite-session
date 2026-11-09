@@ -1,8 +1,13 @@
 #!/bin/sh
-# Session Ferrite, lancée à la connexion sur tty1 : le bureau ferrite-shell, ouvert sur
+# Session Ferrite, lancée par l'écran de connexion (greetd, option --greetd) ou à la
+# connexion sur tty1 : le bureau ferrite-shell, ouvert sur
 # l'espace des widgets (aucune application lancée d'office). Si le bureau ne démarre pas (ou quand on le quitte avec Ctrl+Alt+Retour
 # arrière), on retombe sur la console avec les commandes utiles.
 set -u
+# Lancée par greetd : à la fin de la session, on revient à l'écran de connexion (pas de
+# console), et le bureau ne redemande pas le mot de passe qui vient d'être donné.
+greetd=0
+[ "${1:-}" = --greetd ] && greetd=1
 export FERRITE_SESSION=1
 export XDG_CURRENT_DESKTOP=Ferrite
 export XDG_SESSION_TYPE=wayland
@@ -64,7 +69,7 @@ first=1
 # Le bureau démarre sur l'écran de verrouillage (la connexion sur tty1 est automatique),
 # sauf quand on le relance soi-même depuis le bureau. Pas sur le système live de l'ISO :
 # son utilisateur n'a pas de mot de passe connu de qui le démarre.
-if grep -qw "boot=live" /proc/cmdline 2>/dev/null; then
+if [ "$greetd" = 1 ] || grep -qw "boot=live" /proc/cmdline 2>/dev/null; then
     lock_default=0
 else
     lock_default=1
@@ -100,6 +105,10 @@ while [ -x "$bin/ferrite-shell" ]; do
         choose_bin
         continue
     fi
+    if [ "$status" -eq 4 ] && [ "$greetd" = 1 ]; then
+        # « Se déconnecter » : retour à l'écran de connexion.
+        exit 0
+    fi
     if [ "$status" -eq 4 ]; then
         # « Se déconnecter » : rien d'autre à taper que Entrée pour revenir.
         printf '\n  \033[1mSession fermée.\033[0m\n\n'
@@ -115,7 +124,7 @@ while [ -x "$bin/ferrite-shell" ]; do
     fi
     if [ "$status" -eq 0 ]; then
         # En développement, quitter le bureau sert à le relancer ; Ctrl+Alt+F2 donne une console.
-        [ "$dev" = 1 ] || break
+        [ "$dev" = 1 ] || { [ "$greetd" = 1 ] && exit 0; break; }
         lock=0
         crashes=0
         dev_crashes=0
@@ -145,6 +154,8 @@ while [ -x "$bin/ferrite-shell" ]; do
     crashes=$((crashes + 1))
     if [ "$crashes" -ge 3 ]; then
         printf '\n  Arrêts répétés : retour à la console (journal : %s).\n' "$log"
+        # Écran de connexion : il reprend la main (une console ici ne se verrait pas).
+        [ "$greetd" = 1 ] && exit 1
         break
     fi
     sleep 2

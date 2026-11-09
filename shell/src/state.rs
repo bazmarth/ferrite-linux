@@ -179,6 +179,8 @@ pub struct Ferrite {
     pub lock_picture: Option<crate::desktop::panels::LockPicture>,
     /// Image de profil du compte (avatar de l'écran de verrouillage).
     pub lock_avatar: Option<crate::clipboard::Thumbnail>,
+    /// Écran de connexion (`--greeter`) : comptes proposés et compte choisi.
+    pub greeter: Option<crate::desktop::greeter::Greeter>,
     /// Mode nuit : réglages, forçage depuis le centre de contrôle et teinte de l'écran.
     pub night: crate::desktop::night::Night,
     /// Inactivité : verrouillage et mise en veille automatiques.
@@ -486,6 +488,7 @@ impl Ferrite {
             power_deadline: None,
             lock_picture: None,
             lock_avatar: None,
+            greeter: None,
             night: Default::default(),
             idle: Default::default(),
             appearance: settings.appearance(),

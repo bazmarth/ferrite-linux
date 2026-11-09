@@ -198,6 +198,9 @@ impl SettingsState {
                 .position(|other| other.path == account.path)
                 .map_or(Lead::None, |index| leads[index])
         };
+        let face = if mine.is_some() { self.face_summary() } else { "" };
+        let mut open_face = false;
+        let state = &mut self.accounts;
         if let Some(account) = &mine {
             let has_picture = state.has_picture(account);
             let kind = if account.admin {
@@ -255,8 +258,18 @@ impl SettingsState {
                 if open {
                     password_form(rows, form, busy, &mut action);
                 }
+                rows.row(Row::new("Déverrouillage par visage").hint(face), |ui| {
+                    if ui.button("Configurer…").clicked() {
+                        open_face = true;
+                    }
+                });
             });
         }
+        if open_face {
+            self.go(Page::Privacy);
+            return;
+        }
+        let state = &mut self.accounts;
 
         let form = &mut state.form;
         group(ui, &mut self.icons, "Autres comptes", |rows| {

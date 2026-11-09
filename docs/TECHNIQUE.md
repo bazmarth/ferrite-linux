@@ -54,7 +54,7 @@ plan quand ils divergent), `docs/ARCHITECTURE.md`, `docs/DEPENDANCES.md`,
 | Couche | Choix |
 |---|---|
 | Distribution | Debian 13 « trixie », amd64, `main contrib non-free non-free-firmware` |
-| Démarrage | GRUB + shim signé (Secure Boot), systemd, connexion automatique sur tty1 |
+| Démarrage | GRUB + shim signé (Secure Boot), systemd, écran de connexion greetd + `ferrite-greeter` (console 7 ; session ouverte seule sur le système live) |
 | Affichage | `ferrite-shell` : compositeur Wayland **Smithay 0.7**, backends DRM/KMS+GBM+libinput (`--drm`, session libseat/logind) et winit (`--winit`, fenêtre de dev) |
 | Rendu | `GlesRenderer` (OpenGL ES) uniquement ; shaders maison (ombres, coins, décorations) ; panneaux du bureau rastérisés sur le **CPU** (`Canvas`, BGRA prémultiplié) puis envoyés en `MemoryRenderBuffer` |
 | Applications Ferrite | `ferrite-apps` (un seul binaire, **egui**), sous-commande par appli |
@@ -143,7 +143,8 @@ ferrite-linux/
 
 | Fichier | Rôle |
 |---|---|
-| `etc/systemd/system/getty@tty1.service.d/autologin.conf` | connexion automatique de `ferrite` sur tty1 |
+| `etc/greetd/config.toml` | greetd : `ferrite-greeter` (utilisateur `_greetd`) sur la console 7 ; `[initial_session]` ouvre seule la session live, retiré à l'installation |
+| `usr/local/bin/ferrite-greeter` | `ferrite-shell --drm --greeter` (écran de connexion) ; s'il plante, connexion texte `agreety` |
 | `etc/profile.d/90-ferrite.sh` | lance `ferrite-session` une fois, sur tty1, shell interactif |
 | `usr/local/bin/ferrite-session` | boucle de session (§2.1) |
 | `usr/local/bin/ferrite-check` | vérifications matérielles de la phase 1 |
@@ -399,7 +400,7 @@ Elle prime sur la charte §3.4 de `PLAN.md` (voir `DECISIONS.md`, 2026-11-02).
 
 | Élément | Pourquoi |
 |---|---|
-| `getty@tty1` autologin + `90-ferrite.sh` + `ferrite-session` | chaîne de démarrage : une erreur = plus de bureau. La sécurité repose sur le **verrouillage au démarrage** (§2.1) ; ne pas le retirer ni l'appliquer au système live |
+| greetd + `ferrite-greeter` + `ferrite-session --greetd` | chaîne de démarrage : une erreur = plus de bureau. Garder le repli `agreety` de `ferrite-greeter` ; `tools/ecran-connexion.sh --retirer` rétablit l'ancienne connexion automatique sur tty1 (`90-ferrite.sh` reste pour elle) |
 | Bus D-Bus de systemd dans `ferrite-session` | sinon gnome-keyring injoignable, 2 min d'attente des navigateurs |
 | `--systemd` dans `dbus-update-activation-environment` (`state.rs::publish_environment`) | les services démarrés par systemd (portails) doivent trouver l'écran |
 | `ferrite-rtw89.conf` + `wifi.powersave = 2` | sans eux, coupures Wi-Fi et pics à 110 ms sur le ThinkBook |
@@ -462,7 +463,7 @@ Reste :
 3. Logithèque (phase 7) : PackageKit + Flatpak, notification des mises à jour (polkit est prêt).
 4. Batterie et fiabilité (phase 10) : moins d'images au repos (l'appli Claude soumet ~50
    images/s), démarrage < 20 s, tests automatiques des écrans par captures de référence.
-5. Phases 8–9 : écran de connexion (greetd), paquets `.deb`, dépôt apt signé, installateur
+5. Phases 8–9 : changement d'utilisateur sans fermer la session (second greetd), paquets `.deb`, dépôt apt signé, installateur
    graphique (tests en VM d'abord, Windows intact).
 6. Phase 6 en dernier : navigateur maison (Brave couvre le besoin).
 

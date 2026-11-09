@@ -1,0 +1,20 @@
+# Écran de connexion (greetd) dans l'ISO : la session live s'ouvre seule, on la quitte,
+# l'écran de connexion apparaît, puis on se reconnecte avec le mot de passe live.
+sleep 75
+shot cx-1-session-live
+# Ctrl+Alt+Retour arrière : quitte le bureau ; ferrite-session --greetd rend la main à greetd.
+key ctrl-alt-backspace
+sleep 15
+shot cx-2-ecran-connexion
+type live
+sleep 1
+shot cx-3-mot-de-passe
+key ret
+sleep 20
+shot cx-4-session-rouverte
+# Journal de l'écran de connexion et état de greetd, sur la console série.
+serial ferrite
+serial live
+serial systemctl status greetd --no-pager | head -20
+serial sudo cat /run/user/*/ferrite-greeter.log | tail -20
+sleep 3

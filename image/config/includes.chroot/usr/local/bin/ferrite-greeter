@@ -1,0 +1,21 @@
+#!/bin/sh
+# Écran de connexion Ferrite, lancé par greetd avec l'utilisateur _greetd (voir
+# /etc/greetd/config.toml) : le bureau en mode --greeter, qui confie le mot de passe à
+# greetd puis se ferme pour laisser s'ouvrir la session choisie.
+# S'il plante, la connexion se fait en mode texte (agreety) : on n'est jamais bloqué hors
+# de l'ordinateur.
+set -u
+log="${XDG_RUNTIME_DIR:-/tmp}/ferrite-greeter.log"
+bin=/usr/local/bin
+# Machine virtuelle de développement : binaires du partage ferrite-dev.
+[ -x /run/ferrite-dev/ferrite-shell ] && bin=/run/ferrite-dev
+[ -f "$log" ] && mv -f "$log" "$log.precedent"
+"$bin/ferrite-shell" --drm --greeter >"$log" 2>&1
+status=$?
+# 0 : session ouverte ; 3 et 4 : « Relancer le bureau » ou « Se déconnecter » du dialogue
+# d'arrêt. greetd relance alors cet écran.
+case "$status" in
+    0 | 3 | 4) exit 0 ;;
+esac
+printf '\n  Écran de connexion indisponible (code %s, journal : %s).\n\n' "$status" "$log"
+exec /usr/sbin/agreety --cmd "/usr/local/bin/ferrite-session --greetd"

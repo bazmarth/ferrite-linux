@@ -104,9 +104,10 @@ install -m 0755 /src/target/release/ferrite-visage "$target/usr/local/bin/ferrit
 install -m 0755 /src/target/release/xdg-desktop-portal-ferrite "$target/usr/local/bin/xdg-desktop-portal-ferrite"
 install -d "$target/usr/share/ferrite/visage"
 install -m 0644 /src/assets/visage/*.onnx "$target/usr/share/ferrite/visage/"
-# Connexion automatique de l'utilisateur sur tty1, comme l'utilisateur live de l'image.
-sed -i "s/--autologin ferrite/--autologin $user/" \
-    "$target/etc/systemd/system/getty@tty1.service.d/autologin.conf"
+# Écran de connexion au démarrage : pas d'ouverture automatique comme sur le système live
+# (bloc [initial_session], le dernier du fichier).
+sed -i '/^# Système live/,$d' "$target/etc/greetd/config.toml"
+rm -f "$target/etc/systemd/system/getty@tty1.service.d/autologin.conf"
 for hook in /src/image/config/hooks/live/*.hook.chroot; do
     cp "$hook" "$target/tmp/hook"
     in_target sh /tmp/hook

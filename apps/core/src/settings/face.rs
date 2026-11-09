@@ -125,6 +125,21 @@ fn parse(line: &str) -> Option<Step> {
 }
 
 impl SettingsState {
+    /// État du visage du compte, en une phrase (page Comptes). Les empreintes sont propres
+    /// à chaque compte (`/var/lib/ferrite/visage/<uid>`).
+    pub(super) fn face_summary(&mut self) -> &'static str {
+        let state = *self.face.enrolled.get_or_insert_with(read_enrolled);
+        let unlock = Settings::load()
+            .get("visage_deverrouillage")
+            .is_some_and(|value| value == "oui");
+        match state {
+            Enrolled::No => "Aucun visage enregistré pour ce compte",
+            Enrolled::Old => "Visage à enregistrer de nouveau",
+            Enrolled::Yes if unlock => "Activé : votre visage déverrouille l’écran",
+            Enrolled::Yes => "Visage enregistré, déverrouillage désactivé",
+        }
+    }
+
     pub(super) fn privacy_page(&mut self, ui: &mut egui::Ui) {
         let face = &mut self.face;
         let state = *face.enrolled.get_or_insert_with(read_enrolled);

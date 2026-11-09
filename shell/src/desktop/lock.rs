@@ -853,6 +853,35 @@ impl Ferrite {
         }
     }
 
+    /// Écran de connexion : verrouillé d'emblée (aucun bureau à quitter), le champ du mot
+    /// de passe déjà ouvert.
+    pub fn open_greeter(&mut self, greeter: crate::desktop::greeter::Greeter) {
+        self.greeter = Some(greeter);
+        self.lock_now();
+        if let Some(lock) = self.lock.as_mut() {
+            lock.show_field();
+        }
+    }
+
+    /// Écran de connexion : compte suivant (1) ou précédent (-1). Le mot de passe commencé
+    /// est oublié.
+    pub fn greeter_step(&mut self, step: isize) {
+        let Some(greeter) = self.greeter.as_mut() else {
+            return;
+        };
+        if let Some(lock) = self
+            .lock
+            .as_mut()
+            .filter(|lock| !lock.checking && !lock.unlocking())
+        {
+            greeter.step(step);
+            lock.forget_password();
+            lock.message = LockMessage::Hint;
+            lock.refused_at = None;
+            lock.show_field();
+        }
+    }
+
     /// Thème de cet écran, indépendant de celui de la session.
     pub fn lock_toggle_theme(&mut self) {
         if let Some(lock) = self.lock.as_mut() {
@@ -905,6 +934,15 @@ impl Ferrite {
             .as_ref()
             .and_then(|lock| lock.welcome_until)
             .is_some_and(|until| Instant::now() >= until);
+        if ready && self.greeter.is_some() {
+            // Connexion acceptée : greetd ouvre la session dès que cet écran se ferme.
+            if !self.expected_exit {
+                self.exit_code = 0;
+                self.request_exit();
+                self.loop_signal.stop();
+            }
+            return;
+        }
         if ready && !matches!(self.screen_fade, Some(ScreenFade::Capture { .. })) {
             self.begin_swap(Scene::Unlock);
         }
@@ -941,6 +979,15 @@ impl Ferrite {
         let mut password = std::mem::take(&mut lock.password);
         lock.cursor = 0;
         lock.peek = false;
+        if let Some(user) = self.greeter.as_ref().and_then(|greeter| greeter.current()) {
+            let login = user.login.clone();
+            std::thread::spawn(move || {
+                let result = crate::desktop::greeter::login(&login, &password);
+                wipe(&mut password);
+                let _ = events.send(Event::Checked(result));
+            });
+            return;
+        }
         std::thread::spawn(move || {
             let result = check(&user_name(), &password);
             if result == Ok(true)

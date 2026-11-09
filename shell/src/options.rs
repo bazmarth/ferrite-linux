@@ -25,6 +25,7 @@ Options :
   --demo-overview       ouvre la vue d'ensemble au démarrage (pour les captures)
   --demo-switcher       ouvre le sélecteur Alt+Tab dès qu'une fenêtre existe (pour les captures)
   --demo-controls LISTE ouvre le centre de contrôle sur sa liste (principal, wifi ou bluetooth)
+  --greeter             écran de connexion (lancé par greetd : choix du compte, mot de passe)
   --demo-lock           affiche l'écran de verrouillage au démarrage (pour les captures)
   --demo-face ÉTAT      avec --demo-lock : visage en cours (scan), reconnu ou echec
   --demo-power          ouvre le dialogue d'arrêt au démarrage (pour les captures)
@@ -85,6 +86,8 @@ pub struct Options {
     pub demo_switcher: bool,
     pub demo_region: bool,
     pub demo_lock: bool,
+    /// Écran de connexion (`--greeter`), lancé par greetd.
+    pub greeter: bool,
     /// Déverrouillage par visage figé sur l'écran verrouillé (`--demo-face`).
     pub demo_face: Option<crate::desktop::panels::LockFace>,
     pub demo_auth: bool,
@@ -120,6 +123,7 @@ impl Default for Options {
             demo_switcher: false,
             demo_region: false,
             demo_lock: false,
+            greeter: false,
             demo_face: None,
             demo_auth: false,
             demo_power: false,
@@ -201,6 +205,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
             "--demo-video" => options.demo_video = true,
             "--demo-island" => options.demo_island = true,
             "--demo-lock" => options.demo_lock = true,
+            "--greeter" => options.greeter = true,
             "--demo-face" => {
                 use crate::desktop::panels::LockFace;
                 let text = value("--demo-face")?;

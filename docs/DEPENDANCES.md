@@ -52,6 +52,7 @@ Liste : `image/config/package-lists/ferrite.list.chroot`. Points notables :
 | `fish` | shell des terminaux du bureau (complétion, suggestions) |
 | `power-profiles-daemon` | `powerprofilesctl` : tuile « Économie d'énergie » |
 | `pkexec`, `polkitd`, `accountsservice` | mot de passe administrateur (agent polkit du bureau), « Ouvrir en administrateur », enregistrement du visage ; Paramètres → Comptes (ajout, suppression, mots de passe, images de profil) |
+| `greetd` | écran de connexion : lance `ferrite-greeter` (`_greetd`), vérifie le mot de passe par PAM (`/etc/pam.d/greetd`, qui ouvre aussi gnome-keyring) et ouvre `ferrite-session --greetd` ; `agreety` sert de repli en mode texte |
 | `libcrypt1` (toujours présent ; `libcrypt-dev` pour compiler, tiré par `libc6-dev`) | ferrite-apps : chiffrement des mots de passe (`crypt_ra`, méthode par défaut du système) avant de les donner à AccountsService |
 | `gnome-keyring`, `libpam-gnome-keyring`, `gcr` | coffre à mots de passe (Secret Service) des navigateurs et d'Electron |
 | `bluez-obexd` | `obexd` (bus de session) : « Envoyer par Bluetooth » dans Fichiers (profil Object Push) |

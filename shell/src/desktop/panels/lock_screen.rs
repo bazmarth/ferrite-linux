@@ -569,6 +569,8 @@ pub enum LockAction {
     Media(crate::desktop::lock::MediaCommand),
     /// « Réessayer » ou l'avatar : relance la reconnaissance du visage.
     Face,
+    /// Écran de connexion : compte suivant.
+    SwitchUser,
     Consume,
 }
 
@@ -608,6 +610,9 @@ pub fn lock_action_at(
     if lock.field {
         if places.cancel().contains(pos) {
             return LockAction::Cancel;
+        }
+        if lock.switch_user && places.switch_user().contains(pos) {
+            return LockAction::SwitchUser;
         }
         if places.submit().contains(pos) {
             return LockAction::Submit;
@@ -1145,14 +1150,26 @@ impl Panels {
     }
 
     /// Chevron et texte de l'invitation ; `baseline` est le bas de l'écran moins sa marge.
-    fn draw_invitation(&self, canvas: &mut Canvas, center: f64, baseline: f64, tokens: &Tokens, level: f64) {
+    fn draw_invitation(
+        &self,
+        canvas: &mut Canvas,
+        lock: &LockView,
+        center: f64,
+        baseline: f64,
+        tokens: &Tokens,
+        level: f64,
+    ) {
         let ink = tokens.fg2.with_alpha((level * f64::from(tokens.fg2.a)) as u8);
         let chevron = baseline - 33.0;
         canvas.line((center - 9.0, chevron + 8.0), (center, chevron), 2.4, ink);
         canvas.line((center, chevron), (center + 9.0, chevron + 8.0), 2.4, ink);
         canvas.centered(
             &self.regular,
-            "Appuyez sur une touche ou cliquez pour déverrouiller",
+            if lock.greeter {
+                "Appuyez sur une touche ou cliquez pour vous connecter"
+            } else {
+                "Appuyez sur une touche ou cliquez pour déverrouiller"
+            },
             center,
             baseline - 17.0,
             14.0,
@@ -1183,7 +1200,14 @@ impl Panels {
             icons: &self.icons,
         };
         let tokens = tokens(invitation_ink(lock));
-        self.draw_invitation(&mut canvas, places.w / 2.0, places.h - 46.0 - top, &tokens, 1.0);
+        self.draw_invitation(
+            &mut canvas,
+            lock,
+            places.w / 2.0,
+            places.h - 46.0 - top,
+            &tokens,
+            1.0,
+        );
         let buffer = MemoryRenderBuffer::from_slice(
             &canvas.pixels,
             Fourcc::Argb8888,
@@ -1416,7 +1440,14 @@ impl Panels {
         // `PULSE_APART`).
         if lock.pulse != PULSE_APART {
             let inks = self::tokens(invitation_ink(lock));
-            self.draw_invitation(canvas, center, places.h - 46.0, &inks, pulse_level(lock.pulse));
+            self.draw_invitation(
+                canvas,
+                lock,
+                center,
+                places.h - 46.0,
+                &inks,
+                pulse_level(lock.pulse),
+            );
         }
 
         // Personnaliser : thème et fond de cet écran.
@@ -1624,6 +1655,11 @@ impl Panels {
                     tokens.error.1,
                 ),
                 (_, LockFace::Unavailable) => ("Caméra infrarouge indisponible", tokens.fg3),
+                _ if lock.switch_user => (
+                    "Entrée pour vous connecter · ↑ ↓ pour changer de compte",
+                    tokens.fg3,
+                ),
+                _ if lock.greeter => ("Appuyez sur Entrée pour vous connecter", tokens.fg3),
                 _ => ("Appuyez sur Entrée pour déverrouiller", tokens.fg3),
             };
             canvas.centered(&self.regular, text, center, field.bottom() + 14.0, 13.0, ink);
@@ -1656,7 +1692,8 @@ impl Panels {
             13.0,
             tokens.fg,
         );
-        // Aucun second compte à ouvrir depuis cette session : le bouton reste atténué.
+        // Écran de connexion : passe au compte suivant. Dans une session verrouillée, aucun
+        // second compte ne s'ouvre d'ici : le bouton reste atténué.
         let switch = places.switch_user();
         canvas.lock_button(switch, tokens);
         canvas.centered(
@@ -1665,7 +1702,11 @@ impl Panels {
             switch.center().0,
             switch.y + 12.0,
             13.0,
-            tokens.fg.with_alpha(110),
+            if lock.switch_user {
+                tokens.fg
+            } else {
+                tokens.fg.with_alpha(110)
+            },
         );
     }
 }

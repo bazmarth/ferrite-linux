@@ -1,0 +1,17 @@
+# Écran de connexion Ferrite (greetd). Le mot de passe est vérifié par PAM
+# (/etc/pam.d/greetd, qui ouvre aussi le trousseau gnome-keyring) ; la session est
+# ferrite-session. Voir docs/TECHNIQUE.md (chaîne de démarrage).
+
+[terminal]
+# Console 7 : celle que le service greetd de Debian réserve (il arrête getty@tty7).
+vt = 7
+
+[default_session]
+command = "/usr/local/bin/ferrite-greeter"
+user = "_greetd"
+
+# Système live : la session de l'utilisateur live s'ouvre seule au démarrage (son mot de
+# passe n'est pas connu de qui démarre la clé). Retiré à l'installation.
+[initial_session]
+command = "/usr/local/bin/ferrite-session --greetd"
+user = "ferrite"

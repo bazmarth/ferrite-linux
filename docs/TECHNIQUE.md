@@ -334,8 +334,8 @@ Elle prime sur la charte §3.4 de `PLAN.md` (voir `DECISIONS.md`, 2026-11-02).
 
 - Pixels **logiques** ; échelle en 120es (`Scale`, 240 = ×2).
 - Barre du haut 34 px (horloge centrée, menu Applications à gauche, indicateurs à droite) ;
-  barre de titre 46 px ; rayon des fenêtres 14 px ; deux boutons de fenêtre (fermer à
-  gauche, agrandir à droite) de rayon 11 ; Dock : icônes 58 px, écart 10, marge 12.
+  barre de titre 46 px ; rayon des fenêtres 14 px ; trois boutons de fenêtre à droite
+  (réduire, agrandir, fermer au bord, 30 px entre deux centres) de rayon 9 ; Dock : icônes 58 px, écart 10, marge 12.
 - Accent `#2779E0` (clair) / `#6CB8FF` (sombre) ; danger `#E5372B` ; succès `#1F9D63` ;
   attention `#FF9F0A`. Fond uni `#16202D` à hexagones par défaut.
 - Ombres : active `0 28 70` noir 38 % ; inactive `0 6 14` noir 22 %.

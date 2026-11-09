@@ -398,3 +398,9 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
   tâche à faire ; un clic sur un jour ouvre le Calendrier sur ce jour, ailleurs sur le
   mois. Le bureau ne lance pas `date` pour l'heure de l'agenda : il reprend le décalage
   déjà lu par l'horloge de la barre.
+- **2026-11-09 — Boutons de fenêtre tous à droite : réduire, agrandir, fermer.** Demande
+  de l'utilisateur, après avoir vu PhotoCraft (barre à boutons à droite) à côté de la barre
+  Ferrite (fermer à gauche). Même disposition partout : barre de titre du bureau,
+  applications Ferrite (dans Ferrite comme ailleurs) et applications GTK
+  (`button-layout` = `:minimize,maximize,close`). Le bouton réduire revient (comme dans
+  PhotoCraft). Remplace l'ordre « fermer à gauche, agrandir à droite » du 2026-11-02.

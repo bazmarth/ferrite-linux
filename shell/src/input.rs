@@ -1395,7 +1395,7 @@ impl Ferrite {
                     | DesktopAction::DashboardCyclePriority(_)
                     | DesktopAction::DashboardDeleteTask(_)
                     | DesktopAction::DashboardMonth(_)
-                    | DesktopAction::OpenCalendar(_)
+                    | DesktopAction::DashboardCalendar(_)
                     | DesktopAction::DashboardNoteStep(_)
                     | DesktopAction::DashboardApp(_)
                     | DesktopAction::DashboardMedia(_)
@@ -1469,7 +1469,9 @@ impl Ferrite {
             DesktopAction::DashboardCyclePriority(index) => {
                 self.dashboard.cycle_priority(index);
             }
-            DesktopAction::OpenCalendar(day) => self.open_calendar(day),
+            DesktopAction::OpenCalendar(day) | DesktopAction::DashboardCalendar(day) => {
+                self.open_calendar(day)
+            }
             DesktopAction::DashboardDeleteTask(index) => {
                 self.stop_dashboard_editing();
                 if self.dashboard.remove_task(index) {

@@ -537,7 +537,7 @@ impl CalendarState {
             );
         }
         let mut toggle = false;
-        style::toolbar(ui, !sidebar, |ui| {
+        style::toolbar(ui, true, |ui| {
             toggle = self.toolbar(ui, sidebar);
         });
         if toggle {
@@ -795,6 +795,10 @@ impl CalendarState {
     }
 
     fn sidebar_body(&mut self, ui: &mut egui::Ui, now: DateTime) {
+        // Largeur du petit calendrier, place de la barre de défilement déjà retirée : sinon
+        // la barre, en apparaissant, le rétrécit, le contenu raccourcit, la barre s'en va,
+        // et le calendrier tremble d'une image à l'autre.
+        let steady = ui.available_width() - ui.spacing().scroll.allocated_width();
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 2.0;
             ui.add_space(4.0);
@@ -829,9 +833,15 @@ impl CalendarState {
                     (0..=(last.days() - first.days()).max(0)).map(move |offset| first.add_days(offset))
                 })
                 .collect();
-            if let Some(day) = widgets::mini_month(ui, &mut self.shown, self.cursor, now.date, |day| {
-                marked.contains(&day)
-            }) {
+            let picked = ui
+                .scope(|ui| {
+                    ui.set_max_width(steady);
+                    widgets::mini_month(ui, &mut self.shown, self.cursor, now.date, |day| {
+                        marked.contains(&day)
+                    })
+                })
+                .inner;
+            if let Some(day) = picked {
                 self.cursor = day;
                 self.search.clear();
                 if self.page != Page::Calendar {

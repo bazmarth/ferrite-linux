@@ -6,7 +6,7 @@
 use std::cell::RefCell;
 
 use ferrite_ui::{
-    theme::{Palette, WINDOW_BUTTON_INSET, WINDOW_BUTTON_RADIUS},
+    theme::Palette,
     tokens::{elevation, radius::WINDOW as WINDOW_RADIUS},
 };
 use smithay::{
@@ -169,7 +169,7 @@ impl Decorations {
         let bar = decoration::titlebar(content);
 
         // Titre, centré dans la barre, sans empiéter sur les boutons.
-        let buttons_width = (WINDOW_BUTTON_INSET + WINDOW_BUTTON_RADIUS) as i32 + 12;
+        let buttons_width = decoration::BUTTONS_WIDTH;
         let max_width = ((bar.size.w - 2 * buttons_width).max(0) as f64 * scale) as u32;
         let text = window_title(window);
         let stale = cache.title.as_ref().is_none_or(|t| {
@@ -258,6 +258,7 @@ impl Decorations {
                         None => 0.0f32,
                         Some(decoration::WindowButton::Close) => 1.0,
                         Some(decoration::WindowButton::Zoom) => 2.0,
+                        Some(decoration::WindowButton::Minimize) => 3.0,
                     },
                 ),
                 Uniform::new("corner", if maximized { 0.0f32 } else { WINDOW_RADIUS as f32 }),

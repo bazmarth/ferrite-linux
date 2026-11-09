@@ -502,7 +502,7 @@ impl MusicState {
                 .show(ui, |ui| self.queue_panel(ui, &status));
         }
         let title = self.page_title();
-        style::toolbar_with(ui, false, window(), line(), |ui| {
+        style::toolbar_with(ui, true, window(), line(), |ui| {
             ui.add_space(10.0);
             ui.label(
                 egui::RichText::new(title)

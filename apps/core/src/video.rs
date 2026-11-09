@@ -586,7 +586,7 @@ impl VideoState {
             .unwrap_or_default()
             .to_string_lossy()
             .into_owned();
-        let room = area.width() - 260.0;
+        let room = area.width() - 300.0;
         painter.text(
             egui::pos2(row.center().x, row.center().y - 8.0),
             egui::Align2::CENTER_CENTER,
@@ -603,10 +603,8 @@ impl VideoState {
         );
         // Fond déplaçable d'abord, pour que les boutons restent prioritaires.
         style::drag_area(ui, row, "video-haut");
-        let inset = ferrite_ui::theme::WINDOW_BUTTON_INSET as f32;
-        style::close_button(ui, egui::pos2(row.left() + inset, row.center().y));
-        style::zoom_button(ui, egui::pos2(row.right() - inset, row.center().y));
-        let open = egui::Rect::from_min_size(row.min + egui::vec2(44.0, 14.0), egui::vec2(78.0, 32.0));
+        style::window_buttons(ui, row);
+        let open = egui::Rect::from_min_size(row.min + egui::vec2(14.0, 14.0), egui::vec2(78.0, 32.0));
         if pill_button(ui, open, "Ouvrir…", false)
             .on_hover_text("Ouvrir une vidéo (Ctrl+O)")
             .clicked()
@@ -615,7 +613,7 @@ impl VideoState {
         }
         if ui.available_width() > 760.0 || self.show_list {
             let list = egui::Rect::from_min_size(
-                egui::pos2(row.right() - 84.0, row.top() + 13.0),
+                egui::pos2(row.right() - 144.0, row.top() + 13.0),
                 egui::vec2(34.0, 34.0),
             );
             let response = icon_button(ui, list, self.show_list).on_hover_text("Liste « À suivre »");

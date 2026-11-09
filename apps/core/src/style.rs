@@ -679,14 +679,14 @@ pub fn strong_family() -> FontFamily {
     FontFamily::Name("strong".into())
 }
 
-/// Barre d'outils d'une fenêtre sans colonne : boutons de fenêtre à gauche, puis `add`.
+/// Barre d'outils d'une fenêtre sans colonne : `add`, puis les boutons de fenêtre à droite.
 pub fn header(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
     toolbar(ui, true, add);
 }
 
-/// Barre d'outils en haut du contenu, sur le fond des barres de titre avec son filet. Elle
-/// porte le bouton agrandir à droite ; avec `buttons` (fenêtre sans barre latérale), aussi le
-/// bouton fermer à gauche. Le vide sert à déplacer la fenêtre.
+/// Barre d'outils en haut du contenu, sur le fond des barres de titre avec son filet. Avec
+/// `buttons`, elle porte à droite réduire, agrandir et fermer. Le vide sert à déplacer la
+/// fenêtre.
 pub fn toolbar(ui: &mut egui::Ui, buttons: bool, add: impl FnOnce(&mut egui::Ui)) {
     toolbar_with(ui, buttons, header_color(), color(palette().titlebar_line), add);
 }
@@ -700,10 +700,10 @@ pub fn toolbar_with(
     line: Color32,
     add: impl FnOnce(&mut egui::Ui),
 ) {
-    // Hors de Ferrite, les trois boutons (réduire, agrandir, fermer) sont à droite.
-    let native = inside_ferrite();
-    let left: i8 = if buttons && native { 46 } else { 14 };
-    let right: i8 = if native { 46 } else { 106 };
+    // Les trois boutons (réduire, agrandir, fermer) sont à droite, dans Ferrite comme
+    // ailleurs ; sans `buttons` (feuille), aucun.
+    let left: i8 = 14;
+    let right: i8 = if buttons { 106 } else { 14 };
     egui::Panel::top(ui.scope_id().with("ferrite-header"))
         .resizable(false)
         .exact_size(TOOLBAR_HEIGHT)
@@ -726,26 +726,16 @@ pub fn toolbar_with(
             );
             // Fond déplaçable, enregistré avant les boutons pour qu'ils restent prioritaires.
             drag_area(ui, full, "barre");
-            let inset = ferrite_ui::theme::WINDOW_BUTTON_INSET as f32;
-            if !native {
-                let at =
-                    |rank: f32| egui::pos2(full.right() - inset - rank * WINDOW_BUTTON_GAP, full.center().y);
-                close_button(ui, at(0.0));
-                zoom_button(ui, at(1.0));
-                minimize_button(ui, at(2.0));
-            } else {
-                if buttons {
-                    close_button(ui, egui::pos2(full.left() + inset, full.center().y));
-                }
-                zoom_button(ui, egui::pos2(full.right() - inset, full.center().y));
+            if buttons {
+                window_buttons(ui, full);
             }
             // Centré en hauteur, sans étirer les éléments (pastilles, onglets).
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), add);
         });
 }
 
-/// Barre latérale pleine hauteur, collée au bord gauche, avec son filet à droite et le bouton
-/// fermer en haut (sauf `buttons` faux : sélecteur de fichiers dans une feuille).
+/// Barre latérale pleine hauteur, collée au bord gauche, avec son filet à droite ; son haut
+/// déplace la fenêtre (sauf `buttons` faux : sélecteur de fichiers dans une feuille).
 pub fn sidebar(
     ui: &mut egui::Ui,
     id: &str,
@@ -768,16 +758,6 @@ pub fn sidebar(
             let top = egui::Rect::from_min_size(full.min, egui::vec2(full.width(), TOOLBAR_HEIGHT));
             if buttons {
                 drag_area(ui, top, "colonne");
-            }
-            // Hors de Ferrite, le bouton fermer est à droite, dans la barre d'outils.
-            if buttons && inside_ferrite() {
-                close_button(
-                    ui,
-                    egui::pos2(
-                        full.left() + ferrite_ui::theme::WINDOW_BUTTON_INSET as f32,
-                        top.center().y,
-                    ),
-                );
             }
             let body = egui::Rect::from_min_max(
                 egui::pos2(
@@ -826,12 +806,23 @@ pub fn drag_area(ui: &mut egui::Ui, rect: egui::Rect, salt: &str) {
     }
 }
 
-/// Écart entre les centres des boutons de fenêtre côte à côte (hors de Ferrite).
-const WINDOW_BUTTON_GAP: f32 = 30.0;
+/// Les trois boutons de fenêtre au bord droit de `bar`, centrés en hauteur : réduire,
+/// agrandir, fermer (fermer au bord).
+pub fn window_buttons(ui: &mut egui::Ui, bar: egui::Rect) {
+    use ferrite_ui::theme::{WINDOW_BUTTON_GAP, WINDOW_BUTTON_INSET};
+    let at = |rank: f32| {
+        egui::pos2(
+            bar.right() - WINDOW_BUTTON_INSET as f32 - rank * WINDOW_BUTTON_GAP as f32,
+            bar.center().y,
+        )
+    };
+    close_button(ui, at(0.0));
+    zoom_button(ui, at(1.0));
+    minimize_button(ui, at(2.0));
+}
 
-/// Vrai dans la session Ferrite : ferrite-shell y donne bords, ombre et redimensionnement,
-/// et le Dock remplace le bouton réduire. Ailleurs (GNOME, KDE, Xfce…), la fenêtre garde sa
-/// propre barre, sans barre de titre imposée, avec réduire, agrandir et fermer à droite.
+/// Vrai dans la session Ferrite : ferrite-shell y donne bords, ombre et redimensionnement.
+/// Ailleurs (GNOME, KDE, Xfce…), la fenêtre les dessine elle-même.
 pub fn inside_ferrite() -> bool {
     static INSIDE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *INSIDE.get_or_init(|| {
@@ -909,14 +900,14 @@ fn window_button(ui: &mut egui::Ui, center: egui::Pos2, kind: WindowButton) -> e
     response
 }
 
-/// Bouton « fermer », à gauche de la barre de la fenêtre.
+/// Bouton « fermer », au bord droit de la barre de la fenêtre.
 pub fn close_button(ui: &mut egui::Ui, center: egui::Pos2) {
     if window_button(ui, center, WindowButton::Close).clicked() {
         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
     }
 }
 
-/// Bouton « agrandir », à droite de la barre de la fenêtre.
+/// Bouton « agrandir », à gauche de « fermer ».
 pub fn zoom_button(ui: &mut egui::Ui, center: egui::Pos2) {
     if window_button(ui, center, WindowButton::Zoom).clicked() {
         let maximized = ui.input(|input| input.viewport().maximized.unwrap_or(false));
@@ -925,7 +916,7 @@ pub fn zoom_button(ui: &mut egui::Ui, center: egui::Pos2) {
     }
 }
 
-/// Bouton « réduire » (hors de Ferrite seulement : dans Ferrite, le Dock s'en charge).
+/// Bouton « réduire » : la fenêtre part dans le Dock.
 pub fn minimize_button(ui: &mut egui::Ui, center: egui::Pos2) {
     if window_button(ui, center, WindowButton::Minimize).clicked() {
         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Minimized(true));

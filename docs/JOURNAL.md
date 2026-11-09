@@ -2659,3 +2659,62 @@ le widget et dans la barre, listes du Calendrier dans le widget Tâches, reprise
 anciennes tâches.
 Pas vérifié : clics réels sur le vrai bureau (ouverture du Calendrier sur un jour, avec
 l'application déjà ouverte ou non) ; aller-retour widget ↔ application en direct.
+
+## 2026-11-09 — Calendrier de la barre : clic sur un jour ignoré au-dessus d'une fenêtre
+
+Vu sur une vidéo de l'utilisateur : avec une fenêtre sous le panneau de l'horloge, un
+clic sur un jour ne faisait rien. L'action « ouvrir le Calendrier » était rangée avec
+celles des widgets, que le bureau écarte quand une fenêtre est sous le pointeur. Deux
+actions désormais : `OpenCalendar` (barre, toujours reçue) et `DashboardCalendar`
+(widget, écartée sous une fenêtre comme les autres widgets).
+Le même clic écarté passait à la fenêtre du dessous : on y sélectionnait du texte à
+travers le panneau (vu sur la même vidéo). Réglé par la même correction.
+
+Autre défaut vu sur une vidéo : le petit calendrier de la colonne du Calendrier tremblait.
+Contenu de la colonne juste à la hauteur de la fenêtre : la barre de défilement
+apparaissait, rétrécissait le calendrier (cases de 32 au lieu de 33 px), le contenu
+raccourcissait, la barre disparaissait… à chaque image. Sa largeur retire maintenant
+d'office la place de la barre (`sidebar_body`).
+Vérifié : CI (sans shellcheck). Pas vérifié : nouvel essai sur le vrai bureau (le
+tremblement n'a pas été reproduit ici).
+
+## 2026-11-09 — Dock : applications épinglées et ouvertes séparées
+
+Demande de l'utilisateur : séparer dans le Dock les applications toujours là (épinglées)
+et celles qui sont seulement ouvertes. Un trait sépare maintenant les épinglées des
+ouvertes non épinglées (`DockLayout::separators`), en plus du trait devant la corbeille ;
+sans application ouverte non épinglée, seul le trait de la corbeille reste.
+Défaut trouvé en chemin : les points et les traits tiraient tous leur élément du même
+tampon, donc du même identifiant, et l'affichage n'en gardait qu'un (second trait
+invisible). Un tampon par exemplaire désormais (`Dock::marks`).
+Vérifié : CI (sans shellcheck) ; test `des_traits_separent_les_ouvertes_et_la_corbeille` ;
+capture du bureau imbriqué avec Galerie et foot ouverts : deux traits, un point sous
+chacune des deux applications ouvertes.
+Pas vérifié : vrai bureau. Vu en passant : la Galerie n'a pas d'icône dans le Dock.
+
+## 2026-11-09 — PhotoCraft : deux barres de titre
+
+Vu sur une capture de l'utilisateur : PhotoCraft (Flatpak `ai.storyteller.photocraft`,
+egui) avait la barre Ferrite au-dessus de la sienne. Contrairement à ArtCraft, PhotoCraft
+dessine une barre complète (menus, titre, réduire/agrandir/fermer). Ajouté à la liste par
+défaut `cadre_propre` : il garde sa barre, sans celle de Ferrite.
+Vérifié : CI (sans shellcheck) ; test `photocraft_garde_sa_barre_par_defaut`.
+Pas vérifié : à l'écran (PhotoCraft déjà ouvert sur le vrai bureau, une seule copie
+possible, le bureau imbriqué n'a pas pu l'afficher).
+
+## 2026-11-09 — Boutons de fenêtre tous à droite
+
+Demande de l'utilisateur : une seule disposition pour toutes les applications, boutons à
+droite. La barre de titre du bureau dessine trois pastilles à droite (réduire, agrandir,
+fermer au bord ; shader `TITLEBAR`, `decoration::WindowButton::Minimize`). Les applications
+Ferrite prennent partout la disposition qu'elles avaient hors de Ferrite
+(`style::window_buttons`) ; la colonne n'a plus de bouton fermer, d'où la recherche des
+Réglages et le titre de Fichiers recalés à gauche. Lecteur vidéo : « Ouvrir… » à gauche,
+liste « À suivre » décalée devant les trois boutons. GTK reçoit
+`:minimize,maximize,close`.
+Vérifié : CI (sans shellcheck) ; test `trois_boutons_a_droite_de_la_barre` ; captures du
+bureau imbriqué : foot (barre du bureau), Calculatrice et Fichiers (barre Ferrite), trois
+boutons à droite, titre centré.
+Pas vérifié : clics réels sur les trois boutons, Réglages, Musique, Calendrier et lecteur
+vidéo à l'écran, applications GTK. Vu en passant dans Fichiers : « Trier par date de
+modification » chevauche les filtres (Documents) dans une fenêtre de cette largeur.

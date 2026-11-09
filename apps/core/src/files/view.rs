@@ -305,7 +305,7 @@ impl FilesState {
         style::sidebar(ui, "emplacements", SIDEBAR_WIDTH, look.side, !picker, |ui| {
             self.sidebar(ui, &look, &mut actions, &mut targets)
         });
-        style::toolbar_with(ui, false, look.win, look.line, |ui| {
+        style::toolbar_with(ui, !picker, look.win, look.line, |ui| {
             self.toolbar(ui, &look, &mut actions, &mut targets)
         });
         if !picker && self.tabs.len() > 1 {
@@ -355,11 +355,11 @@ impl FilesState {
     // ----- Barre latérale -----
 
     fn sidebar(&mut self, ui: &mut egui::Ui, look: &Look, actions: &mut Vec<Action>, targets: &mut Targets) {
-        // Titre de la fenêtre, à droite du bouton fermer (au-dessus de la zone de `ui`).
+        // Titre de la fenêtre, en haut de la colonne (au-dessus de la zone de `ui`).
         if self.picker.is_none() {
             let top = ui.max_rect().top() - style::TOOLBAR_HEIGHT / 2.0;
             ui.ctx().layer_painter(ui.layer_id()).text(
-                egui::pos2(ui.max_rect().left() + 44.0, top),
+                egui::pos2(ui.max_rect().left() + 4.0, top),
                 egui::Align2::LEFT_CENTER,
                 "Fichiers",
                 font(15.0, true),

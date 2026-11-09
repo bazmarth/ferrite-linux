@@ -11,10 +11,10 @@ sans redémarrer. L'écran s'assombrit progressivement avant le verrouillage et 
 |---|---|---|
 | Changer de fenêtre | Alt + Tab, Alt + Maj + Tab | — |
 | Fenêtres de la même application | Alt + ` | — |
-| Fermer la fenêtre | Super + Q | bouton de gauche |
-| Agrandir ou restaurer | Super + ↑ | bouton de droite, double-clic sur la barre de titre |
+| Fermer la fenêtre | Super + Q | bouton × (le plus à droite) |
+| Agrandir ou restaurer | Super + ↑ | bouton du milieu, double-clic sur la barre de titre |
 | Restaurer ou réduire | Super + ↓ | clic du milieu sur la barre de titre (réduire) |
-| Réduire | Super + M | — |
+| Réduire | Super + M | bouton – (à gauche des trois) |
 | Masquer l'application | Super + H | — |
 | Moitié, deux tiers puis tiers | Super + ← ou →, répété | glisser vers le bord |
 | Tiers | Super + Alt + 1, 2, 3 | — |

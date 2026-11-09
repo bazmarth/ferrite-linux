@@ -731,6 +731,7 @@ impl Ferrite {
     pub fn activate_light(&mut self, window: &Window, button: WindowButton) {
         match button {
             WindowButton::Close => close_window(window),
+            WindowButton::Minimize => self.minimize(window),
             // En tuilage, le bouton vert d'une fenêtre de la pile la met en grand.
             WindowButton::Zoom => {
                 if !self.promote_tiled(window) {

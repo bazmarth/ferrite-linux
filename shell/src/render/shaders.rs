@@ -4,7 +4,7 @@
 //! Les distances sont calculées en pixels logiques ; `scale` (pixels physiques par pixel
 //! logique) sert à l'anticrénelage, sur un pixel physique.
 
-use ferrite_ui::theme::{Color, WINDOW_BUTTON_INSET, WINDOW_BUTTON_RADIUS};
+use ferrite_ui::theme::{Color, WINDOW_BUTTON_GAP, WINDOW_BUTTON_INSET, WINDOW_BUTTON_RADIUS};
 use smithay::backend::renderer::gles::{
     GlesError, GlesPixelProgram, GlesRenderer, GlesTexProgram, UniformName, UniformType,
 };
@@ -76,17 +76,17 @@ void main() {
         color = separator;
     }
 
-    // Fermer à gauche : pastille et croix de 6 px dans un carré de 10 px.
+    // Boutons à droite. Fermer au bord : pastille et croix de 6 px dans un carré de 10 px.
     float y = size.y * 0.5;
-    vec2 q = p - vec2(BUTTON_INSET, y);
+    vec2 q = p - vec2(size.x - BUTTON_INSET, y);
     bool lit = hover > 0.5 && hover < 1.5;
     color = over(color, lit ? danger.rgb : button.rgb, coverage(length(q) - BUTTON_RADIUS, scale));
     float s = min(segment(q, vec2(-3.0, -3.0), vec2(3.0, 3.0)), segment(q, vec2(3.0, -3.0), vec2(-3.0, 3.0)));
     color = over(color, lit ? vec3(1.0) : glyph.rgb, coverage(s - 0.8, scale));
 
-    // Agrandir à droite : deux flèches opposées.
-    q = p - vec2(size.x - BUTTON_INSET, y);
-    lit = hover > 1.5;
+    // Agrandir, à gauche de fermer : deux flèches opposées.
+    q = p - vec2(size.x - BUTTON_INSET - BUTTON_GAP, y);
+    lit = hover > 1.5 && hover < 2.5;
     color = over(color, lit ? accent.rgb : button.rgb, coverage(length(q) - BUTTON_RADIUS, scale));
     s = min(segment(q, vec2(-3.0, 1.0), vec2(-3.0, 3.0)), segment(q, vec2(-3.0, 3.0), vec2(-1.0, 3.0)));
     s = min(s, segment(q, vec2(1.0, -3.0), vec2(3.0, -3.0)));
@@ -94,6 +94,13 @@ void main() {
     s = min(s, segment(q, vec2(-3.0, 3.0), vec2(-0.5, 0.5)));
     s = min(s, segment(q, vec2(3.0, -3.0), vec2(0.5, -0.5)));
     color = over(color, lit ? vec3(1.0) : glyph.rgb, coverage(s - 0.75, scale));
+
+    // Réduire, à gauche d'agrandir : un trait.
+    q = p - vec2(size.x - BUTTON_INSET - 2.0 * BUTTON_GAP, y);
+    lit = hover > 2.5;
+    color = over(color, lit ? accent.rgb : button.rgb, coverage(length(q) - BUTTON_RADIUS, scale));
+    s = segment(q, vec2(-3.5, 0.0), vec2(3.5, 0.0));
+    color = over(color, lit ? vec3(1.0) : glyph.rgb, coverage(s - 0.8, scale));
 
     gl_FragColor = finish(color);
 }
@@ -380,9 +387,10 @@ impl Shaders {
 /// Source du shader de barre de titre, constantes de la charte comprises.
 fn titlebar_source() -> String {
     format!(
-        "#define BUTTON_RADIUS {}\n#define BUTTON_INSET {}\n{COMMON}{TITLEBAR}",
+        "#define BUTTON_RADIUS {}\n#define BUTTON_INSET {}\n#define BUTTON_GAP {}\n{COMMON}{TITLEBAR}",
         float(WINDOW_BUTTON_RADIUS as f32),
         float(WINDOW_BUTTON_INSET as f32),
+        float(WINDOW_BUTTON_GAP as f32),
     )
 }
 

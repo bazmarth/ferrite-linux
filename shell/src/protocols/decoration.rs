@@ -1,10 +1,11 @@
 //! `xdg-decoration` : qui dessine la barre de titre, le client ou ferrite-shell.
 //!
-//! Toutes les fenêtres ont la même barre de titre : celle de Ferrite (fermer à gauche,
-//! agrandir à droite), même quand le client demande à dessiner son cadre, car beaucoup en
+//! Toutes les fenêtres ont la même barre de titre : celle de Ferrite (réduire, agrandir et
+//! fermer à droite), même quand le client demande à dessiner son cadre, car beaucoup en
 //! demandent un sans y mettre de bouton (ArtCraft et les applications egui ou winit sans
 //! cadre). Gardent le leur : les applications Ferrite (barre unifiée au même style) et les
-//! applications de `cadre_propre` (navigateurs Chromium, dont les onglets sont la barre) et
+//! applications de `cadre_propre` (navigateurs Chromium, dont les onglets sont la barre ;
+//! PhotoCraft, qui dessine menus et boutons dans la sienne) et
 //! toute application bâtie sur Chromium (Electron : Claude, VS Code, ChatGPT…), qui dessine
 //! toujours une vraie barre avec ses boutons ; lui imposer la nôtre empilait deux barres.
 //! Les applications GTK n'utilisent pas ce protocole : elles dessinent leur cadre, avec
@@ -142,6 +143,13 @@ mod tests {
         assert!(keeps_own_frame("Chromium-browser", &own));
         assert!(!keeps_own_frame("ai.storyteller.artcraft-launcher", &own));
         assert!(!keeps_own_frame("foot", &own));
+    }
+
+    #[test]
+    fn photocraft_garde_sa_barre_par_defaut() {
+        let own = ferrite_system::config::Settings::default().own_frame_apps();
+        assert!(keeps_own_frame("ai.storyteller.photocraft", &own));
+        assert!(!keeps_own_frame("ai.storyteller.artcraft-launcher", &own));
     }
 
     #[test]

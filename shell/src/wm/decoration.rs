@@ -2,7 +2,7 @@
 //! redimensionnement. Tout est en pixels logiques, relatif au contenu de la fenêtre
 //! (la surface du client) ; la barre de titre est posée juste au-dessus.
 
-use ferrite_ui::theme::{TITLEBAR_HEIGHT, WINDOW_BUTTON_INSET, WINDOW_BUTTON_RADIUS};
+use ferrite_ui::theme::{TITLEBAR_HEIGHT, WINDOW_BUTTON_GAP, WINDOW_BUTTON_INSET, WINDOW_BUTTON_RADIUS};
 use smithay::utils::{Logical, Point, Rectangle};
 
 use super::resize_grab::ResizeEdge;
@@ -14,16 +14,31 @@ const RESIZE_CORNER: f64 = 16.0;
 /// Rayon de clic d'un bouton : un peu plus large que la pastille dessinée.
 const BUTTON_HIT_RADIUS: f64 = WINDOW_BUTTON_RADIUS as f64 + 1.0;
 
-/// Les deux boutons d'une fenêtre : fermer à gauche, agrandir à droite.
+/// Les trois boutons d'une fenêtre, tous à droite : réduire, agrandir, fermer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WindowButton {
     Close,
     Zoom,
+    Minimize,
 }
 
 impl WindowButton {
-    pub const ALL: [WindowButton; 2] = [WindowButton::Close, WindowButton::Zoom];
+    pub const ALL: [WindowButton; 3] = [WindowButton::Close, WindowButton::Zoom, WindowButton::Minimize];
+
+    /// Rang depuis le bord droit (fermer au bord).
+    fn rank(self) -> i32 {
+        match self {
+            WindowButton::Close => 0,
+            WindowButton::Zoom => 1,
+            WindowButton::Minimize => 2,
+        }
+    }
 }
+
+/// Place réservée aux boutons à droite de la barre (le titre reste centré, la même marge
+/// est gardée à gauche).
+pub const BUTTONS_WIDTH: i32 =
+    (WINDOW_BUTTON_INSET + 2 * WINDOW_BUTTON_GAP + WINDOW_BUTTON_RADIUS) as i32 + 12;
 
 /// Partie de la décoration sous le pointeur.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,11 +69,7 @@ pub fn frame(content: Rectangle<i32, Logical>) -> Rectangle<i32, Logical> {
 /// Centre d'un bouton, en coordonnées globales.
 pub fn button_center(content: Rectangle<i32, Logical>, button: WindowButton) -> Point<f64, Logical> {
     let bar = titlebar(content);
-    let inset = WINDOW_BUTTON_INSET as i32;
-    let x = match button {
-        WindowButton::Close => bar.loc.x + inset,
-        WindowButton::Zoom => bar.loc.x + bar.size.w - inset,
-    };
+    let x = bar.loc.x + bar.size.w - WINDOW_BUTTON_INSET as i32 - button.rank() * WINDOW_BUTTON_GAP as i32;
     Point::from((x as f64, bar.loc.y as f64 + TITLEBAR_HEIGHT as f64 / 2.0))
 }
 
@@ -160,10 +171,15 @@ mod tests {
     }
 
     #[test]
-    fn boutons_de_part_et_d_autre_de_la_barre() {
+    fn trois_boutons_a_droite_de_la_barre() {
         let c = content();
-        assert_eq!(hit(c, p(123.0, 123.0)), Some(Part::Button(WindowButton::Close)));
-        assert_eq!(hit(c, p(477.0, 123.0)), Some(Part::Button(WindowButton::Zoom)));
+        assert_eq!(hit(c, p(481.0, 127.0)), Some(Part::Button(WindowButton::Close)));
+        assert_eq!(hit(c, p(451.0, 127.0)), Some(Part::Button(WindowButton::Zoom)));
+        assert_eq!(
+            hit(c, p(421.0, 127.0)),
+            Some(Part::Button(WindowButton::Minimize))
+        );
+        assert_eq!(hit(c, p(119.0, 127.0)), Some(Part::Titlebar));
         assert_eq!(hit(c, p(300.0, 123.0)), Some(Part::Titlebar));
         assert_eq!(hit(c, p(300.0, 200.0)), None);
         assert_eq!(hovered_button(c, p(300.0, 123.0)), None);

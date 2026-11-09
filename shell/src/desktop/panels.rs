@@ -270,8 +270,10 @@ pub enum DesktopAction {
     DashboardCyclePriority(usize),
     DashboardDeleteTask(usize),
     DashboardMonth(i32),
-    /// Ouvre le Calendrier sur un jour (année, mois, jour), ou sur le mois en cours.
+    /// Ouvre le Calendrier sur un jour (année, mois, jour), ou sur le mois en cours :
+    /// depuis le calendrier de la barre, et depuis le widget (qu'une fenêtre peut couvrir).
     OpenCalendar(Option<(i32, u32, u32)>),
+    DashboardCalendar(Option<(i32, u32, u32)>),
     DashboardConsume,
     /// Corbeille de la note affichée.
     DashboardDeleteNote(usize),
@@ -6975,7 +6977,7 @@ mod tests {
                 center(cards::calendar_day(widget, i64::from(year), month, 3)),
                 &desktop
             ),
-            Some(DesktopAction::OpenCalendar(Some((year, month, 3))))
+            Some(DesktopAction::DashboardCalendar(Some((year, month, 3))))
         );
     }
 

@@ -673,7 +673,7 @@ impl SettingsState {
             self.sidebar(ui)
         });
         let title = self.page.title();
-        style::toolbar(ui, false, |ui| {
+        style::toolbar(ui, true, |ui| {
             ui.add_space(10.0);
             ui.label(RichText::new(title).size(16.0).family(style::strong_family()));
         });
@@ -758,11 +758,11 @@ impl SettingsState {
     }
 
     fn sidebar(&mut self, ui: &mut egui::Ui) {
-        // Champ de recherche sur la ligne du bouton fermer.
+        // Champ de recherche en haut de la colonne, à hauteur de la barre d'outils.
         let body = ui.max_rect();
         let field = egui::Rect::from_min_size(
-            egui::pos2(body.left() + 34.0, body.top() - style::TOOLBAR_HEIGHT + 7.0),
-            egui::vec2(body.width() - 34.0, 28.0),
+            egui::pos2(body.left(), body.top() - style::TOOLBAR_HEIGHT + 7.0),
+            egui::vec2(body.width(), 28.0),
         );
         ui.put(
             field,

@@ -25,10 +25,11 @@ pub const MENU_WIDTH: u32 = 220;
 /// Hauteur d'une ligne de menu.
 pub const MENU_ITEM_HEIGHT: u32 = 32;
 
-/// Boutons de fenêtre : pastille de 18 px, centre à 19 px du bord (fermer à gauche,
-/// agrandir à droite).
+/// Boutons de fenêtre, tous à droite (réduire, agrandir, fermer) : pastille de 18 px,
+/// centre du bouton fermer à 19 px du bord, 30 px entre deux centres.
 pub const WINDOW_BUTTON_RADIUS: u32 = 9;
 pub const WINDOW_BUTTON_INSET: u32 = 19;
+pub const WINDOW_BUTTON_GAP: u32 = 30;
 
 /// Polices de l'interface (fichiers dans `assets/fonts`).
 pub const FONT_UI: &str = "Inter";

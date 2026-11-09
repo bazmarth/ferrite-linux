@@ -406,9 +406,9 @@ pub(super) fn dashboard_action_at(
             } else if arrows && next.contains(pos) {
                 DesktopAction::DashboardMonth(1)
             } else if let Some(day) = day {
-                DesktopAction::OpenCalendar(Some((year, month, day)))
+                DesktopAction::DashboardCalendar(Some((year, month, day)))
             } else {
-                DesktopAction::OpenCalendar(None)
+                DesktopAction::DashboardCalendar(None)
             }
         }
         WidgetKind::Notes => {

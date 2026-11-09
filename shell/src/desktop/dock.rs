@@ -1,5 +1,6 @@
 //! Dock Ferrite, comme sur macOS : les applications épinglées, puis (après un trait) les
-//! applications ouvertes qui ne le sont pas ; un point sous celles qui ont une fenêtre.
+//! applications ouvertes qui ne le sont pas, puis (après un autre trait) la corbeille ;
+//! un point sous celles qui ont une fenêtre.
 //! Sous la souris, les icônes grossissent comme sur macOS : la plus proche double
 //! presque, ses voisines grandissent en vague, toutes s'écartent et le fond s'élargit,
 //! sans que le point sous la souris ne bouge.
@@ -53,7 +54,7 @@ const BOTTOM_MARGIN: i32 = 18;
 const RUNNING_DOT: f64 = 5.0;
 /// Contour sombre du point, qui le garde lisible sur un fond d'écran clair.
 const DOT_HALO: f64 = 1.0;
-/// Place ajoutée pour le trait qui sépare la corbeille des applications.
+/// Place ajoutée pour chaque trait (applications ouvertes non épinglées, corbeille).
 const SEPARATOR: f64 = 9.0;
 const SEPARATOR_HEIGHT: f64 = 54.0;
 /// Débord du fond du Dock pour son ombre (0 12 32).
@@ -253,8 +254,9 @@ pub struct DockLayout {
     pub plate: Rectangle<f64, Logical>,
     /// Icônes, dans l'ordre des cases (carrés, posés sur le bas du fond).
     pub icons: Vec<Rectangle<f64, Logical>>,
-    /// Trait devant la corbeille.
-    pub separator: Option<f64>,
+    /// Traits de séparation : devant les applications ouvertes non épinglées et devant
+    /// la corbeille.
+    pub separators: Vec<f64>,
 }
 
 /// Place les icônes ; `zoom` (0 à 1) dose l'agrandissement autour de `pointer`.
@@ -268,16 +270,24 @@ pub fn layout(
 ) -> DockLayout {
     let icon = config.icon();
     let count = items.len();
-    // Le trait précède la corbeille, dernière case du Dock.
-    let separator_after = items
-        .iter()
-        .position(|item| item.key == AppKey::Builtin(App::TRASH))
-        .filter(|index| *index > 0);
+    // Un trait sépare les applications épinglées des applications ouvertes qui ne le
+    // sont pas, un autre précède la corbeille, dernière case du Dock.
+    let mut separator_before: Vec<usize> = [
+        items.iter().position(|item| !item.pinned),
+        items
+            .iter()
+            .position(|item| item.key == AppKey::Builtin(App::TRASH)),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|index| *index > 0)
+    .collect();
+    separator_before.dedup();
     // Centres des icônes sans agrandissement, relatifs au bord gauche du fond.
     let mut base = Vec::with_capacity(count);
     let mut x = PAD_X;
     for index in 0..count {
-        if separator_after == Some(index) {
+        if separator_before.contains(&index) {
             x += SEPARATOR;
         }
         base.push(x + icon / 2.0);
@@ -310,7 +320,7 @@ pub fn layout(
     let mut centers = Vec::with_capacity(count);
     let mut x = 0.0;
     for (index, scale) in scales.iter().enumerate() {
-        if separator_after == Some(index) {
+        if separator_before.contains(&index) {
             x += SEPARATOR;
         }
         centers.push(x + icon * scale / 2.0);
@@ -345,17 +355,20 @@ pub fn layout(
         ),
         _ => (left, left + base_width),
     };
-    let separator = separator_after.map(|index| {
-        let before = icons[index - 1];
-        (before.loc.x + before.size.w + icons[index].loc.x) / 2.0
-    });
+    let separators = separator_before
+        .iter()
+        .map(|&index| {
+            let before = icons[index - 1];
+            (before.loc.x + before.size.w + icons[index].loc.x) / 2.0
+        })
+        .collect();
     DockLayout {
         plate: Rectangle::new(
             Point::from((plate_left, top)),
             Size::from((plate_right - plate_left, height)),
         ),
         icons,
-        separator,
+        separators,
     }
 }
 
@@ -548,8 +561,10 @@ pub struct Dock {
     icons: IconCache,
     /// Textures des icônes, par icône et côté en pixels.
     textures: RefCell<HashMap<(AppIcon, u32), MemoryRenderBuffer>>,
-    /// Point des applications ouvertes et trait de séparation, par échelle.
-    marks: RefCell<HashMap<u32, (MemoryRenderBuffer, MemoryRenderBuffer)>>,
+    /// Point des applications ouvertes et trait de séparation, par échelle et par
+    /// exemplaire : deux éléments tirés du même tampon portent le même identifiant, et
+    /// l'affichage n'en garde qu'un.
+    marks: RefCell<HashMap<(u32, usize), (MemoryRenderBuffer, MemoryRenderBuffer)>>,
     /// Fond du Dock : place, échelle et élément. Ses paramètres ne sont réécrits que s'ils
     /// changent : chaque réécriture compte comme un changement et fait redessiner le Dock.
     plate: RefCell<Option<Plate>>,
@@ -604,7 +619,7 @@ impl Dock {
 
         // Icônes nettes même agrandies : texture à la taille maximale.
         let side = (config.icon() * MAGNIFY * scale).round() as u32;
-        let (dot, line) = self.marks(scale);
+        let mut dots = 0;
         for (index, (item, rect)) in items.iter().zip(&geometry.icons).enumerate() {
             if item.running && config.dots {
                 let size = RUNNING_DOT + 2.0 * DOT_HALO;
@@ -620,6 +635,8 @@ impl Dock {
                         Size::from((size, size)),
                     );
                     let physical = (size * scale).round().max(1.0);
+                    let (dot, _) = self.marks(scale, dots);
+                    dots += 1;
                     push(&dot, mark, (physical, physical));
                 }
             }
@@ -628,7 +645,8 @@ impl Dock {
             let texture = self.texture(&item.icon, side);
             push(&texture, rect, (side as f64, side as f64));
         }
-        if let Some(x) = geometry.separator {
+        for (index, &x) in geometry.separators.iter().enumerate() {
+            let (_, line) = self.marks(scale, index);
             let plate = geometry.plate;
             let rect = Rectangle::new(
                 Point::from((x, plate.loc.y + (plate.size.h - SEPARATOR_HEIGHT) / 2.0)),
@@ -717,9 +735,10 @@ impl Dock {
             .clone()
     }
 
-    /// Point des applications ouvertes et trait de séparation, à l'échelle `scale`.
-    fn marks(&self, scale: f64) -> (MemoryRenderBuffer, MemoryRenderBuffer) {
-        let key = (scale * 1000.0).round() as u32;
+    /// Point des applications ouvertes et trait de séparation, à l'échelle `scale`
+    /// (exemplaire `copy` : un par point ou trait dessiné).
+    fn marks(&self, scale: f64, copy: usize) -> (MemoryRenderBuffer, MemoryRenderBuffer) {
+        let key = ((scale * 1000.0).round() as u32, copy);
         self.marks
             .borrow_mut()
             .entry(key)
@@ -862,14 +881,14 @@ mod tests {
         let above = icon.loc.y - dock.plate.loc.y;
         let below = dock.plate.loc.y + dock.plate.size.h - icon.loc.y - icon.size.h;
         assert_eq!(above, below);
-        assert_eq!(dock.separator, None);
+        assert!(dock.separators.is_empty());
         // Caché : entièrement sous le bord de l'écran.
         let hidden = layout(output(), medium(), &items(&App::dock(), &[]), 0.0, None, 0.0);
         assert!(hidden.plate.loc.y >= 720.0);
     }
 
     #[test]
-    fn le_trait_precede_la_corbeille() {
+    fn des_traits_separent_les_ouvertes_et_la_corbeille() {
         let mut list = items(&App::dock(), &["vlc", "brave"]);
         list.push(DockItem {
             key: AppKey::Builtin(App::TRASH),
@@ -880,9 +899,21 @@ mod tests {
         });
         let dock = layout(output(), medium(), &list, 1.0, None, 0.0);
         assert_eq!(dock.icons.len(), 8);
-        assert_eq!(dock.plate.size.w, 354.0 + 3.0 * (58.0 + ICON_GAP) + SEPARATOR);
-        let separator = dock.separator.expect("trait devant la corbeille");
-        assert!(separator > dock.icons[6].loc.x + 58.0 && separator < dock.icons[7].loc.x);
+        assert_eq!(
+            dock.plate.size.w,
+            354.0 + 3.0 * (58.0 + ICON_GAP) + 2.0 * SEPARATOR
+        );
+        // Un trait entre épinglées et ouvertes, un autre devant la corbeille.
+        let [opened, trash] = dock.separators[..] else {
+            panic!("deux traits attendus : {:?}", dock.separators);
+        };
+        assert!(opened > dock.icons[4].loc.x + 58.0 && opened < dock.icons[5].loc.x);
+        assert!(trash > dock.icons[6].loc.x + 58.0 && trash < dock.icons[7].loc.x);
+        // Sans application ouverte non épinglée, seul le trait de la corbeille reste.
+        let mut only_pinned = items(&App::dock(), &[]);
+        only_pinned.push(list[7].clone());
+        let dock = layout(output(), medium(), &only_pinned, 1.0, None, 0.0);
+        assert_eq!(dock.separators.len(), 1);
     }
 
     #[test]

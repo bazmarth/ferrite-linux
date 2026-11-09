@@ -224,8 +224,8 @@ fn publish_color_scheme(dark: bool) {
 }
 
 /// Boutons de fenêtre des applications GTK (et de Firefox, Chromium, Brave, qui suivent
-/// GTK) : fermer à gauche, agrandir à droite, comme les fenêtres Ferrite.
-const WINDOW_BUTTONS: &str = "close:maximize";
+/// GTK) : réduire, agrandir et fermer à droite, comme les fenêtres Ferrite.
+const WINDOW_BUTTONS: &str = ":minimize,maximize,close";
 
 /// Annonce l'ordre des boutons de fenêtre aux applications tierces, par la clé GNOME que
 /// lisent GTK et le portail des réglages.

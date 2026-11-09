@@ -1,6 +1,8 @@
 //! Cartes des widgets : verre sombre, à la place et à la taille choisies, sous les fenêtres.
 
+use crate::desktop::shortcuts::ShortcutView;
 use crate::desktop::widgets::{Dashboard, DashboardEdit, Priority, WidgetEdges, WidgetKind, WidgetSlot};
+use ferrite_system::shortcuts::Cell;
 
 use super::*;
 
@@ -25,8 +27,8 @@ const TAB_H: f64 = 28.0;
 const TAB_GAP: f64 = 6.0;
 const TAB_W: (f64, f64) = (64.0, 124.0);
 /// Case d'un raccourci du bureau (icône de 52 et nom dessous), et marge au bord droit.
-const SHORTCUT_CELL: (f64, f64) = (96.0, 100.0);
-const SHORTCUT_ICON: f64 = 52.0;
+/// Case d'un raccourci autour de son icône : marges sur les côtés, et place du nom dessous.
+const SHORTCUT_CELL_EXTRA: (f64, f64) = (44.0, 48.0);
 const SHORTCUT_MARGIN: f64 = 16.0;
 
 const INK: Color = Color::rgb(0xF3F6F9);
@@ -77,24 +79,22 @@ impl Layout {
             .collect()
     }
 
-    /// Cases des raccourcis du bureau : en colonnes depuis le coin haut droit, de haut en
-    /// bas puis vers la gauche, sans descendre sur le Dock.
-    pub(super) fn shortcut_cells(&self, count: usize) -> Vec<Rect> {
-        let (cell_w, cell_h) = SHORTCUT_CELL;
+    /// Grille des raccourcis pour des icônes de `icon` pixels : entre la barre et le Dock,
+    /// colonnes comptées depuis le bord droit.
+    pub(super) fn shortcut_grid(&self, icon: u32) -> ShortcutGrid {
+        let cell = (
+            f64::from(icon) + SHORTCUT_CELL_EXTRA.0,
+            f64::from(icon) + SHORTCUT_CELL_EXTRA.1,
+        );
         let top = self.bar + SHORTCUT_MARGIN;
         let bottom = self.h - self.dock_height - SHORTCUT_MARGIN;
-        let rows = (((bottom - top) / cell_h).floor() as usize).max(1);
-        (0..count)
-            .map(|index| {
-                let (column, row) = (index / rows, index % rows);
-                Rect::new(
-                    self.w - SHORTCUT_MARGIN - (column + 1) as f64 * cell_w,
-                    top + row as f64 * cell_h,
-                    cell_w,
-                    cell_h,
-                )
-            })
-            .collect()
+        ShortcutGrid {
+            cell,
+            right: self.w - SHORTCUT_MARGIN,
+            top,
+            columns: (((self.w - 2.0 * SHORTCUT_MARGIN) / cell.0).floor() as u16).max(1),
+            rows: (((bottom - top) / cell.1).floor() as u16).max(1),
+        }
     }
 
     /// Barre de l'éditeur : widgets à ajouter, Rétablir et Terminé.
@@ -106,6 +106,57 @@ impl Layout {
             w,
             h,
         )
+    }
+}
+
+/// Grille des raccourcis du bureau.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) struct ShortcutGrid {
+    pub cell: (f64, f64),
+    /// Bord droit de la première colonne, et haut de la première ligne.
+    pub right: f64,
+    pub top: f64,
+    pub columns: u16,
+    pub rows: u16,
+}
+
+impl ShortcutGrid {
+    pub(super) fn rect(&self, cell: Cell) -> Rect {
+        Rect::new(
+            self.right - f64::from(cell.column + 1) * self.cell.0,
+            self.top + f64::from(cell.row) * self.cell.1,
+            self.cell.0,
+            self.cell.1,
+        )
+    }
+
+    /// Case la plus proche de `(x, y)`, toujours dans la grille.
+    pub(super) fn nearest(&self, (x, y): (f64, f64)) -> Cell {
+        let column = ((self.right - x) / self.cell.0).floor().max(0.0) as u16;
+        let row = ((y - self.top) / self.cell.1).floor().max(0.0) as u16;
+        Cell {
+            column: column.min(self.columns - 1),
+            row: row.min(self.rows - 1),
+        }
+    }
+
+    /// Case de chaque raccourci : celle choisie si elle est dans la grille et libre, sinon
+    /// la première libre, de haut en bas puis vers la gauche. Aucune quand la grille est
+    /// pleine.
+    pub(super) fn place(&self, wanted: &[Option<Cell>]) -> Vec<Option<Cell>> {
+        let inside = |cell: &Cell| cell.column < self.columns && cell.row < self.rows;
+        let mut taken = std::collections::HashSet::new();
+        let mut placed: Vec<Option<Cell>> = wanted
+            .iter()
+            .map(|cell| cell.filter(|cell| inside(cell) && taken.insert(*cell)))
+            .collect();
+        let mut free = (0..self.columns)
+            .flat_map(|column| (0..self.rows).map(move |row| Cell { column, row }))
+            .filter(|cell| !taken.contains(cell));
+        for cell in placed.iter_mut().filter(|cell| cell.is_none()) {
+            *cell = free.next();
+        }
+        placed
     }
 }
 
@@ -400,27 +451,34 @@ fn editor_action_at(layout: &Layout, view: &DesktopView, pos: Point<f64, Logical
     DesktopAction::Consume
 }
 
-/// Raccourcis du bureau visibles, avec leur case. Sur le bureau des widgets, un raccourci
-/// qu'un widget recouvre, même en partie, n'est ni dessiné ni cliquable.
+/// Case de chaque raccourci du bureau (aucune si la grille est pleine).
+pub(super) fn shortcut_cells(layout: &Layout, view: &DashboardView) -> Vec<Option<Cell>> {
+    let wanted: Vec<Option<Cell>> = view.shortcuts.iter().map(|shortcut| shortcut.cell).collect();
+    layout.shortcut_grid(view.icon_size).place(&wanted)
+}
+
+/// Raccourcis du bureau visibles, avec leur case à l'écran.
 pub(super) fn visible_shortcuts(layout: &Layout, view: &DashboardView) -> Vec<(usize, Rect)> {
-    let cards = if view.shown {
-        layout.dashboard_cards(&view.layout)
-    } else {
-        Vec::new()
-    };
-    layout
-        .shortcut_cells(view.shortcuts.len())
+    let grid = layout.shortcut_grid(view.icon_size);
+    shortcut_cells(layout, view)
         .into_iter()
         .enumerate()
-        .filter(|(_, cell)| {
-            !cards.iter().any(|card| {
-                card.x < cell.right()
-                    && cell.x < card.right()
-                    && card.y < cell.bottom()
-                    && cell.y < card.bottom()
-            })
-        })
+        .filter_map(|(index, cell)| Some((index, grid.rect(cell?))))
         .collect()
+}
+
+/// Case où irait le raccourci `index` déplacé de `offset` : celle sous le centre de son
+/// icône.
+pub(super) fn shortcut_target(
+    layout: &Layout,
+    view: &DashboardView,
+    index: usize,
+    offset: (f64, f64),
+) -> Option<Cell> {
+    let grid = layout.shortcut_grid(view.icon_size);
+    let from = grid.rect(shortcut_cells(layout, view).get(index).copied()??);
+    let (x, y) = from.center();
+    Some(grid.nearest((x + offset.0, y + offset.1)))
 }
 
 /// Raccourci du bureau sous `pos`, sur n'importe quel bureau.
@@ -429,7 +487,7 @@ pub(super) fn shortcut_at(
     view: &DesktopView,
     pos: Point<f64, Logical>,
 ) -> Option<DesktopAction> {
-    if !view.dashboard.shortcuts_shown {
+    if !view.dashboard.shortcuts_shown || view.dashboard.shown {
         return None;
     }
     visible_shortcuts(layout, &view.dashboard)
@@ -669,6 +727,8 @@ pub(super) fn base_key(state: &VisualState) -> VisualState {
     // Les raccourcis ont leur propre image (voir `push_shortcuts`).
     base.view.dashboard.shortcuts = Vec::new();
     base.view.dashboard.shortcuts_shown = false;
+    base.view.dashboard.icon_size = 0;
+    base.view.dashboard.shortcut_drag = None;
     base
 }
 
@@ -803,23 +863,35 @@ impl Panels {
 
     /// Raccourcis du bureau : icône, et nom sur une pastille de verre sombre pour rester
     /// lisible sur n'importe quel fond. Dessinés à part (voir `push_shortcuts`), sous les
-    /// widgets et sous les fenêtres, sur tous les bureaux.
-    pub(super) fn draw_shortcuts(&self, canvas: &mut Canvas, layout: &Layout, view: &DashboardView) {
+    /// fenêtres, sur tous les bureaux sauf celui des widgets. `skip` : celui qu'on déplace.
+    pub(super) fn draw_shortcuts(
+        &self,
+        canvas: &mut Canvas,
+        layout: &Layout,
+        view: &DashboardView,
+        skip: Option<usize>,
+    ) {
         for (index, cell) in visible_shortcuts(layout, view) {
-            let shortcut = &view.shortcuts[index];
-            let center = (cell.x + cell.w / 2.0, cell.y + 8.0 + SHORTCUT_ICON / 2.0);
-            canvas.app_icon(&shortcut.icon, center, SHORTCUT_ICON);
-            let name = canvas.fit_text(&self.regular, &shortcut.name, px(12.0), cell.w - 16.0);
-            let width = canvas.css_width(&self.regular, &name, 12.0);
-            let top = cell.y + SHORTCUT_ICON + 16.0;
-            canvas.fill(
-                Rect::new(center.0 - width / 2.0 - 6.0, top - 2.0, width + 12.0, 19.0),
-                9.0,
-                GLASS_TONE.with_alpha(150),
-            );
-            let ink = if shortcut.missing { FAINT } else { INK };
-            canvas.text(&self.regular, &name, center.0 - width / 2.0, top, 12.0, ink);
+            if Some(index) != skip {
+                self.draw_shortcut(canvas, &view.shortcuts[index], cell, view.icon_size);
+            }
         }
+    }
+
+    pub(super) fn draw_shortcut(&self, canvas: &mut Canvas, shortcut: &ShortcutView, cell: Rect, icon: u32) {
+        let icon = f64::from(icon);
+        let center = (cell.x + cell.w / 2.0, cell.y + 8.0 + icon / 2.0);
+        canvas.app_icon(&shortcut.icon, center, icon);
+        let name = canvas.fit_text(&self.regular, &shortcut.name, px(12.0), cell.w - 16.0);
+        let width = canvas.css_width(&self.regular, &name, 12.0);
+        let top = cell.y + icon + 16.0;
+        canvas.fill(
+            Rect::new(center.0 - width / 2.0 - 6.0, top - 2.0, width + 12.0, 19.0),
+            9.0,
+            GLASS_TONE.with_alpha(150),
+        );
+        let ink = if shortcut.missing { FAINT } else { INK };
+        canvas.text(&self.regular, &name, center.0 - width / 2.0, top, 12.0, ink);
     }
 
     /// Libellé en capitales espacées, comme les titres de toutes les cartes.

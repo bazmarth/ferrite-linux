@@ -54,6 +54,9 @@ const POWER_COUNTDOWN: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// Molette à accumuler pour changer de mois ou faire défiler les tâches d'une ligne.
 const WIDGET_SCROLL_STEP: f64 = 12.0;
+/// Défilement (en pixels, 15 par cran de molette) qui change d'un pas la taille des
+/// icônes du bureau avec Ctrl.
+const ICON_ZOOM_NOTCH: f64 = 15.0;
 
 /// Raccourcis gérés par le compositeur lui-même (non transmis aux applications).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -377,7 +380,10 @@ impl Ferrite {
                     scale: event.scale(),
                     rotation: event.rotation(),
                 };
-                if self.pinching
+                if let Some(start) = self.desktop_pinch {
+                    let size = (f64::from(start) * event.scale()).round() as u32;
+                    self.set_icon_size(size, false);
+                } else if self.pinching
                     && let Some(pointer) = self.seat.get_pointer()
                 {
                     pointer.gesture_pinch_update(self, &update);
@@ -1090,6 +1096,7 @@ impl Ferrite {
             self.drag_clipboard(location);
         }
         self.drag_widget(location);
+        self.drag_shortcut(location);
         self.dock_drag_motion(location);
         self.file_drag_motion(location);
         if let Some(adjust) = self.region_adjust.as_mut()
@@ -1190,6 +1197,10 @@ impl Ferrite {
                 self.dashboard.layout[last] = placed;
             }
             self.save_dashboard();
+            return;
+        }
+        // Fin d'un clic ou d'un déplacement de raccourci du bureau.
+        if button.button == BTN_LEFT && button.state == ButtonState::Released && self.release_shortcut() {
             return;
         }
         if self.popover == Some(Popover::Screenshot) {
@@ -1583,9 +1594,11 @@ impl Ferrite {
                 }
             }
             DesktopAction::DesktopMenu(index) => self.desktop_menu_choose(index),
+            // Le raccourci s'ouvre au relâchement, s'il n'a pas été déplacé.
             DesktopAction::Shortcut(index) => {
-                self.stop_dashboard_editing();
-                self.open_shortcut(index);
+                if let Some(pointer) = self.pointer_location() {
+                    self.press_shortcut(index, pointer);
+                }
             }
             // Un clic ailleurs sur les widgets termine la saisie.
             DesktopAction::DashboardConsume => {
@@ -2101,6 +2114,26 @@ impl Ferrite {
         )
     }
 
+    /// Pointeur sur le bureau nu, là où sont les raccourcis : pas sur le bureau des widgets,
+    /// ni sur une fenêtre, un menu, la barre ou le Dock.
+    fn over_shortcut_desktop(&self, location: Point<f64, Logical>) -> bool {
+        self.lock.is_none()
+            && self.popover.is_none()
+            && !self.overview
+            && self.workspaces.current() != 0
+            && !self.over_shell_chrome(location)
+            && self.hit_test(location).is_none()
+            && self
+                .layer_surface_under(
+                    location,
+                    &[
+                        smithay::wayland::shell::wlr_layer::Layer::Overlay,
+                        smithay::wayland::shell::wlr_layer::Layer::Top,
+                    ],
+                )
+                .is_none()
+    }
+
     /// Le widget saisi suit le pointeur, librement.
     fn drag_widget(&mut self, location: Point<f64, smithay::utils::Logical>) {
         let Some(drag) = self.widget_drag else {
@@ -2246,6 +2279,14 @@ impl Ferrite {
         let Some(pointer) = self.seat.get_pointer() else {
             return;
         };
+        // Sur le bureau, hors de toute fenêtre : le pincement change la taille des icônes.
+        if !pointer.is_grabbed()
+            && pointer.current_focus().is_none()
+            && self.over_shortcut_desktop(pointer.current_location())
+        {
+            self.desktop_pinch = Some(self.desktop_shortcuts.icon_size);
+            return;
+        }
         self.pinching = self.lock.is_none()
             && self.popover.is_none()
             && !self.overview
@@ -2263,6 +2304,15 @@ impl Ferrite {
     }
 
     fn pinch_end(&mut self, cancelled: bool, time: u32) {
+        if let Some(start) = self.desktop_pinch.take() {
+            let size = if cancelled {
+                start
+            } else {
+                self.desktop_shortcuts.icon_size
+            };
+            self.set_icon_size(size, true);
+            return;
+        }
         if !std::mem::take(&mut self.pinching) {
             return;
         }
@@ -2317,6 +2367,33 @@ impl Ferrite {
             .or_else(|| event.amount_v120(Axis::Vertical).map(|value| value / 8.0))
             .unwrap_or(0.0)
             * direction;
+        // Ctrl+molette sur le bureau : taille des icônes, un pas par cran (vers le haut :
+        // plus grandes).
+        let ctrl = self
+            .seat
+            .get_keyboard()
+            .is_some_and(|keyboard| keyboard.modifier_state().ctrl);
+        if ctrl
+            && let Some(location) = self.pointer_location()
+            && self.over_shortcut_desktop(location)
+        {
+            self.icon_zoom_scroll += amount;
+            while self.icon_zoom_scroll.abs() >= ICON_ZOOM_NOTCH {
+                let up = self.icon_zoom_scroll < 0.0;
+                self.icon_zoom_scroll -= ICON_ZOOM_NOTCH.copysign(self.icon_zoom_scroll);
+                let size = self.desktop_shortcuts.icon_size;
+                let step = crate::desktop::shortcuts::ICON_STEP;
+                self.set_icon_size(
+                    if up {
+                        size + step
+                    } else {
+                        size.saturating_sub(step)
+                    },
+                    true,
+                );
+            }
+            return;
+        }
         if let Some(location) = self.pointer_location()
             && amount != 0.0
             && self.scroll_widget(location, amount)

@@ -2786,3 +2786,27 @@ sonie égalisée selon ITU-R BS.1770 (crête max -1 dB), dither, fondus.
 Vérifié : CI (sans shellcheck) ; mesures ffmpeg (sonie de -12 à -15 LUFS, crêtes ≤ -1 dB,
 durées 0,6 à 3,9 s) ; spectrogrammes.
 Pas vérifié : écoute réelle sur le vrai bureau et sur les haut-parleurs du ThinkBook.
+
+## 2026-11-09 — Icônes du bureau : grille, déplacement, taille
+
+Demande de l'utilisateur : icônes du bureau rangées sur une grille, déplaçables, de taille
+réglable, et absentes du bureau des widgets. Vu aussi sur sa vidéo : le menu d'une
+application du menu Applications (« Ajouter au bureau ») s'ouvrait au-dessus du pointeur,
+comme celui du Dock, et le clic tombait à côté.
+- `ferrite_system::shortcuts::Desktop` : taille des icônes (`taille 96`) et case de chaque
+  raccourci (`4,2 chemin …`, colonne comptée depuis le bord droit) dans le même fichier ;
+  les anciens fichiers se lisent toujours.
+- Grille (`ShortcutGrid`) : cases calculées depuis la taille, entre la barre et le Dock ;
+  une case choisie hors de l'écran ou déjà prise passe à la première case libre.
+- Glisser : l'appui ne fait plus qu'attendre ; relâché sans bouger, le raccourci s'ouvre ;
+  déplacé, il va dans la case la plus proche (échange avec l'icône qui y était) et toutes
+  les icônes gardent leur case. Icône saisie et case visée : deux petites images.
+- Taille : Ctrl+molette ou pincement sur le bureau nu, menu du bureau (« Agrandir /
+  Réduire les icônes »), de 36 à 112 px par pas de 8.
+- Bureau des widgets : plus d'icônes ; elles s'effacent en s'en approchant.
+- Menu Applications : le menu d'une application s'ouvre sous le pointeur
+  (`DockMenuView::at_pointer`).
+Vérifié : CI (sans shellcheck) ; tests de grille, de dépôt et de format ; captures du bureau
+imbriqué : bureau des widgets sans icônes, bureau 2 avec une icône posée en (4,2), même
+bureau en taille 96.
+Pas vérifié : glisser, Ctrl+molette, pincement et menu Applications à la main (vrai bureau).

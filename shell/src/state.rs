@@ -289,8 +289,14 @@ pub struct Ferrite {
     pub desktop_menu: Option<(i32, i32)>,
     /// Raccourci visé par ce menu (clic droit sur un raccourci du bureau).
     pub desktop_menu_target: Option<usize>,
-    /// Raccourcis posés sur le bureau des widgets.
-    pub desktop_shortcuts: Vec<ferrite_system::shortcuts::Shortcut>,
+    /// Raccourcis du bureau (hors bureau des widgets), leurs cases et la taille des icônes.
+    pub desktop_shortcuts: ferrite_system::shortcuts::Desktop,
+    /// Raccourci saisi à la souris : un clic l'ouvre, un glisser le déplace.
+    pub shortcut_drag: Option<crate::desktop::shortcuts::ShortcutDrag>,
+    /// Pincement sur le bureau : taille des icônes à son début.
+    pub desktop_pinch: Option<u32>,
+    /// Ctrl+molette sur le bureau : défilement pas encore converti en pas de taille.
+    pub icon_zoom_scroll: f64,
     /// Dernier clic sur une barre de titre, pour reconnaître le double-clic.
     pub last_titlebar_click: Option<(Instant, Window)>,
     /// Feu tricolore enfoncé : l'action a lieu au relâchement, s'il est toujours dessus.
@@ -548,6 +554,9 @@ impl Ferrite {
             desktop_menu: None,
             desktop_menu_target: None,
             desktop_shortcuts: ferrite_system::shortcuts::load(),
+            shortcut_drag: None,
+            desktop_pinch: None,
+            icon_zoom_scroll: 0.0,
             dock_menu_pointer: None,
             last_titlebar_click: None,
             pressed_light: None,

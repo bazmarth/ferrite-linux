@@ -459,12 +459,14 @@ fn build_output_elements(
         });
     }
 
-    // Raccourcis du bureau : sous les fenêtres et les widgets, sur tous les bureaux.
+    // Raccourcis du bureau : sous les fenêtres, sur tous les bureaux sauf celui des widgets,
+    // d'où ils s'effacent à mesure qu'on s'en approche.
     if !locked && overview_shown == 0.0 {
+        let alpha = 1.0 - widgets_page;
         profile::timed("raccourcis", || {
             assets
                 .panels
-                .push_shortcuts(renderer, output, output_geo, scale, &view, &mut elements)
+                .push_shortcuts(renderer, output, output_geo, scale, &view, alpha, &mut elements)
         });
     }
 
@@ -1462,6 +1464,11 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
                 .collect(),
             shortcuts: state.shortcut_views(),
             shortcuts_shown: !state.overview && state.lock.is_none(),
+            icon_size: state.desktop_shortcuts.icon_size,
+            shortcut_drag: state.shortcut_drag.and_then(|drag| {
+                let (dx, dy) = drag.offset()?;
+                Some((drag.index, (dx.round() as i32, dy.round() as i32)))
+            }),
         },
         desktop_menu: state.desktop_menu,
         desktop_menu_entries: state
@@ -1588,6 +1595,8 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
                 x: anchor.x,
                 bottom: anchor.y,
                 entries: actions.iter().map(|action| action.label().to_owned()).collect(),
+                // Seul le menu d'une icône du Dock fige le pointeur du Dock.
+                at_pointer: state.dock_menu_pointer.is_none(),
             }),
             _ => None,
         },

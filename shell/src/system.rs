@@ -93,7 +93,7 @@ pub enum Event {
     DockApps(Option<Vec<String>>, Vec<String>),
     Applications(Vec<DesktopEntry>),
     /// Raccourcis du bureau, relus quand leur fichier change.
-    Shortcuts(Vec<ferrite_system::shortcuts::Shortcut>),
+    Shortcuts(ferrite_system::shortcuts::Desktop),
     PowerAccepted,
     /// La commande de veille a échoué : le voile noir ne doit pas rester affiché.
     SleepFailed(String),

@@ -339,6 +339,9 @@ pub struct DockMenuView {
     pub x: f64,
     pub bottom: f64,
     pub entries: Vec<String>,
+    /// Ouvert par un clic droit hors du Dock (menu Applications) : le menu part du
+    /// pointeur vers le bas, comme un menu contextuel, au lieu de monter au-dessus.
+    pub at_pointer: bool,
 }
 
 impl Eq for DockMenuView {}
@@ -653,9 +656,14 @@ pub struct DashboardView {
     pub apps: Vec<DashboardApp>,
     /// Raccourcis du bureau (applications, dossiers, fichiers).
     pub shortcuts: Vec<crate::desktop::shortcuts::ShortcutView>,
-    /// Raccourcis affichés et cliquables : sur tous les bureaux, sous les fenêtres, mais
-    /// pas dans la vue d'ensemble ni sur l'écran verrouillé.
+    /// Raccourcis affichés, sous les fenêtres : ni dans la vue d'ensemble ni sur l'écran
+    /// verrouillé. Ils s'effacent sur le bureau des widgets, où ils ne prennent pas le clic
+    /// (`shown`).
     pub shortcuts_shown: bool,
+    /// Taille des icônes des raccourcis, en pixels logiques.
+    pub icon_size: u32,
+    /// Raccourci déplacé à la souris, et son décalage depuis sa case.
+    pub shortcut_drag: Option<(usize, (i32, i32))>,
     /// Lecture en cours, pour le widget Musique.
     pub media: Option<crate::desktop::lock::Media>,
 }
@@ -801,10 +809,26 @@ fn physical_size(state: &VisualState, scale: f64) -> (u32, u32) {
 #[derive(Debug, PartialEq)]
 struct ShortcutsKey {
     size: (u32, u32, u32),
-    bars: (u32, i32),
+    icon: u32,
     shortcuts: Vec<crate::desktop::shortcuts::ShortcutView>,
-    /// Cases visibles (celles que les widgets ne recouvrent pas).
+    /// Case de chaque raccourci à l'écran.
     cells: Vec<(usize, Rect)>,
+    /// Raccourci en cours de déplacement, dessiné à part.
+    skip: Option<usize>,
+}
+
+/// Images des raccourcis : tous (sauf celui qu'on déplace), l'icône saisie, la case visée.
+#[derive(Default)]
+struct ShortcutLayers {
+    rest: Option<(ShortcutsKey, Layer)>,
+    lifted: Option<((usize, u32, u32, crate::desktop::shortcuts::ShortcutView), Layer)>,
+    target: Option<((i32, i32, u32), Layer)>,
+}
+
+impl std::fmt::Debug for ShortcutLayers {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ShortcutLayers").finish_non_exhaustive()
+    }
 }
 
 /// Widgets gardés d'une image à l'autre. Hors édition, seules les cartes dont les données
@@ -882,7 +906,7 @@ pub struct Panels {
     /// Widgets, dessinés à part : ils passent sous les fenêtres.
     dashboard: RefCell<Option<DashboardCache>>,
     /// Raccourcis du bureau, dessinés à part pour rester sur tous les bureaux.
-    shortcuts: RefCell<Option<(ShortcutsKey, MemoryRenderBuffer)>>,
+    shortcuts: RefCell<ShortcutLayers>,
     /// Verre des widgets, gardé d'un dessin à l'autre (voir `cards::GlassKey`).
     glass: RefCell<Option<(cards::GlassKey, Vec<u8>)>>,
     /// Images du glisser d'un widget (voir `push_dragged_dashboard`).
@@ -966,7 +990,7 @@ impl Panels {
             bar: RefCell::new(None),
             invitation: RefCell::new(None),
             dashboard: RefCell::new(None),
-            shortcuts: RefCell::new(None),
+            shortcuts: RefCell::new(ShortcutLayers::default()),
             glass: RefCell::new(None),
             drag_layers: RefCell::new(DragLayers::default()),
             layer: RefCell::new(None),
@@ -1301,8 +1325,11 @@ impl Panels {
         }
     }
 
-    /// Raccourcis du bureau, sous les fenêtres et sous les widgets, sur tous les bureaux.
-    /// L'image est gardée tant que la liste, l'écran et les widgets ne changent pas.
+    /// Raccourcis du bureau, sous les fenêtres, sur tous les bureaux sauf celui des
+    /// widgets ; `alpha` : ils s'effacent à mesure qu'on approche de ce dernier. L'image est
+    /// gardée tant que la liste, l'écran et la taille ne changent pas. Pendant un glisser,
+    /// l'icône saisie et la case visée sont deux petites images posées par-dessus.
+    #[allow(clippy::too_many_arguments)] // Rendu, écran, état et opacité.
     pub fn push_shortcuts(
         &self,
         renderer: &mut GlesRenderer,
@@ -1310,21 +1337,30 @@ impl Panels {
         output_geo: Rectangle<i32, Logical>,
         scale: f64,
         view: &DesktopView,
+        alpha: f32,
         out: &mut Vec<super::super::render::OutputElement>,
     ) {
-        if !view.dashboard.shortcuts_shown || view.dashboard.shortcuts.is_empty() {
+        let dashboard = &view.dashboard;
+        if !dashboard.shortcuts_shown || dashboard.shortcuts.is_empty() || alpha <= 0.0 {
             return;
         }
         let (w, h) = (output_geo.size.w.max(1) as u32, output_geo.size.h.max(1) as u32);
         let layout = Layout::new(f64::from(w), f64::from(h), view);
+        let scale_milli = (scale * 1000.0).round() as u32;
+        let cells = cards::visible_shortcuts(&layout, dashboard);
+        let drag = dashboard.shortcut_drag.and_then(|(index, (dx, dy))| {
+            let cell = cells.iter().find(|(known, _)| *known == index)?.1;
+            Some((index, (f64::from(dx), f64::from(dy)), cell))
+        });
         let key = ShortcutsKey {
-            size: (w, h, (scale * 1000.0).round() as u32),
-            bars: (view.bar_height, view.dock_height),
-            shortcuts: view.dashboard.shortcuts.clone(),
-            cells: cards::visible_shortcuts(&layout, &view.dashboard),
+            size: (w, h, scale_milli),
+            icon: dashboard.icon_size,
+            shortcuts: dashboard.shortcuts.clone(),
+            cells: cells.clone(),
+            skip: drag.map(|(index, ..)| index),
         };
-        let mut cache = self.shortcuts.borrow_mut();
-        if cache.as_ref().is_none_or(|(known, _)| *known != key) {
+        let mut layers = self.shortcuts.borrow_mut();
+        if layers.rest.as_ref().is_none_or(|(known, _)| *known != key) {
             let width = (f64::from(w) * scale).round().max(1.0) as u32;
             let height = (f64::from(h) * scale).round().max(1.0) as u32;
             let mut canvas = Canvas {
@@ -1336,33 +1372,64 @@ impl Panels {
                 icons: &self.icons,
             };
             crate::render::profile::raster("raccourcis", || {
-                self.draw_shortcuts(&mut canvas, &layout, &view.dashboard)
+                self.draw_shortcuts(&mut canvas, &layout, dashboard, key.skip)
             });
-            let buffer = MemoryRenderBuffer::from_slice(
-                &canvas.pixels,
-                Fourcc::Argb8888,
-                (width as i32, height as i32),
-                1,
-                smithay::utils::Transform::Normal,
-                None,
-            );
-            *cache = Some((key, buffer));
+            layers.rest = Some((key, canvas_buffer(canvas)));
         }
-        let Some((_, buffer)) = cache.as_ref() else {
-            return;
-        };
-        let physical_size = (output_geo.size.w as f64 * scale, output_geo.size.h as f64 * scale);
-        match MemoryRenderBufferRenderElement::from_buffer(
-            renderer,
-            Point::from((0.0, 0.0)),
-            buffer,
-            None,
-            Some(Rectangle::<f64, Logical>::from_size(physical_size.into())),
-            Some(output_geo.size),
-            Kind::Unspecified,
-        ) {
-            Ok(element) => out.push(super::super::render::OutputElement::Memory(element)),
-            Err(err) => tracing::warn!(?err, output = output.name(), "raccourcis non importés"),
+        if let Some((index, offset, cell)) = drag {
+            let lifted_key = (
+                index,
+                dashboard.icon_size,
+                scale_milli,
+                dashboard.shortcuts[index].clone(),
+            );
+            if layers
+                .lifted
+                .as_ref()
+                .is_none_or(|(known, _)| *known != lifted_key)
+            {
+                let lifted = Rect::new(LIFT_MARGIN, LIFT_MARGIN, cell.w, cell.h);
+                let mut canvas = Canvas {
+                    pixels: Vec::new(),
+                    width: ((cell.w + 2.0 * LIFT_MARGIN) * scale).ceil().max(1.0) as u32,
+                    height: ((cell.h + 2.0 * LIFT_MARGIN) * scale).ceil().max(1.0) as u32,
+                    scale: scale as f32,
+                    bold: &self.bold,
+                    icons: &self.icons,
+                };
+                canvas.pixels = vec![0; canvas.width as usize * canvas.height as usize * 4];
+                self.draw_shortcut(
+                    &mut canvas,
+                    &dashboard.shortcuts[index],
+                    lifted,
+                    dashboard.icon_size,
+                );
+                layers.lifted = Some((lifted_key, canvas_buffer(canvas)));
+            }
+            let target = cards::shortcut_target(&layout, dashboard, index, offset)
+                .map(|target| layout.shortcut_grid(dashboard.icon_size).rect(target));
+            if let Some(target) = target {
+                let target_key = (target.w as i32, target.h as i32, scale_milli);
+                if !layers
+                    .target
+                    .as_ref()
+                    .is_some_and(|(known, ..)| *known == target_key)
+                {
+                    layers.target = Some((target_key, self.rasterize_target(target, scale)));
+                }
+            }
+            // Du dessus vers le dessous : icône saisie, case visée.
+            if let Some((_, (buffer, pixels))) = &layers.lifted {
+                let at = (cell.x + offset.0 - LIFT_MARGIN, cell.y + offset.1 - LIFT_MARGIN);
+                push_layer(renderer, output, buffer, *pixels, at, scale, alpha, out);
+            }
+            if let (Some(target), Some((_, (buffer, pixels)))) = (target, &layers.target) {
+                let at = (target.x - TARGET_MARGIN, target.y - TARGET_MARGIN);
+                push_layer(renderer, output, buffer, *pixels, at, scale, alpha, out);
+            }
+        }
+        if let Some((_, (buffer, pixels))) = &layers.rest {
+            push_layer(renderer, output, buffer, *pixels, (0.0, 0.0), scale, alpha, out);
         }
     }
 
@@ -3848,6 +3915,26 @@ fn capture_icon_pointer(canvas: &mut Canvas, (cx, cy): (f64, f64), ink: Color) {
     );
 }
 
+/// Case de chaque raccourci du bureau sur l'écran `output` (aucune : grille pleine).
+pub fn shortcut_cells(
+    output: Rectangle<i32, Logical>,
+    view: &DesktopView,
+) -> Vec<Option<ferrite_system::shortcuts::Cell>> {
+    let layout = Layout::new(output.size.w as f64, output.size.h as f64, view);
+    cards::shortcut_cells(&layout, &view.dashboard)
+}
+
+/// Case où se pose le raccourci `index` lâché après un déplacement de `offset`.
+pub fn shortcut_drop_cell(
+    output: Rectangle<i32, Logical>,
+    view: &DesktopView,
+    index: usize,
+    offset: Option<(f64, f64)>,
+) -> Option<ferrite_system::shortcuts::Cell> {
+    let layout = Layout::new(output.size.w as f64, output.size.h as f64, view);
+    cards::shortcut_target(&layout, &view.dashboard, index, offset?)
+}
+
 /// Hit-test du bureau ; les panneaux interceptent leurs propres surfaces pour que le clic
 /// ne tombe jamais sur une fenêtre située derrière eux.
 pub fn action_at(
@@ -5029,6 +5116,13 @@ impl Layout {
     /// Menu d'une icône du Dock, au-dessus d'elle (sans sortir de l'écran).
     fn dock_menu(&self, menu: &DockMenuView) -> Rect {
         let (w, h) = (210.0, 12.0 + menu.entries.len() as f64 * 32.0);
+        if menu.at_pointer {
+            let anchor = (menu.x.round() as i32, menu.bottom.round() as i32);
+            return Rect {
+                w,
+                ..self.desktop_menu(anchor, menu.entries.len())
+            };
+        }
         let x = (menu.x - w / 2.0).clamp(POPOVER_MARGIN, (self.w - w - POPOVER_MARGIN).max(POPOVER_MARGIN));
         Rect::new(x, (menu.bottom - h - 10.0).max(self.bar + POPOVER_MARGIN), w, h)
     }
@@ -6304,17 +6398,21 @@ mod tests {
             icon: crate::desktop::apps::AppIcon::Builtin("places-folder"),
             name: name.to_owned(),
             missing: false,
+            cell: None,
         };
         let mut desktop = view(None);
         desktop.bar_height = 34;
         desktop.dock_height = 80;
-        desktop.dashboard.shown = true;
         desktop.dashboard.shortcuts_shown = true;
+        desktop.dashboard.icon_size = ferrite_system::shortcuts::ICON_SIZE;
         desktop.dashboard.shortcuts = (0..8)
             .map(|index| shortcut(&format!("Dossier {index}")))
             .collect();
         let layout = Layout::new(1280.0, 720.0, &desktop);
-        let cells = layout.shortcut_cells(8);
+        let cells: Vec<Rect> = cards::visible_shortcuts(&layout, &desktop.dashboard)
+            .into_iter()
+            .map(|(_, cell)| cell)
+            .collect();
         // Colonne de droite d'abord, de haut en bas, puis la suivante à sa gauche.
         assert_eq!(cells[0].right(), 1280.0 - 16.0);
         assert!(cells[1].y > cells[0].y);
@@ -6325,23 +6423,63 @@ mod tests {
             action_at(output(), point(x, y), &desktop),
             Some(DesktopAction::Shortcut(2))
         );
-        // Un widget posé dessus passe devant.
-        let mut card = default_layout()[0];
-        (card.x, card.y) = (cells[2].x as i32 - 20, cells[2].y as i32 - 20);
-        desktop.dashboard.layout = vec![card];
-        assert_eq!(
-            action_at(output(), point(x, y), &desktop),
-            Some(DesktopAction::DashboardConsume)
-        );
-        // Sur un autre bureau, les widgets n'y sont pas : le raccourci reste et prend le clic.
+        // Sur le bureau des widgets, pas de raccourcis.
+        desktop.dashboard.shown = true;
+        assert_eq!(action_at(output(), point(x, y), &desktop), None);
+        // Vue d'ensemble ou écran verrouillé non plus.
         desktop.dashboard.shown = false;
-        assert_eq!(
-            action_at(output(), point(x, y), &desktop),
-            Some(DesktopAction::Shortcut(2))
-        );
-        // Vue d'ensemble ou écran verrouillé : plus de raccourcis.
         desktop.dashboard.shortcuts_shown = false;
         assert_eq!(action_at(output(), point(x, y), &desktop), None);
+        desktop.dashboard.shortcuts_shown = true;
+
+        // Une icône posée ailleurs y reste ; plus grandes, les cases s'agrandissent.
+        let far = ferrite_system::shortcuts::Cell { column: 5, row: 2 };
+        desktop.dashboard.shortcuts[0].cell = Some(far);
+        let grid = layout.shortcut_grid(desktop.dashboard.icon_size);
+        let (x, y) = grid.rect(far).center();
+        assert_eq!(
+            action_at(output(), point(x, y), &desktop),
+            Some(DesktopAction::Shortcut(0))
+        );
+        let bigger = layout.shortcut_grid(96);
+        assert!(bigger.cell.0 > grid.cell.0 && bigger.columns < grid.columns);
+        // Glissée d'une case vers la gauche, elle vise la case voisine.
+        let target = cards::shortcut_target(&layout, &desktop.dashboard, 0, (-grid.cell.0, 0.0));
+        assert_eq!(
+            target,
+            Some(ferrite_system::shortcuts::Cell { column: 6, row: 2 })
+        );
+    }
+
+    #[test]
+    fn grille_des_raccourcis_cases_libres_et_hors_ecran() {
+        use ferrite_system::shortcuts::Cell;
+        let layout = Layout::new(1280.0, 720.0, &view(None));
+        let grid = layout.shortcut_grid(52);
+        let far = Cell {
+            column: grid.columns + 3,
+            row: 0,
+        };
+        let placed = grid.place(&[
+            None,
+            Some(Cell { column: 0, row: 0 }),
+            Some(Cell { column: 0, row: 0 }),
+            Some(far),
+        ]);
+        // La case choisie passe avant le rangement automatique ; un doublon ou une case
+        // hors de l'écran prend la première case libre.
+        assert_eq!(placed[1], Some(Cell { column: 0, row: 0 }));
+        assert_eq!(placed[0], Some(Cell { column: 0, row: 1 }));
+        assert_eq!(placed[2], Some(Cell { column: 0, row: 2 }));
+        assert_eq!(placed[3], Some(Cell { column: 0, row: 3 }));
+        // Lâchée loin de la grille, une icône va dans la case la plus proche.
+        assert_eq!(
+            grid.nearest((-500.0, 5000.0)),
+            Cell {
+                column: grid.columns - 1,
+                row: grid.rows - 1
+            }
+        );
     }
 
     #[test]

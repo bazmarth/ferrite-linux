@@ -1,5 +1,7 @@
-//! Raccourcis du bureau : applications, dossiers et fichiers posés sur le bureau des
-//! widgets (bureau 0), en colonnes depuis le coin haut droit.
+//! Raccourcis du bureau : applications, dossiers et fichiers posés sur une grille, sur
+//! tous les bureaux sauf celui des widgets. Rangés en colonnes depuis le coin haut droit,
+//! ils se déplacent à la souris vers n'importe quelle case ; Ctrl+molette, le pincement ou
+//! le menu du bureau changent la taille des icônes.
 //!
 //! La liste vit dans `ferrite_system::shortcuts` ; le fil système la relit quand son
 //! fichier change (Fichiers y ajoute des dossiers). On ajoute un raccourci depuis le menu
@@ -13,7 +15,8 @@ use std::{
     thread,
 };
 
-use ferrite_system::shortcuts::{self, Shortcut};
+use ferrite_system::shortcuts::{self, Cell, Desktop, Shortcut};
+use smithay::utils::{Logical, Point};
 use tracing::{info, warn};
 
 use crate::{
@@ -27,6 +30,8 @@ pub enum DesktopMenuItem {
     EditWidgets,
     AddFolder,
     Wallpaper,
+    IconsBigger,
+    IconsSmaller,
     /// Raccourci visé par le clic droit.
     Open(usize),
     Remove(usize),
@@ -38,6 +43,8 @@ impl DesktopMenuItem {
             DesktopMenuItem::EditWidgets => "Modifier les widgets",
             DesktopMenuItem::AddFolder => "Ajouter un dossier au bureau…",
             DesktopMenuItem::Wallpaper => "Changer le fond d’écran…",
+            DesktopMenuItem::IconsBigger => "Agrandir les icônes",
+            DesktopMenuItem::IconsSmaller => "Réduire les icônes",
             DesktopMenuItem::Open(_) => "Ouvrir",
             DesktopMenuItem::Remove(_) => "Retirer du bureau",
         }
@@ -51,8 +58,46 @@ pub struct ShortcutView {
     pub name: String,
     /// Application désinstallée, dossier ou fichier disparu : nom estompé, rien à ouvrir.
     pub missing: bool,
+    /// Case choisie à la souris ; aucune : rangé à la suite des autres.
+    pub cell: Option<Cell>,
 }
 
+/// Écart du pointeur, en pixels logiques, au-delà duquel un appui devient un glisser.
+const DRAG_THRESHOLD: f64 = 6.0;
+/// Pas de la taille des icônes (molette, menu).
+pub const ICON_STEP: u32 = 8;
+
+/// Raccourci saisi : relâché sans avoir bougé, il s'ouvre ; sinon il va dans la case visée.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ShortcutDrag {
+    pub index: usize,
+    pub press: Point<f64, Logical>,
+    pub pointer: Point<f64, Logical>,
+    pub moved: bool,
+}
+
+impl ShortcutDrag {
+    /// Déplacement depuis l'appui, une fois le glisser commencé.
+    pub fn offset(&self) -> Option<(f64, f64)> {
+        self.moved
+            .then_some((self.pointer.x - self.press.x, self.pointer.y - self.press.y))
+    }
+}
+
+/// Nouvelles cases après le dépôt du raccourci `index` sur `target` : toutes les icônes
+/// gardent la case où on les voit (`shown`), et celle qui occupait la case visée prend
+/// l'ancienne place de l'icône déplacée.
+pub fn drop_on(shown: &[Option<Cell>], index: usize, target: Cell) -> Vec<Option<Cell>> {
+    let mut cells = shown.to_vec();
+    let Some(from) = cells.get(index).copied() else {
+        return cells;
+    };
+    if let Some(other) = cells.iter().position(|cell| *cell == Some(target)) {
+        cells[other] = from;
+    }
+    cells[index] = Some(target);
+    cells
+}
 /// Icône d'un dossier ou d'un fichier.
 fn path_icon(path: &Path) -> &'static str {
     if !path.is_dir() {
@@ -82,20 +127,23 @@ impl Ferrite {
     /// Raccourcis à dessiner, dans l'ordre de la liste.
     pub fn shortcut_views(&self) -> Vec<ShortcutView> {
         self.desktop_shortcuts
+            .items
             .iter()
-            .map(|shortcut| match shortcut {
+            .map(|item| match &item.shortcut {
                 Shortcut::App(token) => {
                     let key = AppKey::from_token(token, &self.applications);
                     ShortcutView {
                         missing: matches!(key, AppKey::Other(_)),
                         icon: key.icon(&self.applications),
                         name: key.name(&self.applications),
+                        cell: item.cell,
                     }
                 }
                 Shortcut::Path(path) => ShortcutView {
                     icon: AppIcon::Builtin(path_icon(path)),
                     name: Shortcut::file_name(path),
                     missing: !path.exists(),
+                    cell: item.cell,
                 },
             })
             .collect()
@@ -127,7 +175,10 @@ impl Ferrite {
 
     fn remove_shortcut(&mut self, shortcut: &Shortcut) {
         match shortcuts::remove(shortcut) {
-            Ok(()) => self.desktop_shortcuts.retain(|known| known != shortcut),
+            Ok(()) => self
+                .desktop_shortcuts
+                .items
+                .retain(|item| item.shortcut != *shortcut),
             Err(err) => warn!(%err, "raccourci du bureau non retiré"),
         }
     }
@@ -135,7 +186,12 @@ impl Ferrite {
     /// Ouvre le raccourci `index` : l'application, ou le dossier dans Fichiers, ou le
     /// fichier dans l'application choisie pour son type.
     pub fn open_shortcut(&mut self, index: usize) {
-        let Some(shortcut) = self.desktop_shortcuts.get(index).cloned() else {
+        let Some(shortcut) = self
+            .desktop_shortcuts
+            .items
+            .get(index)
+            .map(|item| item.shortcut.clone())
+        else {
             return;
         };
         match shortcut {
@@ -187,11 +243,24 @@ impl Ferrite {
                 items.push(DesktopMenuItem::Remove(index));
                 items
             }
-            None => vec![
-                DesktopMenuItem::EditWidgets,
-                DesktopMenuItem::AddFolder,
-                DesktopMenuItem::Wallpaper,
-            ],
+            None => {
+                let mut items = vec![
+                    DesktopMenuItem::EditWidgets,
+                    DesktopMenuItem::AddFolder,
+                    DesktopMenuItem::Wallpaper,
+                ];
+                // Les icônes ne sont pas sur le bureau des widgets.
+                let size = self.desktop_shortcuts.icon_size;
+                if self.workspaces.current() != 0 && !self.desktop_shortcuts.items.is_empty() {
+                    if size < shortcuts::ICON_SIZE_MAX {
+                        items.push(DesktopMenuItem::IconsBigger);
+                    }
+                    if size > shortcuts::ICON_SIZE_MIN {
+                        items.push(DesktopMenuItem::IconsSmaller);
+                    }
+                }
+                items
+            }
         }
     }
 
@@ -206,14 +275,94 @@ impl Ferrite {
             Some(DesktopMenuItem::Wallpaper) => {
                 App::open_settings_page("apparence", &self.client_environment())
             }
+            Some(DesktopMenuItem::IconsBigger) => {
+                self.set_icon_size(self.desktop_shortcuts.icon_size + ICON_STEP, true)
+            }
+            Some(DesktopMenuItem::IconsSmaller) => {
+                self.set_icon_size(self.desktop_shortcuts.icon_size.saturating_sub(ICON_STEP), true)
+            }
             Some(DesktopMenuItem::Open(shortcut)) => self.open_shortcut(shortcut),
             Some(DesktopMenuItem::Remove(shortcut)) => {
-                if let Some(shortcut) = self.desktop_shortcuts.get(shortcut).cloned() {
-                    self.remove_shortcut(&shortcut);
+                if let Some(item) = self.desktop_shortcuts.items.get(shortcut).cloned() {
+                    self.remove_shortcut(&item.shortcut);
                 }
             }
             None => {}
         }
+    }
+
+    /// Taille des icônes ; `save` : l'écrire aussi (pas à chaque pas d'un pincement).
+    pub fn set_icon_size(&mut self, size: u32, save: bool) {
+        let size = Desktop::clamp_size(size);
+        let changed = size != self.desktop_shortcuts.icon_size;
+        self.desktop_shortcuts.icon_size = size;
+        if changed || save {
+            self.request_redraw();
+        }
+        if save {
+            self.save_desktop();
+        }
+    }
+
+    fn save_desktop(&self) {
+        if let Err(err) = shortcuts::save(&self.desktop_shortcuts) {
+            warn!(%err, "bureau non enregistré");
+        }
+    }
+
+    /// Appui sur le raccourci `index` : rien ne s'ouvre avant le relâchement.
+    pub fn press_shortcut(&mut self, index: usize, pointer: Point<f64, Logical>) {
+        self.shortcut_drag = Some(ShortcutDrag {
+            index,
+            press: pointer,
+            pointer,
+            moved: false,
+        });
+    }
+
+    /// Le raccourci saisi suit le pointeur, une fois passé le petit seuil.
+    pub fn drag_shortcut(&mut self, pointer: Point<f64, Logical>) {
+        let Some(drag) = self.shortcut_drag.as_mut() else {
+            return;
+        };
+        drag.pointer = pointer;
+        let (dx, dy) = (pointer.x - drag.press.x, pointer.y - drag.press.y);
+        if dx.hypot(dy) > DRAG_THRESHOLD {
+            drag.moved = true;
+        }
+    }
+
+    /// Relâchement : ouvre le raccourci, ou le pose dans la case visée. Faux s'il n'y avait
+    /// pas de raccourci saisi.
+    pub fn release_shortcut(&mut self) -> bool {
+        let Some(drag) = self.shortcut_drag.take() else {
+            return false;
+        };
+        if !drag.moved {
+            self.stop_dashboard_editing();
+            self.open_shortcut(drag.index);
+            return true;
+        }
+        let Some(area) = self.screen_area() else {
+            return true;
+        };
+        let mut view = crate::render::desktop_view(self);
+        view.dashboard.shortcut_drag = None;
+        let shown = crate::desktop::panels::shortcut_cells(area, &view);
+        let Some(target) = crate::desktop::panels::shortcut_drop_cell(area, &view, drag.index, drag.offset())
+        else {
+            return true;
+        };
+        for (item, cell) in self
+            .desktop_shortcuts
+            .items
+            .iter_mut()
+            .zip(drop_on(&shown, drag.index, target))
+        {
+            item.cell = cell;
+        }
+        self.save_desktop();
+        true
     }
 
     /// Ouvre le sélecteur de dossiers ; ceux choisis rejoignent le bureau (le fil système
@@ -268,5 +417,21 @@ mod tests {
         let dir = std::env::temp_dir();
         assert_eq!(path_icon(&dir), "places-folder");
         assert_eq!(path_icon(Path::new("/nulle/part/rapport.pdf")), "file-pdf");
+    }
+
+    #[test]
+    fn deposer_sur_une_icone_echange_les_places() {
+        let cell = |column, row| Some(Cell { column, row });
+        let shown = [cell(0, 0), cell(0, 1), cell(0, 2)];
+        // Sur une case libre : seule l'icône déplacée change.
+        assert_eq!(
+            drop_on(&shown, 0, Cell { column: 4, row: 3 }),
+            vec![cell(4, 3), cell(0, 1), cell(0, 2)]
+        );
+        // Sur une autre icône : elles échangent leurs places.
+        assert_eq!(
+            drop_on(&shown, 0, Cell { column: 0, row: 2 }),
+            vec![cell(0, 2), cell(0, 1), cell(0, 0)]
+        );
     }
 }

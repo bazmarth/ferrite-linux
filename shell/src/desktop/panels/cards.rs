@@ -488,6 +488,50 @@ pub(super) fn shortcut_target(
     Some(grid.nearest((x + offset.0, y + offset.1)))
 }
 
+/// Partie visible d'un raccourci dans sa case : l'icône et son nom. C'est elle que le
+/// rectangle de sélection doit toucher, et elle qui s'éclaire une fois sélectionnée.
+pub(super) fn shortcut_body(cell: Rect, icon: u32) -> Rect {
+    let icon = f64::from(icon);
+    let w = (icon + 28.0).max(72.0).min(cell.w);
+    Rect::new(
+        cell.x + (cell.w - w) / 2.0,
+        cell.y + 2.0,
+        w,
+        (icon + 40.0).min(cell.h - 2.0),
+    )
+}
+
+/// Raccourcis déplacés quand on saisit `index` (toute la sélection s'il en fait partie),
+/// et cases de tous les raccourcis s'il est lâché après un déplacement de `offset`.
+pub(super) fn shortcut_group_drop(
+    layout: &Layout,
+    view: &DashboardView,
+    index: usize,
+    offset: (f64, f64),
+) -> Option<(Vec<usize>, Vec<Option<Cell>>)> {
+    let grid = layout.shortcut_grid(view.icon_size);
+    let shown = shortcut_cells(layout, view);
+    let from = shown.get(index).copied()??;
+    let target = shortcut_target(layout, view, index, offset)?;
+    let lead_selected = view
+        .shortcuts
+        .get(index)
+        .is_some_and(|shortcut| shortcut.selected);
+    let moving: Vec<usize> = if lead_selected {
+        (0..view.shortcuts.len())
+            .filter(|&other| view.shortcuts[other].selected)
+            .collect()
+    } else {
+        vec![index]
+    };
+    let delta = (
+        i32::from(target.column) - i32::from(from.column),
+        i32::from(target.row) - i32::from(from.row),
+    );
+    let cells = crate::desktop::shortcuts::drop_group(&shown, &moving, delta, (grid.columns, grid.rows));
+    Some((moving, cells))
+}
+
 /// Raccourci du bureau sous `pos`, sur n'importe quel bureau.
 pub(super) fn shortcut_at(
     layout: &Layout,
@@ -736,6 +780,7 @@ pub(super) fn base_key(state: &VisualState) -> VisualState {
     base.view.dashboard.shortcuts_shown = false;
     base.view.dashboard.icon_size = 0;
     base.view.dashboard.shortcut_drag = None;
+    base.view.dashboard.shortcut_lasso = None;
     base
 }
 
@@ -870,22 +915,27 @@ impl Panels {
 
     /// Raccourcis du bureau : icône, et nom sur une pastille de verre sombre pour rester
     /// lisible sur n'importe quel fond. Dessinés à part (voir `push_shortcuts`), sous les
-    /// fenêtres, sur tous les bureaux sauf celui des widgets. `skip` : celui qu'on déplace.
+    /// fenêtres, sur tous les bureaux sauf celui des widgets. `skip` : ceux qu'on déplace.
     pub(super) fn draw_shortcuts(
         &self,
         canvas: &mut Canvas,
         layout: &Layout,
         view: &DashboardView,
-        skip: Option<usize>,
+        skip: &[usize],
     ) {
         for (index, cell) in visible_shortcuts(layout, view) {
-            if Some(index) != skip {
+            if !skip.contains(&index) {
                 self.draw_shortcut(canvas, &view.shortcuts[index], cell, view.icon_size);
             }
         }
     }
 
     pub(super) fn draw_shortcut(&self, canvas: &mut Canvas, shortcut: &ShortcutView, cell: Rect, icon: u32) {
+        if shortcut.selected {
+            let body = shortcut_body(cell, icon);
+            canvas.fill(body, 12.0, Color::WHITE.with_alpha(44));
+            canvas.stroke(body, 12.0, Color::WHITE.with_alpha(96), 1.0);
+        }
         let icon = f64::from(icon);
         let center = (cell.x + cell.w / 2.0, cell.y + 8.0 + icon / 2.0);
         canvas.app_icon(&shortcut.icon, center, icon);

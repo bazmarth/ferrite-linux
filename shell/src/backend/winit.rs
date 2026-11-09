@@ -64,6 +64,12 @@ pub fn init(
     output.set_preferred(mode);
     state.space.map_output(&output, (0, 0));
     info!(size = ?mode.size, scale, "écran virtuel");
+    // Sélection figée pour une capture : posée une fois l'écran connu, et la souris de la
+    // fenêtre hôte ignorée pour qu'elle ne la défasse pas.
+    let frozen = options.demo_selection.is_some();
+    if let Some(mode) = options.demo_selection.as_deref() {
+        state.demo_selection(mode);
+    }
 
     let mut damage_tracker = OutputDamageTracker::from_output(&output);
     let dmabuf_formats = backend
@@ -95,6 +101,7 @@ pub fn init(
                 // Calques et zone utile suivent la nouvelle taille.
                 smithay::desktop::layer_map_for_output(&output).arrange();
             }
+            WinitEvent::Input(_) if frozen => {}
             WinitEvent::Input(event) => state.process_input_event(event),
             WinitEvent::Redraw => {
                 redraw(

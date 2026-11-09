@@ -299,6 +299,12 @@ pub struct Ferrite {
     pub desktop_shortcuts: ferrite_system::shortcuts::Desktop,
     /// Raccourci saisi à la souris : un clic l'ouvre, un glisser le déplace.
     pub shortcut_drag: Option<crate::desktop::shortcuts::ShortcutDrag>,
+    /// Raccourcis sélectionnés (clic, Ctrl+clic ou rectangle) : ils se déplacent ensemble.
+    pub desktop_selection: std::collections::HashSet<ferrite_system::shortcuts::Shortcut>,
+    /// Rectangle de sélection en cours sur le bureau.
+    pub shortcut_lasso: Option<crate::desktop::shortcuts::ShortcutLasso>,
+    /// Places des icônes avant une suite de changements de taille.
+    pub icon_anchor: Option<crate::desktop::shortcuts::IconAnchor>,
     /// Pincement sur le bureau : taille des icônes à son début.
     pub desktop_pinch: Option<u32>,
     /// Ctrl+molette sur le bureau : défilement pas encore converti en pas de taille.
@@ -565,6 +571,9 @@ impl Ferrite {
             desktop_menu_target: None,
             desktop_shortcuts: ferrite_system::shortcuts::load(),
             shortcut_drag: None,
+            desktop_selection: Default::default(),
+            shortcut_lasso: None,
+            icon_anchor: None,
             desktop_pinch: None,
             icon_zoom_scroll: 0.0,
             dock_menu_pointer: None,

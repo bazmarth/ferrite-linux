@@ -1148,6 +1148,7 @@ impl Ferrite {
         }
         self.drag_widget(location);
         self.drag_shortcut(location);
+        self.drag_lasso(location);
         self.dock_drag_motion(location);
         self.file_drag_motion(location);
         if let Some(adjust) = self.region_adjust.as_mut()
@@ -1253,6 +1254,10 @@ impl Ferrite {
         // Fin d'un clic ou d'un déplacement de raccourci du bureau.
         if button.button == BTN_LEFT && button.state == ButtonState::Released && self.release_shortcut() {
             return;
+        }
+        // Fin du rectangle de sélection ; l'appui a suivi son chemin, le relâchement aussi.
+        if button.button == BTN_LEFT && button.state == ButtonState::Released {
+            self.end_lasso();
         }
         if self.popover == Some(Popover::Screenshot) {
             self.capture_click(button.button, button.state, location);
@@ -1371,6 +1376,19 @@ impl Ferrite {
                 }
                 return;
             }
+            // Appui sur le bureau nu, là où sont les raccourcis : rectangle de sélection
+            // (un simple clic oublie la sélection).
+            if button.button == BTN_LEFT
+                && button.state == ButtonState::Pressed
+                && desktop_action.is_none()
+                && self.shortcut_drag.is_none()
+                && !self.desktop_shortcuts.items.is_empty()
+                && location.y >= f64::from(ferrite_ui::theme::MENUBAR_HEIGHT)
+                && self.over_shortcut_desktop(location)
+            {
+                let extend = self.extend_modifier();
+                self.start_lasso(location, extend);
+            }
             if button.button == BTN_LEFT
                 && let Some(action) = desktop_action
             {
@@ -1421,6 +1439,7 @@ impl Ferrite {
                 && let Some(DesktopAction::Shortcut(index)) = desktop_action
             {
                 if button.state == ButtonState::Pressed {
+                    self.select_shortcut(index);
                     self.desktop_menu = Some((location.x as i32, location.y as i32));
                     self.desktop_menu_target = Some(index);
                     self.popover = Some(Popover::DesktopMenu);
@@ -1645,9 +1664,12 @@ impl Ferrite {
                 }
             }
             DesktopAction::DesktopMenu(index) => self.desktop_menu_choose(index),
-            // Le raccourci s'ouvre au relâchement, s'il n'a pas été déplacé.
+            // Le raccourci s'ouvre au relâchement, s'il n'a pas été déplacé ; Ctrl+clic ou
+            // Maj+clic l'ajoute à la sélection ou l'en retire.
             DesktopAction::Shortcut(index) => {
-                if let Some(pointer) = self.pointer_location() {
+                if self.extend_modifier() {
+                    self.toggle_shortcut(index);
+                } else if let Some(pointer) = self.pointer_location() {
                     self.press_shortcut(index, pointer);
                 }
             }
@@ -2156,6 +2178,14 @@ impl Ferrite {
                 .get(index)?
                 .clamped(area.size.w, area.size.h, bar),
         )
+    }
+
+    /// Ctrl ou Maj tenue : un clic étend la sélection au lieu de la remplacer.
+    fn extend_modifier(&self) -> bool {
+        self.seat.get_keyboard().is_some_and(|keyboard| {
+            let modifiers = keyboard.modifier_state();
+            modifiers.ctrl || modifiers.shift
+        })
     }
 
     /// Pointeur sur le bureau nu, là où sont les raccourcis : pas sur le bureau des widgets,

@@ -3090,6 +3090,34 @@ services, profil). Cause : `tools/install-dev/inside.sh` copiait `includes.chroo
 Vérifié : syntaxe du script (`sh -n`) ; liste complète des éléments concernés (15 à
 l'utilisateur, 6 dossiers ouverts à tous). Pas vérifié : une nouvelle installation.
 
+## 2026-11-09 — Bureau : icônes sélectionnées en groupe, places gardées en changeant de taille
+
+Demande : sélectionner les icônes du bureau en groupe comme dans Fichiers, les déplacer
+ensemble, et ne plus perdre leurs places en agrandissant ou en réduisant.
+- Sélection : rectangle tiré depuis le bureau vide (toute icône touchée est prise ; avec
+  Ctrl ou Maj, ajoutée à la sélection d'avant), Ctrl+clic ou Maj+clic sur une icône pour
+  l'ajouter ou la retirer, clic à côté pour tout oublier. Un simple clic ouvre toujours.
+  Icônes sélectionnées éclairées d'un cadre de verre. Sélection gardée par raccourci (pas
+  par numéro) : elle survit à la relecture du fichier.
+- Déplacement : glisser une icône sélectionnée emmène tout le groupe, qui garde sa forme
+  et s'arrête au bord de la grille ; une icône recouverte prend une place laissée libre
+  par le groupe (seule, c'est l'échange d'avant). Toutes les icônes saisies et toutes les
+  cases d'arrivée se voient pendant le glisser. `drop_group` dans
+  `shell/src/desktop/shortcuts.rs`.
+- Clic droit sur une icône de la sélection : « Ouvrir » et « Retirer du bureau » valent
+  pour tout le groupe.
+- Taille des icônes : chaque icône garde sa place relative sur l'écran (haut droit,
+  milieu, bas gauche…) au lieu de son numéro de colonne, que la grille plus grande n'a plus
+  toujours (avant, elle repartait alors en haut à droite). Calculé depuis les positions
+  d'avant le premier changement (`IconAnchor`) : agrandir puis réduire rend les cases de
+  départ ; deux icônes qui tomberaient dans la même case : la seconde à la plus proche.
+- Captures : `--demo-selection groupe|rectangle` (ignore la souris de la fenêtre hôte, qui
+  défaisait l'état figé pendant la capture).
+Vérifié : CI (sans shellcheck) ; tests (échange, groupe et bord de grille, taille aller et
+retour, collision) ; captures du glisser de deux icônes et du rectangle de sélection.
+Pas vérifié : à la vraie souris (glisser, Ctrl+clic, rectangle) ; changement de taille à
+l'écran (seulement par les tests) ; pincement.
+
 ## 2026-11-09 — Paramètres : gestion des comptes et images de profil
 
 Demande : gérer les comptes depuis l'interface (ajout, suppression, mot de passe…), puis

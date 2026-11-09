@@ -1470,6 +1470,15 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
                 let (dx, dy) = drag.offset()?;
                 Some((drag.index, (dx.round() as i32, dy.round() as i32)))
             }),
+            shortcut_lasso: state.shortcut_lasso.as_ref().map(|lasso| {
+                let (x, y, w, h) = lasso.rect();
+                (
+                    x.round() as i32,
+                    y.round() as i32,
+                    w.round() as i32,
+                    h.round() as i32,
+                )
+            }),
         },
         desktop_menu: state.desktop_menu,
         desktop_menu_entries: state

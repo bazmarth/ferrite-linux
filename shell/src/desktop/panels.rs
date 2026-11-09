@@ -674,6 +674,8 @@ pub struct DashboardView {
     pub icon_size: u32,
     /// Raccourci déplacé à la souris, et son décalage depuis sa case.
     pub shortcut_drag: Option<(usize, (i32, i32))>,
+    /// Rectangle de sélection tiré sur le bureau : coin haut gauche, largeur, hauteur.
+    pub shortcut_lasso: Option<(i32, i32, i32, i32)>,
     /// Lecture en cours, pour le widget Musique.
     pub media: Option<crate::desktop::lock::Media>,
 }
@@ -823,16 +825,26 @@ struct ShortcutsKey {
     shortcuts: Vec<crate::desktop::shortcuts::ShortcutView>,
     /// Case de chaque raccourci à l'écran.
     cells: Vec<(usize, Rect)>,
-    /// Raccourci en cours de déplacement, dessiné à part.
-    skip: Option<usize>,
+    /// Raccourcis en cours de déplacement, dessinés à part.
+    skip: Vec<usize>,
 }
 
-/// Images des raccourcis : tous (sauf celui qu'on déplace), l'icône saisie, la case visée.
+/// Icônes saisies et leurs cases, taille des icônes, échelle, et ce qu'elles montrent.
+type LiftedKey = (
+    Vec<(usize, Rect)>,
+    u32,
+    u32,
+    Vec<crate::desktop::shortcuts::ShortcutView>,
+);
+
+/// Images des raccourcis : tous (sauf ceux qu'on déplace), les icônes saisies, la case
+/// visée (posée sur chaque case d'arrivée) et le rectangle de sélection.
 #[derive(Default)]
 struct ShortcutLayers {
     rest: Option<(ShortcutsKey, Layer)>,
-    lifted: Option<((usize, u32, u32, crate::desktop::shortcuts::ShortcutView), Layer)>,
+    lifted: Option<(LiftedKey, Layer)>,
     target: Option<((i32, i32, u32), Layer)>,
+    lasso: Option<((i32, i32, u32), Layer)>,
 }
 
 impl std::fmt::Debug for ShortcutLayers {
@@ -1338,7 +1350,8 @@ impl Panels {
     /// Raccourcis du bureau, sous les fenêtres, sur tous les bureaux sauf celui des
     /// widgets ; `alpha` : ils s'effacent à mesure qu'on approche de ce dernier. L'image est
     /// gardée tant que la liste, l'écran et la taille ne changent pas. Pendant un glisser,
-    /// l'icône saisie et la case visée sont deux petites images posées par-dessus.
+    /// les icônes saisies et les cases visées sont de petites images posées par-dessus, de
+    /// même que le rectangle de sélection.
     #[allow(clippy::too_many_arguments)] // Rendu, écran, état et opacité.
     pub fn push_shortcuts(
         &self,
@@ -1358,16 +1371,36 @@ impl Panels {
         let layout = Layout::new(f64::from(w), f64::from(h), view);
         let scale_milli = (scale * 1000.0).round() as u32;
         let cells = cards::visible_shortcuts(&layout, dashboard);
+        let cell_of = |index: usize| {
+            cells
+                .iter()
+                .find(|(known, _)| *known == index)
+                .map(|(_, cell)| *cell)
+        };
+        // Glisser : les icônes déplacées (toute la sélection) et les cases où elles iront.
         let drag = dashboard.shortcut_drag.and_then(|(index, (dx, dy))| {
-            let cell = cells.iter().find(|(known, _)| *known == index)?.1;
-            Some((index, (f64::from(dx), f64::from(dy)), cell))
+            let offset = (f64::from(dx), f64::from(dy));
+            let (moving, dropped) = cards::shortcut_group_drop(&layout, dashboard, index, offset)?;
+            let grid = layout.shortcut_grid(dashboard.icon_size);
+            let lifted: Vec<(usize, Rect)> = moving
+                .iter()
+                .filter_map(|&index| Some((index, cell_of(index)?)))
+                .collect();
+            let targets: Vec<Rect> = moving
+                .iter()
+                .filter_map(|&index| Some(grid.rect(dropped.get(index).copied()??)))
+                .collect();
+            Some((offset, moving, lifted, targets))
         });
         let key = ShortcutsKey {
             size: (w, h, scale_milli),
             icon: dashboard.icon_size,
             shortcuts: dashboard.shortcuts.clone(),
             cells: cells.clone(),
-            skip: drag.map(|(index, ..)| index),
+            skip: drag
+                .as_ref()
+                .map(|(_, moving, ..)| moving.clone())
+                .unwrap_or_default(),
         };
         let mut layers = self.shortcuts.borrow_mut();
         if layers.rest.as_ref().is_none_or(|(known, _)| *known != key) {
@@ -1382,60 +1415,111 @@ impl Panels {
                 icons: &self.icons,
             };
             crate::render::profile::raster("raccourcis", || {
-                self.draw_shortcuts(&mut canvas, &layout, dashboard, key.skip)
+                self.draw_shortcuts(&mut canvas, &layout, dashboard, &key.skip)
             });
             layers.rest = Some((key, canvas_buffer(canvas)));
         }
-        if let Some((index, offset, cell)) = drag {
+        // Rectangle de sélection, par-dessus tout.
+        if let Some((x, y, rw, rh)) = dashboard.shortcut_lasso
+            && rw > 0
+            && rh > 0
+        {
+            let lasso_key = (rw, rh, scale_milli);
+            if layers.lasso.as_ref().is_none_or(|(known, _)| *known != lasso_key) {
+                let rect = Rect::new(0.0, 0.0, f64::from(rw), f64::from(rh));
+                let mut canvas = Canvas {
+                    pixels: Vec::new(),
+                    width: (rect.w * scale).ceil().max(1.0) as u32,
+                    height: (rect.h * scale).ceil().max(1.0) as u32,
+                    scale: scale as f32,
+                    bold: &self.bold,
+                    icons: &self.icons,
+                };
+                canvas.pixels = vec![0; canvas.width as usize * canvas.height as usize * 4];
+                canvas.fill(rect, 4.0, Color::WHITE.with_alpha(36));
+                canvas.stroke(rect, 4.0, Color::WHITE.with_alpha(170), 1.0);
+                layers.lasso = Some((lasso_key, canvas_buffer(canvas)));
+            }
+            if let Some((_, (buffer, pixels))) = &layers.lasso {
+                let at = (f64::from(x - output_geo.loc.x), f64::from(y - output_geo.loc.y));
+                push_layer(renderer, output, buffer, *pixels, at, scale, alpha, out);
+            }
+        }
+        if let Some((offset, _, lifted, targets)) = drag
+            && let Some(first) = lifted.first().map(|(_, cell)| *cell)
+        {
+            // Toutes les icônes saisies sur une seule image, de la taille du groupe.
+            let bounds = lifted.iter().fold(first, |all, (_, cell)| {
+                let (x, y) = (all.x.min(cell.x), all.y.min(cell.y));
+                Rect::new(
+                    x,
+                    y,
+                    all.right().max(cell.right()) - x,
+                    all.bottom().max(cell.bottom()) - y,
+                )
+            });
             let lifted_key = (
-                index,
+                lifted.clone(),
                 dashboard.icon_size,
                 scale_milli,
-                dashboard.shortcuts[index].clone(),
+                lifted
+                    .iter()
+                    .map(|(index, _)| dashboard.shortcuts[*index].clone())
+                    .collect::<Vec<_>>(),
             );
             if layers
                 .lifted
                 .as_ref()
                 .is_none_or(|(known, _)| *known != lifted_key)
             {
-                let lifted = Rect::new(LIFT_MARGIN, LIFT_MARGIN, cell.w, cell.h);
                 let mut canvas = Canvas {
                     pixels: Vec::new(),
-                    width: ((cell.w + 2.0 * LIFT_MARGIN) * scale).ceil().max(1.0) as u32,
-                    height: ((cell.h + 2.0 * LIFT_MARGIN) * scale).ceil().max(1.0) as u32,
+                    width: ((bounds.w + 2.0 * LIFT_MARGIN) * scale).ceil().max(1.0) as u32,
+                    height: ((bounds.h + 2.0 * LIFT_MARGIN) * scale).ceil().max(1.0) as u32,
                     scale: scale as f32,
                     bold: &self.bold,
                     icons: &self.icons,
                 };
                 canvas.pixels = vec![0; canvas.width as usize * canvas.height as usize * 4];
-                self.draw_shortcut(
-                    &mut canvas,
-                    &dashboard.shortcuts[index],
-                    lifted,
-                    dashboard.icon_size,
-                );
+                for (index, cell) in &lifted {
+                    let local = Rect::new(
+                        cell.x - bounds.x + LIFT_MARGIN,
+                        cell.y - bounds.y + LIFT_MARGIN,
+                        cell.w,
+                        cell.h,
+                    );
+                    self.draw_shortcut(
+                        &mut canvas,
+                        &dashboard.shortcuts[*index],
+                        local,
+                        dashboard.icon_size,
+                    );
+                }
                 layers.lifted = Some((lifted_key, canvas_buffer(canvas)));
             }
-            let target = cards::shortcut_target(&layout, dashboard, index, offset)
-                .map(|target| layout.shortcut_grid(dashboard.icon_size).rect(target));
-            if let Some(target) = target {
+            if let Some(target) = targets.first() {
                 let target_key = (target.w as i32, target.h as i32, scale_milli);
                 if !layers
                     .target
                     .as_ref()
                     .is_some_and(|(known, ..)| *known == target_key)
                 {
-                    layers.target = Some((target_key, self.rasterize_target(target, scale)));
+                    layers.target = Some((target_key, self.rasterize_target(*target, scale)));
                 }
             }
-            // Du dessus vers le dessous : icône saisie, case visée.
+            // Du dessus vers le dessous : icônes saisies, cases visées.
             if let Some((_, (buffer, pixels))) = &layers.lifted {
-                let at = (cell.x + offset.0 - LIFT_MARGIN, cell.y + offset.1 - LIFT_MARGIN);
+                let at = (
+                    bounds.x + offset.0 - LIFT_MARGIN,
+                    bounds.y + offset.1 - LIFT_MARGIN,
+                );
                 push_layer(renderer, output, buffer, *pixels, at, scale, alpha, out);
             }
-            if let (Some(target), Some((_, (buffer, pixels)))) = (target, &layers.target) {
-                let at = (target.x - TARGET_MARGIN, target.y - TARGET_MARGIN);
-                push_layer(renderer, output, buffer, *pixels, at, scale, alpha, out);
+            if let Some((_, (buffer, pixels))) = &layers.target {
+                for target in &targets {
+                    let at = (target.x - TARGET_MARGIN, target.y - TARGET_MARGIN);
+                    push_layer(renderer, output, buffer, *pixels, at, scale, alpha, out);
+                }
             }
         }
         if let Some((_, (buffer, pixels))) = &layers.rest {
@@ -3935,15 +4019,38 @@ pub fn shortcut_cells(
     cards::shortcut_cells(&layout, &view.dashboard)
 }
 
-/// Case où se pose le raccourci `index` lâché après un déplacement de `offset`.
-pub fn shortcut_drop_cell(
+/// Colonnes et lignes de la grille des raccourcis, pour la taille d'icônes de `view`.
+pub fn shortcut_grid_size(output: Rectangle<i32, Logical>, view: &DesktopView) -> (u16, u16) {
+    let layout = Layout::new(output.size.w as f64, output.size.h as f64, view);
+    let grid = layout.shortcut_grid(view.dashboard.icon_size);
+    (grid.columns, grid.rows)
+}
+
+/// Cases de tous les raccourcis après le lâcher du raccourci `index` (et du reste de la
+/// sélection) déplacé de `offset`.
+pub fn shortcut_drop_cells(
     output: Rectangle<i32, Logical>,
     view: &DesktopView,
     index: usize,
-    offset: Option<(f64, f64)>,
-) -> Option<ferrite_system::shortcuts::Cell> {
+    offset: (f64, f64),
+) -> Option<Vec<Option<ferrite_system::shortcuts::Cell>>> {
     let layout = Layout::new(output.size.w as f64, output.size.h as f64, view);
-    cards::shortcut_target(&layout, &view.dashboard, index, offset?)
+    cards::shortcut_group_drop(&layout, &view.dashboard, index, offset).map(|(_, cells)| cells)
+}
+
+/// Raccourcis touchés par le rectangle `(x, y, largeur, hauteur)` en coordonnées globales.
+pub fn shortcuts_in_rect(
+    output: Rectangle<i32, Logical>,
+    view: &DesktopView,
+    (x, y, w, h): (f64, f64, f64, f64),
+) -> Vec<usize> {
+    let layout = Layout::new(output.size.w as f64, output.size.h as f64, view);
+    let rect = Rect::new(x - output.loc.x as f64, y - output.loc.y as f64, w, h);
+    cards::visible_shortcuts(&layout, &view.dashboard)
+        .into_iter()
+        .filter(|(_, cell)| cards::shortcut_body(*cell, view.dashboard.icon_size).intersects(rect))
+        .map(|(index, _)| index)
+        .collect()
 }
 
 /// Hit-test du bureau ; les panneaux interceptent leurs propres surfaces pour que le clic
@@ -5325,6 +5432,10 @@ impl Rect {
     fn contains(self, p: Point<f64, Logical>) -> bool {
         p.x >= self.x && p.x < self.right() && p.y >= self.y && p.y < self.bottom()
     }
+
+    fn intersects(self, other: Rect) -> bool {
+        self.x < other.right() && other.x < self.right() && self.y < other.bottom() && other.y < self.bottom()
+    }
 }
 
 /// Tampon de dessin BGRA prémultiplié ; les coordonnées des méthodes sont logiques.
@@ -6410,6 +6521,7 @@ mod tests {
             name: name.to_owned(),
             missing: false,
             cell: None,
+            selected: false,
         };
         let mut desktop = view(None);
         desktop.bar_height = 34;

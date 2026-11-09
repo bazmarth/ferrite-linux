@@ -3363,3 +3363,55 @@ programmes X11 ; une fenêtre gardée au-dessus d'une vidéo en plein écran.
 Limites : pas de marque visible sur la fenêtre gardée ; la marque n'est pas restaurée
 après une reconnexion ; le menu Wayland d'une fenêtre ordinaire passe sous une fenêtre
 gardée qui la recouvre.
+
+## 2026-11-09 — Fenêtres : menu au clic droit sur le haut
+
+Demande : un clic droit sur le haut d'une fenêtre affiche un menu pour la garder toujours
+au-dessus.
+- `wm/window_menu.rs` : menu « Toujours au-dessus » (ou « Ne plus garder au-dessus »),
+  Réduire, Agrandir (ou Restaurer), Fermer. Il emprunte le panneau du menu du Dock
+  (`Popover::DockMenu`, sous le pointeur) sans faire sortir le Dock.
+- Trois entrées : barre de titre dessinée par ferrite-shell (clic droit) ; programmes qui
+  dessinent la leur et demandent le menu (`xdg_toplevel.show_window_menu` : GTK,
+  Firefox…) ; applications Ferrite, dont `style::drag_area` envoie « menu-fenetre » sur la
+  prise de ferrite-shell (`ferrite_system::drag::request_window_menu`), egui ne sachant
+  pas faire la demande Wayland.
+Vérifié : CI (sans shellcheck) ; tests (entrées du menu) ; capture dans un bureau
+imbriqué, le menu demandé par la prise comme le fait une application Ferrite.
+Pas vérifié : le clic droit à la main (applications Ferrite, barre de titre du bureau,
+programmes GTK) ; le choix d'une entrée à la souris ; les programmes X11 qui dessinent
+leur propre barre n'ont pas ce menu.
+
+## 2026-11-09 — Lecteur PDF : sélection du texte, surlignage, commentaires
+
+Demande : un lecteur PDF avec les fonctions utiles : sélection de texte, surlignage en
+couleur, commentaires, etc.
+- Sélection (`pdf_viewer/selection.rs`) : glisser sur le texte, même d'une page à l'autre
+  (la vue défile près des bords) ; double clic = le mot, triple clic = la ligne, Maj+clic
+  = étendre ; Ctrl+C copie (mots coupés en fin de ligne recollés), Ctrl+A prend la page.
+  Le texte (`pdftotext -bbox`) est lu dès l'ouverture, plus seulement pour la recherche.
+- Barre au-dessus de la sélection : cinq encres (`style::marker` : jaune, vert, bleu,
+  rose, orange), souligner, barrer, commenter, copier. Mêmes actions au clic droit, avec
+  « Rechercher dans le document », « Ajouter une note ici » et le signet de la page.
+- Annotations (`pdf_viewer/annotations.rs`) : surligné, souligné, barré, note posée sur
+  la page, chacune avec un commentaire (bulle : couleur, texte, supprimer ; pastille sur
+  un passage commenté, commentaire au survol). Outils de la barre : surligneur (H, encre
+  et trait au choix), note (N), signet (Ctrl+D, ruban rouge sur la page). Ctrl+Z /
+  Ctrl+Maj+Z sur les annotations.
+- Le PDF n'est jamais modifié : tout est dans
+  `~/.local/share/ferrite/lecteur-pdf-annotations/EMPREINTE.txt`, l'empreinte venant du
+  contenu (un document renommé ou déplacé garde ses annotations).
+- Colonne de gauche (`annotate.rs`) à trois volets : Pages, Notes (signets, annotations,
+  « Exporter les notes » en Markdown à côté du document), Plan (`pdftohtml -xml`, le
+  chapitre en cours est marqué ; le volet n'existe que si le document a un plan).
+- États de capture : `FERRITE_DEMO_PDF=selection,notes,plan,editeur`.
+Vérifié : fmt, clippy et tests de ferrite-apps (sélection, lecture et écriture des
+annotations, empreinte, export, plan) ; captures dans un bureau imbriqué, en clair et en
+sombre : sélection avec sa barre, annotations des quatre genres relues depuis leur
+fichier, volets Notes et Plan, bulle de commentaire, ruban du signet.
+Pas vérifié : tout ce qui se fait à la souris ou au clavier (glisser, double clic, clic
+droit, boutons de la barre, saisie d'un commentaire, Ctrl+C vers une autre application,
+annuler, export) ; un PDF scanné ou à plusieurs colonnes ; un très gros document.
+Limites : les annotations ne sont visibles que dans le Lecteur PDF de Ferrite (pas
+écrites dans le PDF) et sont perdues si le PDF est modifié par un autre programme ; pas
+de liens cliquables ; pas d'impression.

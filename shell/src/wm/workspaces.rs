@@ -680,6 +680,7 @@ impl Ferrite {
         }
         self.popover = None;
         self.dock_menu = None;
+        self.window_menu = None;
         self.dashboard_editing = None;
         self.pressed_light = None;
         let next = self

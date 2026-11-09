@@ -1361,6 +1361,7 @@ impl Ferrite {
                                 .map_or(location, |icon| {
                                     Point::from((icon.loc.x + icon.size.w / 2.0, icon.loc.y))
                                 });
+                            self.window_menu = None;
                             self.dock_menu_pointer = Some(location);
                             self.dock_menu = Some((item.key, entries, anchor));
                             self.popover = Some(Popover::DockMenu);
@@ -1433,6 +1434,7 @@ impl Ferrite {
                 {
                     let entries = self.launcher_menu_entries(&key);
                     if !entries.is_empty() {
+                        self.window_menu = None;
                         self.dock_menu_pointer = None;
                         self.dock_menu = Some((key, entries, location));
                         self.popover = Some(Popover::DockMenu);
@@ -1471,6 +1473,11 @@ impl Ferrite {
             match self.hit_test(location) {
                 Some(Hit::Decoration(window, part)) => {
                     self.focus_window(Some(window.clone()));
+                    // Clic droit sur la barre de titre : menu de la fenêtre.
+                    if button.button == BTN_RIGHT && part == Part::Titlebar {
+                        self.open_window_menu(window, location);
+                        return;
+                    }
                     if button.button == BTN_LEFT
                         && self.on_decoration_press(window, part, location, button.serial)
                     {
@@ -1719,7 +1726,9 @@ impl Ferrite {
             DesktopAction::StopRecording => self.stop_recording(),
             DesktopAction::Island(hit) => self.island_press(hit),
             DesktopAction::DockMenu(index) => {
-                if let Some((key, actions, _)) = self.dock_menu.clone()
+                if self.window_menu_action(index) {
+                    // Menu d'une fenêtre, dessiné comme celui du Dock.
+                } else if let Some((key, actions, _)) = self.dock_menu.clone()
                     && let Some(action) = actions.get(index)
                 {
                     self.dock_menu_action(&key, *action);

@@ -112,6 +112,21 @@ pub fn floating() -> Color32 {
     )
 }
 
+/// Encres du surligneur du Lecteur PDF, dans l'ordre de `MARKER_NAMES`. Les mêmes en
+/// clair et en sombre : une page de PDF reste blanche.
+pub const MARKER_NAMES: [&str; 5] = ["Jaune", "Vert", "Bleu", "Rose", "Orange"];
+
+pub fn marker(index: usize) -> Color32 {
+    const INKS: [Color32; 5] = [
+        Color32::from_rgb(0xFF, 0xD6, 0x0A),
+        Color32::from_rgb(0x34, 0xC7, 0x59),
+        Color32::from_rgb(0x32, 0xAD, 0xE6),
+        Color32::from_rgb(0xFF, 0x5C, 0x8A),
+        Color32::from_rgb(0xFF, 0x95, 0x00),
+    ];
+    INKS[index % INKS.len()]
+}
+
 pub fn floating_ring() -> Color32 {
     tint_ring()
 }
@@ -779,14 +794,17 @@ pub fn segment_background(ui: &egui::Ui, rect: egui::Rect, selected: bool, hover
     }
 }
 
-/// Zone vide qui déplace la fenêtre ; un double-clic l'agrandit ou la rétablit.
+/// Zone vide qui déplace la fenêtre ; un double-clic l'agrandit ou la rétablit, un clic
+/// droit ouvre le menu de la fenêtre (dessiné par ferrite-shell).
 pub fn drag_area(ui: &mut egui::Ui, rect: egui::Rect, salt: &str) {
     let response = ui.interact(
         rect,
         ui.scope_id().with(("deplacer", salt)),
         egui::Sense::click_and_drag(),
     );
-    if response.double_clicked() {
+    if response.secondary_clicked() {
+        ferrite_system::drag::request_window_menu();
+    } else if response.double_clicked() {
         // Basculer uniquement l'état choisi : aucun mouvement de fenêtre ne doit démarrer
         // entre les deux clics.
         match Settings::load().double_click() {

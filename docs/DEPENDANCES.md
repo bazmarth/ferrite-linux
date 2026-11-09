@@ -72,7 +72,7 @@ Liste : `image/config/package-lists/ferrite.list.chroot`. Points notables :
 | `x11-xserver-utils` | `xhost` : programmes lancés par `pkexec` (GParted) affichés sur XWayland |
 | `xsettingsd` | échelle ×2 des programmes GTK sous X11 |
 | `plymouth-label` | écran de démarrage Ferrite (thème `ferrite`) |
-| `poppler-utils` | Lecteur PDF : `pdfinfo` (pages), `pdftoppm` (rendu), `pdftotext` (recherche) |
+| `poppler-utils` | Lecteur PDF : `pdfinfo` (pages), `pdftoppm` (rendu), `pdftotext` (recherche, sélection du texte), `pdftohtml` (plan du document) |
 | `fonts-jetbrains-mono` | police du terminal `foot` (`/etc/xdg/foot/foot.ini`) |
 
 ## Ressources

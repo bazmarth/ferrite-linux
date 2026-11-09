@@ -472,7 +472,8 @@ Reste :
 - Le widget Musique peut chevaucher le widget Système dans la disposition de l'utilisateur.
 - Ouverture du centre de contrôle ~31 ms (une rastérisation complète).
 - `--demo-auth` : le voile sombre du fond ne couvre pas les widgets de l'espace 0.
-- Lecteur PDF : ni sélection du texte ni liens cliquables. Aperçu Markdown : aucun indice
+- Lecteur PDF : pas de liens cliquables ; les annotations restent à côté du PDF
+  (`~/.local/share/ferrite/lecteur-pdf-annotations/`), elles ne sont pas écrites dedans. Aperçu Markdown : aucun indice
   qu'un tableau trop large défile de côté.
 - Le portail ne gère pas `Request.Close` (une demande fermée par l'application).
 - Applications Electron à barre maison (VS Code, Claude) : leurs propres boutons de fenêtre.

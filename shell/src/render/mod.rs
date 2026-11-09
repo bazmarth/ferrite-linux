@@ -1267,7 +1267,9 @@ impl Ferrite {
             called,
             windows: &frames,
             fullscreen: self.top_fullscreen(),
-            launcher_open: matches!(self.popover, Some(Popover::Launcher | Popover::DockMenu)),
+            // Le menu d'une fenêtre emprunte le même panneau sans appeler le Dock.
+            launcher_open: self.popover == Some(Popover::Launcher)
+                || (self.popover == Some(Popover::DockMenu) && self.window_menu.is_none()),
         });
         self.dock_was_shown.set(shown);
         shown
@@ -1629,6 +1631,17 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
             )
         }),
         dock_menu: match (&state.dock_menu, state.popover) {
+            (_, Some(Popover::DockMenu)) if state.window_menu.is_some() => {
+                state
+                    .window_menu
+                    .as_ref()
+                    .map(|(_, actions, anchor)| DockMenuView {
+                        x: anchor.x,
+                        bottom: anchor.y,
+                        entries: actions.iter().map(|action| action.label().to_owned()).collect(),
+                        at_pointer: true,
+                    })
+            }
             (Some((_, actions, anchor)), Some(Popover::DockMenu)) => Some(DockMenuView {
                 x: anchor.x,
                 bottom: anchor.y,

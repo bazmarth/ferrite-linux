@@ -157,6 +157,13 @@ pub struct Ferrite {
         Vec<crate::desktop::launch::DockMenuAction>,
         smithay::utils::Point<f64, smithay::utils::Logical>,
     )>,
+    /// Menu d'une fenêtre (clic droit sur son haut) : fenêtre, choix, et position. Il se
+    /// dessine comme celui du Dock, sous le pointeur.
+    pub window_menu: Option<(
+        Window,
+        Vec<crate::wm::window_menu::WindowMenuAction>,
+        smithay::utils::Point<f64, smithay::utils::Logical>,
+    )>,
     /// Position du clic qui a ouvert ce menu : l'agrandissement y reste figé.
     pub dock_menu_pointer: Option<smithay::utils::Point<f64, smithay::utils::Logical>>,
     /// Fenêtres en train d'être réduites ou rappelées.
@@ -487,6 +494,7 @@ impl Ferrite {
             bar_fast_approach_until: Default::default(),
             dock_was_shown: Default::default(),
             dock_menu: None,
+            window_menu: None,
             window_animations: Default::default(),
             resizing: None,
             volume_held_until: None,

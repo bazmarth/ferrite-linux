@@ -1,6 +1,6 @@
-//! Appels à Poppler (`pdfinfo`, `pdftoppm`, `pdftotext`), toujours depuis un fil
+//! Appels à Poppler (`pdfinfo`, `pdftoppm`, `pdftotext`, `pdftohtml`), toujours depuis un fil
 //! d'arrière-plan : taille de chaque page, rendu d'une page à une largeur donnée, et texte
-//! avec la position de chaque mot (pour la recherche).
+//! avec la position de chaque mot (recherche, sélection), et plan du document.
 
 use std::{io::Cursor, path::Path, process::Command};
 
@@ -204,6 +204,71 @@ pub fn parse_words(output: &str) -> Vec<Vec<Word>> {
     pages
 }
 
+/// Une entrée du plan du document (ses « signets » d'origine).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutlineItem {
+    /// Profondeur : 0 pour un chapitre, 1 pour une section…
+    pub level: usize,
+    /// Page visée, numérotée depuis 0.
+    pub page: usize,
+    pub title: String,
+}
+
+/// Plan du document, vide s'il n'en a pas. `pdftohtml -xml` le donne en entier même quand
+/// on ne lui demande que la première page.
+pub fn load_outline(path: &Path) -> Vec<OutlineItem> {
+    run(
+        "pdftohtml",
+        &[
+            "-xml".as_ref(),
+            "-i".as_ref(),
+            "-stdout".as_ref(),
+            "-f".as_ref(),
+            "1".as_ref(),
+            "-l".as_ref(),
+            "1".as_ref(),
+            path.as_os_str(),
+        ],
+    )
+    .map(|stdout| parse_outline(&String::from_utf8_lossy(&stdout)))
+    .unwrap_or_default()
+}
+
+/// Lit les balises `<outline>` et `<item page="N">` de `pdftohtml -xml`.
+pub fn parse_outline(output: &str) -> Vec<OutlineItem> {
+    let mut items = Vec::new();
+    let mut depth = 0usize;
+    for line in output.lines() {
+        let line = line.trim();
+        if line == "<outline>" {
+            depth += 1;
+        } else if line == "</outline>" {
+            depth = depth.saturating_sub(1);
+        } else if let Some(rest) = line.strip_prefix("<item") {
+            let Some((attributes, title)) = rest.split_once('>') else {
+                continue;
+            };
+            let title = unescape(title.strip_suffix("</item>").unwrap_or(title).trim());
+            let page = attributes
+                .split_once("page=\"")
+                .and_then(|(_, rest)| rest.split_once('"'))
+                .and_then(|(page, _)| page.parse::<usize>().ok())
+                .and_then(|page| page.checked_sub(1));
+            if let Some(page) = page
+                && !title.is_empty()
+                && depth > 0
+            {
+                items.push(OutlineItem {
+                    level: depth - 1,
+                    page,
+                    title,
+                });
+            }
+        }
+    }
+    items
+}
+
 fn unescape(text: &str) -> String {
     text.replace("&lt;", "<")
         .replace("&gt;", ">")
@@ -291,6 +356,21 @@ mod tests {
         assert_eq!(pages[0][1].text, "&");
         assert_eq!(pages[0][0].rect.min, egui::pos2(10.5, 20.0));
         assert!(pages[1].is_empty());
+    }
+
+    #[test]
+    fn lit_le_plan_du_document() {
+        let output = "<pdf2xml>\n<page number=\"1\">\n<text>1. Faux titre</text>\n</page>\n\
+            <outline>\n<item page=\"1\">1. Introduction</item>\n<outline>\n\
+            <item page=\"3\">1.1. Pourquoi &amp; comment</item>\n</outline>\n\
+            <item page=\"9\">2. Suite</item>\n<item>Sans page</item>\n</outline>\n</pdf2xml>";
+        let items = parse_outline(output);
+        assert_eq!(items.len(), 3);
+        assert_eq!((items[0].level, items[0].page), (0, 0));
+        assert_eq!(items[1].title, "1.1. Pourquoi & comment");
+        assert_eq!((items[1].level, items[1].page), (1, 2));
+        assert_eq!((items[2].level, items[2].page), (0, 8));
+        assert!(parse_outline("<pdf2xml>\n</pdf2xml>").is_empty());
     }
 
     #[test]

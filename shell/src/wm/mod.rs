@@ -7,6 +7,7 @@ pub mod keep_above;
 mod move_grab;
 mod resize_grab;
 pub mod switcher;
+pub mod window_menu;
 pub mod workspaces;
 
 pub use move_grab::{BTN_LEFT, BTN_RIGHT, MoveSurfaceGrab};

@@ -137,6 +137,23 @@ impl XdgShellHandler for Ferrite {
         surface.send_repositioned(token);
     }
 
+    /// Clic droit sur la barre qu'un programme dessine lui-même (GTK, Firefox…) : il
+    /// demande le menu de sa fenêtre.
+    fn show_window_menu(
+        &mut self,
+        surface: ToplevelSurface,
+        _seat: wl_seat::WlSeat,
+        _serial: Serial,
+        _location: Point<i32, Logical>,
+    ) {
+        let Some(window) = self.window_for_surface(surface.wl_surface()) else {
+            return;
+        };
+        if let Some(at) = self.pointer_location() {
+            self.open_window_menu(window, at);
+        }
+    }
+
     fn move_request(&mut self, surface: ToplevelSurface, seat: wl_seat::WlSeat, serial: Serial) {
         let Some(seat) = Seat::<Ferrite>::from_resource(&seat) else {
             return;

@@ -22,7 +22,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use ferrite_system::drag::{self, Deposit, Drag, Visit};
+use ferrite_system::drag::{self, Deposit, Drag, Request, Visit};
 use smithay::reexports::wayland_server::Resource;
 use smithay::{
     desktop::Window,
@@ -85,10 +85,13 @@ pub fn listen(handle: &LoopHandle<'static, Ferrite>, display: &str) {
             return;
         }
     };
-    let (sender, channel) = channel::channel::<Drag>();
+    let (sender, channel) = channel::channel::<Request>();
     let inserted = handle.insert_source(channel, |event, _, state| {
-        if let channel::Event::Msg(drag) = event {
-            state.offer_file_drag(drag);
+        if let channel::Event::Msg(request) = event {
+            match request {
+                Request::Drag(drag) => state.offer_file_drag(drag),
+                Request::WindowMenu => state.open_window_menu_at_pointer(),
+            }
             state.request_redraw();
         }
     });
@@ -100,9 +103,9 @@ pub fn listen(handle: &LoopHandle<'static, Ferrite>, display: &str) {
         for stream in listener.incoming().filter_map(Result::ok) {
             let mut text = String::new();
             if stream.take(1 << 20).read_to_string(&mut text).is_ok()
-                && let Some(drag) = Drag::decode(&text)
+                && let Some(request) = Request::decode(&text)
             {
-                let _ = sender.send(drag);
+                let _ = sender.send(request);
             }
         }
     });

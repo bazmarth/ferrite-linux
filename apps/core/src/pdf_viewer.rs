@@ -1,12 +1,17 @@
 //! Lecteur PDF Ferrite. Toutes les pages défilent à la suite ; seules celles à l'écran sont
 //! rendues par Poppler (`pdftoppm`), à la taille exacte où elles s'affichent, donc nettes à
 //! tout zoom. Colonne de miniatures, recherche dans le texte, et liste des documents récents
-//! qui rouvre chacun à la page où on l'avait laissé. Aucune commande bloquante : chaque appel
+//! qui rouvre chacun à la page où on l'avait laissé. Le texte se sélectionne à la souris, se
+//! copie, se surligne, se souligne, se barre et se commente ; notes, signets et plan du
+//! document sont dans la colonne de gauche (`annotate.rs`). Aucune commande bloquante : chaque appel
 //! à Poppler part dans un fil et son résultat revient par un canal.
 
+mod annotate;
+mod annotations;
 mod poppler;
 mod recents;
 mod search;
+mod selection;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -20,9 +25,11 @@ use eframe::egui::{
 };
 
 use self::{
-    poppler::{DocInfo, Word},
+    annotations::{Kind as MarkKind, Notes},
+    poppler::{DocInfo, OutlineItem, Word},
     recents::Recent,
     search::Match,
+    selection::Selection,
 };
 use crate::{
     files::{FilesState, PickerMode},
@@ -53,8 +60,8 @@ const MAX_THUMB_JOBS: usize = 2;
 /// Pages gardées en mémoire de part et d'autre de celles à l'écran.
 const KEEP_AROUND: usize = 3;
 /// Colonne des miniatures.
-const SIDEBAR_WIDTH: f32 = 176.0;
-const THUMB_WIDTH: f32 = 116.0;
+const SIDEBAR_WIDTH: f32 = 216.0;
+const THUMB_WIDTH: f32 = 132.0;
 const THUMB_LABEL: f32 = 24.0;
 const THUMB_GAP: f32 = 12.0;
 
@@ -80,6 +87,39 @@ enum Loaded {
         image: Result<egui::ColorImage, String>,
     },
     Words(Result<Vec<Vec<Word>>, String>),
+    Notes {
+        key: Option<String>,
+        notes: Notes,
+    },
+    Outline(Vec<OutlineItem>),
+}
+
+/// Ce que fait un clic sur la page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Tool {
+    /// Lire et sélectionner du texte.
+    Read,
+    /// Surligneur : chaque sélection est marquée aussitôt.
+    Marker,
+    /// Le prochain clic pose une note.
+    Note,
+}
+
+/// Contenu de la colonne de gauche.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Side {
+    Pages,
+    Notes,
+    Outline,
+}
+
+/// Annotation dont la bulle de commentaire est ouverte.
+struct Editing {
+    id: u64,
+    /// Donner le clavier au champ de commentaire à la prochaine image.
+    focus: bool,
+    /// L'état d'avant est déjà gardé pour Ctrl+Z (une frappe ne le garde qu'une fois).
+    undo_kept: bool,
 }
 
 struct Rendered {
@@ -197,6 +237,27 @@ pub struct PdfViewerState {
     title: String,
     keyboard_zoom_off: bool,
     info_requested: bool,
+    /// Texte choisi à la souris, et vrai tant que le bouton est enfoncé.
+    selection: Option<Selection>,
+    selecting: bool,
+    /// Annotations et signets du document, et le nom de leur fichier (son empreinte).
+    notes: Notes,
+    notes_key: Option<String>,
+    undo: Vec<Notes>,
+    redo: Vec<Notes>,
+    tool: Tool,
+    /// Encre et trait du surligneur : les derniers choisis.
+    ink: usize,
+    mark: MarkKind,
+    editing: Option<Editing>,
+    side: Side,
+    outline: Vec<OutlineItem>,
+    /// Message bref et l'heure de son apparition.
+    message: Option<(String, f64)>,
+    /// Page et point (en points de PDF) du dernier clic droit.
+    menu_at: Option<(usize, Pos2)>,
+    /// Pages à l'écran et leur rectangle, à cette image.
+    page_rects: Vec<(usize, Rect)>,
     /// Demandes de la barre d'outils, traitées par `ViewerApp`.
     pub request_open: bool,
     pub request_recent: Option<PathBuf>,
@@ -233,6 +294,21 @@ impl PdfViewerState {
             title: String::new(),
             keyboard_zoom_off: false,
             info_requested: false,
+            selection: None,
+            selecting: false,
+            notes: Notes::default(),
+            notes_key: None,
+            undo: Vec::new(),
+            redo: Vec::new(),
+            tool: Tool::Read,
+            ink: 0,
+            mark: MarkKind::Highlight,
+            editing: None,
+            side: Side::Pages,
+            outline: Vec::new(),
+            message: None,
+            menu_at: None,
+            page_rects: Vec::new(),
             request_open: false,
             request_recent: None,
             request_clear_recents: false,
@@ -250,13 +326,18 @@ impl PdfViewerState {
         if path == self.path {
             return;
         }
+        self.close_editor();
         let (zoom, sidebar) = (self.zoom, self.sidebar);
+        let (side, ink, mark) = (self.side, self.ink, self.mark);
         let generation = self.generation.wrapping_add(1);
         let keyboard_zoom_off = self.keyboard_zoom_off;
         *self = Self::new(path, start_page);
         self.generation = generation;
         self.zoom = zoom;
         self.sidebar = sidebar;
+        self.side = side;
+        self.ink = ink;
+        self.mark = mark;
         self.keyboard_zoom_off = keyboard_zoom_off;
     }
 
@@ -276,6 +357,19 @@ impl PdfViewerState {
     fn load_info(&mut self, ctx: &egui::Context) {
         self.error = None;
         self.spawn(ctx, |path| Loaded::Info(poppler::load_info(path)));
+    }
+
+    /// À l'ouverture : les annotations gardées pour ce document, son plan, et son texte
+    /// (sélection et recherche).
+    fn load_extras(&mut self, ctx: &egui::Context) {
+        self.spawn(ctx, |path| {
+            let key = annotations::fingerprint(path);
+            let notes = key.as_deref().map(annotations::load).unwrap_or_default();
+            Loaded::Notes { key, notes }
+        });
+        self.spawn(ctx, |path| Loaded::Outline(poppler::load_outline(path)));
+        self.search.loading = true;
+        self.spawn(ctx, |path| Loaded::Words(poppler::load_words(path)));
     }
 
     fn pump(&mut self, ctx: &egui::Context) {
@@ -327,10 +421,19 @@ impl PdfViewerState {
                         Ok(words) => {
                             self.search.words = Some(words);
                             self.search.searched.clear();
+                            self.demo();
                         }
                         Err(error) => self.search.error = Some(error),
                     }
                 }
+                Loaded::Notes { key, notes } => {
+                    self.notes_key = key;
+                    // Une annotation posée avant la fin de la lecture n'est pas perdue.
+                    if self.notes.is_empty() {
+                        self.notes = notes;
+                    }
+                }
+                Loaded::Outline(outline) => self.outline = outline,
             }
         }
     }
@@ -404,8 +507,17 @@ impl PdfViewerState {
         if command && pressed(Key::F) {
             self.open_search(ctx);
         }
-        if self.search.open && pressed(Key::Escape) {
-            self.search.open = false;
+        if pressed(Key::Escape) {
+            // Du plus proche au plus lointain : la bulle, la sélection, l'outil, la recherche.
+            if self.editing.is_some() {
+                self.close_editor();
+            } else if self.selection.is_some() {
+                self.selection = None;
+            } else if self.tool != Tool::Read {
+                self.tool = Tool::Read;
+            } else {
+                self.search.open = false;
+            }
         }
         // Ctrl + molette, ou pincement du pavé tactile.
         let pinch = ctx.input(|input| input.zoom_delta());
@@ -414,6 +526,46 @@ impl PdfViewerState {
         }
         if typing || self.info.is_none() {
             return;
+        }
+        // Ctrl+C arrive comme un événement « copier », pas comme une touche.
+        let copy = ctx.input(|input| {
+            input
+                .events
+                .iter()
+                .any(|event| matches!(event, egui::Event::Copy))
+        });
+        if copy || (command && pressed(Key::C)) {
+            self.copy_selection(ctx);
+        }
+        if command && pressed(Key::A) {
+            self.select_page();
+        }
+        if command && pressed(Key::D) {
+            self.toggle_bookmark(ctx, self.current);
+        }
+        if command && pressed(Key::Z) {
+            if shift {
+                self.redo(ctx);
+            } else {
+                self.undo(ctx);
+            }
+        }
+        if command && pressed(Key::Y) {
+            self.redo(ctx);
+        }
+        if !command && pressed(Key::H) {
+            self.tool = if self.tool == Tool::Marker {
+                Tool::Read
+            } else {
+                Tool::Marker
+            };
+        }
+        if !command && pressed(Key::N) {
+            self.tool = if self.tool == Tool::Note {
+                Tool::Read
+            } else {
+                Tool::Note
+            };
         }
         if pressed(Key::Plus) || pressed(Key::Equals) {
             self.step_zoom(true);
@@ -529,6 +681,7 @@ impl PdfViewerState {
         if !self.info_requested {
             self.info_requested = true;
             self.load_info(&ctx);
+            self.load_extras(&ctx);
         }
         self.pump(&ctx);
         self.keys(&ctx);
@@ -542,7 +695,7 @@ impl PdfViewerState {
             self.search_bar(ui, &ctx);
         }
         if self.sidebar && self.info.is_some() {
-            self.thumbnails(ui, &ctx);
+            self.side_panel(ui, &ctx);
         }
         egui::CentralPanel::default()
             .frame(egui::Frame::new().fill(style::stage()))
@@ -583,7 +736,8 @@ impl PdfViewerState {
     }
 
     fn pages_view(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        let view = ui.max_rect().size();
+        let view_rect = ui.max_rect();
+        let view = view_rect.size();
         let scale = self.scale_for(view);
         let layout = Layout::new(
             &self
@@ -634,10 +788,13 @@ impl PdfViewerState {
                 viewport.top() - viewport.height(),
                 viewport.bottom() + viewport.height(),
             );
+            self.page_rects.clear();
             for page in visible.clone() {
                 let size = layout.sizes[page];
                 let rect =
                     Rect::from_min_size(origin + vec2((width - size.x) / 2.0, layout.tops[page]), size);
+                self.page_rects.push((page, rect));
+                self.page_input(ui, ctx, page, rect);
                 self.paint_page(ui, page, rect);
             }
             // Rendus à la taille d'affichage : d'abord les pages à l'écran, puis leurs voisines
@@ -693,6 +850,10 @@ impl PdfViewerState {
                 self.follow_thumb = true;
             }
         }
+        self.track_selection(ctx, view_rect);
+        self.selection_bar(ctx, view_rect);
+        self.editor(ctx, view_rect);
+        self.paint_message(ui, view_rect);
     }
 
     fn paint_page(&mut self, ui: &mut egui::Ui, page: usize, rect: Rect) {
@@ -722,6 +883,7 @@ impl PdfViewerState {
                 egui::Spinner::new(),
             );
         }
+        self.paint_marks(ui, page, rect);
         // Résultats de recherche : surlignés, le résultat en cours plus marqué.
         if self.search.open {
             let painter = ui.painter();
@@ -765,108 +927,91 @@ impl PdfViewerState {
         }
         let total = y;
         let mut pick = None;
-        egui::Panel::left(ui.scope_id().with("miniatures-pdf"))
-            .resizable(false)
-            .exact_size(SIDEBAR_WIDTH)
-            .frame(egui::Frame::new().fill(style::sidebar_color()))
-            .show(ui, |ui| {
-                let full = ui.max_rect();
-                ui.painter().vline(
-                    full.right() - 0.5,
-                    full.y_range(),
-                    Stroke::new(1.0, style::line()),
-                );
-                let pixels = (THUMB_WIDTH * ctx.pixels_per_point()).ceil() as u32;
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .id_salt("miniatures")
-                    .show_viewport(ui, |ui, viewport| {
-                        ui.set_min_size(vec2(SIDEBAR_WIDTH, total));
-                        let origin = ui.min_rect().min;
-                        let first = tops.partition_point(|top| *top + THUMB_WIDTH * 1.6 < viewport.top());
-                        let last = tops.partition_point(|top| *top < viewport.bottom());
-                        for page in first..last.min(sizes.len()) {
-                            let image = Rect::from_min_size(
-                                origin + vec2((SIDEBAR_WIDTH - THUMB_WIDTH) / 2.0, tops[page]),
-                                vec2(THUMB_WIDTH, heights[page]),
-                            );
-                            let item = Rect::from_min_max(
-                                image.min - vec2(10.0, 6.0),
-                                pos2(image.max.x + 10.0, image.max.y + THUMB_LABEL),
-                            );
-                            let response = ui
-                                .interact(item, ui.scope_id().with(("miniature", page)), Sense::click())
-                                .on_hover_cursor(egui::CursorIcon::PointingHand);
-                            if response.clicked() {
-                                pick = Some(page);
-                            }
-                            let selected = page == self.current;
-                            let painter = ui.painter();
-                            if response.hovered() && !selected {
-                                painter.rect_filled(item, CornerRadius::same(8), style::tint(10));
-                            }
-                            painter.rect_filled(image, CornerRadius::same(2), Color32::WHITE);
-                            if let Some(texture) = self.thumbs.get(&page) {
-                                let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
-                                painter.image(texture.id(), image, uv, Color32::WHITE);
-                            } else if !self.pending_thumbs.contains(&page)
-                                && self.pending_thumbs.len() < MAX_THUMB_JOBS
-                            {
-                                self.pending_thumbs.insert(page);
-                                self.spawn(ctx, move |path| Loaded::Thumb {
-                                    page,
-                                    image: poppler::render(path, page + 1, pixels),
-                                });
-                            }
-                            let ring = if selected {
-                                Stroke::new(2.5, style::accent())
-                            } else {
-                                Stroke::new(1.0, style::tint(30))
-                            };
-                            painter.rect_stroke(
-                                image,
-                                CornerRadius::same(2),
-                                ring,
-                                egui::StrokeKind::Outside,
-                            );
-                            let label = pos2(image.center().x, image.bottom() + THUMB_LABEL / 2.0 + 1.0);
-                            let number = (page + 1).to_string();
-                            if selected {
-                                let galley = painter.layout_no_wrap(
-                                    number.clone(),
-                                    egui::FontId::proportional(12.0),
-                                    style::accent_text(),
-                                );
-                                let pill = Rect::from_center_size(label, vec2(galley.size().x + 14.0, 18.0));
-                                painter.rect_filled(pill, CornerRadius::same(9), style::accent());
-                                painter.galley(label - galley.size() / 2.0, galley, style::accent_text());
-                            } else {
-                                painter.text(
-                                    label,
-                                    egui::Align2::CENTER_CENTER,
-                                    number,
-                                    egui::FontId::proportional(12.0),
-                                    style::text_secondary(),
-                                );
-                            }
-                            if selected && self.follow_thumb {
-                                ui.scroll_to_rect(item, None);
-                            }
-                        }
-                        if self.follow_thumb && !(first..last).contains(&self.current) {
-                            if let Some(top) = tops.get(self.current) {
-                                let target = Rect::from_min_size(
-                                    origin + vec2(0.0, *top),
-                                    vec2(SIDEBAR_WIDTH, heights[self.current] + THUMB_LABEL),
-                                );
-                                ui.scroll_to_rect(target, Some(egui::Align::Center));
-                            }
-                        } else {
-                            self.follow_thumb = false;
-                        }
-                        let keep = first.saturating_sub(30)..last + 30;
-                        self.thumbs.retain(|page, _| keep.contains(page));
-                    });
+        let pixels = (THUMB_WIDTH * ctx.pixels_per_point()).ceil() as u32;
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .id_salt("miniatures")
+            .show_viewport(ui, |ui, viewport| {
+                ui.set_min_size(vec2(SIDEBAR_WIDTH, total));
+                let origin = ui.min_rect().min;
+                let first = tops.partition_point(|top| *top + THUMB_WIDTH * 1.6 < viewport.top());
+                let last = tops.partition_point(|top| *top < viewport.bottom());
+                for page in first..last.min(sizes.len()) {
+                    let image = Rect::from_min_size(
+                        origin + vec2((SIDEBAR_WIDTH - THUMB_WIDTH) / 2.0, tops[page]),
+                        vec2(THUMB_WIDTH, heights[page]),
+                    );
+                    let item = Rect::from_min_max(
+                        image.min - vec2(10.0, 6.0),
+                        pos2(image.max.x + 10.0, image.max.y + THUMB_LABEL),
+                    );
+                    let response = ui
+                        .interact(item, ui.scope_id().with(("miniature", page)), Sense::click())
+                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                    if response.clicked() {
+                        pick = Some(page);
+                    }
+                    let selected = page == self.current;
+                    let painter = ui.painter();
+                    if response.hovered() && !selected {
+                        painter.rect_filled(item, CornerRadius::same(8), style::tint(10));
+                    }
+                    painter.rect_filled(image, CornerRadius::same(2), Color32::WHITE);
+                    if let Some(texture) = self.thumbs.get(&page) {
+                        let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+                        painter.image(texture.id(), image, uv, Color32::WHITE);
+                    } else if !self.pending_thumbs.contains(&page)
+                        && self.pending_thumbs.len() < MAX_THUMB_JOBS
+                    {
+                        self.pending_thumbs.insert(page);
+                        self.spawn(ctx, move |path| Loaded::Thumb {
+                            page,
+                            image: poppler::render(path, page + 1, pixels),
+                        });
+                    }
+                    let ring = if selected {
+                        Stroke::new(2.5, style::accent())
+                    } else {
+                        Stroke::new(1.0, style::tint(30))
+                    };
+                    painter.rect_stroke(image, CornerRadius::same(2), ring, egui::StrokeKind::Outside);
+                    let label = pos2(image.center().x, image.bottom() + THUMB_LABEL / 2.0 + 1.0);
+                    let number = (page + 1).to_string();
+                    if selected {
+                        let galley = painter.layout_no_wrap(
+                            number.clone(),
+                            egui::FontId::proportional(12.0),
+                            style::accent_text(),
+                        );
+                        let pill = Rect::from_center_size(label, vec2(galley.size().x + 14.0, 18.0));
+                        painter.rect_filled(pill, CornerRadius::same(9), style::accent());
+                        painter.galley(label - galley.size() / 2.0, galley, style::accent_text());
+                    } else {
+                        painter.text(
+                            label,
+                            egui::Align2::CENTER_CENTER,
+                            number,
+                            egui::FontId::proportional(12.0),
+                            style::text_secondary(),
+                        );
+                    }
+                    if selected && self.follow_thumb {
+                        ui.scroll_to_rect(item, None);
+                    }
+                }
+                if self.follow_thumb && !(first..last).contains(&self.current) {
+                    if let Some(top) = tops.get(self.current) {
+                        let target = Rect::from_min_size(
+                            origin + vec2(0.0, *top),
+                            vec2(SIDEBAR_WIDTH, heights[self.current] + THUMB_LABEL),
+                        );
+                        ui.scroll_to_rect(target, Some(egui::Align::Center));
+                    }
+                } else {
+                    self.follow_thumb = false;
+                }
+                let keep = first.saturating_sub(30)..last + 30;
+                self.thumbs.retain(|page, _| keep.contains(page));
             });
         if let Some(page) = pick {
             self.go_to(page);
@@ -1031,6 +1176,61 @@ impl PdfViewerState {
                 }
             }
             ui.add_space(6.0);
+            let marked = ready && self.notes.has_bookmark(self.current);
+            if icon_button(
+                ui,
+                Glyph::Bookmark,
+                marked,
+                "Signet sur cette page (Ctrl+D)",
+                ready,
+            )
+            .clicked()
+            {
+                self.toggle_bookmark(ctx, self.current);
+            }
+            if icon_button(
+                ui,
+                Glyph::Note,
+                self.tool == Tool::Note,
+                "Note : cliquez ensuite sur la page (N)",
+                ready,
+            )
+            .clicked()
+            {
+                self.tool = if self.tool == Tool::Note {
+                    Tool::Read
+                } else {
+                    Tool::Note
+                };
+            }
+            // Encre du surligneur : une pastille qui ouvre le choix de la couleur et du trait.
+            let (dot, ink) = ui.allocate_exact_size(vec2(18.0, kit::TOOL), Sense::click());
+            let ink = ink.on_hover_text("Couleur et trait du surligneur");
+            if ink.hovered() {
+                ui.painter()
+                    .rect_filled(dot, CornerRadius::same(6), style::tint(kit::TOOL_HOVER));
+            }
+            ui.painter()
+                .circle_filled(dot.center(), 5.5, style::marker(self.ink));
+            ui.painter()
+                .circle_stroke(dot.center(), 5.5, Stroke::new(1.0, style::tint(40)));
+            egui::Popup::menu(&ink).show(|ui| self.ink_menu(ui));
+            if icon_button(
+                ui,
+                Glyph::Marker,
+                self.tool == Tool::Marker,
+                "Surligneur : marque chaque sélection (H)",
+                ready,
+            )
+            .clicked()
+            {
+                self.tool = if self.tool == Tool::Marker {
+                    Tool::Read
+                } else {
+                    Tool::Marker
+                };
+            }
+            ui.add_space(6.0);
             if icon_button(ui, Glyph::Plus, false, "Zoom avant (+)", ready).clicked() {
                 self.step_zoom(true);
             }
@@ -1162,6 +1362,16 @@ enum Glyph {
     Clock,
     Folder,
     Close,
+    Marker,
+    Note,
+    Bookmark,
+    Underline,
+    Strike,
+    Comment,
+    Copy,
+    Trash,
+    /// Petite croix (retirer une ligne d'une liste).
+    Small,
 }
 
 /// Symbole au trait centré sur `c`, dans le style de ceux de la Visionneuse.
@@ -1237,6 +1447,124 @@ fn paint_glyph(painter: &egui::Painter, c: Pos2, glyph: Glyph, color: Color32) {
         Glyph::Close => {
             painter.line_segment([p(-4.5, -4.5), p(4.5, 4.5)], stroke);
             painter.line_segment([p(4.5, -4.5), p(-4.5, 4.5)], stroke);
+        }
+        Glyph::Small => {
+            let thin = Stroke::new(1.5, color);
+            painter.line_segment([p(-3.5, -3.5), p(3.5, 3.5)], thin);
+            painter.line_segment([p(3.5, -3.5), p(-3.5, 3.5)], thin);
+        }
+        Glyph::Marker => {
+            // Feutre en biais, et le trait qu'il laisse.
+            painter.add(egui::Shape::closed_line(
+                vec![p(2.5, -7.0), p(6.5, -3.0), p(-0.5, 4.0), p(-4.5, 0.0)],
+                Stroke::new(1.5, color),
+            ));
+            painter.add(egui::Shape::closed_line(
+                vec![p(-4.5, 0.0), p(-0.5, 4.0), p(-5.5, 5.0)],
+                Stroke::new(1.5, color),
+            ));
+            painter.line_segment([p(-7.0, 7.5), p(7.0, 7.5)], Stroke::new(2.0, color));
+        }
+        Glyph::Note => {
+            // Feuillet au coin replié.
+            painter.add(egui::Shape::closed_line(
+                vec![
+                    p(-6.5, -6.5),
+                    p(6.5, -6.5),
+                    p(6.5, 2.0),
+                    p(2.0, 6.5),
+                    p(-6.5, 6.5),
+                ],
+                Stroke::new(1.5, color),
+            ));
+            painter.line(
+                vec![p(6.5, 2.0), p(2.0, 2.0), p(2.0, 6.5)],
+                Stroke::new(1.3, color),
+            );
+            painter.line_segment([p(-3.5, -3.0), p(3.5, -3.0)], Stroke::new(1.3, color));
+            painter.line_segment([p(-3.5, 0.0), p(0.0, 0.0)], Stroke::new(1.3, color));
+        }
+        Glyph::Bookmark => {
+            painter.add(egui::Shape::closed_line(
+                vec![
+                    p(-4.5, -7.0),
+                    p(4.5, -7.0),
+                    p(4.5, 7.0),
+                    p(0.0, 3.0),
+                    p(-4.5, 7.0),
+                ],
+                Stroke::new(1.6, color),
+            ));
+        }
+        Glyph::Underline => {
+            painter.line(
+                vec![
+                    p(-4.0, -6.5),
+                    p(-4.0, -1.0),
+                    p(-2.0, 2.0),
+                    p(2.0, 2.0),
+                    p(4.0, -1.0),
+                    p(4.0, -6.5),
+                ],
+                stroke,
+            );
+            painter.line_segment([p(-5.5, 6.0), p(5.5, 6.0)], stroke);
+        }
+        Glyph::Strike => {
+            painter.line(
+                vec![
+                    p(4.0, -4.5),
+                    p(1.5, -6.5),
+                    p(-2.0, -6.5),
+                    p(-4.0, -4.0),
+                    p(-2.0, -1.0),
+                ],
+                stroke,
+            );
+            painter.line(
+                vec![p(2.0, 1.0), p(4.0, 4.0), p(2.0, 6.5), p(-1.5, 6.5), p(-4.0, 4.5)],
+                stroke,
+            );
+            painter.line_segment([p(-7.0, 0.0), p(7.0, 0.0)], stroke);
+        }
+        Glyph::Comment => {
+            painter.add(egui::Shape::closed_line(
+                vec![
+                    p(-7.0, -6.0),
+                    p(7.0, -6.0),
+                    p(7.0, 3.0),
+                    p(0.0, 3.0),
+                    p(-3.5, 6.5),
+                    p(-3.5, 3.0),
+                    p(-7.0, 3.0),
+                ],
+                Stroke::new(1.5, color),
+            ));
+        }
+        Glyph::Copy => {
+            let back = Rect::from_min_max(p(-6.5, -6.5), p(2.5, 2.5));
+            let front = Rect::from_min_max(p(-2.5, -2.5), p(6.5, 6.5));
+            painter.line(
+                vec![back.left_bottom(), back.left_top(), back.right_top()],
+                Stroke::new(1.5, color),
+            );
+            painter.rect_stroke(
+                front,
+                CornerRadius::same(2),
+                Stroke::new(1.5, color),
+                egui::StrokeKind::Middle,
+            );
+        }
+        Glyph::Trash => {
+            painter.line_segment([p(-6.5, -4.5), p(6.5, -4.5)], stroke);
+            painter.line(
+                vec![p(-2.0, -4.5), p(-2.0, -7.0), p(2.0, -7.0), p(2.0, -4.5)],
+                Stroke::new(1.5, color),
+            );
+            painter.line(
+                vec![p(-5.0, -4.5), p(-4.0, 7.0), p(4.0, 7.0), p(5.0, -4.5)],
+                Stroke::new(1.5, color),
+            );
         }
     }
 }

@@ -16,7 +16,8 @@ sans redémarrer. L'écran s'assombrit progressivement avant le verrouillage et 
 | Restaurer ou réduire | Super + ↓ | clic du milieu sur la barre de titre (réduire) |
 | Réduire | Super + M | bouton – (à gauche des trois) |
 | Masquer l'application | Super + H | — |
-| Garder la fenêtre toujours au-dessus des autres (ou arrêter) | Super + Maj + T | clic droit sur l'icône du Dock → « Toujours au-dessus » |
+| Garder la fenêtre toujours au-dessus des autres (ou arrêter) | Super + Maj + T | clic droit sur le haut de la fenêtre ou sur l'icône du Dock → « Toujours au-dessus » |
+| Menu de la fenêtre (toujours au-dessus, réduire, agrandir, fermer) | — | clic droit sur le haut de la fenêtre |
 | Moitié, deux tiers puis tiers | Super + ← ou →, répété | glisser vers le bord |
 | Tiers | Super + Alt + 1, 2, 3 | — |
 | Quarts | — | glisser vers un coin |
@@ -93,4 +94,10 @@ dialogue.
 | Lecteur PDF | Miniatures des pages | F9 |
 | Lecteur PDF | Zoom | + / −, Ctrl + molette, pincement |
 | Lecteur PDF | Défiler | Page préc. / suiv., Espace, flèches, Début / Fin |
+| Lecteur PDF | Sélectionner du texte | glisser ; double clic : le mot ; triple clic : la ligne ; Maj + clic : étendre |
+| Lecteur PDF | Copier la sélection, tout sélectionner sur la page | Ctrl + C, Ctrl + A |
+| Lecteur PDF | Surligneur (marque chaque sélection), note à poser | H, N |
+| Lecteur PDF | Signet sur la page lue | Ctrl + D |
+| Lecteur PDF | Annuler / rétablir une annotation | Ctrl + Z, Ctrl + Maj + Z |
+| Lecteur PDF | Fermer la bulle, lâcher la sélection ou l'outil | Échap |
 | Sélecteur de fichiers | Valider / annuler | Entrée / Échap (Ctrl pour choisir plusieurs fichiers) |

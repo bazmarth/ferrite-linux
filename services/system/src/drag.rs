@@ -52,12 +52,41 @@ impl Drag {
 
     /// Annonce le glisser à ferrite-shell ; faux s'il n'écoute pas (autre compositeur).
     pub fn announce(&self) -> bool {
-        let Some(display) = env::var_os("WAYLAND_DISPLAY") else {
-            return false;
-        };
-        UnixStream::connect(socket_path(&display.to_string_lossy()))
-            .and_then(|mut stream| stream.write_all(self.encode().as_bytes()))
-            .is_ok()
+        send_to_shell(&self.encode())
+    }
+}
+
+/// Écrit `text` sur la prise de ferrite-shell ; faux s'il n'écoute pas.
+fn send_to_shell(text: &str) -> bool {
+    let Some(display) = env::var_os("WAYLAND_DISPLAY") else {
+        return false;
+    };
+    UnixStream::connect(socket_path(&display.to_string_lossy()))
+        .and_then(|mut stream| stream.write_all(text.as_bytes()))
+        .is_ok()
+}
+
+const WINDOW_MENU_HEADER: &str = "menu-fenetre";
+
+/// Demande à ferrite-shell le menu de la fenêtre sous le pointeur (clic droit sur le haut
+/// d'une application Ferrite, qui dessine elle-même sa barre) ; faux s'il n'écoute pas.
+pub fn request_window_menu() -> bool {
+    send_to_shell(&format!("{WINDOW_MENU_HEADER}\n"))
+}
+
+/// Ce qu'une application Ferrite envoie sur la prise de ferrite-shell.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Request {
+    Drag(Drag),
+    WindowMenu,
+}
+
+impl Request {
+    pub fn decode(text: &str) -> Option<Request> {
+        if text.lines().next() == Some(WINDOW_MENU_HEADER) {
+            return Some(Request::WindowMenu);
+        }
+        Drag::decode(text).map(Request::Drag)
     }
 }
 

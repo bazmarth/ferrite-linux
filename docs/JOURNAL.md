@@ -3075,6 +3075,21 @@ imprimante installée ni trouvée).
 Pas vérifié : avec une vraie imprimante (aucune autour du PC) : liste, ajout par `pkexec`,
 page de test, menu Options à l'écran.
 
+## 2026-11-09 — Installation de développement : droits du système réparés
+
+Vu pendant l'installation de CUPS (« unsafe path transition / (owned by bazoum) ») : `/`,
+`/etc`, `/usr` et plusieurs sous-dossiers appartenaient à l'utilisateur avec les droits
+777, ainsi que les fichiers de Ferrite dans `/etc` et `/usr` (connexion automatique,
+services, profil). Cause : `tools/install-dev/inside.sh` copiait `includes.chroot` par
+`cp -a` depuis le disque NTFS (tout y est à l'utilisateur, en 777).
+- Script corrigé : `cp -r --no-preserve=mode,ownership` (fichiers à root, 644, dossiers
+  755, dossiers existants inchangés), puis 755 pour les scripts `usr/local/bin/ferrite-*`.
+- L'image (`tools/usb.sh`) n'est pas touchée : elle copie en root sans garder les droits.
+- Le PC : propriétaires de `/`, `/etc`, `/usr`… rendus à root par l'utilisateur ; droits et
+  fichiers restants à réparer par les commandes données dans la conversation.
+Vérifié : syntaxe du script (`sh -n`) ; liste complète des éléments concernés (15 à
+l'utilisateur, 6 dossiers ouverts à tous). Pas vérifié : une nouvelle installation.
+
 ## 2026-11-09 — Paramètres : gestion des comptes et images de profil
 
 Demande : gérer les comptes depuis l'interface (ajout, suppression, mot de passe…), puis

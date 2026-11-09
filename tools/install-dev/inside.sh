@@ -97,7 +97,12 @@ root_uuid=${FERRITE_ROOT_UUID:?}
 mkdir -p "$target/media/FICHIERS"
 
 say "Fichiers du bureau Ferrite"
-cp -a /src/image/config/includes.chroot/. "$target/"
+# Pas de `cp -a` : le dépôt est souvent sur le disque NTFS, où tout appartient à
+# l'utilisateur avec les droits 777 ; `cp -a` les recopiait sur /, /etc et /usr du système.
+# Ici, les fichiers appartiennent à root (644, dossiers 755) et les dossiers déjà là
+# gardent leurs droits ; seuls les scripts de usr/local/bin sont exécutables.
+cp -r --no-preserve=mode,ownership /src/image/config/includes.chroot/. "$target/"
+chmod 0755 "$target"/usr/local/bin/ferrite-*
 install -m 0755 /src/target/release/ferrite-shell "$target/usr/local/bin/ferrite-shell"
 install -m 0755 /src/target/release/ferrite-apps "$target/usr/local/bin/ferrite-apps"
 install -m 0755 /src/target/release/ferrite-visage "$target/usr/local/bin/ferrite-visage"

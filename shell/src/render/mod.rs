@@ -1441,8 +1441,14 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
                     running: state.app_running(&key),
                 })
                 .collect(),
+            shortcuts: state.shortcut_views(),
         },
         desktop_menu: state.desktop_menu,
+        desktop_menu_entries: state
+            .desktop_menu_items()
+            .into_iter()
+            .map(|item| item.label().to_owned())
+            .collect(),
         menu_pointer: state
             .pointer_location()
             .filter(|_| matches!(state.popover, Some(Popover::DockMenu | Popover::DesktopMenu)))
@@ -1972,7 +1978,7 @@ fn clipboard_view(state: &Ferrite) -> ClipboardView {
 }
 
 /// Icône d'un fichier copié, d'après son extension.
-fn file_icon(path: &std::path::Path) -> &'static str {
+pub(crate) fn file_icon(path: &std::path::Path) -> &'static str {
     if path.is_dir() {
         return "places-folder";
     }

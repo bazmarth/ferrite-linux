@@ -25,6 +25,7 @@ pub mod network;
 pub mod night;
 pub mod power;
 pub mod rfkill;
+pub mod shortcuts;
 pub mod sounds;
 pub mod time;
 pub mod weather;

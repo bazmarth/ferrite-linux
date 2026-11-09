@@ -385,3 +385,13 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
   de moins d'un jour et que l'événement n'est pas fini. Le service s'arrête avec le bus de
   session. Le Calendrier n'est pas épinglé au Dock d'origine (comme l'Horloge) : le Dock
   des utilisateurs ne change pas.
+- **2026-11-09 — Raccourcis sur le bureau des widgets.** À la demande, on revient en partie
+  sur « le bureau n'a plus d'icônes » : applications, dossiers et fichiers peuvent avoir un
+  raccourci, posé sur le bureau 0 (celui des widgets, où aucune fenêtre ne s'ouvre), en
+  colonnes depuis le coin haut droit, sous les widgets. Un seul clic ouvre, comme le Dock.
+  La liste est dans `~/.config/ferrite/raccourcis-bureau` (une ligne par raccourci,
+  `application …` ou `chemin …`), écrite par renommage et relue par le fil système quand
+  elle change : Fichiers y ajoute sans parler au bureau. Pas de place libre ni de glisser
+  pour l'instant (ordre d'ajout) ; un raccourci recouvert par un widget n'est ni dessiné ni
+  cliquable. Un raccourci dont l'application ou le chemin a disparu reste, nom estompé,
+  avec seulement « Retirer du bureau ».

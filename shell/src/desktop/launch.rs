@@ -24,6 +24,9 @@ pub enum DockMenuAction {
     NewWindow,
     Pin,
     Unpin,
+    /// Raccourci de l'application sur le bureau des widgets.
+    AddToDesktop,
+    RemoveFromDesktop,
     Quit,
 }
 
@@ -33,6 +36,8 @@ impl DockMenuAction {
             DockMenuAction::NewWindow => "Nouvelle fenêtre",
             DockMenuAction::Pin => "Garder dans le Dock",
             DockMenuAction::Unpin => "Retirer du Dock",
+            DockMenuAction::AddToDesktop => "Ajouter au bureau",
+            DockMenuAction::RemoveFromDesktop => "Retirer du bureau",
             DockMenuAction::Quit => "Quitter",
         }
     }
@@ -427,11 +432,37 @@ impl Ferrite {
             } else {
                 DockMenuAction::Pin
             });
+            entries.push(self.desktop_menu_action_for(&item.key));
         }
         if item.running {
             entries.push(DockMenuAction::Quit);
         }
         entries
+    }
+
+    /// « Ajouter au bureau » ou « Retirer du bureau », selon qu'il y est déjà.
+    fn desktop_menu_action_for(&self, key: &AppKey) -> DockMenuAction {
+        if self.app_on_desktop(key) {
+            DockMenuAction::RemoveFromDesktop
+        } else {
+            DockMenuAction::AddToDesktop
+        }
+    }
+
+    /// Menu d'une application du menu Applications (clic droit) : Dock et bureau.
+    pub fn launcher_menu_entries(&self, key: &AppKey) -> Vec<DockMenuAction> {
+        if matches!(key, AppKey::Other(_)) || *key == AppKey::Builtin(App::TRASH) {
+            return Vec::new();
+        }
+        let pinned = self.pinned_apps().contains(key);
+        vec![
+            if pinned {
+                DockMenuAction::Unpin
+            } else {
+                DockMenuAction::Pin
+            },
+            self.desktop_menu_action_for(key),
+        ]
     }
 
     /// Choix dans le menu d'une case du Dock.
@@ -452,6 +483,8 @@ impl Ferrite {
                 }
                 self.save_dock_pinned(pinned);
             }
+            DockMenuAction::AddToDesktop => self.set_app_on_desktop(key, true),
+            DockMenuAction::RemoveFromDesktop => self.set_app_on_desktop(key, false),
             DockMenuAction::Quit => {
                 let (mapped, minimized) = self.app_windows(key);
                 let minimized = minimized

@@ -1338,6 +1338,37 @@ impl Ferrite {
                 self.handle_desktop_action(DesktopAction::DashboardDeleteTask(index));
                 return;
             }
+            // Clic droit sur une application du menu Applications : Dock et bureau.
+            if button.button == BTN_RIGHT
+                && let Some(DesktopAction::LaunchTile(index)) = desktop_action
+            {
+                if button.state == ButtonState::Pressed
+                    && let Some(key) = self
+                        .launcher_entries()
+                        .into_iter()
+                        .nth(index)
+                        .map(|entry| entry.key())
+                {
+                    let entries = self.launcher_menu_entries(&key);
+                    if !entries.is_empty() {
+                        self.dock_menu_pointer = None;
+                        self.dock_menu = Some((key, entries, location));
+                        self.popover = Some(Popover::DockMenu);
+                    }
+                }
+                return;
+            }
+            // Clic droit sur un raccourci du bureau : son menu (Ouvrir, Retirer).
+            if button.button == BTN_RIGHT
+                && let Some(DesktopAction::Shortcut(index)) = desktop_action
+            {
+                if button.state == ButtonState::Pressed {
+                    self.desktop_menu = Some((location.x as i32, location.y as i32));
+                    self.desktop_menu_target = Some(index);
+                    self.popover = Some(Popover::DesktopMenu);
+                }
+                return;
+            }
             // Clic droit sur le bureau, widgets compris : son menu.
             if button.button == BTN_RIGHT
                 && self.popover.is_none()
@@ -1349,6 +1380,7 @@ impl Ferrite {
             {
                 if button.state == ButtonState::Pressed {
                     self.desktop_menu = Some((location.x as i32, location.y as i32));
+                    self.desktop_menu_target = None;
                     self.popover = Some(Popover::DesktopMenu);
                 }
                 return;
@@ -1558,14 +1590,10 @@ impl Ferrite {
                     });
                 }
             }
-            DesktopAction::DesktopMenu(index) => {
-                self.popover = None;
-                match index {
-                    0 => self.start_widgets_edit(),
-                    _ => {
-                        crate::desktop::apps::App::open_settings_page("apparence", &self.client_environment())
-                    }
-                }
+            DesktopAction::DesktopMenu(index) => self.desktop_menu_choose(index),
+            DesktopAction::Shortcut(index) => {
+                self.stop_dashboard_editing();
+                self.open_shortcut(index);
             }
             // Un clic ailleurs sur les widgets termine la saisie.
             DesktopAction::DashboardConsume => {
@@ -2038,7 +2066,7 @@ impl Ferrite {
         }
     }
 
-    fn start_widgets_edit(&mut self) {
+    pub fn start_widgets_edit(&mut self) {
         self.stop_dashboard_editing();
         self.widgets_front = false;
         self.widgets_edit = true;

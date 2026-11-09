@@ -300,6 +300,8 @@ pub enum DesktopAction {
     DockMenu(usize),
     /// Choix `index` du menu du bureau.
     DesktopMenu(usize),
+    /// Raccourci `index` du bureau.
+    Shortcut(usize),
     /// Clic absorbé par un panneau, sans effet.
     Consume,
 }
@@ -639,6 +641,8 @@ pub struct DashboardView {
     pub target: Option<crate::desktop::widgets::WidgetSlot>,
     /// Mini-Dock : applications récemment utilisées.
     pub apps: Vec<DashboardApp>,
+    /// Raccourcis du bureau (applications, dossiers, fichiers).
+    pub shortcuts: Vec<crate::desktop::shortcuts::ShortcutView>,
     /// Lecture en cours, pour le widget Musique.
     pub media: Option<crate::desktop::lock::Media>,
 }
@@ -713,8 +717,9 @@ pub struct DesktopView {
     pub clipboard: ClipboardView,
     pub dashboard: DashboardView,
     pub dock_menu: Option<DockMenuView>,
-    /// Coin du menu du bureau.
+    /// Coin du menu du bureau, et ses lignes.
     pub desktop_menu: Option<(i32, i32)>,
+    pub desktop_menu_entries: Vec<String>,
     /// Pointeur, connu seulement quand un menu est ouvert : il en surligne la ligne.
     pub menu_pointer: Option<(i32, i32)>,
     pub osd: Option<Osd>,
@@ -874,7 +879,6 @@ pub struct Panels {
 
 /// Durées de l'apparition et de la disparition d'un panneau, et sa taille de départ.
 /// Choix du menu du bureau.
-const DESKTOP_MENU: [&str; 2] = ["Modifier les widgets", "Changer le fond d’écran…"];
 /// Marques des bureaux dans la barre.
 const PAGE_MARK: f64 = 6.0;
 const PAGE_MARK_ACTIVE: f64 = 16.0;
@@ -1646,7 +1650,13 @@ impl Panels {
             }
             Some(Popover::DesktopMenu) => {
                 if let Some(anchor) = view.desktop_menu {
-                    self.draw_desktop_menu(&mut canvas, &layout, anchor, view.menu_pointer);
+                    self.draw_desktop_menu(
+                        &mut canvas,
+                        &layout,
+                        anchor,
+                        &view.desktop_menu_entries,
+                        view.menu_pointer,
+                    );
                 }
             }
             None => {}
@@ -2733,11 +2743,17 @@ impl Panels {
         canvas: &mut Canvas,
         layout: &Layout,
         anchor: (i32, i32),
+        entries: &[String],
         pointer: Option<(i32, i32)>,
     ) {
-        canvas.glass(layout.desktop_menu(anchor), 10.0);
-        for (index, entry) in DESKTOP_MENU.iter().enumerate() {
-            self.menu_row(canvas, layout.desktop_menu_row(anchor, index), entry, pointer);
+        canvas.glass(layout.desktop_menu(anchor, entries.len()), 10.0);
+        for (index, entry) in entries.iter().enumerate() {
+            self.menu_row(
+                canvas,
+                layout.desktop_menu_row(anchor, entries.len(), index),
+                entry,
+                pointer,
+            );
         }
     }
 
@@ -3823,9 +3839,19 @@ pub fn action_at(
             _ => DesktopAction::ClosePopover,
         },
         Popover::DesktopMenu => match view.desktop_menu {
-            Some(anchor) if layout.desktop_menu(anchor).contains(pos) => (0..DESKTOP_MENU.len())
-                .find(|&index| layout.desktop_menu_row(anchor, index).contains(pos))
-                .map_or(DesktopAction::Consume, DesktopAction::DesktopMenu),
+            Some(anchor)
+                if layout
+                    .desktop_menu(anchor, view.desktop_menu_entries.len())
+                    .contains(pos) =>
+            {
+                (0..view.desktop_menu_entries.len())
+                    .find(|&index| {
+                        layout
+                            .desktop_menu_row(anchor, view.desktop_menu_entries.len(), index)
+                            .contains(pos)
+                    })
+                    .map_or(DesktopAction::Consume, DesktopAction::DesktopMenu)
+            }
             _ => DesktopAction::ClosePopover,
         },
         Popover::Launcher if layout.launcher().contains(pos) => {
@@ -4793,8 +4819,8 @@ impl Layout {
     }
 
     /// Menu du bureau : 260 de large, des lignes de 32, marge de 6, jamais hors de l'écran.
-    fn desktop_menu(&self, anchor: (i32, i32)) -> Rect {
-        let (w, h) = (260.0, DESKTOP_MENU.len() as f64 * 32.0 + 12.0);
+    fn desktop_menu(&self, anchor: (i32, i32), rows: usize) -> Rect {
+        let (w, h) = (260.0, rows as f64 * 32.0 + 12.0);
         Rect::new(
             f64::from(anchor.0)
                 .min(self.w - w - POPOVER_MARGIN)
@@ -4807,8 +4833,8 @@ impl Layout {
         )
     }
 
-    fn desktop_menu_row(&self, anchor: (i32, i32), index: usize) -> Rect {
-        let menu = self.desktop_menu(anchor);
+    fn desktop_menu_row(&self, anchor: (i32, i32), rows: usize, index: usize) -> Rect {
+        let menu = self.desktop_menu(anchor, rows);
         Rect::new(
             menu.x + 6.0,
             menu.y + 6.0 + index as f64 * 32.0,
@@ -6124,6 +6150,42 @@ mod tests {
     use crate::desktop::widgets::{WidgetEdges, default_layout};
 
     #[test]
+    fn les_raccourcis_se_rangent_en_colonnes_a_droite_et_prennent_le_clic() {
+        let shortcut = |name: &str| crate::desktop::shortcuts::ShortcutView {
+            icon: crate::desktop::apps::AppIcon::Builtin("places-folder"),
+            name: name.to_owned(),
+            missing: false,
+        };
+        let mut desktop = view(None);
+        desktop.bar_height = 34;
+        desktop.dock_height = 80;
+        desktop.dashboard.shown = true;
+        desktop.dashboard.shortcuts = (0..8)
+            .map(|index| shortcut(&format!("Dossier {index}")))
+            .collect();
+        let layout = Layout::new(1280.0, 720.0, &desktop);
+        let cells = layout.shortcut_cells(8);
+        // Colonne de droite d'abord, de haut en bas, puis la suivante à sa gauche.
+        assert_eq!(cells[0].right(), 1280.0 - 16.0);
+        assert!(cells[1].y > cells[0].y);
+        assert!(cells.iter().all(|cell| cell.bottom() <= 720.0 - 80.0));
+        assert!(cells[7].x < cells[0].x);
+        let (x, y) = cells[2].center();
+        assert_eq!(
+            action_at(output(), point(x, y), &desktop),
+            Some(DesktopAction::Shortcut(2))
+        );
+        // Un widget posé dessus passe devant.
+        let mut card = default_layout()[0];
+        (card.x, card.y) = (cells[2].x as i32 - 20, cells[2].y as i32 - 20);
+        desktop.dashboard.layout = vec![card];
+        assert_eq!(
+            action_at(output(), point(x, y), &desktop),
+            Some(DesktopAction::DashboardConsume)
+        );
+    }
+
+    #[test]
     fn un_widget_devant_prend_le_clic_et_les_taches_suivent_la_hauteur() {
         let output = output();
         let mut desktop = view(None);
@@ -6375,7 +6437,8 @@ mod tests {
     fn le_clic_droit_du_bureau_offre_ses_choix() {
         let mut desktop = view(Some(Popover::DesktopMenu));
         desktop.desktop_menu = Some((400, 300));
-        let row = Layout::new(1280.0, 720.0, &desktop).desktop_menu_row((400, 300), 0);
+        desktop.desktop_menu_entries = vec!["Modifier les widgets".to_owned(), "Ouvrir".to_owned()];
+        let row = Layout::new(1280.0, 720.0, &desktop).desktop_menu_row((400, 300), 2, 0);
         let (x, y) = row.center();
         assert_eq!(
             action_at(output(), point(x, y), &desktop),

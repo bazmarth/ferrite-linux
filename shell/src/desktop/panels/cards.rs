@@ -24,6 +24,10 @@ const TASKS_TOP: f64 = 84.0;
 const TAB_H: f64 = 28.0;
 const TAB_GAP: f64 = 6.0;
 const TAB_W: (f64, f64) = (64.0, 124.0);
+/// Case d'un raccourci du bureau (icône de 52 et nom dessous), et marge au bord droit.
+const SHORTCUT_CELL: (f64, f64) = (96.0, 100.0);
+const SHORTCUT_ICON: f64 = 52.0;
+const SHORTCUT_MARGIN: f64 = 16.0;
 
 const INK: Color = Color::rgb(0xF3F6F9);
 const SOFT: Color = Color::rgb(0xC8D1DC);
@@ -66,6 +70,26 @@ impl Layout {
                     f64::from(slot.y),
                     f64::from(slot.w),
                     f64::from(slot.h),
+                )
+            })
+            .collect()
+    }
+
+    /// Cases des raccourcis du bureau : en colonnes depuis le coin haut droit, de haut en
+    /// bas puis vers la gauche, sans descendre sur le Dock.
+    pub(super) fn shortcut_cells(&self, count: usize) -> Vec<Rect> {
+        let (cell_w, cell_h) = SHORTCUT_CELL;
+        let top = self.bar + SHORTCUT_MARGIN;
+        let bottom = self.h - self.dock_height - SHORTCUT_MARGIN;
+        let rows = (((bottom - top) / cell_h).floor() as usize).max(1);
+        (0..count)
+            .map(|index| {
+                let (column, row) = (index / rows, index % rows);
+                Rect::new(
+                    self.w - SHORTCUT_MARGIN - (column + 1) as f64 * cell_w,
+                    top + row as f64 * cell_h,
+                    cell_w,
+                    cell_h,
                 )
             })
             .collect()
@@ -384,11 +408,19 @@ pub(super) fn dashboard_action_at(
         return Some(editor_action_at(layout, view, pos));
     }
     let cards = layout.dashboard_cards(&view.dashboard.layout);
-    let (index, card) = cards
+    // Les widgets passent devant les raccourcis.
+    let Some((index, card)) = cards
         .iter()
         .enumerate()
         .rev()
-        .find(|(_, card)| card.contains(pos))?;
+        .find(|(_, card)| card.contains(pos))
+    else {
+        return layout
+            .shortcut_cells(view.dashboard.shortcuts.len())
+            .iter()
+            .position(|cell| cell.contains(pos))
+            .map(DesktopAction::Shortcut);
+    };
     let slot = view.dashboard.layout[index];
     Some(match slot.kind {
         WidgetKind::Calendar if card.w >= CALENDAR_ARROWS => {
@@ -672,6 +704,8 @@ impl Panels {
             );
             target_hollow(canvas, rect);
         }
+        // Raccourcis sous les widgets.
+        self.draw_shortcuts(canvas, layout, view, &cards);
         // Du dessous vers le dessus : le verre de chaque carte cache ce qu'elle recouvre.
         for (index, card) in cards.iter().copied().enumerate() {
             if Some(index) != skip {
@@ -720,6 +754,37 @@ impl Panels {
         }
         if view.edit {
             self.draw_handles(canvas, card, kind, view.drag == Some(index));
+        }
+    }
+
+    /// Raccourcis du bureau : icône, et nom sur une pastille de verre sombre pour rester
+    /// lisible sur n'importe quel fond. Le verre des cartes est souvent posé avant (voir
+    /// `glass_pixels`) : un raccourci qu'un widget recouvre, même en partie, n'est pas
+    /// dessiné, comme il ne reçoit pas de clic.
+    fn draw_shortcuts(&self, canvas: &mut Canvas, layout: &Layout, view: &DashboardView, cards: &[Rect]) {
+        let cells = layout.shortcut_cells(view.shortcuts.len());
+        for (shortcut, cell) in view.shortcuts.iter().zip(cells) {
+            let covered = cards.iter().any(|card| {
+                card.x < cell.right()
+                    && cell.x < card.right()
+                    && card.y < cell.bottom()
+                    && cell.y < card.bottom()
+            });
+            if covered {
+                continue;
+            }
+            let center = (cell.x + cell.w / 2.0, cell.y + 8.0 + SHORTCUT_ICON / 2.0);
+            canvas.app_icon(&shortcut.icon, center, SHORTCUT_ICON);
+            let name = canvas.fit_text(&self.regular, &shortcut.name, px(12.0), cell.w - 16.0);
+            let width = canvas.css_width(&self.regular, &name, 12.0);
+            let top = cell.y + SHORTCUT_ICON + 16.0;
+            canvas.fill(
+                Rect::new(center.0 - width / 2.0 - 6.0, top - 2.0, width + 12.0, 19.0),
+                9.0,
+                GLASS_TONE.with_alpha(150),
+            );
+            let ink = if shortcut.missing { FAINT } else { INK };
+            canvas.text(&self.regular, &name, center.0 - width / 2.0, top, 12.0, ink);
         }
     }
 

@@ -2770,3 +2770,19 @@ Sur le bureau des widgets, un raccourci recouvert par un widget reste caché et 
 Vérifié : CI (sans shellcheck) ; test des raccourcis étendu (autre bureau, vue d'ensemble) ;
 captures du bureau imbriqué (`--demo-page 0` et `1`) : raccourcis visibles sur les deux.
 Pas vérifié : vrai bureau, clics réels, raccourci sous une fenêtre ouverte.
+
+## 2026-11-09 — Nouveau pack de sons système
+
+Demande de l'utilisateur : des sons système plus « pro », au niveau de Windows 11 ou macOS.
+`services/system/src/sounds.rs` réécrit (sons toujours fabriqués par le code, version 2 des
+fichiers) : stéréo, réverbération de pièce (type Freeverb, sans graves), timbres modaux
+(cloche d'église, lame de verre, marimba, bois) avec léger battement, nappe d'accord pour le
+démarrage, papier froissé en grains filtrés pour la Corbeille, obturateur en deux déclics,
+sonie égalisée selon ITU-R BS.1770 (crête max -1 dB), dither, fondus.
+- Alertes : Goutte, Douce, Verre, Cristal (nouveau), Cloche, Bois (nouveau).
+- Nouveaux : chargeur branché / débranché (quinte montante / descendante), joués par le fil
+  de `battery_alerts`, rangés dans « Sons des actions ».
+- `export_all` + test ignoré `exporter_les_sons` (`FERRITE_SONS=dossier`) pour les écouter.
+Vérifié : CI (sans shellcheck) ; mesures ffmpeg (sonie de -12 à -15 LUFS, crêtes ≤ -1 dB,
+durées 0,6 à 3,9 s) ; spectrogrammes.
+Pas vérifié : écoute réelle sur le vrai bureau et sur les haut-parleurs du ThinkBook.

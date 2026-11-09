@@ -188,6 +188,11 @@ fn watch(battery: &Path, chargers: &[PathBuf], events: &channel::Sender<Event>) 
     let mut was_plugged = None;
     loop {
         let plugged = plugged(battery, chargers);
+        // Petit carillon au branchement et au débranchement (sons des actions).
+        if was_plugged.is_some_and(|was| was != plugged) {
+            use ferrite_system::sounds::{self, Sound};
+            sounds::play(if plugged { Sound::Plugged } else { Sound::Unplugged });
+        }
         if percent.is_none() || was_plugged != Some(plugged) || read_at.elapsed() >= CAPACITY_REFRESH {
             percent = capacity(battery).or(percent);
             read_at = Instant::now();

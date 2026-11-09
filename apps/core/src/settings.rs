@@ -1761,7 +1761,7 @@ impl SettingsState {
             }
 
             let mut actions = settings.action_sounds();
-            let row = Row::new("Sons des actions").hint("Corbeille, capture d’écran");
+            let row = Row::new("Sons des actions").hint("Corbeille, capture d’écran, chargeur");
             if rows.row(row, |ui| rows::switch(ui, &mut actions)).0 {
                 settings.set_flag("sons_actions", actions);
                 if actions {

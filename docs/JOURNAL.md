@@ -2718,3 +2718,25 @@ boutons à droite, titre centré.
 Pas vérifié : clics réels sur les trois boutons, Réglages, Musique, Calendrier et lecteur
 vidéo à l'écran, applications GTK. Vu en passant dans Fichiers : « Trier par date de
 modification » chevauche les filtres (Documents) dans une fenêtre de cette largeur.
+
+## 2026-11-09 — Raccourcis d'applications et de dossiers sur le bureau
+
+Demande de l'utilisateur : pouvoir mettre des raccourcis d'applications et de dossiers sur
+le bureau.
+- `ferrite_system::shortcuts` : liste commune (`~/.config/ferrite/raccourcis-bureau`),
+  lecture, ajout sans doublon, retrait, écriture atomique.
+- Bureau (`shell/src/desktop/shortcuts.rs`) : raccourcis dessinés sur le bureau des
+  widgets, en colonnes depuis le coin haut droit, sans descendre sur le Dock ; clic :
+  ouvre l'application, le dossier dans Fichiers, le fichier dans son application (celle
+  choisie par l'utilisateur si elle n'est pas de Ferrite). Clic droit : « Ouvrir »,
+  « Retirer du bureau ». Le fil système relit le fichier quand il change.
+- Ajouter : menu d'une icône du Dock et, nouveau, clic droit dans le menu Applications
+  (« Garder dans le Dock », « Ajouter au bureau ») ; Fichiers, clic droit sur un élément
+  (toute la sélection) ; menu du bureau, « Ajouter un dossier au bureau… » (sélecteur
+  `ferrite-apps choisir --dossier --multiple`, attendu dans un fil à part).
+Vérifié : fmt, clippy, tests (nouveaux : `ferrite_system::shortcuts`, rangement et clic des
+raccourcis) ; shellcheck ; couleurs ; capture du bureau imbriqué (Xvfb) avec 8 raccourcis,
+dont un chemin disparu. Trois tests de `ferrite-apps` (archives, favoris de TextEdit)
+échouent dans le conteneur de cette session, aussi sans ces changements.
+Pas vérifié : clics réels (ouvrir, menus, sélecteur de dossiers, « Ajouter au bureau »
+dans Fichiers) sur le vrai bureau ; thème clair.

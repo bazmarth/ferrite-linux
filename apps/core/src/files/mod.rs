@@ -258,6 +258,8 @@ enum Action {
     ConfirmDeleteTag(String),
     /// Analyse l'espace occupé dans ce dossier.
     Analyze(PathBuf),
+    /// Pose un raccourci de ces dossiers ou fichiers sur le bureau.
+    AddToDesktop(Vec<PathBuf>),
     /// Contenu du dossier (faux) ou plus gros fichiers (vrai).
     AnalysisMode(bool),
     Rescan,
@@ -1582,6 +1584,18 @@ panneau={}
                 self.devices_checked = None;
             }
             Action::CloseDialog => self.dialog = None,
+            Action::AddToDesktop(paths) => {
+                let list: Vec<ferrite_system::shortcuts::Shortcut> = paths
+                    .into_iter()
+                    .map(ferrite_system::shortcuts::Shortcut::Path)
+                    .collect();
+                match ferrite_system::shortcuts::add(&list) {
+                    Ok(0) => self.info("Déjà sur le bureau"),
+                    Ok(1) => self.info("Raccourci ajouté au bureau"),
+                    Ok(count) => self.info(format!("{count} raccourcis ajoutés au bureau")),
+                    Err(error) => self.error(format!("Raccourci non ajouté au bureau : {error}")),
+                }
+            }
             Action::Analyze(dir) => {
                 let fresh = self.scan.as_ref().is_some_and(|scan| dir.starts_with(&scan.root));
                 if !fresh {
@@ -2080,6 +2094,15 @@ panneau={}
                 single,
                 Action::OpenWith(entry.path.clone()),
             );
+        }
+        if self.picker.is_none() {
+            // Toute la sélection si l'élément en fait partie, lui seul sinon.
+            let paths = if self.selected.contains(&entry.path) {
+                self.selected.iter().cloned().collect()
+            } else {
+                vec![entry.path.clone()]
+            };
+            item(ui, "Ajouter au bureau", "", true, Action::AddToDesktop(paths));
         }
         style::menu_separator(ui);
         item(ui, "Copier", "Ctrl+C", true, Action::Copy);

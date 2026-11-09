@@ -287,6 +287,10 @@ pub struct Ferrite {
     pub widget_scroll: f64,
     /// Coin du menu du bureau.
     pub desktop_menu: Option<(i32, i32)>,
+    /// Raccourci visé par ce menu (clic droit sur un raccourci du bureau).
+    pub desktop_menu_target: Option<usize>,
+    /// Raccourcis posés sur le bureau des widgets.
+    pub desktop_shortcuts: Vec<ferrite_system::shortcuts::Shortcut>,
     /// Dernier clic sur une barre de titre, pour reconnaître le double-clic.
     pub last_titlebar_click: Option<(Instant, Window)>,
     /// Feu tricolore enfoncé : l'action a lieu au relâchement, s'il est toujours dessus.
@@ -542,6 +546,8 @@ impl Ferrite {
             widgets_faded: std::cell::Cell::new((0.0, None)),
             widget_scroll: 0.0,
             desktop_menu: None,
+            desktop_menu_target: None,
+            desktop_shortcuts: ferrite_system::shortcuts::load(),
             dock_menu_pointer: None,
             last_titlebar_click: None,
             pressed_light: None,

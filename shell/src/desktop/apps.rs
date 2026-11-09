@@ -65,7 +65,7 @@ pub fn launcher_entries<'a>(installed: &'a [DesktopEntry], query: &str) -> Vec<L
 
 /// Commande d'un exécutable Ferrite : celui placé à côté de ferrite-shell (compilation de
 /// développement) passe avant celui du `PATH`.
-fn ferrite_command(program: &str) -> Command {
+pub(crate) fn ferrite_command(program: &str) -> Command {
     std::env::current_exe()
         .ok()
         .map(|path| path.with_file_name(program))

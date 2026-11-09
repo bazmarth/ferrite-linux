@@ -48,6 +48,8 @@ sans redémarrer. L'écran s'assombrit progressivement avant le verrouillage et 
 | Dialogue d'arrêt | Super + Échap |
 | Widgets devant les fenêtres, puis derrière | Super + W, Échap |
 | Modifier les widgets | clic droit sur le bureau |
+| Raccourci sur le bureau : ajouter une application / un dossier | clic droit sur son icône (Dock ou menu Applications) → « Ajouter au bureau » ; dans Fichiers, clic droit → « Ajouter au bureau » ; clic droit sur le bureau → « Ajouter un dossier au bureau… » |
+| Raccourci sur le bureau : ouvrir / retirer | clic / clic droit → « Retirer du bureau » |
 | Capture : écran de capture (Sélection, Écran ou Fenêtre) | Impr. écran |
 | Capture : ouvrir directement en mode Sélection | Maj + Impr. écran, ou Super + Maj + S (touche de capture Lenovo sans Fn) |
 | Capture : prendre l'image / fermer | Entrée ou Espace / Échap |

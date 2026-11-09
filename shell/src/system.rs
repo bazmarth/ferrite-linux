@@ -92,6 +92,8 @@ pub enum Event {
     /// Applications épinglées dans le Dock, et applications à plusieurs fenêtres.
     DockApps(Option<Vec<String>>, Vec<String>),
     Applications(Vec<DesktopEntry>),
+    /// Raccourcis du bureau, relus quand leur fichier change.
+    Shortcuts(Vec<ferrite_system::shortcuts::Shortcut>),
     PowerAccepted,
     /// La commande de veille a échoué : le voile noir ne doit pas rester affiché.
     SleepFailed(String),
@@ -274,6 +276,8 @@ fn worker(receiver: mpsc::Receiver<Change>, events: channel::Sender<Event>, nest
     let mut wallpaper_generation = 0u64;
     let mut last_snapshot: Option<Instant> = None;
     let mut applications_stamp = None;
+    let mut shortcuts_stamp = None;
+    let mut shortcuts_initialized = false;
     loop {
         // Applications installées ou retirées (apt, Flatpak, .deb) : le menu suit.
         let stamp = Some(applications::stamp());
@@ -281,6 +285,18 @@ fn worker(receiver: mpsc::Receiver<Change>, events: channel::Sender<Event>, nest
             applications_stamp = stamp;
             if events
                 .send(Event::Applications(applications::installed()))
+                .is_err()
+            {
+                return;
+            }
+        }
+        // Raccourcis du bureau, ajoutés aussi par Fichiers : affichés dans la seconde.
+        let stamp = ferrite_system::shortcuts::modified();
+        if !shortcuts_initialized || stamp != shortcuts_stamp {
+            shortcuts_initialized = true;
+            shortcuts_stamp = stamp;
+            if events
+                .send(Event::Shortcuts(ferrite_system::shortcuts::load()))
                 .is_err()
             {
                 return;
@@ -564,6 +580,7 @@ impl Ferrite {
                 self.applications = list;
                 self.restore_session_after_applications();
             }
+            Event::Shortcuts(list) => self.desktop_shortcuts = list,
             Event::PowerAccepted => {
                 info!("arrêt du système accepté : fermeture du bureau");
                 self.request_exit();

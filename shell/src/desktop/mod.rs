@@ -16,5 +16,6 @@ pub mod notifications;
 pub mod panels;
 pub mod polkit;
 pub mod recording;
+pub mod shortcuts;
 pub mod svg;
 pub mod widgets;

@@ -1,20 +1,17 @@
 //! Calendrier : événements (récurrents, sur plusieurs jours), tâches et listes, rappels.
 //!
-//! - `date` : jours, heures, saisies et mise en forme en français ;
-//! - `model` : événements, récurrences, tâches, catégories, listes et requêtes ;
-//! - `store` : fichiers de `~/.local/share/ferrite/calendrier/` ;
+//! - `date`, `model`, `store` : agenda partagé avec le bureau (`ferrite_system::agenda`) ;
 //! - `reminders` : rappels, leur état, et le service `ferrite-apps rappels` qui les annonce
 //!   par les notifications de Ferrite ;
 //! - `views`, `lists`, `editor`, `widgets` : l'interface.
 
-pub mod date;
 mod editor;
 mod lists;
-pub mod model;
 pub mod reminders;
-pub mod store;
 mod views;
 mod widgets;
+
+pub use ferrite_system::agenda::{date, model, store};
 
 use std::{
     collections::HashSet,

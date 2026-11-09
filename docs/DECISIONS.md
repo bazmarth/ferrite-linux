@@ -385,3 +385,16 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
   de moins d'un jour et que l'événement n'est pas fini. Le service s'arrête avec le bus de
   session. Le Calendrier n'est pas épinglé au Dock d'origine (comme l'Horloge) : le Dock
   des utilisateurs ne change pas.
+- **2026-11-09 — Le Calendrier, seule source des widgets et de la barre.** Le modèle de
+  l'agenda (`date`, `model`, `store`) passe dans `ferrite_system::agenda`, lu par
+  l'application et par le bureau. Le widget Tâches n'a plus de tâches à lui : ses
+  feuilles sont les listes du Calendrier (plus une feuille « Sans liste » s'il y a des
+  tâches sans liste), et chaque action relit l'agenda, le change et l'écrit aussitôt
+  (l'application relit le fichier toutes les 2 s, le bureau aussi). Supprimer une
+  feuille fait comme le Calendrier : ses tâches restent, sans liste. Les anciennes
+  tâches des réglages (`tableau_liste_*`) sont reprises une fois dans l'agenda
+  (`tableau_taches_calendrier = oui`), sans les tâches d'exemple. Le calendrier de la
+  barre et le widget Calendrier marquent d'un point les jours avec un événement ou une
+  tâche à faire ; un clic sur un jour ouvre le Calendrier sur ce jour, ailleurs sur le
+  mois. Le bureau ne lance pas `date` pour l'heure de l'agenda : il reprend le décalage
+  déjà lu par l'horloge de la barre.

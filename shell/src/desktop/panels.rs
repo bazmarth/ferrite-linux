@@ -270,6 +270,8 @@ pub enum DesktopAction {
     DashboardCyclePriority(usize),
     DashboardDeleteTask(usize),
     DashboardMonth(i32),
+    /// Ouvre le Calendrier sur un jour (année, mois, jour), ou sur le mois en cours.
+    OpenCalendar(Option<(i32, u32, u32)>),
     DashboardConsume,
     /// Corbeille de la note affichée.
     DashboardDeleteNote(usize),
@@ -618,6 +620,12 @@ pub struct DashboardView {
     /// Noms des feuilles de tâches, et celle affichée.
     pub lists: Vec<String>,
     pub list_shown: usize,
+    /// La feuille affichée est celle des tâches sans liste, qu'on ne supprime pas.
+    pub loose_list: bool,
+    /// Jours occupés (événement ou tâche à faire) du mois du widget Calendrier et du mois
+    /// en cours (calendrier de la barre) : un bit par jour, bit 0 pour le 1er.
+    pub busy_month: u32,
+    pub busy_today: u32,
     pub draft: String,
     pub editing: Option<crate::desktop::widgets::DashboardEdit>,
     pub month_offset: i32,
@@ -967,7 +975,11 @@ impl Panels {
             accent: accent(),
             view: DesktopView {
                 dark_theme: view.dark_theme,
-                dashboard: DashboardView::default(),
+                // Seuls les jours occupés du mois en cours servent ici (calendrier de la barre).
+                dashboard: DashboardView {
+                    busy_today: view.dashboard.busy_today,
+                    ..DashboardView::default()
+                },
                 island: IslandView::default(),
                 recording: None,
                 osd: view.osd.filter(|_| view.lock.is_some()),
@@ -1637,7 +1649,12 @@ impl Panels {
             Some(Popover::Controls) => {}
             Some(Popover::Clipboard) => self.draw_clipboard(&mut canvas, &layout, &view.clipboard),
             Some(Popover::Notifications) => {
-                self.draw_notification_center(&mut canvas, &layout, &view.notifications);
+                self.draw_notification_center(
+                    &mut canvas,
+                    &layout,
+                    &view.notifications,
+                    view.dashboard.busy_today,
+                );
             }
             Some(Popover::DockMenu) => {
                 if let Some(menu) = &view.dock_menu {
@@ -3147,7 +3164,15 @@ impl Panels {
     }
 
     /// Historique des notifications, avec « Ne pas déranger » et « Tout effacer ».
-    fn draw_notification_center(&self, canvas: &mut Canvas, layout: &Layout, view: &NotificationsView) {
+    /// Calendrier du mois (points sous les jours occupés du Calendrier, `busy`), puis
+    /// historique des notifications.
+    fn draw_notification_center(
+        &self,
+        canvas: &mut Canvas,
+        layout: &Layout,
+        view: &NotificationsView,
+        busy: u32,
+    ) {
         let card = layout.calendar(view.history.len());
         canvas.glass(card, 16.0);
         let clock = clock_snapshot(SystemTime::now());
@@ -3200,14 +3225,8 @@ impl Panels {
                 text_secondary(),
             );
         }
-        // Lundi en première colonne.
-        let first = (days_from_civil(clock.year, clock.month, 1) + 3).rem_euclid(7);
         for day in 1..=days_in_month(clock.year, clock.month) {
-            let slot = first + i64::from(day) - 1;
-            let center = (
-                card.x + 18.0 + cell * ((slot % 7) as f64 + 0.5),
-                grid + 22.0 + CALENDAR_ROW * ((slot / 7) as f64 + 0.5),
-            );
+            let center = calendar_cell(card, clock.year, clock.month, day).center();
             let text = day.to_string();
             let current = day == clock.day;
             if current {
@@ -3224,6 +3243,10 @@ impl Panels {
             };
             let width = canvas.text_width(font, &text, px(13.0));
             canvas.label(font, &text, center.0 - width / 2.0, center.1 - 9.0, px(13.0), ink);
+            if busy & (1 << (day - 1)) != 0 {
+                let dot = if current { Color::WHITE } else { accent() };
+                canvas.fill(Rect::new(center.0 - 2.0, center.1 + 9.0, 4.0, 4.0), 2.0, dot);
+            }
         }
 
         let rule = layout.calendar_rule(view.history.len());
@@ -3990,12 +4013,21 @@ pub fn action_at(
         }
         Popover::Notifications if layout.calendar(view.notifications.history.len()).contains(pos) => {
             let history = &view.notifications.history;
+            let card = layout.calendar(history.len());
+            let ((year, month), _) = calendar_months(0);
+            let day = (1..=days_in_month(i64::from(year), month))
+                .find(|day| calendar_cell(card, i64::from(year), month, *day).contains(pos));
+            let title = Rect::new(card.x, card.y, card.w, 52.0);
             let row = history
                 .iter()
                 .take(layout.notification_rows())
                 .enumerate()
                 .find(|(slot, _)| layout.notification_row(history.len(), *slot).contains(pos));
-            if !history.is_empty() && layout.notifications_clear(history.len()).contains(pos) {
+            if let Some(day) = day {
+                DesktopAction::OpenCalendar(Some((year, month, day)))
+            } else if title.contains(pos) {
+                DesktopAction::OpenCalendar(None)
+            } else if !history.is_empty() && layout.notifications_clear(history.len()).contains(pos) {
                 DesktopAction::NotificationsClear
             } else if let Some((_, notification)) = row {
                 DesktopAction::NotificationActivate(notification.id)
@@ -5911,6 +5943,32 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
 
 /// Décalage du fuseau local en secondes, lu une fois au démarrage avec `date +%z`
 /// (un passage à l'heure d'été n'est pris en compte qu'au prochain démarrage).
+/// Case du jour `day` dans le calendrier de la barre (lundi en première colonne).
+fn calendar_cell(card: Rect, year: i64, month: u32, day: u32) -> Rect {
+    let cell = (card.w - 36.0) / 7.0;
+    let first = (days_from_civil(year, month, 1) + 3).rem_euclid(7);
+    let slot = first + i64::from(day) - 1;
+    Rect::new(
+        card.x + 18.0 + cell * (slot % 7) as f64,
+        card.y + 52.0 + 22.0 + CALENDAR_ROW * (slot / 7) as f64,
+        cell,
+        CALENDAR_ROW,
+    )
+}
+
+/// Année et mois du jour, et ceux du widget Calendrier (`offset` mois plus loin).
+pub(crate) fn calendar_months(offset: i32) -> ((i32, u32), (i32, u32)) {
+    let clock = clock_snapshot(SystemTime::now());
+    let (year, month) = shift_month(clock.year, clock.month, offset);
+    ((clock.year as i32, clock.month), (year as i32, month))
+}
+
+/// Minutes écoulées depuis 1970, en heure locale (pour l'agenda du Calendrier).
+pub(crate) fn local_minutes() -> Option<i64> {
+    let seconds = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs() as i64;
+    Some((seconds + local_offset()).div_euclid(60))
+}
+
 fn local_offset() -> i64 {
     static OFFSET: OnceLock<i64> = OnceLock::new();
     *OFFSET.get_or_init(|| {
@@ -6876,6 +6934,48 @@ mod tests {
         assert_eq!(
             action_at(output, at(layout.notification_row(1, 0)), &view),
             Some(DesktopAction::NotificationActivate(7))
+        );
+    }
+
+    #[test]
+    fn un_jour_des_calendriers_du_bureau_ouvre_le_calendrier() {
+        let center = |rect: Rect| point(rect.x + rect.w / 2.0, rect.y + rect.h / 2.0);
+        // Calendrier de la barre : un jour, ou le titre du mois.
+        let desktop = view(Some(Popover::Notifications));
+        let card = layout().calendar(0);
+        let ((year, month), _) = calendar_months(0);
+        assert_eq!(
+            action_at(
+                output(),
+                center(calendar_cell(card, i64::from(year), month, 12)),
+                &desktop
+            ),
+            Some(DesktopAction::OpenCalendar(Some((year, month, 12))))
+        );
+        assert_eq!(
+            action_at(output(), point(card.x + 40.0, card.y + 20.0), &desktop),
+            Some(DesktopAction::OpenCalendar(None))
+        );
+        // Widget Calendrier : un jour du mois montré.
+        let mut desktop = view(None);
+        desktop.dashboard.layout = default_layout();
+        desktop.dashboard.shown = true;
+        desktop.dashboard.month_offset = 1;
+        let index = desktop
+            .dashboard
+            .layout
+            .iter()
+            .position(|slot| slot.kind == crate::desktop::widgets::WidgetKind::Calendar)
+            .unwrap();
+        let widget = Layout::new(1280.0, 720.0, &desktop).dashboard_cards(&desktop.dashboard.layout)[index];
+        let (_, (year, month)) = calendar_months(1);
+        assert_eq!(
+            action_at(
+                output(),
+                center(cards::calendar_day(widget, i64::from(year), month, 3)),
+                &desktop
+            ),
+            Some(DesktopAction::OpenCalendar(Some((year, month, 3))))
         );
     }
 

@@ -2638,3 +2638,24 @@ bureau imbriqué (bus à part) en clair et en sombre, fenêtre large et étroite
 3.4`) ; une vraie notification de rappel reçue par le bureau imbriqué, avec ses boutons.
 Pas vérifié : clics réels (création, glisser, boutons des notifications) sur le vrai bureau ;
 lancement du service à l'ouverture d'une vraie session (ISO non reconstruite).
+
+## 2026-11-09 — Calendrier : seule source du widget Tâches, du widget et de la barre
+
+Demande de l'utilisateur : utiliser l'application Calendrier comme seule application pour
+les widgets et la barre d'état (Tâches comprises).
+- `date`, `model`, `store` du Calendrier déplacés dans `ferrite_system::agenda`
+  (`git mv`) ; l'application les reprend par `pub use`.
+- Widget Tâches : feuilles = listes du Calendrier (+ « Sans liste ») ; ajouter, cocher,
+  priorité, supprimer, nouvelle feuille, renommer : écrits dans l'agenda. Anciennes
+  tâches des réglages reprises une fois. Bureau qui relit l'agenda toutes les 2 s
+  (`start_agenda_watch`).
+- Calendrier de la barre et widget Calendrier : point sous les jours occupés (événement
+  ou tâche à faire) ; clic sur un jour → Calendrier sur ce jour (vue Jour), sur le titre
+  (barre) ou ailleurs (widget) → Calendrier sur le mois.
+Vérifié : CI (sans shellcheck) ; tests `feuilles_de_taches_et_notes_s_ajoutent_et_se_suppriment`,
+`les_jours_occupes_viennent_du_calendrier`, `un_jour_des_calendriers_du_bureau_ouvre_le_calendrier` ;
+captures du bureau imbriqué avec un agenda d'essai (`XDG_DATA_HOME` à part) : points dans
+le widget et dans la barre, listes du Calendrier dans le widget Tâches, reprise des
+anciennes tâches.
+Pas vérifié : clics réels sur le vrai bureau (ouverture du Calendrier sur un jour, avec
+l'application déjà ouverte ou non) ; aller-retour widget ↔ application en direct.

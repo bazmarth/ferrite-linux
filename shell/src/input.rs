@@ -747,11 +747,7 @@ impl Ferrite {
                     }
                 }
                 Some(crate::desktop::widgets::DashboardEdit::NewTask) => {
-                    if self.dashboard.commit_draft()
-                        && let Err(error) = self.dashboard.save()
-                    {
-                        tracing::warn!(%error, "tâches du tableau de bord non enregistrées");
-                    }
+                    self.dashboard.commit_draft();
                 }
                 Some(crate::desktop::widgets::DashboardEdit::ListName(_)) => {
                     self.stop_dashboard_editing();
@@ -1399,6 +1395,7 @@ impl Ferrite {
                     | DesktopAction::DashboardCyclePriority(_)
                     | DesktopAction::DashboardDeleteTask(_)
                     | DesktopAction::DashboardMonth(_)
+                    | DesktopAction::OpenCalendar(_)
                     | DesktopAction::DashboardNoteStep(_)
                     | DesktopAction::DashboardApp(_)
                     | DesktopAction::DashboardMedia(_)
@@ -1465,22 +1462,14 @@ impl Ferrite {
                 self.dashboard.draft.clear();
                 self.dashboard_editing = Some(crate::desktop::widgets::DashboardEdit::NewTask);
             }
+            // Les tâches sont enregistrées dans l'agenda du Calendrier au passage.
             DesktopAction::DashboardToggleTask(index) => {
-                if let Some(task) = self.dashboard.tasks_mut().get_mut(index) {
-                    task.done = !task.done;
-                    if let Err(error) = self.dashboard.save() {
-                        tracing::warn!(%error, "tâches du tableau de bord non enregistrées");
-                    }
-                }
+                self.dashboard.toggle_task(index);
             }
             DesktopAction::DashboardCyclePriority(index) => {
-                if let Some(task) = self.dashboard.tasks_mut().get_mut(index) {
-                    task.priority = task.priority.next();
-                    if let Err(error) = self.dashboard.save() {
-                        tracing::warn!(%error, "tâches du tableau de bord non enregistrées");
-                    }
-                }
+                self.dashboard.cycle_priority(index);
             }
+            DesktopAction::OpenCalendar(day) => self.open_calendar(day),
             DesktopAction::DashboardDeleteTask(index) => {
                 self.stop_dashboard_editing();
                 if self.dashboard.remove_task(index) {
@@ -1715,6 +1704,22 @@ impl Ferrite {
             DesktopAction::Lock => self.lock_session(),
             DesktopAction::Consume => {}
         }
+    }
+
+    /// Le Calendrier sur un jour (sa vue Jour), ou sur le mois. Déjà ouvert, sa fenêtre
+    /// passe devant et reçoit le jour (un second lancement le lui confie).
+    fn open_calendar(&mut self, day: Option<(i32, u32, u32)>) {
+        self.popover = None;
+        let target = day.map_or_else(
+            || "mois".to_owned(),
+            |(year, month, day)| format!("{year:04}-{month:02}-{day:02}"),
+        );
+        let key = crate::desktop::apps::AppKey::Builtin(crate::desktop::apps::App::CALENDAR);
+        if self.app_running(&key) {
+            self.show_app(&key);
+        }
+        crate::desktop::apps::App::CALENDAR
+            .launch_with(&self.client_environment(), &[std::path::PathBuf::from(target)]);
     }
 
     fn save_dashboard(&self) {

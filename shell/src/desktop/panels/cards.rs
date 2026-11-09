@@ -35,6 +35,8 @@ const NOTE_INK: Color = Color::rgb(0x3A2F0B);
 const NOTE_BODY: Color = Color::rgb(0x5C4D1A);
 const NOTE_LABEL: Color = Color::rgb(0x7A6418);
 const TEAL: Color = Color::rgb(0x0E9AA7);
+/// Rouge corail : titre du Calendrier, jours occupés, priorité haute.
+const CORAL: Color = Color::rgb(0xF07A6E);
 
 const MONTHS: [&str; 12] = [
     "janvier",
@@ -391,14 +393,22 @@ pub(super) fn dashboard_action_at(
         .find(|(_, card)| card.contains(pos))?;
     let slot = view.dashboard.layout[index];
     Some(match slot.kind {
-        WidgetKind::Calendar if card.w >= CALENDAR_ARROWS => {
+        // Flèches : mois précédent ou suivant ; un jour : le Calendrier sur ce jour ;
+        // ailleurs : le Calendrier.
+        WidgetKind::Calendar => {
             let [previous, next] = month_arrows(*card);
-            if previous.contains(pos) {
+            let arrows = card.w >= CALENDAR_ARROWS;
+            let (_, (year, month)) = calendar_months(view.dashboard.month_offset);
+            let day = (1..=days_in_month(i64::from(year), month))
+                .find(|day| calendar_day(*card, i64::from(year), month, *day).contains(pos));
+            if arrows && previous.contains(pos) {
                 DesktopAction::DashboardMonth(-1)
-            } else if next.contains(pos) {
+            } else if arrows && next.contains(pos) {
                 DesktopAction::DashboardMonth(1)
+            } else if let Some(day) = day {
+                DesktopAction::OpenCalendar(Some((year, month, day)))
             } else {
-                DesktopAction::DashboardConsume
+                DesktopAction::OpenCalendar(None)
             }
         }
         WidgetKind::Notes => {
@@ -481,11 +491,13 @@ pub(super) fn dashboard_action_at(
             for (index, tab) in tabs {
                 if tab.contains(pos) {
                     let current = index == view.dashboard.list_shown;
-                    return Some(if current && lists > 1 && tab_close(tab).contains(pos) {
-                        DesktopAction::DashboardDeleteList(index)
-                    } else {
-                        DesktopAction::DashboardList(index)
-                    });
+                    return Some(
+                        if current && !view.dashboard.loose_list && tab_close(tab).contains(pos) {
+                            DesktopAction::DashboardDeleteList(index)
+                        } else {
+                            DesktopAction::DashboardList(index)
+                        },
+                    );
                 }
             }
             if plus.contains(pos) {
@@ -877,7 +889,7 @@ impl Panels {
         } else {
             format!("{} {year}", MONTHS[month as usize - 1])
         };
-        self.caption(canvas, &title, card.x + 16.0, card.y + 14.0, Color::rgb(0xF07A6E));
+        self.caption(canvas, &title, card.x + 16.0, card.y + 14.0, CORAL);
         if card.w >= CALENDAR_ARROWS {
             let [previous, next] = month_arrows(card);
             self.round_button(
@@ -896,10 +908,7 @@ impl Panels {
             );
         }
         // Les jours occupent toute la carte : le texte grandit avec elle.
-        let (left, width) = (card.x + 14.0, card.w - 28.0);
-        let cell = width / 7.0;
-        let top = card.y + 34.0;
-        let row = ((card.bottom() - 10.0 - top) / 7.0).max(14.0);
+        let (left, cell, top, row) = calendar_grid(card);
         let text = (row * 0.62).min(cell * 0.5).clamp(10.0, 28.0);
         let head = (text * 0.9).max(9.0);
         for (index, name) in ["L", "M", "M", "J", "V", "S", "D"].iter().enumerate() {
@@ -907,14 +916,12 @@ impl Panels {
             let x = left + cell * (index as f64 + 0.5) - w / 2.0;
             canvas.text(&self.bold, name, x, top + (row - head * 1.21) / 2.0, head, FAINT);
         }
-        let first = (days_from_civil(year, month, 1) + 3).rem_euclid(7) as usize;
         for day in 1..=days_in_month(year, month) {
-            let slot = first + day as usize - 1;
-            let (column, line) = (slot % 7, slot / 7);
-            let y = top + row * (line as f64 + 1.0);
+            let rect = calendar_day(card, year, month, day);
+            let column = ((rect.x - left) / cell).round() as usize;
+            let y = rect.y;
             let today = view.month_offset == 0 && day == state.clock.day;
             if today {
-                let rect = Rect::new(left + cell * column as f64, y, cell, row - 1.0);
                 canvas.fill(rect, ((row - 1.0).min(cell) / 2.0) as f32, Color::rgb(0xE5574A));
             }
             let number = day.to_string();
@@ -929,6 +936,13 @@ impl Panels {
             };
             let x = left + cell * (column as f64 + 0.5) - w / 2.0;
             canvas.text(font, &number, x, y + (row - 1.0 - text * 1.21) / 2.0, text, ink);
+            // Un événement ou une tâche à faire ce jour-là, dans le Calendrier.
+            if view.busy_month & (1 << (day - 1)) != 0 {
+                let size = (text * 0.2).clamp(3.0, 5.0);
+                let dot_y = (y + (row - 1.0 + text * 1.21) / 2.0).min(y + row - 1.0 - size);
+                let dot = Rect::new(x + w / 2.0 - size / 2.0, dot_y, size, size);
+                canvas.fill(dot, (size / 2.0) as f32, if today { Color::WHITE } else { CORAL });
+            }
         }
     }
 
@@ -1011,7 +1025,8 @@ impl Panels {
             } else {
                 name.to_owned()
             };
-            let closable = current && view.lists.len() > 1;
+            // Une liste du Calendrier se supprime (ses tâches restent, sans liste).
+            let closable = current && !view.loose_list;
             let room = tab.w - 20.0 - if closable { 20.0 } else { 0.0 };
             let name = canvas.fit_text(&self.bold, &name, px(12.5), room);
             let ink = if current { Color::WHITE } else { SOFT };
@@ -1085,7 +1100,7 @@ impl Panels {
                 Color::WHITE.with_alpha(38)
             } else {
                 match task.priority {
-                    Priority::High => Color::rgb(0xF07A6E),
+                    Priority::High => CORAL,
                     Priority::Medium => Color::rgb(0xFFB547),
                     Priority::Low => Color::rgb(0x3CC7D1),
                 }
@@ -1602,4 +1617,27 @@ pub(super) struct Placement {
     pub x: f64,
     pub y: f64,
     pub screen: (f64, f64),
+}
+
+/// Grille du widget Calendrier : bord gauche, largeur d'une colonne, haut (ligne des
+/// initiales des jours) et hauteur d'une ligne.
+fn calendar_grid(card: Rect) -> (f64, f64, f64, f64) {
+    let (left, width) = (card.x + 14.0, card.w - 28.0);
+    let top = card.y + 34.0;
+    let row = ((card.bottom() - 10.0 - top) / 7.0).max(14.0);
+    (left, width / 7.0, top, row)
+}
+
+/// Case du jour `day` dans le widget Calendrier (lundi en première colonne).
+pub(super) fn calendar_day(card: Rect, year: i64, month: u32, day: u32) -> Rect {
+    let (left, cell, top, row) = calendar_grid(card);
+    let first = (days_from_civil(year, month, 1) + 3).rem_euclid(7) as usize;
+    let slot = first + day as usize - 1;
+    let (column, line) = (slot % 7, slot / 7);
+    Rect::new(
+        left + cell * column as f64,
+        top + row * (line as f64 + 1.0),
+        cell,
+        row - 1.0,
+    )
 }

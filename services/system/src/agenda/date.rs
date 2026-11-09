@@ -361,7 +361,7 @@ fn local_offset() -> i64 {
     {
         return offset;
     }
-    let offset = ferrite_system::command::run("date", &["+%z"])
+    let offset = crate::command::run("date", &["+%z"])
         .ok()
         .and_then(|text| parse_offset(text.trim()))
         .unwrap_or(0);

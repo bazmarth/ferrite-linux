@@ -1398,6 +1398,16 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
                 .map(|list| list.name.clone())
                 .collect(),
             list_shown: state.dashboard.list_shown,
+            loose_list: state.dashboard.loose_list_shown(),
+            busy_month: {
+                let (_, (year, month)) =
+                    crate::desktop::panels::calendar_months(state.dashboard.month_offset);
+                state.dashboard.busy_days(year, month)
+            },
+            busy_today: {
+                let ((year, month), _) = crate::desktop::panels::calendar_months(0);
+                state.dashboard.busy_days(year, month)
+            },
             tasks: state
                 .dashboard
                 .tasks()

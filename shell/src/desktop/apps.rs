@@ -274,6 +274,7 @@ impl App {
     pub const SETTINGS: App = App("settings");
     pub const MUSIC: App = App("music");
     pub const CLOCK: App = App("clock");
+    pub const CALENDAR: App = App("calendar");
 
     /// Application Ferrite qui ouvre `file`, d'après la liste commune des formats
     /// (`ferrite_system::formats`) ; Fichiers (sur le fichier) pour le reste.

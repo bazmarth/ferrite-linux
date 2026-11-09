@@ -411,7 +411,7 @@ pub fn parse_agenda(text: &str) -> Agenda {
 
 #[cfg(test)]
 mod tests {
-    use ferrite_system::config::Accent;
+    use crate::config::Accent;
 
     use super::*;
 

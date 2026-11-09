@@ -186,7 +186,7 @@ bouton physique seulement), `cadre_propre` (applications qui gardent leur barre 
 `horloge`, `meteo_ville`, `meteo_latitude`, `meteo_longitude`, `mode_nuit`,
 `mode_nuit_debut`, `mode_nuit_fin`, `mode_nuit_temperature`, `reduire_animations`,
 `son_alerte` (goutte, cloche, verre, douce, aucun), `son_demarrage`, `sons_actions`,
-`sons_volume`, `surlignage`, `tableau_*` (widgets Notes et Tâches), `texte_taille` (90 à 150 %),
+`sons_volume`, `surlignage`, `tableau_*` (widget Notes ; les tâches sont dans l'agenda du Calendrier), `texte_taille` (90 à 150 %),
 `tuilage`, `veille_batterie`,
 `veille_secteur`, `verrouillage_auto`, `verrouillage_flou`, `verrouillage_fond` (nom d'un
 fond dessiné ou chemin absolu d'une photo), `verrouillage_theme`, `visage_deverrouillage`,

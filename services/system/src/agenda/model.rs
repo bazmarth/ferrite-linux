@@ -2,7 +2,7 @@
 //! listes de tâches, catégories, et les questions qu'on leur pose (occurrences d'une
 //! période, recherche, tâches en retard, progression).
 
-use ferrite_system::config::Accent;
+use crate::config::Accent;
 
 use super::date::{DAY_MINUTES, Date, DateTime};
 

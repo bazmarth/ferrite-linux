@@ -155,6 +155,9 @@ fn run(options: Options) -> Result<u8, Box<dyn std::error::Error>> {
     if let Err(err) = desktop::widgets::start_weather(&event_loop.handle()) {
         warn!(%err, "météo du tableau de bord indisponible");
     }
+    if let Err(err) = desktop::widgets::start_agenda_watch(&event_loop.handle()) {
+        warn!("agenda du Calendrier non suivi : {err}");
+    }
 
     // Ouverture de session (ferrite-session, connexion automatique) : le bureau démarre
     // verrouillé. Un bureau imbriqué, lancé depuis un terminal, hérite de la variable : il

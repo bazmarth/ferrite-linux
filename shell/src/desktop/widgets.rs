@@ -1,15 +1,28 @@
 //! Données persistantes des widgets du bureau : disposition, notes, tâches et météo.
+//!
+//! Les tâches sont celles du Calendrier (`ferrite_system::agenda`) : le widget Tâches les
+//! lit et les écrit dans le même fichier que l'application, sans copie à part.
 
 use std::{
+    cell::RefCell,
+    path::PathBuf,
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use ferrite_system::{
-    config::Settings,
+    agenda::{
+        date::{Date, DateTime},
+        model::{self as agenda, Agenda},
+        store,
+    },
+    config::{Accent, Settings},
     weather::{self, Place, Weather},
 };
-use smithay::reexports::calloop::{LoopHandle, channel};
+use smithay::reexports::calloop::{
+    LoopHandle, channel,
+    timer::{TimeoutAction, Timer},
+};
 use tracing::warn;
 
 use crate::state::Ferrite;
@@ -373,6 +386,23 @@ impl Priority {
         }
     }
 
+    fn to_agenda(self) -> agenda::Priority {
+        match self {
+            Priority::High => agenda::Priority::High,
+            Priority::Medium => agenda::Priority::Normal,
+            Priority::Low => agenda::Priority::Low,
+        }
+    }
+
+    fn from_agenda(priority: agenda::Priority) -> Self {
+        match priority {
+            agenda::Priority::High => Priority::High,
+            agenda::Priority::Normal => Priority::Medium,
+            agenda::Priority::Low => Priority::Low,
+        }
+    }
+
+    #[cfg(test)]
     fn token(self) -> &'static str {
         match self {
             Priority::High => "haute",
@@ -440,16 +470,21 @@ pub fn checklist(lines: &[String]) -> Vec<(usize, bool, String)> {
         .collect()
 }
 
+/// Tâche du Calendrier, telle que le widget la montre.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Task {
+    /// Numéro de la tâche dans l'agenda.
+    pub id: u64,
     pub text: String,
     pub done: bool,
     pub priority: Priority,
 }
 
-/// Une feuille du widget Tâches : son nom et ses tâches.
+/// Une feuille du widget Tâches : une liste du Calendrier, ou (`id` vide) les tâches
+/// rangées dans aucune liste.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TaskList {
+    pub id: Option<u64>,
     pub name: String,
     pub tasks: Vec<Task>,
 }
@@ -457,8 +492,16 @@ pub struct TaskList {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Dashboard {
     pub notes: Vec<Note>,
-    /// Feuilles du widget Tâches ; `list_shown` est celle affichée.
+    /// Feuilles du widget Tâches, tirées de `agenda` ; `list_shown` est celle affichée.
     pub lists: Vec<TaskList>,
+    /// Agenda du Calendrier : listes et tâches du widget Tâches, jours occupés des
+    /// calendriers du bureau.
+    pub agenda: Agenda,
+    /// Fichier de l'agenda ; aucun dans les essais (tout reste en mémoire).
+    agenda_file: Option<PathBuf>,
+    agenda_stamp: Option<SystemTime>,
+    /// Jours occupés déjà calculés, par mois ; vidé quand l'agenda change.
+    busy: RefCell<Vec<((i32, u32), u32)>>,
     pub list_shown: usize,
     pub draft: String,
     pub month_offset: i32,
@@ -484,7 +527,11 @@ impl Dashboard {
     pub fn load() -> Self {
         let settings = Settings::load();
         let notes = load_notes(&settings);
-        let lists = load_lists(&settings);
+        let agenda_file = store::agenda_path();
+        let agenda = store::load_agenda(&agenda_file).unwrap_or_else(|error| {
+            warn!(%error, "agenda du Calendrier illisible");
+            Agenda::default()
+        });
         let mut layout = settings
             .get("widgets_disposition")
             .map_or_else(default_layout, parse_layout);
@@ -500,17 +547,186 @@ impl Dashboard {
             }
             layout.push(slot);
         }
-        Self {
+        let mut dashboard = Self {
             notes,
-            lists,
             list_shown: settings
                 .get("tableau_liste_affichee")
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(0),
             layout,
             place: Place::from_settings(&settings).name,
+            agenda_stamp: store::modified(&agenda_file),
+            agenda,
+            agenda_file: Some(agenda_file),
             ..Self::default()
+        };
+        dashboard.import_old_tasks(settings);
+        dashboard.rebuild_lists();
+        dashboard
+    }
+
+    /// Tableau de bord sur un agenda en mémoire seulement (essais).
+    #[cfg(test)]
+    pub fn with_agenda(agenda: Agenda) -> Self {
+        let mut dashboard = Self {
+            agenda,
+            ..Self::default()
+        };
+        dashboard.rebuild_lists();
+        dashboard
+    }
+
+    /// Les tâches d'avant le Calendrier, gardées dans les réglages, rejoignent l'agenda
+    /// une seule fois : chaque feuille dans la liste du même nom, créée s'il le faut.
+    fn import_old_tasks(&mut self, mut settings: Settings) {
+        const IMPORTED: &str = "tableau_taches_calendrier";
+        if settings.get(IMPORTED).is_some()
+            || (settings.get("tableau_listes").is_none() && settings.get("tableau_taches").is_none())
+        {
+            return;
         }
+        let old = load_lists(&settings);
+        let now = local_now();
+        let imported = self.edit_agenda(|agenda| {
+            for list in old {
+                let id = match agenda
+                    .lists
+                    .iter()
+                    .find(|known| known.name.to_lowercase() == list.name.to_lowercase())
+                {
+                    Some(known) => known.id,
+                    None => new_list(agenda, list.name.clone()),
+                };
+                for task in list.tasks {
+                    let id = new_task(agenda, Some(id), task.text, now);
+                    if let Some(added) = agenda.task_mut(id) {
+                        added.priority = task.priority.to_agenda();
+                        added.done = task.done;
+                        added.completed = task.done.then_some(now);
+                    }
+                }
+            }
+            true
+        });
+        if imported {
+            settings.set(IMPORTED, "oui");
+            if let Err(error) = settings.save() {
+                warn!(%error, "reprise des tâches non notée");
+            }
+        }
+    }
+
+    /// Feuilles du widget d'après l'agenda : ses listes, dans l'ordre, puis les tâches
+    /// sans liste s'il y en a (ou s'il n'y a aucune liste).
+    fn rebuild_lists(&mut self) {
+        let shown = |task: &agenda::Task| Task {
+            id: task.id,
+            text: task.title.clone(),
+            done: task.done,
+            priority: Priority::from_agenda(task.priority),
+        };
+        let mut lists: Vec<TaskList> = self
+            .agenda
+            .lists
+            .iter()
+            .map(|list| TaskList {
+                id: Some(list.id),
+                name: list.name.clone(),
+                tasks: self
+                    .agenda
+                    .tasks
+                    .iter()
+                    .filter(|task| task.list == Some(list.id))
+                    .map(shown)
+                    .collect(),
+            })
+            .collect();
+        let loose: Vec<Task> = self
+            .agenda
+            .tasks
+            .iter()
+            .filter(|task| task.list.is_none_or(|id| self.agenda.list(Some(id)).is_none()))
+            .map(shown)
+            .collect();
+        if !loose.is_empty() || lists.is_empty() {
+            lists.push(TaskList {
+                id: None,
+                name: LOOSE_LIST.to_owned(),
+                tasks: loose,
+            });
+        }
+        self.lists = lists;
+        self.list_shown = self.list_shown.min(self.lists.len() - 1);
+        self.busy.borrow_mut().clear();
+    }
+
+    /// Change l'agenda : relu juste avant (l'application a pu l'écrire), changé par
+    /// `change`, puis enregistré s'il a changé (`change` renvoie vrai).
+    fn edit_agenda(&mut self, change: impl FnOnce(&mut Agenda) -> bool) -> bool {
+        if let Some(file) = &self.agenda_file {
+            match store::load_agenda(file) {
+                Ok(agenda) => self.agenda = agenda,
+                Err(error) => {
+                    warn!(%error, "agenda du Calendrier illisible, rien n'est changé");
+                    return false;
+                }
+            }
+        }
+        let changed = change(&mut self.agenda);
+        if changed && let Some(file) = &self.agenda_file {
+            if let Err(error) = store::save_agenda(file, &self.agenda) {
+                warn!(%error, "agenda du Calendrier non enregistré");
+            }
+            self.agenda_stamp = store::modified(file);
+        }
+        self.rebuild_lists();
+        changed
+    }
+
+    /// Relit l'agenda s'il a changé ailleurs (l'application Calendrier) ; vrai s'il faut
+    /// redessiner.
+    pub fn refresh_agenda(&mut self) -> bool {
+        let Some(file) = &self.agenda_file else {
+            return false;
+        };
+        let stamp = store::modified(file);
+        if stamp == self.agenda_stamp {
+            return false;
+        }
+        self.agenda_stamp = stamp;
+        match store::load_agenda(file) {
+            Ok(agenda) => {
+                self.agenda = agenda;
+                self.rebuild_lists();
+                true
+            }
+            Err(error) => {
+                warn!(%error, "agenda du Calendrier illisible");
+                false
+            }
+        }
+    }
+
+    /// Jours du mois qui ont un événement ou une tâche à faire : un bit par jour (bit 0
+    /// pour le 1er).
+    pub fn busy_days(&self, year: i32, month: u32) -> u32 {
+        if let Some((_, bits)) = self.busy.borrow().iter().find(|(key, _)| *key == (year, month)) {
+            return *bits;
+        }
+        let bits = busy_days(&self.agenda, year, month);
+        let mut cache = self.busy.borrow_mut();
+        if cache.len() >= 4 {
+            cache.remove(0);
+        }
+        cache.push(((year, month), bits));
+        bits
+    }
+
+    /// La feuille affichée est celle des tâches sans liste (qu'on ne supprime pas).
+    pub fn loose_list_shown(&self) -> bool {
+        self.lists
+            .get(self.list_shown)
+            .is_some_and(|list| list.id.is_none())
     }
 
     pub fn save(&self) -> std::io::Result<()> {
@@ -522,21 +738,8 @@ impl Dashboard {
             settings.set(&format!("tableau_note_{index}"), &encode(&note.text));
             settings.set(&format!("tableau_note_{index}_date"), &note.updated.to_string());
         }
-        settings.set("tableau_listes", &self.lists.len().to_string());
+        // Les tâches, elles, sont dans l'agenda du Calendrier, enregistré à chaque changement.
         settings.set("tableau_liste_affichee", &self.list_shown.to_string());
-        for (list_index, list) in self.lists.iter().enumerate() {
-            let key = format!("tableau_liste_{list_index}");
-            settings.set(&format!("{key}_nom"), &encode(&list.name));
-            settings.set(&format!("{key}_taches"), &list.tasks.len().to_string());
-            for (index, task) in list.tasks.iter().enumerate() {
-                settings.set(&format!("{key}_tache_{index}"), &encode(&task.text));
-                settings.set(
-                    &format!("{key}_tache_{index}_faite"),
-                    if task.done { "oui" } else { "non" },
-                );
-                settings.set(&format!("{key}_tache_{index}_priorite"), task.priority.token());
-            }
-        }
         settings.save()
     }
 
@@ -592,16 +795,37 @@ impl Dashboard {
             .map_or(&[], |list| list.tasks.as_slice())
     }
 
-    /// Tâches de la feuille affichée, une feuille étant créée s'il n'y en a aucune.
-    pub fn tasks_mut(&mut self) -> &mut Vec<Task> {
-        if self.lists.is_empty() {
-            self.lists.push(TaskList {
-                name: "Tâches".to_owned(),
-                tasks: Vec::new(),
-            });
-        }
-        self.list_shown = self.list_shown.min(self.lists.len() - 1);
-        &mut self.lists[self.list_shown].tasks
+    /// Tâche `index` de la feuille affichée : son numéro dans l'agenda.
+    fn task_id(&self, index: usize) -> Option<u64> {
+        self.tasks().get(index).map(|task| task.id)
+    }
+
+    /// Coche ou décoche la tâche `index` de la feuille affichée.
+    pub fn toggle_task(&mut self, index: usize) -> bool {
+        let Some(id) = self.task_id(index) else {
+            return false;
+        };
+        let now = local_now();
+        self.edit_agenda(|agenda| {
+            let Some(done) = agenda.task(id).map(|task| !task.done) else {
+                return false;
+            };
+            agenda.set_done(id, done, now);
+            true
+        })
+    }
+
+    /// Priorité suivante pour la tâche `index` de la feuille affichée.
+    pub fn cycle_priority(&mut self, index: usize) -> bool {
+        let Some(id) = self.task_id(index) else {
+            return false;
+        };
+        self.edit_agenda(|agenda| {
+            agenda.task_mut(id).is_some_and(|task| {
+                task.priority = Priority::from_agenda(task.priority).next().to_agenda();
+                true
+            })
+        })
     }
 
     /// Affiche la feuille `index`.
@@ -614,28 +838,50 @@ impl Dashboard {
 
     /// Nouvelle feuille de tâches, affichée, son nom à saisir.
     pub fn add_list(&mut self) -> Option<DashboardEdit> {
-        if self.lists.len() >= LISTS_MAX {
+        if self.agenda.lists.len() >= LISTS_MAX {
             return None;
         }
-        self.lists.push(TaskList::default());
-        self.show_list(self.lists.len() - 1);
-        Some(DashboardEdit::ListName(self.list_shown))
+        let mut created = None;
+        self.edit_agenda(|agenda| {
+            created = Some(new_list(agenda, String::new()));
+            true
+        });
+        let created = created?;
+        let index = self.lists.iter().position(|list| list.id == Some(created))?;
+        self.show_list(index);
+        Some(DashboardEdit::ListName(index))
     }
 
-    /// Supprime une feuille ; la dernière restante est seulement vidée.
+    /// Renomme la feuille `index` (une liste du Calendrier).
+    fn rename_list(&mut self, index: usize, name: String) -> bool {
+        let Some(id) = self.lists.get(index).and_then(|list| list.id) else {
+            return false;
+        };
+        self.edit_agenda(|agenda| {
+            agenda
+                .lists
+                .iter_mut()
+                .find(|list| list.id == id)
+                .is_some_and(|list| {
+                    list.name = name;
+                    true
+                })
+        })
+    }
+
+    /// Supprime une liste, comme le Calendrier : ses tâches restent, sans liste. La
+    /// feuille des tâches sans liste ne se supprime pas.
     pub fn remove_list(&mut self, index: usize) {
-        if index >= self.lists.len() {
+        let Some(id) = self.lists.get(index).and_then(|list| list.id) else {
             return;
+        };
+        if self.list_shown > index {
+            self.list_shown -= 1;
         }
-        if self.lists.len() == 1 {
-            self.lists[0].tasks.clear();
-        } else {
-            self.lists.remove(index);
-            if self.list_shown > index {
-                self.list_shown -= 1;
-            }
-        }
-        self.list_shown = self.list_shown.min(self.lists.len() - 1);
+        self.edit_agenda(|agenda| {
+            agenda.remove_list(id);
+            true
+        });
         self.tasks_scroll = 0;
     }
 
@@ -673,22 +919,25 @@ impl Dashboard {
     }
 
     pub fn remove_task(&mut self, index: usize) -> bool {
-        let tasks = self.tasks_mut();
-        if index < tasks.len() {
-            tasks.remove(index);
-            return true;
-        }
-        false
+        let Some(id) = self.task_id(index) else {
+            return false;
+        };
+        self.edit_agenda(|agenda| {
+            agenda.remove_task(id);
+            true
+        })
     }
 
     /// Fin de la saisie : une note restée vide disparaît (renvoie sa place) ; une feuille
     /// restée sans nom en reçoit un.
     pub fn finish_editing(&mut self, editing: Option<DashboardEdit>) -> Option<usize> {
         if let Some(DashboardEdit::ListName(index)) = editing {
-            if let Some(list) = self.lists.get_mut(index)
-                && list.name.trim().is_empty()
+            if self
+                .lists
+                .get(index)
+                .is_some_and(|list| list.name.trim().is_empty())
             {
-                list.name = format!("Liste {}", index + 1);
+                self.rename_list(index, format!("Liste {}", index + 1));
             }
             return None;
         }
@@ -714,12 +963,16 @@ impl Dashboard {
                 self.draft.push(character);
                 false
             }
-            Some(DashboardEdit::ListName(index)) => self.lists.get_mut(index).is_some_and(|list| {
-                if list.name.chars().count() < LIST_NAME_MAX {
-                    list.name.push(character);
+            // La liste est enregistrée dans l'agenda : rien de plus à enregistrer.
+            Some(DashboardEdit::ListName(index)) => {
+                if let Some(list) = self.lists.get(index)
+                    && list.name.chars().count() < LIST_NAME_MAX
+                {
+                    let name = format!("{}{character}", list.name);
+                    self.rename_list(index, name);
                 }
-                true
-            }),
+                false
+            }
             None => false,
         }
     }
@@ -736,10 +989,14 @@ impl Dashboard {
                 self.draft.pop();
                 false
             }
-            Some(DashboardEdit::ListName(index)) => self.lists.get_mut(index).is_some_and(|list| {
-                list.name.pop();
-                true
-            }),
+            Some(DashboardEdit::ListName(index)) => {
+                if let Some(list) = self.lists.get(index) {
+                    let mut name = list.name.clone();
+                    name.pop();
+                    self.rename_list(index, name);
+                }
+                false
+            }
             None => false,
         }
     }
@@ -753,21 +1010,23 @@ impl Dashboard {
             self.draft.clear();
             return false;
         }
-        let task = Task {
-            text: text.to_owned(),
-            done: false,
-            priority: Priority::default(),
-        };
-        self.tasks_mut().push(task);
+        let text = text.to_owned();
+        let list = self.lists.get(self.list_shown).and_then(|list| list.id);
+        let now = local_now();
         self.draft.clear();
-        true
+        self.edit_agenda(|agenda| {
+            new_task(agenda, list, text, now);
+            true
+        })
     }
 }
 
-/// Feuilles de tâches enregistrées ; avant les feuilles, une seule liste « Tâches ».
+/// Anciennes feuilles de tâches des réglages (avant le Calendrier), pour les reprendre ;
+/// avant les feuilles, une seule liste « Tâches ».
 fn load_lists(settings: &Settings) -> Vec<TaskList> {
     let task = |key: &str| {
         Some(Task {
+            id: 0,
             text: decode(settings.get(key)?),
             done: settings.get(&format!("{key}_faite")) == Some("oui"),
             priority: Priority::from_token(settings.get(&format!("{key}_priorite"))),
@@ -784,6 +1043,7 @@ fn load_lists(settings: &Settings) -> Vec<TaskList> {
             .map(|list| {
                 let key = format!("tableau_liste_{list}");
                 TaskList {
+                    id: None,
                     name: settings
                         .get(&format!("{key}_nom"))
                         .map_or_else(|| format!("Liste {}", list + 1), decode),
@@ -801,9 +1061,10 @@ fn load_lists(settings: &Settings) -> Vec<TaskList> {
         Some(tasks) => (0..tasks)
             .filter_map(|index| task(&format!("tableau_tache_{index}")))
             .collect(),
-        None => sample_tasks(),
+        None => Vec::new(),
     };
     vec![TaskList {
+        id: None,
         name: "Tâches".to_owned(),
         tasks,
     }]
@@ -858,19 +1119,84 @@ fn sample_notes() -> Vec<Note> {
     }]
 }
 
-fn sample_tasks() -> Vec<Task> {
-    [
-        ("Préparer la démo Ferrite", Priority::High, false),
-        ("Relire le rapport", Priority::Medium, false),
-        ("Mettre à jour les icônes", Priority::Low, true),
-    ]
-    .into_iter()
-    .map(|(text, priority, done)| Task {
-        text: text.to_owned(),
-        done,
-        priority,
-    })
-    .collect()
+/// Nom de la feuille des tâches rangées dans aucune liste du Calendrier.
+pub const LOOSE_LIST: &str = "Sans liste";
+
+/// Maintenant, en heure locale, pour l'agenda (sans lancer de commande : le décalage
+/// horaire est celui que l'horloge de la barre a déjà lu).
+fn local_now() -> DateTime {
+    crate::desktop::panels::local_minutes().map_or_else(|| DateTime::from_stamp(0), DateTime::from_stamp)
+}
+
+/// Nouvelle liste dans l'agenda, d'une couleur différente de la précédente.
+fn new_list(agenda: &mut Agenda, name: String) -> u64 {
+    let id = agenda.new_id();
+    let color = Accent::ALL[(agenda.lists.len() + 3) % Accent::ALL.len()];
+    agenda.lists.push(agenda::TaskList { id, name, color });
+    id
+}
+
+/// Nouvelle tâche à faire dans l'agenda, sans échéance.
+fn new_task(agenda: &mut Agenda, list: Option<u64>, title: String, now: DateTime) -> u64 {
+    let id = agenda.new_id();
+    agenda.tasks.push(agenda::Task {
+        id,
+        title,
+        notes: String::new(),
+        list,
+        due: None,
+        due_time: None,
+        priority: agenda::Priority::Normal,
+        done: false,
+        completed: None,
+        event: None,
+        reminders: Vec::new(),
+        created: now,
+    });
+    id
+}
+
+/// Jours du mois `month` qui ont un événement ou une tâche à faire (un bit par jour).
+fn busy_days(agenda: &Agenda, year: i32, month: u32) -> u32 {
+    let Some(first) = Date::new(year, month, 1) else {
+        return 0;
+    };
+    let next = first.add_months(1);
+    let mut bits = 0u32;
+    let mut mark = |date: Date| {
+        if date >= first && date < next {
+            bits |= 1 << (date.day - 1);
+        }
+    };
+    for occurrence in agenda.occurrences(first, next, |_| true) {
+        let mut day = occurrence.start.date.max(first);
+        let last = occurrence.last_day().min(next.add_days(-1));
+        while day <= last {
+            mark(day);
+            day = day.add_days(1);
+        }
+    }
+    for task in agenda.tasks.iter().filter(|task| !task.done) {
+        if let Some(due) = task.due {
+            mark(due);
+        }
+    }
+    bits
+}
+
+/// Relit l'agenda du Calendrier toutes les deux secondes s'il a changé, pour que les
+/// widgets et le calendrier de la barre suivent l'application.
+pub fn start_agenda_watch(handle: &LoopHandle<'static, Ferrite>) -> Result<(), String> {
+    const CHECK: Duration = Duration::from_secs(2);
+    handle
+        .insert_source(Timer::from_duration(CHECK), |_, _, state| {
+            if state.dashboard.refresh_agenda() {
+                state.request_redraw();
+            }
+            TimeoutAction::ToDuration(CHECK)
+        })
+        .map(drop)
+        .map_err(|error| error.to_string())
 }
 
 /// Relève la météo en arrière-plan, sans jamais retenir le bureau.
@@ -1156,45 +1482,57 @@ mod tests {
 
     #[test]
     fn feuilles_de_taches_et_notes_s_ajoutent_et_se_suppriment() {
-        let mut dashboard = Dashboard {
-            draft: "Pain".to_owned(),
-            ..Dashboard::default()
-        };
-        assert!(dashboard.commit_draft());
+        let mut dashboard = Dashboard::with_agenda(Agenda::empty());
+        // Sans liste au Calendrier, une seule feuille : les tâches sans liste.
         assert_eq!(dashboard.lists.len(), 1);
+        assert!(dashboard.loose_list_shown());
+        dashboard.draft = "Pain".to_owned();
+        assert!(dashboard.commit_draft());
         assert_eq!(dashboard.tasks()[0].text, "Pain");
+        assert_eq!(dashboard.agenda.tasks[0].list, None);
 
-        // Nouvelle feuille, nommée à la saisie ; sans nom, elle en reçoit un.
+        // Nouvelle feuille = nouvelle liste du Calendrier, nommée à la saisie ; sans nom,
+        // elle en reçoit un. Les listes passent avant les tâches sans liste.
         let editing = dashboard.add_list();
-        assert_eq!(editing, Some(DashboardEdit::ListName(1)));
+        assert_eq!(editing, Some(DashboardEdit::ListName(0)));
         assert!(dashboard.tasks().is_empty());
         for character in "Courses".chars() {
-            assert!(dashboard.type_char(editing, character, 0));
+            dashboard.type_char(editing, character, 0);
         }
-        assert!(dashboard.erase_char(editing, 0));
+        dashboard.erase_char(editing, 0);
         dashboard.finish_editing(editing);
-        assert_eq!(dashboard.lists[1].name, "Course");
+        assert_eq!(dashboard.agenda.lists[0].name, "Course");
         let unnamed = dashboard.add_list();
+        assert_eq!(unnamed, Some(DashboardEdit::ListName(1)));
         dashboard.finish_editing(unnamed);
-        assert_eq!(dashboard.lists[2].name, "Liste 3");
+        assert_eq!(dashboard.lists[1].name, "Liste 2");
+        assert_eq!(dashboard.lists[2].name, LOOSE_LIST);
 
-        // Chaque feuille garde ses tâches.
-        dashboard.show_list(1);
+        // Chaque feuille garde ses tâches, rangées dans sa liste du Calendrier.
+        dashboard.show_list(0);
         dashboard.draft = "Lait".to_owned();
         dashboard.commit_draft();
-        dashboard.show_list(0);
+        let course = dashboard.lists[0].id;
+        assert_eq!(dashboard.agenda.tasks[1].list, course);
+        assert!(dashboard.toggle_task(0));
+        assert!(dashboard.agenda.tasks[1].done);
+        assert!(dashboard.cycle_priority(0));
+        assert_eq!(dashboard.agenda.tasks[1].priority, agenda::Priority::Low);
+        dashboard.show_list(2);
         assert_eq!(dashboard.tasks()[0].text, "Pain");
         assert!(dashboard.remove_task(0));
-        assert!(dashboard.tasks().is_empty());
+        // Plus de tâche sans liste : la feuille disparaît.
+        assert_eq!(dashboard.lists.len(), 2);
 
-        // Supprimer une feuille avant celle affichée garde l'affichage sur la même.
+        // Supprimer une liste garde ses tâches, sans liste (comme le Calendrier).
         dashboard.show_list(1);
         dashboard.remove_list(0);
-        assert_eq!(dashboard.lists[dashboard.list_shown].name, "Course");
+        assert_eq!(dashboard.lists[dashboard.list_shown].name, "Liste 2");
+        assert_eq!(dashboard.lists[1].name, LOOSE_LIST);
+        assert_eq!(dashboard.lists[1].tasks[0].text, "Lait");
+        // La feuille des tâches sans liste ne se supprime pas.
         dashboard.remove_list(1);
-        dashboard.remove_list(0);
-        assert_eq!(dashboard.lists.len(), 1);
-        assert!(dashboard.tasks().is_empty());
+        assert_eq!(dashboard.lists.len(), 2);
 
         dashboard.add_note(1);
         dashboard.add_note(2);
@@ -1228,5 +1566,33 @@ mod tests {
             "Idées\n- [ ] Chevrons\ntexte\n[x] Scanout"
         );
         assert_eq!(dashboard.notes[0].updated, 42);
+    }
+
+    #[test]
+    fn les_jours_occupes_viennent_du_calendrier() {
+        let mut agenda = Agenda::empty();
+        let start = Date::new(2026, 11, 9).unwrap();
+        agenda.events.push(agenda::Event {
+            id: 1,
+            title: "Salon".to_owned(),
+            description: String::new(),
+            location: String::new(),
+            category: None,
+            start: start.at(9 * 60),
+            end: start.add_days(1).at(18 * 60),
+            all_day: false,
+            recurrence: agenda::Recurrence::default(),
+            exceptions: Vec::new(),
+            reminders: Vec::new(),
+        });
+        let now = DateTime::from_stamp(0);
+        let id = new_task(&mut agenda, None, "Rapport".to_owned(), now);
+        agenda.task_mut(id).unwrap().due = Date::new(2026, 11, 20);
+        let done = new_task(&mut agenda, None, "Fait".to_owned(), now);
+        agenda.set_done(done, true, now);
+        agenda.task_mut(done).unwrap().due = Date::new(2026, 11, 1);
+        let dashboard = Dashboard::with_agenda(agenda);
+        assert_eq!(dashboard.busy_days(2026, 11), (1 << 8) | (1 << 9) | (1 << 19));
+        assert_eq!(dashboard.busy_days(2026, 12), 0);
     }
 }

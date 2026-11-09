@@ -11,7 +11,7 @@ use crate::tokens::{colors, motion};
 /// Hauteur de la barre du haut.
 pub const MENUBAR_HEIGHT: u32 = 34;
 /// Hauteur de la barre de titre des fenêtres.
-pub const TITLEBAR_HEIGHT: u32 = 46;
+pub const TITLEBAR_HEIGHT: u32 = 38;
 /// Rayon des coins des fenêtres.
 pub const WINDOW_RADIUS: u32 = crate::tokens::radius::WINDOW;
 /// Côté des icônes du Dock.
@@ -25,10 +25,10 @@ pub const MENU_WIDTH: u32 = 220;
 /// Hauteur d'une ligne de menu.
 pub const MENU_ITEM_HEIGHT: u32 = 32;
 
-/// Boutons de fenêtre : pastille de 22 px, centre à 23 px du bord (fermer à gauche,
+/// Boutons de fenêtre : pastille de 18 px, centre à 19 px du bord (fermer à gauche,
 /// agrandir à droite).
-pub const WINDOW_BUTTON_RADIUS: u32 = 11;
-pub const WINDOW_BUTTON_INSET: u32 = 23;
+pub const WINDOW_BUTTON_RADIUS: u32 = 9;
+pub const WINDOW_BUTTON_INSET: u32 = 19;
 
 /// Polices de l'interface (fichiers dans `assets/fonts`).
 pub const FONT_UI: &str = "Inter";
@@ -358,7 +358,7 @@ mod tests {
         let scale = Scale::from_factor(1.75).unwrap();
         assert_eq!(scale.as_120ths(), 210);
         assert_eq!(scale.ceil(), 2);
-        assert_eq!(scale.to_physical(TITLEBAR_HEIGHT), 81);
+        assert_eq!(scale.to_physical(TITLEBAR_HEIGHT), 67);
         assert_eq!(scale.to_logical(2880), 1646);
         assert_eq!(Scale::from_factor(0.0), None);
         assert_eq!(Scale::from_factor(f64::NAN), None);

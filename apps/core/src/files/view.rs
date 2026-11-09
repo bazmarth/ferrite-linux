@@ -676,7 +676,7 @@ impl FilesState {
         ui.spacing_mut().item_spacing.x = 2.0;
         let back = !self.back.is_empty();
         let forward = !self.forward.is_empty();
-        let size = egui::vec2(32.0, 32.0);
+        let size = egui::vec2(28.0, 28.0);
         if icon_button(ui, size, 9, None, "Précédent (Alt+←)", |p, r| {
             chevron(p, r, true, if back { look.icon } else { look.fg3 }, 2.0)
         })
@@ -700,8 +700,8 @@ impl FilesState {
             let on = self.preview;
             if icon_button(
                 ui,
-                egui::vec2(34.0, 34.0),
-                10,
+                egui::vec2(28.0, 28.0),
+                8,
                 Some(if on { look.sel_bg } else { look.chip }),
                 "Panneau d’aperçu",
                 |p, r| {
@@ -719,8 +719,8 @@ impl FilesState {
             let dark = style::theme_is_dark();
             if icon_button(
                 ui,
-                egui::vec2(34.0, 34.0),
-                10,
+                egui::vec2(28.0, 28.0),
+                8,
                 Some(look.chip),
                 if dark {
                     "Passer en thème clair"
@@ -764,8 +764,8 @@ impl FilesState {
             if self.picker.is_none()
                 && icon_button(
                     ui,
-                    egui::vec2(34.0, 34.0),
-                    10,
+                    egui::vec2(28.0, 28.0),
+                    8,
                     Some(look.chip),
                     "Nouvel onglet (Ctrl+T)",
                     |p, r| {
@@ -779,18 +779,18 @@ impl FilesState {
             {
                 actions.push(Action::NewTab(None));
             }
-            // Recherche : 220 × 34, moins quand la fenêtre est étroite (le chemin d'abord).
+            // Recherche : 220 × 28, moins quand la fenêtre est étroite (le chemin d'abord).
             let search_width = (ui.available_width() * 0.3 - 40.0).clamp(150.0, 220.0);
-            let (field, _) = ui.allocate_exact_size(egui::vec2(search_width, 34.0), Sense::hover());
-            ui.painter().rect_filled(field, 10.0, look.chip);
-            let c = egui::pos2(field.left() + 18.0, field.center().y - 1.0);
+            let (field, _) = ui.allocate_exact_size(egui::vec2(search_width, 28.0), Sense::hover());
+            ui.painter().rect_filled(field, 8.0, look.chip);
+            let c = egui::pos2(field.left() + 16.0, field.center().y - 1.0);
             ui.painter().circle_stroke(c, 4.2, Stroke::new(1.6, look.fg3));
             ui.painter().line_segment(
                 [c + egui::vec2(3.2, 3.2), c + egui::vec2(6.3, 6.3)],
                 Stroke::new(1.6, look.fg3),
             );
             let input = egui::Rect::from_min_max(
-                egui::pos2(field.left() + 34.0, field.top()),
+                egui::pos2(field.left() + 30.0, field.top()),
                 egui::pos2(field.right() - 10.0, field.bottom()),
             );
             let mut child = ui.new_child(
@@ -804,24 +804,24 @@ impl FilesState {
                     // Même police que le texte tapé : sinon l'invitation, plus grande, remonte.
                     .hint_text(RichText::new("Rechercher").font(font(14.0, false)))
                     .font(font(14.0, false))
-                    // Centré dans les 34 points du champ, comme la loupe (egui cale en haut).
+                    // Centré dans les 28 points du champ, comme la loupe (egui cale en haut).
                     .min_size(egui::vec2(0.0, input.height()))
                     .align(egui::Align2::LEFT_CENTER)
                     .text_color(look.fg)
                     .frame(egui::Frame::NONE)
                     .desired_width(input.width()),
             );
-            // Grille ou liste : rail de 3 autour de deux segments de 34 × 28.
+            // Grille ou liste : rail de 2 autour de deux segments de 30 × 24.
             let (rail, _) =
-                ui.allocate_exact_size(egui::vec2(3.0 + 34.0 + 2.0 + 34.0 + 3.0, 34.0), Sense::hover());
-            ui.painter().rect_filled(rail, 10.0, look.chip);
+                ui.allocate_exact_size(egui::vec2(2.0 + 30.0 + 2.0 + 30.0 + 2.0, 28.0), Sense::hover());
+            ui.painter().rect_filled(rail, 8.0, look.chip);
             for (slot, (view, hint)) in [(View::Grid, "Grille"), (View::List, "Liste")]
                 .into_iter()
                 .enumerate()
             {
                 let rect = egui::Rect::from_min_size(
-                    egui::pos2(rail.left() + 3.0 + slot as f32 * 36.0, rail.top() + 3.0),
-                    egui::vec2(34.0, 28.0),
+                    egui::pos2(rail.left() + 2.0 + slot as f32 * 32.0, rail.top() + 2.0),
+                    egui::vec2(30.0, 24.0),
                 );
                 let response = ui.interact(rect, ui.scope_id().with(("vue", slot)), Sense::click());
                 let on = self.view == view;
@@ -1062,7 +1062,7 @@ impl FilesState {
         }
         for (index, (name, path)) in parts.into_iter().enumerate().skip(first) {
             if index > first {
-                let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 30.0), Sense::hover());
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 28.0), Sense::hover());
                 chevron(ui.painter(), rect, false, look.fg3, 1.8);
             }
             let current = index == last;
@@ -1070,7 +1070,7 @@ impl FilesState {
                 .painter()
                 .layout_no_wrap(name.clone(), font(14.0, current), look.fg);
             let (rect, response) = ui.allocate_exact_size(
-                egui::vec2((galley.size().x + 20.0).min(budget), 30.0),
+                egui::vec2((galley.size().x + 20.0).min(budget), 28.0),
                 Sense::click(),
             );
             if current {

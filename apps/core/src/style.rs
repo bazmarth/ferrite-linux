@@ -24,7 +24,7 @@ use ferrite_ui::{
 };
 
 /// Hauteur de la barre d'outils, et de la zone des boutons en haut de la colonne.
-pub const TOOLBAR_HEIGHT: f32 = 52.0;
+pub const TOOLBAR_HEIGHT: f32 = 42.0;
 /// Préférences d'apparence en vigueur (voir [`apply_preferences`]) : accentuation en
 /// `0xRRGGBB`, et taille des icônes des barres latérales en pour cent.
 static THEME_DARK: AtomicU8 = AtomicU8::new(0);
@@ -851,7 +851,7 @@ enum WindowButton {
     Minimize,
 }
 
-/// Bouton de fenêtre : pastille de 22 px et symbole, rouge (fermer) ou couleur d'accent
+/// Bouton de fenêtre : pastille de 18 px et symbole, rouge (fermer) ou couleur d'accent
 /// (agrandir, réduire) au survol, estompé si la fenêtre n'a pas le focus.
 fn window_button(ui: &mut egui::Ui, center: egui::Pos2, kind: WindowButton) -> egui::Response {
     let close = kind == WindowButton::Close;

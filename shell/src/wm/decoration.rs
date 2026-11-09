@@ -151,11 +151,11 @@ mod tests {
     fn cadre_et_barre_de_titre() {
         assert_eq!(
             titlebar(content()),
-            Rectangle::new((100, 100).into(), (400, 46).into())
+            Rectangle::new((100, 108).into(), (400, 38).into())
         );
         assert_eq!(
             frame(content()),
-            Rectangle::new((100, 100).into(), (400, 346).into())
+            Rectangle::new((100, 108).into(), (400, 338).into())
         );
     }
 

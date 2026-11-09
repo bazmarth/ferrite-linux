@@ -160,7 +160,7 @@ pub enum Tone {
 }
 
 /// Côté d'un bouton d'outil (barre du haut d'une fenêtre).
-pub const TOOL: f32 = 34.0;
+pub const TOOL: f32 = 28.0;
 /// Voile d'un bouton d'outil survolé.
 pub const TOOL_HOVER: u8 = 12;
 

@@ -761,15 +761,15 @@ impl SettingsState {
         // Champ de recherche sur la ligne du bouton fermer.
         let body = ui.max_rect();
         let field = egui::Rect::from_min_size(
-            egui::pos2(body.left() + 34.0, body.top() - style::TOOLBAR_HEIGHT + 10.0),
-            egui::vec2(body.width() - 34.0, 32.0),
+            egui::pos2(body.left() + 34.0, body.top() - style::TOOLBAR_HEIGHT + 7.0),
+            egui::vec2(body.width() - 34.0, 28.0),
         );
         ui.put(
             field,
             egui::TextEdit::singleline(&mut self.search)
                 .hint_text("Rechercher un réglage")
                 .desired_width(f32::INFINITY)
-                .margin(Margin::symmetric(10, 6)),
+                .margin(Margin::symmetric(10, 4)),
         );
         let query = self.search.trim().to_lowercase();
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {

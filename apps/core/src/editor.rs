@@ -1020,18 +1020,18 @@ impl EditorState {
     /// Barre de titre : logo et nom, recherche de fichiers au milieu, boutons à droite.
     fn header(&mut self, ui: &mut egui::Ui, commands: &mut Vec<Command>) {
         let full = ui.max_rect();
-        let (logo, _) = ui.allocate_exact_size(egui::vec2(28.0, 28.0), Sense::hover());
+        let (logo, _) = ui.allocate_exact_size(egui::vec2(22.0, 22.0), Sense::hover());
         icons::paint_logo(ui.painter(), logo);
         ui.add_space(4.0);
         ui.label(
             RichText::new("TextEdit")
-                .size(15.0)
+                .size(14.0)
                 .family(style::strong_family())
                 .color(style::primary_text()),
         );
 
         // Champ centré dans la fenêtre, raccourci s'il manque de place à droite.
-        const BUTTONS: f32 = 4.0 * 38.0 + 12.0;
+        const BUTTONS: f32 = 4.0 * 32.0 + 12.0;
         let wanted = (full.width() * 0.38).clamp(220.0, 460.0);
         let left = (full.center().x - wanted / 2.0).max(ui.cursor().left() + 16.0);
         let width = wanted.min(full.right() - BUTTONS - left);
@@ -1073,10 +1073,10 @@ impl EditorState {
 
     /// Recherche de fichiers par leur nom dans le dossier de l'explorateur (Ctrl+P).
     fn search_field(&mut self, ui: &mut egui::Ui, width: f32) {
-        let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 34.0), Sense::hover());
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 28.0), Sense::hover());
         ui.painter().rect(
             rect,
-            17.0,
+            14.0,
             field(),
             Stroke::new(1.0, border()),
             egui::StrokeKind::Inside,
@@ -1084,14 +1084,14 @@ impl EditorState {
         icons::paint(
             ui.painter(),
             egui::Rect::from_center_size(
-                egui::pos2(rect.left() + 20.0, rect.center().y),
-                egui::vec2(18.0, 18.0),
+                egui::pos2(rect.left() + 17.0, rect.center().y),
+                egui::vec2(15.0, 15.0),
             ),
             Icon::Search,
             style::text_secondary(),
         );
         let field = egui::Rect::from_min_max(
-            egui::pos2(rect.left() + 36.0, rect.top() + 2.0),
+            egui::pos2(rect.left() + 31.0, rect.top() + 2.0),
             egui::pos2(rect.right() - 14.0, rect.bottom() - 2.0),
         );
         let response = ui.put(

@@ -405,8 +405,8 @@ mod tests {
     fn source_de_la_barre_de_titre() {
         let source = titlebar_source();
         // Les constantes sont définies avant d'être utilisées par le code.
-        assert!(source.starts_with("#define BUTTON_RADIUS 11.000\n"));
-        assert!(source.find("#define BUTTON_INSET 23.000").unwrap() < source.find("void main").unwrap());
+        assert!(source.starts_with("#define BUTTON_RADIUS 9.000\n"));
+        assert!(source.find("#define BUTTON_INSET 19.000").unwrap() < source.find("void main").unwrap());
     }
 
     #[test]

@@ -400,6 +400,44 @@ fn editor_action_at(layout: &Layout, view: &DesktopView, pos: Point<f64, Logical
     DesktopAction::Consume
 }
 
+/// Raccourcis du bureau visibles, avec leur case. Sur le bureau des widgets, un raccourci
+/// qu'un widget recouvre, même en partie, n'est ni dessiné ni cliquable.
+pub(super) fn visible_shortcuts(layout: &Layout, view: &DashboardView) -> Vec<(usize, Rect)> {
+    let cards = if view.shown {
+        layout.dashboard_cards(&view.layout)
+    } else {
+        Vec::new()
+    };
+    layout
+        .shortcut_cells(view.shortcuts.len())
+        .into_iter()
+        .enumerate()
+        .filter(|(_, cell)| {
+            !cards.iter().any(|card| {
+                card.x < cell.right()
+                    && cell.x < card.right()
+                    && card.y < cell.bottom()
+                    && cell.y < card.bottom()
+            })
+        })
+        .collect()
+}
+
+/// Raccourci du bureau sous `pos`, sur n'importe quel bureau.
+pub(super) fn shortcut_at(
+    layout: &Layout,
+    view: &DesktopView,
+    pos: Point<f64, Logical>,
+) -> Option<DesktopAction> {
+    if !view.dashboard.shortcuts_shown {
+        return None;
+    }
+    visible_shortcuts(layout, &view.dashboard)
+        .into_iter()
+        .find(|(_, cell)| cell.contains(pos))
+        .map(|(index, _)| DesktopAction::Shortcut(index))
+}
+
 /// Action d'un clic sur les widgets ; `None` : à côté.
 pub(super) fn dashboard_action_at(
     layout: &Layout,
@@ -410,19 +448,12 @@ pub(super) fn dashboard_action_at(
         return Some(editor_action_at(layout, view, pos));
     }
     let cards = layout.dashboard_cards(&view.dashboard.layout);
-    // Les widgets passent devant les raccourcis.
-    let Some((index, card)) = cards
+    // Le dernier widget est devant ; à côté des widgets, les raccourcis (`shortcut_at`).
+    let (index, card) = cards
         .iter()
         .enumerate()
         .rev()
-        .find(|(_, card)| card.contains(pos))
-    else {
-        return layout
-            .shortcut_cells(view.dashboard.shortcuts.len())
-            .iter()
-            .position(|cell| cell.contains(pos))
-            .map(DesktopAction::Shortcut);
-    };
+        .find(|(_, card)| card.contains(pos))?;
     let slot = view.dashboard.layout[index];
     Some(match slot.kind {
         // Flèches : mois précédent ou suivant ; un jour : le Calendrier sur ce jour ;
@@ -635,6 +666,9 @@ pub(super) fn base_key(state: &VisualState) -> VisualState {
     base.clock = ClockSnapshot::default();
     base.system = SystemMetrics::default();
     base.view.dashboard.media = None;
+    // Les raccourcis ont leur propre image (voir `push_shortcuts`).
+    base.view.dashboard.shortcuts = Vec::new();
+    base.view.dashboard.shortcuts_shown = false;
     base
 }
 
@@ -716,8 +750,6 @@ impl Panels {
             );
             target_hollow(canvas, rect);
         }
-        // Raccourcis sous les widgets.
-        self.draw_shortcuts(canvas, layout, view, &cards);
         // Du dessous vers le dessus : le verre de chaque carte cache ce qu'elle recouvre.
         for (index, card) in cards.iter().copied().enumerate() {
             if Some(index) != skip {
@@ -770,21 +802,11 @@ impl Panels {
     }
 
     /// Raccourcis du bureau : icône, et nom sur une pastille de verre sombre pour rester
-    /// lisible sur n'importe quel fond. Le verre des cartes est souvent posé avant (voir
-    /// `glass_pixels`) : un raccourci qu'un widget recouvre, même en partie, n'est pas
-    /// dessiné, comme il ne reçoit pas de clic.
-    fn draw_shortcuts(&self, canvas: &mut Canvas, layout: &Layout, view: &DashboardView, cards: &[Rect]) {
-        let cells = layout.shortcut_cells(view.shortcuts.len());
-        for (shortcut, cell) in view.shortcuts.iter().zip(cells) {
-            let covered = cards.iter().any(|card| {
-                card.x < cell.right()
-                    && cell.x < card.right()
-                    && card.y < cell.bottom()
-                    && cell.y < card.bottom()
-            });
-            if covered {
-                continue;
-            }
+    /// lisible sur n'importe quel fond. Dessinés à part (voir `push_shortcuts`), sous les
+    /// widgets et sous les fenêtres, sur tous les bureaux.
+    pub(super) fn draw_shortcuts(&self, canvas: &mut Canvas, layout: &Layout, view: &DashboardView) {
+        for (index, cell) in visible_shortcuts(layout, view) {
+            let shortcut = &view.shortcuts[index];
             let center = (cell.x + cell.w / 2.0, cell.y + 8.0 + SHORTCUT_ICON / 2.0);
             canvas.app_icon(&shortcut.icon, center, SHORTCUT_ICON);
             let name = canvas.fit_text(&self.regular, &shortcut.name, px(12.0), cell.w - 16.0);

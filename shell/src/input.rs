@@ -1439,6 +1439,7 @@ impl Ferrite {
                     | DesktopAction::DashboardAddList
                     | DesktopAction::DashboardDeleteList(_)
                     | DesktopAction::DashboardConsume
+                    | DesktopAction::Shortcut(_)
             ) || widgets_ahead
                 || self.hit_test(location).is_none()
         })

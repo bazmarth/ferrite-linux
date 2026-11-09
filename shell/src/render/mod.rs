@@ -459,6 +459,15 @@ fn build_output_elements(
         });
     }
 
+    // Raccourcis du bureau : sous les fenêtres et les widgets, sur tous les bureaux.
+    if !locked && overview_shown == 0.0 {
+        profile::timed("raccourcis", || {
+            assets
+                .panels
+                .push_shortcuts(renderer, output, output_geo, scale, &view, &mut elements)
+        });
+    }
+
     if !locked {
         push_layers(renderer, output, Layer::Bottom, scale, &mut elements);
         push_layers(renderer, output, Layer::Background, scale, &mut elements);
@@ -1452,6 +1461,7 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
                 })
                 .collect(),
             shortcuts: state.shortcut_views(),
+            shortcuts_shown: !state.overview && state.lock.is_none(),
         },
         desktop_menu: state.desktop_menu,
         desktop_menu_entries: state

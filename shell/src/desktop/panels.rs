@@ -653,6 +653,9 @@ pub struct DashboardView {
     pub apps: Vec<DashboardApp>,
     /// Raccourcis du bureau (applications, dossiers, fichiers).
     pub shortcuts: Vec<crate::desktop::shortcuts::ShortcutView>,
+    /// Raccourcis affichés et cliquables : sur tous les bureaux, sous les fenêtres, mais
+    /// pas dans la vue d'ensemble ni sur l'écran verrouillé.
+    pub shortcuts_shown: bool,
     /// Lecture en cours, pour le widget Musique.
     pub media: Option<crate::desktop::lock::Media>,
 }
@@ -793,6 +796,17 @@ fn physical_size(state: &VisualState, scale: f64) -> (u32, u32) {
     )
 }
 
+/// Ce dont dépend l'image des raccourcis du bureau : elle n'est redessinée que si cela
+/// change, pas à chaque image.
+#[derive(Debug, PartialEq)]
+struct ShortcutsKey {
+    size: (u32, u32, u32),
+    bars: (u32, i32),
+    shortcuts: Vec<crate::desktop::shortcuts::ShortcutView>,
+    /// Cases visibles (celles que les widgets ne recouvrent pas).
+    cells: Vec<(usize, Rect)>,
+}
+
 /// Widgets gardés d'une image à l'autre. Hors édition, seules les cartes dont les données
 /// vivantes changent (heure, mesures du système, lecture en cours) sont redessinées, sur
 /// leur verre, et seule leur zone est renvoyée à la carte graphique : redessiner tout
@@ -867,6 +881,8 @@ pub struct Panels {
     invitation: RefCell<Option<InvitationImage>>,
     /// Widgets, dessinés à part : ils passent sous les fenêtres.
     dashboard: RefCell<Option<DashboardCache>>,
+    /// Raccourcis du bureau, dessinés à part pour rester sur tous les bureaux.
+    shortcuts: RefCell<Option<(ShortcutsKey, MemoryRenderBuffer)>>,
     /// Verre des widgets, gardé d'un dessin à l'autre (voir `cards::GlassKey`).
     glass: RefCell<Option<(cards::GlassKey, Vec<u8>)>>,
     /// Images du glisser d'un widget (voir `push_dragged_dashboard`).
@@ -950,6 +966,7 @@ impl Panels {
             bar: RefCell::new(None),
             invitation: RefCell::new(None),
             dashboard: RefCell::new(None),
+            shortcuts: RefCell::new(None),
             glass: RefCell::new(None),
             drag_layers: RefCell::new(DragLayers::default()),
             layer: RefCell::new(None),
@@ -1281,6 +1298,71 @@ impl Panels {
         ) {
             Ok(element) => out.push(super::super::render::OutputElement::Memory(element)),
             Err(err) => tracing::warn!(?err, output = output.name(), "widgets non importés"),
+        }
+    }
+
+    /// Raccourcis du bureau, sous les fenêtres et sous les widgets, sur tous les bureaux.
+    /// L'image est gardée tant que la liste, l'écran et les widgets ne changent pas.
+    pub fn push_shortcuts(
+        &self,
+        renderer: &mut GlesRenderer,
+        output: &Output,
+        output_geo: Rectangle<i32, Logical>,
+        scale: f64,
+        view: &DesktopView,
+        out: &mut Vec<super::super::render::OutputElement>,
+    ) {
+        if !view.dashboard.shortcuts_shown || view.dashboard.shortcuts.is_empty() {
+            return;
+        }
+        let (w, h) = (output_geo.size.w.max(1) as u32, output_geo.size.h.max(1) as u32);
+        let layout = Layout::new(f64::from(w), f64::from(h), view);
+        let key = ShortcutsKey {
+            size: (w, h, (scale * 1000.0).round() as u32),
+            bars: (view.bar_height, view.dock_height),
+            shortcuts: view.dashboard.shortcuts.clone(),
+            cells: cards::visible_shortcuts(&layout, &view.dashboard),
+        };
+        let mut cache = self.shortcuts.borrow_mut();
+        if cache.as_ref().is_none_or(|(known, _)| *known != key) {
+            let width = (f64::from(w) * scale).round().max(1.0) as u32;
+            let height = (f64::from(h) * scale).round().max(1.0) as u32;
+            let mut canvas = Canvas {
+                pixels: vec![0; width as usize * height as usize * 4],
+                width,
+                height,
+                scale: scale as f32,
+                bold: &self.bold,
+                icons: &self.icons,
+            };
+            crate::render::profile::raster("raccourcis", || {
+                self.draw_shortcuts(&mut canvas, &layout, &view.dashboard)
+            });
+            let buffer = MemoryRenderBuffer::from_slice(
+                &canvas.pixels,
+                Fourcc::Argb8888,
+                (width as i32, height as i32),
+                1,
+                smithay::utils::Transform::Normal,
+                None,
+            );
+            *cache = Some((key, buffer));
+        }
+        let Some((_, buffer)) = cache.as_ref() else {
+            return;
+        };
+        let physical_size = (output_geo.size.w as f64 * scale, output_geo.size.h as f64 * scale);
+        match MemoryRenderBufferRenderElement::from_buffer(
+            renderer,
+            Point::from((0.0, 0.0)),
+            buffer,
+            None,
+            Some(Rectangle::<f64, Logical>::from_size(physical_size.into())),
+            Some(output_geo.size),
+            Kind::Unspecified,
+        ) {
+            Ok(element) => out.push(super::super::render::OutputElement::Memory(element)),
+            Err(err) => tracing::warn!(?err, output = output.name(), "raccourcis non importés"),
         }
     }
 
@@ -3809,6 +3891,13 @@ pub fn action_at(
         return Some(action);
     }
 
+    if popover.is_none()
+        && pending_power.is_none()
+        && let Some(action) = cards::shortcut_at(&layout, view, pos)
+    {
+        return Some(action);
+    }
+
     if let Some(power) = pending_power {
         let choices = [PowerAction::PowerOff, PowerAction::Restart, PowerAction::Sleep];
         let chosen = match power {
@@ -6220,6 +6309,7 @@ mod tests {
         desktop.bar_height = 34;
         desktop.dock_height = 80;
         desktop.dashboard.shown = true;
+        desktop.dashboard.shortcuts_shown = true;
         desktop.dashboard.shortcuts = (0..8)
             .map(|index| shortcut(&format!("Dossier {index}")))
             .collect();
@@ -6243,6 +6333,15 @@ mod tests {
             action_at(output(), point(x, y), &desktop),
             Some(DesktopAction::DashboardConsume)
         );
+        // Sur un autre bureau, les widgets n'y sont pas : le raccourci reste et prend le clic.
+        desktop.dashboard.shown = false;
+        assert_eq!(
+            action_at(output(), point(x, y), &desktop),
+            Some(DesktopAction::Shortcut(2))
+        );
+        // Vue d'ensemble ou écran verrouillé : plus de raccourcis.
+        desktop.dashboard.shortcuts_shown = false;
+        assert_eq!(action_at(output(), point(x, y), &desktop), None);
     }
 
     #[test]

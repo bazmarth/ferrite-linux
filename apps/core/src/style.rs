@@ -1361,6 +1361,61 @@ const GLYPHS: &[(&str, &str)] = &[
         "glyph-app",
         r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M5 5 H19 V19 H5 Z" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
     ),
+    // Logithèque.
+    (
+        "glyph-star",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 3.5 L14.6 8.9 L20.5 9.6 L16.1 13.6 L17.3 19.5 L12 16.6 L6.7 19.5 L7.9 13.6 L3.5 9.6 L9.4 8.9 Z" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    // Logithèque.
+    (
+        "glyph-installed",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 4 V14 M7.5 9.5 L12 14 L16.5 9.5 M5 16.5 V19.5 H19 V16.5" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    // Logithèque.
+    (
+        "glyph-play",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M8 5.5 V18.5 L18.5 12 Z" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    // Logithèque.
+    (
+        "glyph-brush",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M15.5 4.5 L19.5 8.5 L9 19 H5 V15 Z M13 7 L17 11" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    // Logithèque.
+    (
+        "glyph-globe",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 3 a9 9 0 1 0 0.01 0 Z M3 12 H21 M12 3 C8.5 7 8.5 17 12 21 M12 3 C15.5 7 15.5 17 12 21" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    // Logithèque.
+    (
+        "glyph-doc",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M6.5 3 H14 L18.5 7.5 V21 H6.5 Z M14 3 V7.5 H18.5 M9.5 12.5 H15.5 M9.5 16.5 H15.5" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    // Logithèque.
+    (
+        "glyph-code",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M8.5 7 L3.5 12 L8.5 17 M15.5 7 L20.5 12 L15.5 17" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    // Logithèque.
+    (
+        "glyph-game",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M7 8 H17 a4 4 0 0 1 4 4 V14 a3 3 0 0 1 -5.5 1.7 L14.5 14.5 H9.5 L8.5 15.7 A3 3 0 0 1 3 14 V12 a4 4 0 0 1 4 -4 Z M8 10.5 V13.5 M6.5 12 H9.5" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    // Logithèque.
+    (
+        "glyph-book",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 6.5 C9.5 4.5 6 4.5 3.5 5.5 V19 C6 18 9.5 18 12 20 C14.5 18 18 18 20.5 19 V5.5 C18 4.5 14.5 4.5 12 6.5 Z M12 6.5 V20" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    // Logithèque.
+    (
+        "glyph-flask",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9 3.5 H15 M10.5 3.5 V9.5 L5 19 a1 1 0 0 0 1 1.5 H18 a1 1 0 0 0 1 -1.5 L13.5 9.5 V3.5 M7.5 15 H16.5" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    // Logithèque.
+    (
+        "glyph-grid",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 4 H10 V10 H4 Z M14 4 H20 V10 H14 Z M4 14 H10 V20 H4 Z M14 14 H20 V20 H14 Z" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
 ];
 
 fn rasterize(name: &str, side: u32, ink: Option<Color32>) -> Option<egui::ColorImage> {

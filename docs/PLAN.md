@@ -8,9 +8,10 @@
 > **Avancement au 2026-11-07** (le plan d'origine n'est pas réécrit ; les écarts voulus sont
 > dans `docs/DECISIONS.md`, l'état détaillé dans `docs/TECHNIQUE.md` §5) :
 > phases 0 à 3 faites ; phases 4 et 5 en grande partie (restent des réglages grisés dans
-> Paramètres et quelques rubriques en maquette) ; phase 7 (Logithèque), phase 8 (écran de
-> connexion) et phase 9 (paquets, installateur graphique) pas commencées, sauf le portail
-> Ferrite (sélecteur de fichiers) et l'agent polkit ; phase 6 (navigateur) laissée pour la
+> Paramètres et quelques rubriques en maquette) ; phase 7 (Logithèque) commencée le
+> 2026-11-09 (catalogues Debian et Flathub, installation, mises à jour, `.deb`) ; phase 8 :
+> écran de connexion greetd, portail Ferrite (sélecteur de fichiers) et agent polkit faits ;
+> phase 9 (paquets, installateur graphique) pas commencée ; phase 6 (navigateur) laissée pour la
 > fin, Brave couvre le besoin ; phase 10 en continu. Le développement se fait sur le
 > ThinkBook, dans Ferrite installé sur sa propre partition, et non plus sous WSL.
 

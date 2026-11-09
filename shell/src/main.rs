@@ -59,6 +59,7 @@ fn run(options: Options) -> Result<u8, Box<dyn std::error::Error>> {
     let display: Display<Ferrite> = Display::new()?;
     let has_display = std::env::var_os("WAYLAND_DISPLAY").is_some() || std::env::var_os("DISPLAY").is_some();
     let mut state = Ferrite::new(&mut event_loop, display)?;
+    state.nested = has_display;
     state.prepare_session_restore(
         !has_display && std::env::var_os("FERRITE_SESSION").is_some_and(|value| value == "1"),
     );
@@ -70,6 +71,7 @@ fn run(options: Options) -> Result<u8, Box<dyn std::error::Error>> {
         state.open_overview();
     }
     state.demo_switcher = options.demo_switcher;
+    state.demo_keep_above = options.demo_keep_above;
     state.demo_screenshot = options.demo_screenshot;
     // Après la création de l'écran : la zone proposée en dépend.
     state.screenshot_video = options.demo_video;
@@ -198,6 +200,7 @@ fn run(options: Options) -> Result<u8, Box<dyn std::error::Error>> {
     if !has_display && !options.greeter {
         desktop::apps::App::start_reminders(&state.client_environment());
         desktop::apps::App::start_bluetooth_reception(&state.client_environment());
+        desktop::apps::App::start_update_check(&state.client_environment());
     }
 
     if let Some((program, args)) = options.command.split_first() {
@@ -220,6 +223,7 @@ fn run(options: Options) -> Result<u8, Box<dyn std::error::Error>> {
         // Après chaque tour de boucle : fenêtres fermées retirées, messages envoyés.
         render::profile::timed("tour de boucle", || {
             state.space.refresh();
+            state.restack_kept_above();
             state.sync_desktops();
             state.lock_tick();
             state.power_tick();

@@ -76,6 +76,10 @@ power-profiles-daemon
 udisks2
 packagekit
 flatpak
+# Logithèque : catalogue des applications de Debian (DEP-11 téléchargé par apt update) et
+# leurs icônes, y compris en double taille.
+appstream
+apt-config-icons-hidpi
 polkitd
 # Lancer une application en administrateur (Fichiers : « Ouvrir en administrateur ») ;
 # le mot de passe est demandé par l'agent polkit du bureau.
@@ -121,6 +125,9 @@ libgstreamer-plugins-base1.0-0
 gstreamer1.0-plugins-base
 gstreamer1.0-plugins-good
 gstreamer1.0-libav
+# AV1 (vidéos 4K de YouTube) : libav ne le décode pas ; plugins-bad apporte le décodeur
+# de la carte graphique (vaav1dec) et celui du processeur (av1dec).
+gstreamer1.0-plugins-bad
 
 # Réglages transmis aux applications tierces par ferrite-shell (gsettings) : thème clair ou
 # sombre et ordre des boutons de fenêtre (fermer à gauche, agrandir à droite).

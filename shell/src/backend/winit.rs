@@ -145,6 +145,7 @@ fn redraw(
     assets: &RenderAssets,
     pending_capture: &mut Option<PendingCapture>,
 ) {
+    state.restack_kept_above();
     backend
         .window()
         .set_cursor(host_cursor_icon(state.cursor_shape()));

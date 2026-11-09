@@ -91,6 +91,9 @@ pub struct Ferrite {
     pub session_restore_deadline: Option<Instant>,
     /// La restauration ne s'applique qu'à la vraie session, pas aux bureaux imbriqués.
     pub session_restore_enabled: bool,
+    /// Bureau imbriqué (lancé dans un autre bureau, pour un essai) : il ne touche pas à
+    /// l'environnement D-Bus de la session qui l'héberge.
+    pub nested: bool,
     /// Recherche tapée dans le menu Applications.
     pub launcher_query: String,
     pub launcher_scroll: u32,
@@ -331,6 +334,8 @@ pub struct Ferrite {
     pub swap_demo: Option<(f64, Option<Instant>, bool)>,
     /// Options de démonstration : actions faites à l'apparition de la première fenêtre.
     pub demo_switcher: bool,
+    /// Première fenêtre à garder au-dessus des autres dès qu'elle existe (`--demo-keep-above`).
+    pub demo_keep_above: bool,
     pub demo_screenshot: bool,
 
     pub compositor_state: CompositorState,
@@ -447,6 +452,7 @@ impl Ferrite {
             session_restore_queue: Vec::new(),
             session_restore_deadline: None,
             session_restore_enabled: false,
+            nested: false,
             launcher_query: String::new(),
             launcher_scroll: 0,
             slider_drag: None,
@@ -612,6 +618,7 @@ impl Ferrite {
             genie_demo: None,
             swap_demo: None,
             demo_switcher: false,
+            demo_keep_above: false,
             demo_screenshot: false,
         })
     }
@@ -713,7 +720,13 @@ impl Ferrite {
 
     /// Transmet l'environnement de session à D-Bus, pour que les services
     /// lancés à la demande (portails, dialogues de fichiers) trouvent l'affichage.
+    /// Un bureau imbriqué s'abstient : sinon les portails de la vraie session ouvriraient
+    /// leurs fenêtres (sélecteur de fichiers…) dans le bureau d'essai, invisible ou fermé,
+    /// et l'application qui attend son dialogue semblerait figée.
     pub fn publish_environment(&self) {
+        if self.nested {
+            return;
+        }
         let mut command = std::process::Command::new("dbus-update-activation-environment");
         // Aussi pour systemd (--user) : les services du bus de session qu'il démarre
         // (portails…) doivent trouver l'écran.
@@ -831,6 +844,12 @@ impl Ferrite {
         if self.top_window().is_some() {
             if std::mem::take(&mut self.demo_switcher) {
                 self.switcher_step(1);
+            }
+            if std::mem::take(&mut self.demo_keep_above) {
+                let first = self.space.elements().next().cloned();
+                if let Some(first) = first {
+                    self.set_keep_above(&first, true);
+                }
             }
             if std::mem::take(&mut self.demo_screenshot) {
                 self.screenshot_request = Some(crate::render::capture::Request {

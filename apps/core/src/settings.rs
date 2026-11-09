@@ -21,7 +21,7 @@ mod defaults;
 mod face;
 mod meter;
 mod rows;
-mod updates;
+use crate::packagekit as updates;
 
 use self::rows::{Lead, Row, group, hero};
 use eframe::egui::{self, Color32, Frame, Margin, RichText, Stroke};

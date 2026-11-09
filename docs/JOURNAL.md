@@ -3289,3 +3289,77 @@ bulle du volume.
 Pas vérifié : ferrite-apps ne compile pas en ce moment (chantier `packagekit`/`store`
 d'une autre session) : la ligne Wi-Fi de Paramètres n'a été ni compilée ni vue ; icône
 barrée sur le vrai bureau (radio coupée).
+
+## 2026-11-09 — Logithèque (phase 7)
+
+Demande : une boutique d'applications qui trouve les logiciels des dépôts officiels, les
+trie et les installe.
+- `ferrite-apps logitheque` (`apps/core/src/store/`), dans le menu Applications. Catalogue
+  AppStream (`appstream.rs`) : Flathub (`appstream.xml`, lu en flux par quick-xml, 3 349
+  applications en 0,5 s) et Debian (DEP-11 en YAML de `/var/lib/apt/lists`). Textes en
+  français quand ils existent ; une application des deux origines garde ses deux versions
+  (choix « Debian | Flathub » sur la fiche).
+- Pages : Découvrir (sélection, six rubriques), 10 catégories, recherche sans accents,
+  Installées (avec les Flatpak hors Flathub), Mises à jour (Debian et Flathub, « Tout
+  mettre à jour »). Fiche : icône, éditeur (vérifié par Flathub), captures téléchargées par
+  curl dans `~/.cache/ferrite/logitheque`, description, taille, licence, site.
+- Installer / désinstaller : Debian par PackageKit (`packagekit.rs`, ancien
+  `settings/updates.rs` partagé avec Paramètres ; mot de passe par l'agent polkit), Flathub
+  par `flatpak --user` (sans mot de passe). Une opération à la fois, barre d'avancement.
+- Catalogue Debian absent : carte « Télécharger le catalogue » (installe `appstream` et
+  `apt-config-icons-hidpi` par PackageKit, puis relit les dépôts). Flathub absent : carte
+  « Activer Flathub » (accord de l'utilisateur).
+- `.deb` : `ferrite-logitheque.desktop` (MimeType `application/vnd.debian.binary-package`,
+  `mimeapps.list` de l'image) ; fiche avec l'en-tête du paquet (`dpkg-deb -f`), avertissement
+  « ne vient pas des dépôts », installation par `InstallFiles`.
+- Notification quotidienne : `ferrite-apps verifier-mises-a-jour`, lancé par le bureau à
+  l'ouverture de session ; dix minutes après, puis une fois par jour, cherche les mises à
+  jour et les annonce ; un clic ouvre la Logithèque sur « Mises à jour ».
+- Image : paquets `appstream`, `apt-config-icons-hidpi`.
+Vérifié : CI (sans shellcheck) ; tests (Flathub et DEP-11 en français, réunion des
+origines, recherche, en-tête d'un .deb, dpkg, tailles et pourcentages de flatpak, texte et
+rythme de la notification) ; lecture du vrai catalogue Flathub ; captures (accueil, fiche
+VLC avec captures, recherche « photo », Mises à jour avec le vrai PackageKit et Flatpak,
+fiche Spotify en sombre).
+Pas vérifié : le catalogue Debian réel (paquet `appstream` pas encore installé sur le PC :
+emplacement des icônes supposé) ; une vraie installation et désinstallation (Debian avec
+mot de passe, Flathub, .deb) ; le double-clic sur un .deb dans Fichiers ; la notification
+quotidienne ; « Ouvrir » après installation.
+
+## 2026-11-09 — Lecteur vidéo : vidéo 4K en AV1 sans image
+
+Demande : le lecteur n'affiche pas une vidéo (4K de YouTube) ; le son et la barre avancent,
+l'image reste sur « Préparation de la lecture… ».
+- Cause : la vidéo est en AV1 et aucun décodeur AV1 n'est installé (`gstreamer1.0-libav`
+  ne l'expose pas). GStreamer joue alors le son seul, sans erreur.
+- `video.rs` : le message `missing-plugin` de GStreamer est lu ; pour une piste vidéo, le
+  lecteur affiche « Lecture impossible — Le décodeur du format AV1 n'est pas installé sur
+  ce PC. » (une piste audio illisible ne bloque pas l'image).
+- Image et `DEPENDANCES.md` : paquet `gstreamer1.0-plugins-bad` (vaav1dec, av1dec).
+Vérifié : CI (sans shellcheck) ; test du nom de format ; capture du message avec la vraie
+vidéo dans un bureau imbriqué ; paquet installé sur le PC, puis capture de la même vidéo
+avec son image (à 0:10) et sa vignette dans « À suivre ».
+Pas vérifié : la fluidité en 4K sur le vrai bureau ; quel décodeur est pris (carte
+graphique ou processeur).
+
+## 2026-11-09 — Fenêtres : « toujours au-dessus »
+
+Demande : pouvoir mettre une fenêtre toujours au-dessus des autres, dans tout le système.
+- `wm/keep_above.rs` : la marque est portée par la fenêtre (elle la garde réduite ou sur un
+  autre bureau). `restack_kept_above` remet l'ordre après chaque tour de boucle et avant
+  chaque image : fenêtres ordinaires, puis gardées (avec leurs boîtes de dialogue), puis
+  menus X11. Rien n'est fait quand l'ordre est déjà bon.
+- Super+Maj+T (`keep_window_above`, modifiable dans Paramètres → Clavier) sur la fenêtre
+  active ; clic droit sur l'icône du Dock → « Toujours au-dessus » / « Ne plus garder
+  au-dessus ». Une bulle confirme le changement.
+- `top_window` préfère une fenêtre ordinaire : après une fermeture ou un déverrouillage,
+  le clavier ne va pas à la fenêtre gardée.
+- Option de capture `--demo-keep-above`.
+Vérifié : CI (sans shellcheck) ; test de l'ordre de la pile ; captures dans un bureau
+imbriqué (Calculatrice gardée au-dessus de Fichiers ouvert après elle ; sans l'option,
+Fichiers la recouvre).
+Pas vérifié : le raccourci et le menu du Dock à la main sur le vrai bureau ; les
+programmes X11 ; une fenêtre gardée au-dessus d'une vidéo en plein écran.
+Limites : pas de marque visible sur la fenêtre gardée ; la marque n'est pas restaurée
+après une reconnexion ; le menu Wayland d'une fenêtre ordinaire passe sous une fenêtre
+gardée qui la recouvre.

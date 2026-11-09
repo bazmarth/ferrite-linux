@@ -90,6 +90,7 @@ const SUPER_ALT: u8 = SHORTCUT_SUPER | SHORTCUT_ALT;
 
 const CLOSE_WINDOW: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(24, SUPER)];
 const MINIMIZE_WINDOW: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(58, SUPER)];
+const KEEP_WINDOW_ABOVE: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(28, SUPER_SHIFT)];
 const HIDE_WINDOW: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(43, SUPER)];
 const MAXIMIZE_WINDOW: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(111, SUPER)];
 const RESTORE_MINIMIZE_WINDOW: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(116, SUPER)];
@@ -152,6 +153,12 @@ pub const KEYBOARD_SHORTCUTS: &[KeyboardShortcutDefinition] = &[
         group: "Fenêtres",
         label: "Réduire la fenêtre",
         defaults: MINIMIZE_WINDOW,
+    },
+    KeyboardShortcutDefinition {
+        id: "keep_window_above",
+        group: "Fenêtres",
+        label: "Garder la fenêtre toujours au-dessus",
+        defaults: KEEP_WINDOW_ABOVE,
     },
     KeyboardShortcutDefinition {
         id: "hide_window",

@@ -3,6 +3,7 @@
 
 pub mod animation;
 pub mod decoration;
+pub mod keep_above;
 mod move_grab;
 mod resize_grab;
 pub mod switcher;
@@ -507,9 +508,15 @@ impl Ferrite {
         }
     }
 
-    /// Fenêtre du dessus, s'il y en a une.
+    /// Fenêtre de devant, s'il y en a une : la plus haute des fenêtres ordinaires, sinon
+    /// une fenêtre gardée au-dessus (elle reste devant sans être celle qu'on utilise).
     pub fn top_window(&self) -> Option<Window> {
-        self.space.elements().next_back().cloned()
+        self.space
+            .elements()
+            .rev()
+            .find(|window| !keep_above::is_kept_above(window))
+            .or_else(|| self.space.elements().next_back())
+            .cloned()
     }
 
     /// Recherche de ce qui est sous `pos`, de la fenêtre du dessus vers celle du dessous :

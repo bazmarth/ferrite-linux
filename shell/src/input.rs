@@ -108,6 +108,8 @@ pub(crate) enum Action {
     /// Super+Q, Super+M et Super+H : fenêtre ou application active.
     CloseWindow,
     MinimizeWindow,
+    /// Super+Maj+T : garde la fenêtre active au-dessus des autres, ou arrête.
+    KeepAbove,
     HideApp,
     /// Super+↑ et Super+↓.
     Maximize,
@@ -207,6 +209,7 @@ fn shortcut_action(id: &str) -> Option<Action> {
     Some(match id {
         "close_window" => Action::CloseWindow,
         "minimize_window" => Action::MinimizeWindow,
+        "keep_window_above" => Action::KeepAbove,
         "hide_window" => Action::HideApp,
         "maximize_window" => Action::Maximize,
         "restore_minimize_window" => Action::RestoreOrMinimize,
@@ -868,6 +871,7 @@ impl Ferrite {
             Some(Action::SwitcherSameApp(step)) => self.switcher_step_same_app(step),
             Some(Action::CloseWindow) => self.close_active_window(),
             Some(Action::MinimizeWindow) => self.minimize_active_window(),
+            Some(Action::KeepAbove) => self.toggle_keep_above_active(),
             Some(Action::HideApp) => self.hide_active_app(),
             Some(Action::Maximize) => self.toggle_maximize_active(),
             Some(Action::RestoreOrMinimize) => self.restore_or_minimize_active(),

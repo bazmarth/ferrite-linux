@@ -42,3 +42,4 @@ text/x-c++src=ferrite-textedit.desktop
 text/x-c++hdr=ferrite-textedit.desktop
 text/css=ferrite-textedit.desktop
 application/xml=ferrite-textedit.desktop
+application/vnd.debian.binary-package=ferrite-logitheque.desktop

@@ -460,6 +460,7 @@ fn apply_night(drm: &mut Drm, gains: (f64, f64, f64)) {
 
 /// Dessine l'écran ; renvoie vrai si une nouvelle image a été envoyée.
 fn render(drm: &mut Drm, state: &mut Ferrite) -> bool {
+    state.restack_kept_above();
     if state.idle.screen_off {
         if !drm.blanked {
             // Coupe l'affichage (DPMS) ; la prochaine image le rallume.

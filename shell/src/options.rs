@@ -24,6 +24,7 @@ Options :
                         glissement à cette fraction (0 à 1), pour les captures
   --demo-overview       ouvre la vue d'ensemble au démarrage (pour les captures)
   --demo-switcher       ouvre le sélecteur Alt+Tab dès qu'une fenêtre existe (pour les captures)
+  --demo-keep-above     garde la première fenêtre ouverte au-dessus des autres (pour les captures)
   --demo-controls LISTE ouvre le centre de contrôle sur sa liste (principal, wifi ou bluetooth)
   --greeter             écran de connexion (lancé par greetd : choix du compte, mot de passe)
   --demo-lock           affiche l'écran de verrouillage au démarrage (pour les captures)
@@ -86,6 +87,8 @@ pub struct Options {
     pub demo_overview: bool,
     /// Sélecteur Alt+Tab, sélection d'une zone et capture demandés d'avance.
     pub demo_switcher: bool,
+    /// Première fenêtre gardée au-dessus des autres (`--demo-keep-above`).
+    pub demo_keep_above: bool,
     pub demo_region: bool,
     pub demo_lock: bool,
     /// Écran de connexion (`--greeter`), lancé par greetd.
@@ -125,6 +128,7 @@ impl Default for Options {
             demo_page: None,
             demo_overview: false,
             demo_switcher: false,
+            demo_keep_above: false,
             demo_region: false,
             demo_lock: false,
             greeter: false,
@@ -205,6 +209,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
             }
             "--demo-overview" => options.demo_overview = true,
             "--demo-switcher" => options.demo_switcher = true,
+            "--demo-keep-above" => options.demo_keep_above = true,
             "--demo-region" => options.demo_region = true,
             "--demo-capture" => options.demo_capture = true,
             "--demo-video" => options.demo_video = true,

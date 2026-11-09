@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Logithèque
+Comment=Installer des applications de Debian et de Flathub
+Exec=ferrite-apps logitheque %f
+Icon=system-software-install
+MimeType=application/vnd.debian.binary-package;
+Categories=System;PackageManager;
+NoDisplay=true

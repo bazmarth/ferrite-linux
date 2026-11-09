@@ -489,7 +489,7 @@ tools/dev-on.sh                               # puis « Relancer le bureau » (d
 target/debug/ferrite-shell --winit --capture /tmp/x.png --capture-delay 5 [--demo-lock|--demo-auth|--demo-power] [-- ferrite-apps settings energie]
 # Autres options de démonstration (captures) : --demo-face scan|reconnu|echec (avec
 # --demo-lock), --demo-controls principal, --demo-swap FRACTION, --demo-island(-press),
-# --demo-osd, --demo-overview, --demo-switcher, --demo-genie, --demo-region, --demo-video…
+# --demo-osd, --demo-overview, --demo-switcher, --demo-keep-above, --demo-genie, --demo-region, --demo-video…
 # (liste complète : ferrite-shell --help)
 XDG_CONFIG_HOME=/tmp/cfg target/debug/ferrite-shell --winit …   # réglages isolés pour un essai
 # Appli déjà ouverte sur le vrai bureau : sinon l'instance unique lui passe la main.

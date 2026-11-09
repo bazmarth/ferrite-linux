@@ -20,6 +20,10 @@ ferrite-ui = { path = "../../ui" }
 gstreamer = "0.25"
 gstreamer-app = "0.25"
 gstreamer-video = "0.25"
+# Logithèque : catalogue Flathub (`appstream.xml[.gz]`) et catalogue Debian (DEP-11 en YAML).
+flate2 = "1"
+quick-xml = "0.41"
+yaml-rust2 = "0.13"
 # Compression zlib des images PNG mises en PDF (Fichiers › Créer un PDF) ; déjà tirée par png.
 miniz_oxide = "0.8"
 png = "0.18"

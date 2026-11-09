@@ -1,5 +1,6 @@
 //! Applications de base Ferrite : Fichiers, TextEdit, Terminal, Calculatrice, Horloge,
-//! Paramètres, Moniteur d'activité, Visionneuse, lecteur PDF, Musique et Calendrier.
+//! Paramètres, Moniteur d'activité, Visionneuse, lecteur PDF, Musique, Calendrier et
+//! Logithèque.
 
 mod calculator;
 mod calendar;
@@ -14,10 +15,12 @@ mod kit;
 mod markdown;
 mod monitor;
 mod music;
+mod packagekit;
 mod pairing;
 mod pdf_viewer;
 mod settings;
 mod single;
+mod store;
 mod style;
 mod terminal;
 mod video;
@@ -82,6 +85,7 @@ fn create(
         "pdf" => Box::new(Pdf(ViewerApp::new_pdf(target))),
         "music" => Box::new(MusicState::new(target)),
         "video" => Box::new(video::VideoState::new(target, context.clone())),
+        "logitheque" => opened(Box::new(store::StoreState::new(context))),
         "galerie" => Box::new(gallery::GalleryState::default()),
         // Arguments de la demande du portail, après `choisir`.
         "choisir" => {
@@ -95,6 +99,15 @@ fn create(
 impl AppView for chooser::ChooserState {
     fn update(&mut self, ui: &mut egui::Ui) {
         chooser::ChooserState::update(self, ui);
+    }
+}
+
+impl AppView for store::StoreState {
+    fn update(&mut self, ui: &mut egui::Ui) {
+        store::StoreState::update(self, ui);
+    }
+    fn open(&mut self, target: PathBuf) {
+        store::StoreState::open(self, target);
     }
 }
 
@@ -226,6 +239,11 @@ fn main() -> eframe::Result {
     // de session (et par le Calendrier), il annonce les rappels même Calendrier fermé.
     if env::args().nth(1).as_deref() == Some("rappels") {
         std::process::exit(calendar::reminders::run_service());
+    }
+    // Recherche quotidienne des mises à jour (Logithèque), sans fenêtre : lancée par le
+    // bureau à l'ouverture de session.
+    if env::args().nth(1).as_deref() == Some("verifier-mises-a-jour") {
+        std::process::exit(store::notifier::run_service());
     }
     // Réception de fichiers par Bluetooth, sans fenêtre : lancée par le bureau à
     // l'ouverture de session.

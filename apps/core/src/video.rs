@@ -323,6 +323,21 @@ impl VideoState {
                         self.playing = false;
                         ended = true;
                     }
+                    // Décodeur absent : GStreamer continue avec le son seul et ne signale
+                    // pas d'erreur ; sans ce message, l'image resterait en « Préparation ».
+                    gst::MessageView::Element(element) => {
+                        if let Some(format) = element
+                            .structure()
+                            .filter(|structure| structure.name() == "missing-plugin")
+                            .and_then(|structure| structure.get::<gst::Caps>("detail").ok())
+                            .and_then(|caps| caps.structure(0).and_then(|s| missing_video_format(s.name())))
+                        {
+                            tracing::warn!(%format, "décodeur vidéo absent");
+                            self.error = Some(format!(
+                                "Le décodeur du format {format} n'est pas installé sur ce PC."
+                            ));
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -1065,6 +1080,21 @@ fn toggle_fullscreen(ctx: &egui::Context) {
     ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(!fullscreen));
 }
 
+/// Nom lisible du format vidéo dont le décodeur manque (`None` pour le son et le reste :
+/// une piste audio illisible n'empêche pas de voir la vidéo).
+fn missing_video_format(media: &str) -> Option<String> {
+    let kind = media.strip_prefix("video/")?;
+    Some(match kind {
+        "x-av1" => "AV1".to_owned(),
+        "x-h264" => "H.264".to_owned(),
+        "x-h265" => "H.265 (HEVC)".to_owned(),
+        "x-vp8" => "VP8".to_owned(),
+        "x-vp9" => "VP9".to_owned(),
+        "mpeg" => "MPEG".to_owned(),
+        other => other.trim_start_matches("x-").to_uppercase(),
+    })
+}
+
 /// Texte centré sur l'image (chargement, erreur).
 fn message(painter: &egui::Painter, area: egui::Rect, title: &str, detail: &str) {
     painter.text(
@@ -1303,6 +1333,17 @@ fn speed_label(speed: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nomme_le_format_video_sans_decodeur() {
+        assert_eq!(missing_video_format("video/x-av1").as_deref(), Some("AV1"));
+        assert_eq!(
+            missing_video_format("video/x-h265").as_deref(),
+            Some("H.265 (HEVC)")
+        );
+        assert_eq!(missing_video_format("video/x-theora").as_deref(), Some("THEORA"));
+        assert_eq!(missing_video_format("audio/x-opus"), None);
+    }
 
     #[test]
     fn reconnait_les_formats_video_sans_tenir_compte_de_la_casse() {

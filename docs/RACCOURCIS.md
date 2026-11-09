@@ -16,6 +16,7 @@ sans redémarrer. L'écran s'assombrit progressivement avant le verrouillage et 
 | Restaurer ou réduire | Super + ↓ | clic du milieu sur la barre de titre (réduire) |
 | Réduire | Super + M | bouton – (à gauche des trois) |
 | Masquer l'application | Super + H | — |
+| Garder la fenêtre toujours au-dessus des autres (ou arrêter) | Super + Maj + T | clic droit sur l'icône du Dock → « Toujours au-dessus » |
 | Moitié, deux tiers puis tiers | Super + ← ou →, répété | glisser vers le bord |
 | Tiers | Super + Alt + 1, 2, 3 | — |
 | Quarts | — | glisser vers un coin |
@@ -86,6 +87,8 @@ dialogue.
 | Fichiers | Élément suivant / précédent | Tab / Maj + Tab |
 | Fichiers | Ouvrir un dossier ou un onglet pendant un glisser | s'y attarder 0,7 s |
 | Fichiers | Mettre à la Corbeille | Suppr |
+| Logithèque | Rechercher une application | Ctrl + F ; Échap efface |
+| Logithèque | Revenir de la fiche | Alt + ← (ou la flèche en haut à gauche) |
 | Lecteur PDF | Chercher, résultat suivant / précédent | Ctrl + F, Entrée / Maj + Entrée |
 | Lecteur PDF | Miniatures des pages | F9 |
 | Lecteur PDF | Zoom | + / −, Ctrl + molette, pincement |

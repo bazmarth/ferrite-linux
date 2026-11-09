@@ -60,7 +60,7 @@ impl WlrLayerShellHandler for Ferrite {
         }
         // Le lanceur fermé rend le clavier à la fenêtre du dessus.
         if focused {
-            let top = self.space.elements().last().cloned();
+            let top = self.top_window();
             self.focus_window(top);
         }
         self.request_redraw();

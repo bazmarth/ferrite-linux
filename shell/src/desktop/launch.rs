@@ -27,6 +27,9 @@ pub enum DockMenuAction {
     /// Raccourci de l'application sur le bureau des widgets.
     AddToDesktop,
     RemoveFromDesktop,
+    /// Fenêtre de l'application gardée au-dessus des autres.
+    KeepAbove,
+    ReleaseAbove,
     Quit,
 }
 
@@ -38,6 +41,8 @@ impl DockMenuAction {
             DockMenuAction::Unpin => "Retirer du Dock",
             DockMenuAction::AddToDesktop => "Ajouter au bureau",
             DockMenuAction::RemoveFromDesktop => "Retirer du bureau",
+            DockMenuAction::KeepAbove => "Toujours au-dessus",
+            DockMenuAction::ReleaseAbove => "Ne plus garder au-dessus",
             DockMenuAction::Quit => "Quitter",
         }
     }
@@ -435,6 +440,12 @@ impl Ferrite {
             entries.push(self.desktop_menu_action_for(&item.key));
         }
         if item.running {
+            let (mapped, _) = self.app_windows(&item.key);
+            if mapped.iter().any(crate::wm::keep_above::is_kept_above) {
+                entries.push(DockMenuAction::ReleaseAbove);
+            } else if !mapped.is_empty() {
+                entries.push(DockMenuAction::KeepAbove);
+            }
             entries.push(DockMenuAction::Quit);
         }
         entries
@@ -485,6 +496,19 @@ impl Ferrite {
             }
             DockMenuAction::AddToDesktop => self.set_app_on_desktop(key, true),
             DockMenuAction::RemoveFromDesktop => self.set_app_on_desktop(key, false),
+            // La fenêtre de devant de l'application passe au-dessus des autres.
+            DockMenuAction::KeepAbove => {
+                if let Some(front) = self.app_windows(key).0.first().cloned() {
+                    self.set_keep_above(&front, true);
+                }
+            }
+            DockMenuAction::ReleaseAbove => {
+                for window in self.app_windows(key).0 {
+                    if crate::wm::keep_above::is_kept_above(&window) {
+                        self.set_keep_above(&window, false);
+                    }
+                }
+            }
             DockMenuAction::Quit => {
                 let (mapped, minimized) = self.app_windows(key);
                 let minimized = minimized

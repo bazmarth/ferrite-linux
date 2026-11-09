@@ -22,7 +22,7 @@
 
 mod analysis;
 mod bluetooth;
-mod devices;
+pub mod devices;
 pub(crate) mod file_art;
 mod look;
 mod open_with;

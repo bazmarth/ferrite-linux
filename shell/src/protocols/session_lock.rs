@@ -34,7 +34,7 @@ impl SessionLockHandler for Ferrite {
 
     fn unlock(&mut self) {
         self.session_lock = None;
-        let top = self.space.elements().last().cloned();
+        let top = self.top_window();
         self.focus_window(top);
         self.request_redraw();
     }

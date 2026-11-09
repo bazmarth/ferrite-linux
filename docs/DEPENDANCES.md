@@ -22,6 +22,9 @@ Chaque dépendance avec sa licence et la raison de sa présence. Les versions ex
 | `epaint` 0.37 (déjà tiré par eframe) | ferrite-apps | MIT/Apache-2.0 | seulement pour activer `color_fonts` : emoji en couleur (police Noto Color Emoji du système) ; aucune bibliothèque nouvelle |
 | `winit` 0.30.13 (copie dans `third_party/winit`) | ferrite-apps (par eframe) | Apache-2.0 | remplace la version de crates.io (`[patch.crates-io]`) pour transmettre le pincement du pavé tactile sous Wayland ; détails dans `third_party/winit/FERRITE.md` |
 | `qrcode` 0.14 (sans fonctions par défaut, aucune dépendance) | ferrite-apps | MIT/Apache-2.0 | Paramètres › Wi-Fi › Détails : QR code pour partager le réseau |
+| `quick-xml` 0.41 (déjà tirée par zbus) | ferrite-apps | MIT | Logithèque : lecture en flux du catalogue de Flathub (`appstream.xml`, 50 Mo) |
+| `yaml-rust2` 0.13 | ferrite-apps | MIT/Apache-2.0 | Logithèque : lecture du catalogue des applications de Debian (DEP-11, en YAML) |
+| `flate2` 1 (déjà dans `Cargo.lock`) | ferrite-apps | MIT/Apache-2.0 | Logithèque : catalogues compressés (`.yml.gz`, `appstream.xml.gz`) |
 | `miniz_oxide` 0.8 (déjà tirée par `png`) | ferrite-apps | MIT/Zlib/Apache-2.0 | Fichiers › Créer un PDF : images PNG compressées sans perte (zlib) |
 | `async-channel` 2 | ferrite-shell | MIT/Apache-2.0 | réponses de l'agent polkit attendues sans bloquer la boucle |
 | `libc` 0.2 | ferrite-shell | MIT/Apache-2.0 | `statvfs` : espace disque libre affiché par le bureau |
@@ -59,9 +62,12 @@ Liste : `image/config/package-lists/ferrite.list.chroot`. Points notables :
 | `gnome-keyring`, `libpam-gnome-keyring`, `gcr` | coffre à mots de passe (Secret Service) des navigateurs et d'Electron |
 | `bluez-obexd` | `obexd` (bus de session) : « Envoyer par Bluetooth » dans Fichiers (profil Object Push) |
 | `cups`, `cups-browsed`, `ipp-usb` | Paramètres › Imprimantes : service d’impression, imprimantes du réseau trouvées seules, imprimantes USB récentes sans pilote |
+| `packagekit`, `flatpak` | Logithèque et Paramètres › Mises à jour : installer, désinstaller, mettre à jour (Debian par PackageKit, Flathub par `flatpak --user`) |
+| `appstream`, `apt-config-icons-hidpi` | Logithèque : `apt update` télécharge le catalogue des applications de Debian (DEP-11) et leurs icônes |
 | `tesseract-ocr`, `tesseract-ocr-fra` | Capture › Texte : reconnaissance du texte d'une zone de l'écran (français et anglais), copié dans le presse-papiers |
 | `ntfs-3g` | disques et clés formatés sous Windows |
 | `libgstreamer1.0-0`, `gstreamer1.0-plugins-base`, `-good`, `gstreamer1.0-libav` | Lecteur vidéo, Musique, caméra infrarouge ; libav pour le H.264 |
+| `gstreamer1.0-plugins-bad` | Lecteur vidéo : AV1 (vidéos 4K), par la carte graphique ou le processeur |
 | `libglib2.0-bin`, `gsettings-desktop-schemas`, `dconf-gsettings-backend` | thème clair/sombre et ordre des boutons annoncés aux applications GTK |
 | `x11-xserver-utils` | `xhost` : programmes lancés par `pkexec` (GParted) affichés sur XWayland |
 | `xsettingsd` | échelle ×2 des programmes GTK sous X11 |

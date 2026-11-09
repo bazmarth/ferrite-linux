@@ -12,13 +12,18 @@
 use std::{
     io::Write,
     path::{Path, PathBuf},
+    sync::mpsc,
     time::SystemTime,
 };
 
 use eframe::egui::{self, Frame, Margin, RichText, Sense};
 
 use crate::{
-    files::{Looks, format_date, format_size, paint_path_icon, path_icon},
+    files::{
+        Looks,
+        devices::{self, Device},
+        format_date, format_size, paint_path_icon, path_icon,
+    },
     kit,
     style::{self, Icons},
 };
@@ -167,6 +172,10 @@ pub struct ChooserState {
     confirm_replace: Option<PathBuf>,
     error: Option<String>,
     new_folder: Option<String>,
+    /// Disques et partitions (comme dans Fichiers), lus à l'ouverture.
+    disks: Vec<Device>,
+    /// Montage en cours (mot de passe administrateur pour un disque interne).
+    mounting: Option<mpsc::Receiver<Result<PathBuf, String>>>,
 }
 
 impl std::fmt::Debug for ChooserState {
@@ -197,6 +206,8 @@ impl ChooserState {
             confirm_replace: None,
             error: None,
             new_folder: None,
+            disks: devices::list(),
+            mounting: None,
         };
         state.load(folder);
         state
@@ -245,6 +256,43 @@ impl ChooserState {
                 .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
         });
         self.entries = entries;
+    }
+
+    /// Ouvre un disque : tout de suite s'il est monté, sinon après son montage, fait
+    /// dans un fil à part (la fenêtre reste vivante pendant le mot de passe).
+    fn open_disk(&mut self, ctx: &egui::Context, device: Device) {
+        if let Some(mount) = device.mount {
+            self.enter(mount);
+            return;
+        }
+        if self.mounting.is_some() {
+            return;
+        }
+        let (sender, receiver) = mpsc::channel();
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let _ = sender.send(devices::mount(&device));
+            ctx.request_repaint();
+        });
+        self.mounting = Some(receiver);
+    }
+
+    fn poll_mount(&mut self) {
+        let Some(result) = self
+            .mounting
+            .as_ref()
+            .and_then(|receiver| receiver.try_recv().ok())
+        else {
+            return;
+        };
+        self.mounting = None;
+        match result {
+            Ok(mount) => {
+                self.disks = devices::list();
+                self.enter(mount);
+            }
+            Err(error) => self.error = Some(error),
+        }
     }
 
     fn enter(&mut self, folder: PathBuf) {
@@ -366,7 +414,47 @@ impl ChooserState {
                     self.enter(path);
                 }
             }
+            ui.add_space(8.0);
+            style::sidebar_heading(ui, "Disques");
+            let root = Path::new("/");
+            if style::sidebar_tile_item(
+                ui,
+                &mut self.icons,
+                "places-computer",
+                style::accent(),
+                "Système",
+                self.folder == root,
+            )
+            .clicked()
+            {
+                self.enter(root.to_path_buf());
+            }
+            for device in self.disks.clone() {
+                let icon = if device.removable {
+                    "places-usb"
+                } else {
+                    "places-computer"
+                };
+                let selected = device.mount.as_deref() == Some(self.folder.as_path());
+                let response = style::sidebar_tile_item(
+                    ui,
+                    &mut self.icons,
+                    icon,
+                    style::accent(),
+                    &device.label,
+                    selected,
+                );
+                let response = if device.mount.is_none() {
+                    response.on_hover_text("Pas encore monté : un clic l’ouvre")
+                } else {
+                    response
+                };
+                if response.clicked() {
+                    self.open_disk(ui.ctx(), device);
+                }
+            }
         });
+        self.poll_mount();
         egui::CentralPanel::no_frame()
             .frame(
                 Frame::new()

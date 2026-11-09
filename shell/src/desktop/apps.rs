@@ -356,6 +356,18 @@ impl App {
         }
     }
 
+    /// Recherche quotidienne des mises à jour (`ferrite-apps verifier-mises-a-jour`), sans
+    /// fenêtre : annonce par une notification les mises à jour de Debian et de Flathub.
+    /// Elle se retire seule si elle tourne déjà.
+    pub fn start_update_check(env: &[(String, String)]) {
+        let mut command = ferrite_command("ferrite-apps");
+        command.arg("verifier-mises-a-jour");
+        command.envs(env.iter().map(|(key, value)| (key, value)));
+        if let Err(err) = spawn_detached(command) {
+            tracing::warn!(%err, "recherche des mises à jour indisponible");
+        }
+    }
+
     /// Lance l'application comme client du compositeur.
     pub fn launch(self, env: &[(String, String)]) {
         self.launch_with(env, &[]);

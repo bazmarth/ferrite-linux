@@ -155,6 +155,15 @@ pub const APPS: &[AppInfo] = &[
         (640, 400),
         false,
     ),
+    app(
+        "logitheque",
+        "ferrite-logitheque",
+        "Logithèque",
+        "app-store",
+        (1180, 760),
+        (720, 480),
+        false,
+    ),
     // Sélecteur de fichiers du portail (xdg-desktop-portal-ferrite), hors du menu.
     AppInfo {
         menu: false,

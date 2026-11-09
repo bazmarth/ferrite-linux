@@ -56,6 +56,7 @@ Liste : `image/config/package-lists/ferrite.list.chroot`. Points notables :
 | `libcrypt1` (toujours présent ; `libcrypt-dev` pour compiler, tiré par `libc6-dev`) | ferrite-apps : chiffrement des mots de passe (`crypt_ra`, méthode par défaut du système) avant de les donner à AccountsService |
 | `gnome-keyring`, `libpam-gnome-keyring`, `gcr` | coffre à mots de passe (Secret Service) des navigateurs et d'Electron |
 | `bluez-obexd` | `obexd` (bus de session) : « Envoyer par Bluetooth » dans Fichiers (profil Object Push) |
+| `cups`, `cups-browsed`, `ipp-usb` | Paramètres › Imprimantes : service d’impression, imprimantes du réseau trouvées seules, imprimantes USB récentes sans pilote |
 | `ntfs-3g` | disques et clés formatés sous Windows |
 | `libgstreamer1.0-0`, `gstreamer1.0-plugins-base`, `-good`, `gstreamer1.0-libav` | Lecteur vidéo, Musique, caméra infrarouge ; libav pour le H.264 |
 | `libglib2.0-bin`, `gsettings-desktop-schemas`, `dconf-gsettings-backend` | thème clair/sombre et ordre des boutons annoncés aux applications GTK |

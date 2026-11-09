@@ -38,6 +38,7 @@ use ferrite_system::{
     display,
     idle::{self, IdleSettings},
     network::{self, KnownWifi, WifiNetwork, WifiOptions},
+    printers::{self, Printer},
     time,
 };
 use ferrite_ui::wallpaper::{self, Builtin, Image, Source};
@@ -214,6 +215,9 @@ enum Update {
     Hotspot(Result<String, String>),
     ScanDone,
     BluetoothName(Option<String>),
+    /// Imprimantes installées, puis celles trouvées sur le réseau ou en USB.
+    Printers(printers::Status),
+    PrintersFound(Result<Vec<String>, String>),
     Audio {
         sources: Vec<Sink>,
         input: Option<u8>,
@@ -242,6 +246,16 @@ enum UpdatesTask {
     Checking,
     /// Installation, avec son pourcentage quand il est connu.
     Installing(Option<u32>),
+}
+
+/// Action demandée dans la rubrique Imprimantes, faite après son dessin.
+enum PrinterAction {
+    Add(String),
+    Remove(String),
+    Default(String),
+    Test(String),
+    Cancel(String),
+    Search,
 }
 
 /// Action demandée depuis une liste (réseaux, appareils), faite après son dessin.
@@ -292,6 +306,9 @@ pub struct SettingsState {
     /// « Ajouter… » : images et chemin pour le fond d'écran.
     wallpaper_more: bool,
     bluetooth_devices: Option<Vec<bluetooth::Device>>,
+    printers: Option<printers::Status>,
+    /// Imprimantes trouvées (`None` : recherche en cours).
+    printers_found: Option<Result<Vec<String>, String>>,
     sinks: Vec<Sink>,
     keyboard: String,
     keyboard_sample: String,
@@ -372,6 +389,8 @@ impl Default for SettingsState {
             streams: Vec::new(),
             wallpaper_more: false,
             bluetooth_devices: None,
+            printers: None,
+            printers_found: None,
             sinks: Vec::new(),
             keyboard: Settings::load().keyboard_layout().to_owned(),
             keyboard_sample: String::new(),
@@ -493,6 +512,8 @@ impl SettingsState {
                 }
                 Update::ScanDone => self.bluetooth_scanning = false,
                 Update::BluetoothName(name) => self.bluetooth_name = name,
+                Update::Printers(status) => self.printers = Some(status),
+                Update::PrintersFound(found) => self.printers_found = Some(found),
                 Update::Audio {
                     sources,
                     input,
@@ -566,6 +587,7 @@ impl SettingsState {
                 self.spawn_quiet(ctx, || vec![Update::BluetoothName(bluetooth::adapter_name())]);
             }
             Page::Sound => self.refresh_audio(ctx),
+            Page::Printers => self.refresh_printers(ctx),
             Page::DateTime => self.spawn_quiet(ctx, || {
                 vec![
                     Update::Time(time::timezone(), time::ntp_enabled()),
@@ -581,7 +603,6 @@ impl SettingsState {
             | Page::Displays
             | Page::Keyboard
             | Page::Mouse
-            | Page::Printers
             | Page::Accounts
             | Page::Defaults
             | Page::Privacy
@@ -731,7 +752,7 @@ impl SettingsState {
             Page::Defaults => self.defaults_page(ui),
             Page::Notifications => self.notifications_page(ui),
             Page::Updates => self.updates_page(ui),
-            Page::Printers => self.pending_page(ui),
+            Page::Printers => self.printers_page(ui),
             Page::Accessibility => self.accessibility_page(ui),
         }
     }
@@ -2410,20 +2431,170 @@ impl SettingsState {
         }
     }
 
-    /// Imprimantes, pas encore branchée sur le système (CUPS absent) : la maquette, avec le
-    /// même gabarit, grisée, et une note qui le dit.
-    fn pending_page(&mut self, ui: &mut egui::Ui) {
-        group(ui, &mut self.icons, "", |rows| {
-            let row = Row::new("Aucune imprimante")
-                .hint("Ajoute une imprimante pour imprimer depuis tes applications.")
-                .lead(Lead::Tile(Page::Printers.icon(), Page::Printers.color()))
-                .unavailable();
-            rows.row(row, |ui| rows::button(ui, "Ajouter…", true));
+    /// Relit les imprimantes installées, puis cherche les autres (réseau, USB).
+    fn refresh_printers(&mut self, ctx: &egui::Context) {
+        self.printers_found = None;
+        self.spawn_quiet(ctx, || {
+            let status = printers::status();
+            let found = match &status {
+                printers::Status::Ready(installed) => printers::discover(installed),
+                _ => Ok(Vec::new()),
+            };
+            vec![Update::Printers(status), Update::PrintersFound(found)]
+        });
+    }
+
+    /// Action sur une imprimante, puis relecture de la liste.
+    fn printer_action(
+        &mut self,
+        ctx: &egui::Context,
+        success: &'static str,
+        action: impl FnOnce() -> Result<(), String> + Send + 'static,
+    ) {
+        self.message = None;
+        self.spawn(ctx, move || {
+            let result = action().map(|()| success.to_owned());
+            let status = printers::status();
+            let found = match &status {
+                printers::Status::Ready(installed) => printers::discover(installed),
+                _ => Ok(Vec::new()),
+            };
+            vec![
+                Update::Done(result),
+                Update::Printers(status),
+                Update::PrintersFound(found),
+            ]
+        });
+    }
+
+    /// Imprimantes (CUPS) : celles installées, avec leur état et leurs actions, puis
+    /// celles trouvées sur le réseau ou en USB, à ajouter d'un clic (sans pilote).
+    fn printers_page(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        let tile = Lead::Tile(Page::Printers.icon(), Page::Printers.color());
+        let installed: Vec<Printer> = match &self.printers {
+            None => {
+                group(ui, &mut self.icons, "", |rows| {
+                    rows.row(Row::new("Imprimantes"), |ui| rows::status(ui, "Lecture…", true));
+                });
+                return;
+            }
+            Some(printers::Status::Missing) => {
+                group(ui, &mut self.icons, "", |rows| {
+                    rows.text(
+                        Row::new("Service d’impression absent")
+                            .hint("À installer : sudo apt install cups cups-browsed ipp-usb")
+                            .lead(tile),
+                    );
+                });
+                return;
+            }
+            Some(printers::Status::Stopped) => {
+                group(ui, &mut self.icons, "", |rows| {
+                    rows.text(
+                        Row::new("Service d’impression arrêté")
+                            .hint("Pour le relancer : sudo systemctl start cups")
+                            .lead(tile),
+                    );
+                });
+                return;
+            }
+            Some(printers::Status::Ready(list)) => list.clone(),
+        };
+        let mut action = None;
+        group(ui, &mut self.icons, "Mes imprimantes", |rows| {
+            if installed.is_empty() {
+                rows.text(
+                    Row::new("Aucune imprimante")
+                        .hint("Ajoutez-en une parmi celles trouvées ci-dessous")
+                        .lead(tile),
+                );
+            }
+            for printer in &installed {
+                let hint = printer_hint(printer);
+                let row = Row::new(&printer.label)
+                    .lead(tile)
+                    .hint(&hint)
+                    .ok(printer.state != printers::State::Stopped);
+                rows.row(row, |ui| {
+                    ui.menu_button("Options", |ui| {
+                        if !printer.default && ui.button("Utiliser par défaut").clicked() {
+                            action = Some(PrinterAction::Default(printer.name.clone()));
+                            ui.close();
+                        }
+                        if ui.button("Imprimer une page de test").clicked() {
+                            action = Some(PrinterAction::Test(printer.name.clone()));
+                            ui.close();
+                        }
+                        if printer.jobs > 0 && ui.button("Annuler les impressions").clicked() {
+                            action = Some(PrinterAction::Cancel(printer.name.clone()));
+                            ui.close();
+                        }
+                        ui.separator();
+                        if ui.button("Retirer cette imprimante").clicked() {
+                            action = Some(PrinterAction::Remove(printer.name.clone()));
+                            ui.close();
+                        }
+                    });
+                });
+            }
+        });
+        let found = self.printers_found.clone();
+        group(ui, &mut self.icons, "Imprimantes trouvées", |rows| match &found {
+            None => {
+                rows.row(Row::new("Recherche"), |ui| {
+                    rows::status(ui, "Recherche en cours…", true)
+                });
+            }
+            Some(Err(error)) => {
+                rows.text(Row::new("Recherche impossible").hint(error));
+            }
+            Some(Ok(list)) if list.is_empty() => {
+                let row = Row::new("Aucune autre imprimante trouvée")
+                    .hint("Allumez-la et reliez-la au même réseau, ou par un câble USB");
+                if rows
+                    .row(row, |ui| rows::button(ui, "Rechercher", false).clicked())
+                    .0
+                {
+                    action = Some(PrinterAction::Search);
+                }
+            }
+            Some(Ok(list)) => {
+                for name in list {
+                    let row = Row::new(name).lead(tile).hint("Sans pilote à installer");
+                    if rows.row(row, |ui| rows::button(ui, "Ajouter", true).clicked()).0 {
+                        action = Some(PrinterAction::Add(name.clone()));
+                    }
+                }
+            }
         });
         rows::group_note(
             ui,
-            "Maquette proposée : cette rubrique n’est pas encore disponible dans Ferrite OS.",
+            "Ajouter ou retirer une imprimante demande le mot de passe administrateur.",
         );
+        match action {
+            Some(PrinterAction::Add(name)) => {
+                self.printer_action(&ctx, "Imprimante ajoutée", move || printers::add(&name));
+            }
+            Some(PrinterAction::Remove(name)) => {
+                self.printer_action(&ctx, "Imprimante retirée", move || printers::remove(&name));
+            }
+            Some(PrinterAction::Default(name)) => {
+                self.printer_action(&ctx, "Imprimante par défaut choisie", move || {
+                    printers::set_default(&name)
+                });
+            }
+            Some(PrinterAction::Test(name)) => {
+                self.printer_action(&ctx, "Page de test envoyée", move || {
+                    printers::print_test_page(&name)
+                });
+            }
+            Some(PrinterAction::Cancel(name)) => {
+                self.printer_action(&ctx, "Impressions annulées", move || printers::cancel_all(&name));
+            }
+            Some(PrinterAction::Search) => self.refresh_printers(&ctx),
+            None => {}
+        }
     }
 
     /// Accessibilité : contraste, transparence, animations, touches rémanentes.
@@ -3211,6 +3382,23 @@ fn hiding_labels() -> [(DockHiding, &'static str); 3] {
 }
 
 /// Ligne oui/non enregistrée sous `key`.
+/// Ligne d'état d'une imprimante : « Prête · Par défaut · 2 documents en attente · Bureau ».
+fn printer_hint(printer: &Printer) -> String {
+    let mut parts = vec![printer.state.label().to_owned()];
+    if printer.default {
+        parts.push("Par défaut".to_owned());
+    }
+    match printer.jobs {
+        0 => {}
+        1 => parts.push("1 document en attente".to_owned()),
+        n => parts.push(format!("{n} documents en attente")),
+    }
+    if !printer.location.is_empty() {
+        parts.push(printer.location.clone());
+    }
+    parts.join(" · ")
+}
+
 fn flag_row(rows: &mut rows::Group<'_>, settings: &mut Settings, row: Row<'_>, key: &str, default: bool) {
     let mut on = match key {
         "dock_agrandissement" => settings.dock_magnify(),

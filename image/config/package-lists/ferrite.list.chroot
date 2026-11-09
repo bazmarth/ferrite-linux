@@ -66,6 +66,10 @@ alsa-ucm-conf
 bluez
 # Fichiers : « Envoyer par Bluetooth » (service obexd, profil Object Push)
 bluez-obexd
+# Impression sans pilote (Paramètres › Imprimantes) : CUPS, imprimantes réseau, USB récentes
+cups
+cups-browsed
+ipp-usb
 upower
 # Profils d’énergie (tuile « Économie d’énergie », commande powerprofilesctl)
 power-profiles-daemon

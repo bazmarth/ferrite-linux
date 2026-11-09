@@ -3053,6 +3053,28 @@ Pas vérifié : les touches rémanentes au clavier (pas moyen de taper dans le b
 depuis ici) ; aucun signe à l'écran d'une touche tenue ; contraste élevé dans toutes les
 applis et sur le bureau réel.
 
+## 2026-11-09 — Paramètres : rubrique Imprimantes (CUPS, sans pilote)
+
+Suite du plan (phase 5, dernière rubrique en maquette). L'utilisateur a installé
+`cups cups-browsed ipp-usb` sur le PC.
+- `ferrite_system::printers` : état par `lpstat` (prête, impression en cours, arrêtée ;
+  description, lieu, imprimante par défaut, documents en attente), recherche des
+  imprimantes du réseau et USB par `lpstat -e`, ajout sans pilote
+  (`lpadmin -m everywhere`, adresse lue par `lpstat -v`), retrait, imprimante par défaut de
+  l'utilisateur (`lpoptions -d`, sans mot de passe), page de test (`lp`), annulation des
+  impressions (`cancel -a`). `lpadmin` refusé faute de droits : relancé par `pkexec`.
+  Erreurs en français.
+- Rubrique : « Mes imprimantes » (état sur une ligne, menu Options : par défaut, page de
+  test, annuler les impressions, retirer), « Imprimantes trouvées » (Ajouter ; sinon
+  « Rechercher »). CUPS absent ou arrêté : la ligne le dit avec la commande à taper.
+- Image : paquets `cups`, `cups-browsed`, `ipp-usb` ajoutés.
+- Plus aucune rubrique en maquette dans Paramètres.
+Vérifié : CI (sans shellcheck) ; tests (lecture de `lpstat`, nom de file, erreurs) ;
+messages réels de CUPS en langue C ; capture de la rubrique avec le vrai CUPS (aucune
+imprimante installée ni trouvée).
+Pas vérifié : avec une vraie imprimante (aucune autour du PC) : liste, ajout par `pkexec`,
+page de test, menu Options à l'écran.
+
 ## 2026-11-09 — Paramètres : gestion des comptes et images de profil
 
 Demande : gérer les comptes depuis l'interface (ajout, suppression, mot de passe…), puis

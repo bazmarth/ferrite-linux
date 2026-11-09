@@ -157,22 +157,9 @@ fn window_strength(start: u32, end: u32, minute: f64) -> f64 {
 }
 
 /// Rang du jour dans l'année (1 à 366), minute du jour et décalage horaire (minutes), en
-/// heure locale. Le décalage est lu une fois (`date +%z`).
+/// heure locale (heure d'été comprise, voir [`crate::time::local_offset_seconds`]).
 pub fn local_now() -> (u32, f64, i32) {
-    static OFFSET: std::sync::OnceLock<i32> = std::sync::OnceLock::new();
-    let offset = *OFFSET.get_or_init(|| {
-        let text = crate::command::run("date", &["+%z"]).unwrap_or_default();
-        let text = text.trim();
-        let sign = if text.starts_with('-') { -1 } else { 1 };
-        let digits = text.trim_start_matches(['+', '-']);
-        match (
-            digits.get(..2).and_then(|h| h.parse::<i32>().ok()),
-            digits.get(2..4).and_then(|m| m.parse::<i32>().ok()),
-        ) {
-            (Some(hours), Some(minutes)) => sign * (hours * 60 + minutes),
-            _ => 0,
-        }
-    });
+    let offset = (crate::time::local_offset_seconds() / 60) as i32;
     let seconds = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()

@@ -3415,3 +3415,28 @@ annuler, export) ; un PDF scanné ou à plusieurs colonnes ; un très gros docum
 Limites : les annotations ne sont visibles que dans le Lecteur PDF de Ferrite (pas
 écrites dans le PDF) et sont perdues si le PDF est modifié par un autre programme ; pas
 de liens cliquables ; pas d'impression.
+
+## 2026-11-09 — Bureau : moins de saccades, heure d'été suivie
+
+Demande : vérifier la fluidité, la robustesse et la fiabilité du bureau, puis corriger les
+deux défauts trouvés.
+- Bilan : CI réussie, aucun plantage dans les journaux du vrai bureau, repos du rendu
+  correct sur l'écran (10 essais par seconde). Le journal montrait des saccades répétées
+  d'environ 50 ms à l'étape « panneaux ».
+- Saccades : l'image des panneaux était redessinée au processeur à chaque minute et à
+  chaque variation du signal Wi-Fi ou de la batterie, qu'elle ne montre pas (la barre a sa
+  propre image). `panels.rs::without_unseen` les retire de sa clé, sauf sur l'écran
+  verrouillé (qui les montre) et pour la batterie quand le centre de contrôle est ouvert ;
+  la date reste (calendrier du centre de notifications).
+- Heure : le décalage du fuseau était lu une fois au démarrage (`date +%z`) dans la barre
+  et le mode nuit : décalage d'une heure après un passage à l'heure d'été ou un changement
+  de fuseau. Nouveau `ferrite_system::time::local_offset_seconds` (`tzset` +
+  `localtime_r`, relu toutes les 10 s, sans commande donc sans bloquer), utilisé par la
+  barre, le mode nuit et l'agenda. `libc` ajouté à ferrite-system (déjà dans le dépôt).
+Vérifié : CI (sans shellcheck), 561 tests dont deux nouveaux ; bureau imbriqué profilé
+75 s : après le premier dessin, seule la barre est redessinée au changement de minute et
+de signal ; capture avec `TZ=America/New_York` (17:52 pour 22:52 UTC) ; captures du
+centre de contrôle (batterie) et du centre de notifications (calendrier).
+Pas vérifié : sur le vrai bureau (saccades disparues au déplacement d'une fenêtre) ; un
+vrai passage à l'heure d'été ; un changement de fuseau dans Réglages pendant la session.
+Reste : l'appli Horloge garde sa propre lecture par `date` (déjà relue chaque minute).

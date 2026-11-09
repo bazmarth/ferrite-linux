@@ -27,7 +27,7 @@ Chaque dépendance avec sa licence et la raison de sa présence. Les versions ex
 | `flate2` 1 (déjà dans `Cargo.lock`) | ferrite-apps | MIT/Apache-2.0 | Logithèque : catalogues compressés (`.yml.gz`, `appstream.xml.gz`) |
 | `miniz_oxide` 0.8 (déjà tirée par `png`) | ferrite-apps | MIT/Zlib/Apache-2.0 | Fichiers › Créer un PDF : images PNG compressées sans perte (zlib) |
 | `async-channel` 2 | ferrite-shell | MIT/Apache-2.0 | réponses de l'agent polkit attendues sans bloquer la boucle |
-| `libc` 0.2 | ferrite-shell | MIT/Apache-2.0 | `statvfs` : espace disque libre affiché par le bureau |
+| `libc` 0.2 | ferrite-shell, ferrite-system | MIT/Apache-2.0 | `statvfs` : espace disque libre affiché par le bureau ; `localtime_r` : décalage horaire (heure d'été comprise) sans lancer `date` |
 | `gstreamer`, `gstreamer-app`, `gstreamer-video` 0.25 | ferrite-apps, ferrite-visage | MIT/Apache-2.0 (GStreamer : LGPL, liaison dynamique) | Lecteur vidéo, vignettes des vidéos dans Fichiers, lecture de la caméra infrarouge |
 | `symphonia` 0.5 (mp3, aac, isomp4, alac) | ferrite-apps | MPL-2.0 | Musique : décodage et lecture des métadonnées des morceaux |
 | `tract-onnx` 0.21 | ferrite-visage | MIT/Apache-2.0 | exécution des modèles YuNet et SFace (visage) en Rust pur, sans OpenCV |

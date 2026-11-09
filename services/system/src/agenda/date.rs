@@ -2,10 +2,7 @@
 //! saisies en français et mise en forme. Tout est en heure locale « flottante » : un
 //! rendez-vous à 9 h reste à 9 h, même après un changement d'heure.
 
-use std::{
-    sync::Mutex,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
-};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Minutes dans une journée.
 pub const DAY_MINUTES: i64 = 1440;
@@ -350,38 +347,9 @@ pub fn plural(count: u32, one: &str, many: &str) -> String {
     format!("{count} {}", if count > 1 { many } else { one })
 }
 
-/// Décalage de l'heure locale sur l'UTC, en minutes (lu par `date +%z`, gardé une minute).
+/// Décalage de l'heure locale sur l'UTC, en minutes.
 fn local_offset() -> i64 {
-    static OFFSET: Mutex<Option<(Instant, i64)>> = Mutex::new(None);
-    let Ok(mut cached) = OFFSET.lock() else {
-        return 0;
-    };
-    if let Some((checked, offset)) = *cached
-        && checked.elapsed() < Duration::from_secs(60)
-    {
-        return offset;
-    }
-    let offset = crate::command::run("date", &["+%z"])
-        .ok()
-        .and_then(|text| parse_offset(text.trim()))
-        .unwrap_or(0);
-    *cached = Some((Instant::now(), offset));
-    offset
-}
-
-/// « +0100 » → 60 ; « -0530 » → -330.
-pub fn parse_offset(text: &str) -> Option<i64> {
-    let (sign, digits) = match text.split_at_checked(1)? {
-        ("+", rest) => (1, rest),
-        ("-", rest) => (-1, rest),
-        _ => return None,
-    };
-    if digits.len() != 4 {
-        return None;
-    }
-    let hours: i64 = digits[..2].parse().ok()?;
-    let minutes: i64 = digits[2..].parse().ok()?;
-    Some(sign * (hours * 60 + minutes))
+    crate::time::local_offset_seconds() / 60
 }
 
 /// Maintenant, en heure locale, à la minute près.
@@ -478,8 +446,6 @@ mod tests {
         assert_eq!(duration_label(1440), "1 jour");
         assert_eq!(duration_label(2880), "2 jours");
         assert_eq!(duration_label(10_080), "1 semaine");
-        assert_eq!(parse_offset("+0100"), Some(60));
-        assert_eq!(parse_offset("-0530"), Some(-330));
     }
 
     #[test]

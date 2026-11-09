@@ -9,7 +9,6 @@ use std::{
     cell::{Cell, RefCell},
     fs,
     path::PathBuf,
-    process::Command,
     sync::{
         Arc, Mutex, OnceLock,
         atomic::{AtomicBool, AtomicU32, Ordering},
@@ -811,6 +810,25 @@ struct VisualState {
     system: SystemMetrics,
 }
 
+/// État des panneaux sans ce qu'ils ne montrent pas : l'heure à la minute, le signal Wi-Fi
+/// et la batterie sont dans la barre (qui a sa propre image). Sans cela, chaque minute et
+/// chaque variation du signal redessinaient tous les panneaux au processeur (≈ 50 ms sur
+/// le ThinkBook, une saccade visible). L'écran verrouillé les montre : il garde tout ; le
+/// centre de contrôle montre la batterie.
+fn without_unseen(mut state: VisualState) -> VisualState {
+    if state.view.lock.is_some() {
+        return state;
+    }
+    // La date reste : le calendrier du centre de notifications marque le jour.
+    state.clock.hour = 0;
+    state.clock.minute = 0;
+    state.view.wifi_signal = None;
+    if state.view.popover != Some(Popover::Controls) {
+        state.battery = None;
+    }
+    state
+}
+
 /// Taille en pixels physiques de l'écran décrit par `state`.
 fn physical_size(state: &VisualState, scale: f64) -> (u32, u32) {
     (
@@ -1088,6 +1106,7 @@ impl Panels {
             },
             ..state.clone()
         };
+        let rest = without_unseen(rest);
         let invitation = state.view.lock.as_ref().map(|lock| {
             let key = (
                 state.width,
@@ -6325,8 +6344,6 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
     (year, month, day)
 }
 
-/// Décalage du fuseau local en secondes, lu une fois au démarrage avec `date +%z`
-/// (un passage à l'heure d'été n'est pris en compte qu'au prochain démarrage).
 /// Case du jour `day` dans le calendrier de la barre (lundi en première colonne).
 fn calendar_cell(card: Rect, year: i64, month: u32, day: u32) -> Rect {
     let cell = (card.w - 36.0) / 7.0;
@@ -6353,31 +6370,10 @@ pub(crate) fn local_minutes() -> Option<i64> {
     Some((seconds + local_offset()).div_euclid(60))
 }
 
+/// Décalage du fuseau local en secondes, heure d'été comprise (relu toutes les 10 s,
+/// sans commande : un changement d'heure ou de fuseau se voit sans redémarrer le bureau).
 fn local_offset() -> i64 {
-    static OFFSET: OnceLock<i64> = OnceLock::new();
-    *OFFSET.get_or_init(|| {
-        Command::new("date")
-            .arg("+%z")
-            .output()
-            .ok()
-            .and_then(|output| parse_offset(String::from_utf8_lossy(&output.stdout).trim()))
-            .unwrap_or(0)
-    })
-}
-
-/// « +0130 » → 5400 secondes.
-fn parse_offset(text: &str) -> Option<i64> {
-    let (sign, digits) = match text.as_bytes().first()? {
-        b'+' => (1, &text[1..]),
-        b'-' => (-1, &text[1..]),
-        _ => return None,
-    };
-    if digits.len() != 4 || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
-        return None;
-    }
-    let hours: i64 = digits[..2].parse().ok()?;
-    let minutes: i64 = digits[2..].parse().ok()?;
-    Some(sign * (hours * 3600 + minutes * 60))
+    ferrite_system::time::local_offset_seconds()
 }
 
 /// Dossier sysfs de la première batterie, s'il y en a une.
@@ -6686,6 +6682,44 @@ mod tests {
         let tall = Rect::new(0.0, 0.0, 356.0, 360.0);
         assert_eq!(cards::shown_tasks(&desktop.dashboard, short).len(), 2);
         assert_eq!(cards::shown_tasks(&desktop.dashboard, tall).len(), 7);
+    }
+
+    #[test]
+    fn l_heure_et_le_signal_ne_redessinent_pas_les_panneaux() {
+        let state = VisualState {
+            width: 1280,
+            height: 720,
+            scale_milli: 1000,
+            accent: Color::WHITE,
+            view: view(None),
+            battery: Some(Battery {
+                percent: 80,
+                charging: false,
+            }),
+            clock: ClockSnapshot::default(),
+            system: SystemMetrics::default(),
+        };
+        let mut later = state.clone();
+        later.clock.minute = 7;
+        later.view.wifi_signal = Some(70);
+        later.battery = Some(Battery {
+            percent: 79,
+            charging: false,
+        });
+        assert_eq!(without_unseen(state.clone()), without_unseen(later.clone()));
+        // Le jour change : le calendrier du centre de notifications doit suivre.
+        let mut tomorrow = state.clone();
+        tomorrow.clock.day = 10;
+        assert_ne!(without_unseen(state.clone()), without_unseen(tomorrow));
+        // Centre de contrôle ouvert : il montre la batterie.
+        let mut controls = state.clone();
+        controls.view.popover = Some(Popover::Controls);
+        let mut controls_later = controls.clone();
+        controls_later.battery = Some(Battery {
+            percent: 79,
+            charging: false,
+        });
+        assert_ne!(without_unseen(controls), without_unseen(controls_later));
     }
 
     #[test]
@@ -7473,8 +7507,5 @@ mod tests {
         assert_eq!(clock_label(time, 0), "lun. 26 oct.  17:57");
         assert_eq!(clock_label(time, 3600), "lun. 26 oct.  18:57");
         assert_eq!(clock_label(time, 7 * 3600), "mar. 27 oct.  00:57");
-        assert_eq!(parse_offset("+0100"), Some(3600));
-        assert_eq!(parse_offset("-0230"), Some(-9000));
-        assert_eq!(parse_offset("UTC"), None);
     }
 }

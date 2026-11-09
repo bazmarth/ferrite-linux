@@ -3052,3 +3052,30 @@ annulation, raccourci tapé d'un coup) ; captures de la rubrique sans et avec co
 Pas vérifié : les touches rémanentes au clavier (pas moyen de taper dans le bureau imbriqué
 depuis ici) ; aucun signe à l'écran d'une touche tenue ; contraste élevé dans toutes les
 applis et sur le bureau réel.
+
+## 2026-11-09 — Paramètres : gestion des comptes et images de profil
+
+Demande : gérer les comptes depuis l'interface (ajout, suppression, mot de passe…), puis
+des images de profil personnalisables.
+- Page Comptes réécrite (`apps/core/src/settings/accounts.rs`), tout par AccountsService
+  (bus système, zbus) avec autorisation interactive : l'agent polkit du bureau demande le
+  mot de passe administrateur ; Paramètres ne vérifie jamais un mot de passe lui-même.
+- Mon compte : image de profil (Choisir… / Retirer), nom complet (sans mot de passe),
+  mot de passe (actuel, nouveau, confirmation). L'actuel sert à changer aussi le trousseau
+  gnome-keyring (`ChangeWithMasterPassword`), qui s'ouvre au déverrouillage avec lui.
+- Autres comptes : image, mot de passe, Supprimer… (confirmation, fichiers gardés par
+  défaut, interrupteur pour les effacer), interrupteur Administrateur (le dernier
+  administrateur ne peut pas le perdre). « Ajouter un compte… » : nom complet, identifiant
+  proposé (premier mot sans accent), mot de passe (6 caractères au moins) et confirmation,
+  administrateur ou non ; identifiant vérifié (règles Debian, déjà pris dans passwd/group).
+- Mots de passe chiffrés par libxcrypt (méthode par défaut, yescrypt), jamais en clair sur
+  le bus, effacés de la mémoire après usage.
+- Image de profil : sélecteur Ferrite (`ferrite-apps choisir`, PNG/JPEG, dans ~/Images),
+  recadrée au centre en carré de 256 px, écrite dans `~/.cache/ferrite/profil-ID.png`,
+  donnée à AccountsService (`SetIconFile`, qui en garde la copie). Affichée en rond à la
+  place de la pastille (`Lead::Picture` dans `rows.rs`).
+Vérifié : CI (sans shellcheck) ; tests (identifiant, mot de passe, chiffrement, recadrage) ;
+capture de la page Comptes (lecture réelle des comptes par AccountsService).
+Pas vérifié : à la souris sur le vrai bureau (formulaires, fenêtre polkit, ajout et
+suppression réels, image choisie) ; trousseau après changement ; l'image n'apparaît pas
+encore sur l'écran de verrouillage.

@@ -51,7 +51,8 @@ Liste : `image/config/package-lists/ferrite.list.chroot`. Points notables :
 | `foot` | terminal de secours ; le Terminal Ferrite ne l'utilise pas |
 | `fish` | shell des terminaux du bureau (complétion, suggestions) |
 | `power-profiles-daemon` | `powerprofilesctl` : tuile « Économie d'énergie » |
-| `pkexec`, `polkitd`, `accountsservice` | mot de passe administrateur (agent polkit du bureau), « Ouvrir en administrateur », enregistrement du visage |
+| `pkexec`, `polkitd`, `accountsservice` | mot de passe administrateur (agent polkit du bureau), « Ouvrir en administrateur », enregistrement du visage ; Paramètres → Comptes (ajout, suppression, mots de passe, images de profil) |
+| `libcrypt1` (toujours présent ; `libcrypt-dev` pour compiler, tiré par `libc6-dev`) | ferrite-apps : chiffrement des mots de passe (`crypt_ra`, méthode par défaut du système) avant de les donner à AccountsService |
 | `gnome-keyring`, `libpam-gnome-keyring`, `gcr` | coffre à mots de passe (Secret Service) des navigateurs et d'Electron |
 | `bluez-obexd` | `obexd` (bus de session) : « Envoyer par Bluetooth » dans Fichiers (profil Object Push) |
 | `ntfs-3g` | disques et clés formatés sous Windows |

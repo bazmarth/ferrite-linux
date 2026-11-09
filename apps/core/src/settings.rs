@@ -16,6 +16,7 @@ use std::{
 /// Durée pendant laquelle un curseur réglé à la main n'est pas remplacé par une relecture.
 const HOLD: Duration = Duration::from_secs(2);
 
+mod accounts;
 mod defaults;
 mod face;
 mod meter;
@@ -325,6 +326,7 @@ pub struct SettingsState {
     input_meter_failed: bool,
     /// Confidentialité : enregistrement du visage.
     face: face::FaceState,
+    accounts: accounts::AccountsState,
     /// Applications installées, lues à l'ouverture de « Applications par défaut ».
     installed_apps: Option<Vec<ferrite_system::applications::DesktopEntry>>,
 }
@@ -393,6 +395,7 @@ impl Default for SettingsState {
             input_meter: None,
             input_meter_failed: false,
             face: face::FaceState::default(),
+            accounts: accounts::AccountsState::default(),
             installed_apps: None,
         }
     }
@@ -2219,17 +2222,6 @@ impl SettingsState {
                 eprintln!("mode nuit non enregistré : {error}");
             }
         }
-    }
-
-    fn accounts_page(&mut self, ui: &mut egui::Ui) {
-        let (full, login) = self.user.clone();
-        group(ui, &mut self.icons, "Compte actuel", |rows| {
-            rows.text(
-                Row::new(&full)
-                    .hint(&login)
-                    .lead(Lead::Tile("glyph-account", 0xE5571A)),
-            );
-        });
     }
 
     /// Notifications : « Ne pas déranger » (aussi dans le centre de contrôle), aperçu et son

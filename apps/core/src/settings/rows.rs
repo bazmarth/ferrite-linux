@@ -29,6 +29,8 @@ pub enum Lead {
     Tile(&'static str, u32),
     /// Barres de signal, de 1 à 4.
     Bars(u8),
+    /// Image ronde de 30 px (image de profil).
+    Picture(egui::TextureId),
 }
 
 /// Une ligne de groupe.
@@ -169,6 +171,16 @@ impl Group<'_> {
                     tile.shrink(6.5),
                     style::IconStyle::Tinted(Color32::WHITE),
                 );
+                x += 42.0;
+            }
+            Lead::Picture(texture) => {
+                let tile = egui::Rect::from_center_size(
+                    egui::pos2(x + 15.0, inner.center().y),
+                    egui::vec2(30.0, 30.0),
+                );
+                egui::Image::from_texture(egui::load::SizedTexture::new(texture, tile.size()))
+                    .corner_radius(15)
+                    .paint_at(&child, tile);
                 x += 42.0;
             }
             Lead::Bars(level) => {

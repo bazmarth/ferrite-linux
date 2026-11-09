@@ -34,11 +34,7 @@ static ACCENT_RGB: AtomicU32 = AtomicU32::new(0x000A7AFF);
 static SIDEBAR_SCALE: AtomicU32 = AtomicU32::new(100);
 
 fn palette() -> Palette {
-    if THEME_DARK.load(Ordering::Relaxed) == 1 {
-        Palette::DARK
-    } else {
-        Palette::LIGHT
-    }
+    Palette::themed(THEME_DARK.load(Ordering::Relaxed) == 1)
 }
 
 pub fn background() -> Color32 {
@@ -369,6 +365,7 @@ static TEXT_SIZE: AtomicU32 = AtomicU32::new(0);
 pub fn apply_preferences(context: &egui::Context, settings: &Settings) {
     let dark = wants_dark(settings);
     THEME_DARK.store(u8::from(dark), Ordering::Relaxed);
+    ferrite_ui::theme::set_high_contrast(settings.flag(ferrite_system::config::HIGH_CONTRAST, false));
     context.set_theme(if dark {
         egui::Theme::Dark
     } else {
@@ -1011,6 +1008,7 @@ macro_rules! icons {
 
 icons![
     "app-code",
+    "app-files",
     "app-text-editor",
     "ferrite-logo",
     "ferrite-logo-light",
@@ -1040,7 +1038,6 @@ icons![
     "file-spreadsheet",
     "file-presentation",
     ;
-    "app-files" => "apps/system-file-manager",
     "app-video" => "apps/multimedia-video-player",
     "app-music" => "apps/multimedia-audio-player",
     "app-photos" => "apps/image-viewer",

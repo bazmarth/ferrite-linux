@@ -947,7 +947,8 @@ fn overview_view(state: &Ferrite) -> Option<OverviewView> {
             current: page == current,
         })
         .collect();
-    Some(OverviewView { tiles, spaces })
+    let fixed = state.dock_config.fixed_workspaces.is_some();
+    Some(OverviewView { tiles, spaces, fixed })
 }
 
 /// Fenêtre décorée par ferrite-shell : menus contextuels, titre, barre de titre, contenu

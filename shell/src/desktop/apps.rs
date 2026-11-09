@@ -333,6 +333,17 @@ impl App {
         }
     }
 
+    /// Réception de fichiers par Bluetooth (`ferrite-apps reception-bluetooth`), sans
+    /// fenêtre : lancée à l'ouverture de session. Elle se retire seule si elle tourne déjà.
+    pub fn start_bluetooth_reception(env: &[(String, String)]) {
+        let mut command = ferrite_command("ferrite-apps");
+        command.arg("reception-bluetooth");
+        command.envs(env.iter().map(|(key, value)| (key, value)));
+        if let Err(err) = spawn_detached(command) {
+            tracing::warn!(%err, "réception Bluetooth indisponible");
+        }
+    }
+
     /// Service des rappels du Calendrier (`ferrite-apps rappels`), sans fenêtre : lancé à
     /// l'ouverture de session pour que les rappels arrivent même Calendrier fermé. Il se
     /// retire seul s'il tourne déjà.

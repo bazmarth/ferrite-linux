@@ -42,6 +42,7 @@ use ferrite_system::{
 use ferrite_ui::wallpaper::{self, Builtin, Image, Source};
 
 use crate::details;
+use crate::files::reception;
 use crate::kit::note;
 use crate::style::{self, Icons};
 
@@ -727,7 +728,8 @@ impl SettingsState {
             Page::Defaults => self.defaults_page(ui),
             Page::Notifications => self.notifications_page(ui),
             Page::Updates => self.updates_page(ui),
-            Page::Printers | Page::Accessibility => self.pending_page(ui),
+            Page::Printers => self.pending_page(ui),
+            Page::Accessibility => self.accessibility_page(ui),
         }
     }
 
@@ -1394,6 +1396,17 @@ impl SettingsState {
         let mut settings = Settings::load();
         let mut bar_icon = settings.flag("barre_bluetooth", true);
         let mut save_icon = false;
+        let mut receive = settings.flag(reception::SETTING_ENABLED, true);
+        let mut folder = reception::FOLDERS
+            .iter()
+            .position(|(key, _, _)| Some(*key) == settings.get(reception::SETTING_FOLDER))
+            .unwrap_or(0);
+        let folders: Vec<(usize, &str)> = reception::FOLDERS
+            .iter()
+            .enumerate()
+            .map(|(index, (_, label, _))| (index, *label))
+            .collect();
+        let (mut save_reception, mut save_folder) = (false, false);
         group(ui, &mut self.icons, "Mes appareils", |rows| {
             if paired.is_empty() {
                 rows.text(Row::new("Aucun appareil associé"));
@@ -1448,17 +1461,21 @@ impl SettingsState {
         group(ui, &mut self.icons, "Options", |rows| {
             let row = Row::new("Icône dans la barre supérieure");
             save_icon = rows.row(row, |ui| rows::switch(ui, &mut bar_icon)).0;
-            rows.row(Row::new("Recevoir des fichiers").unavailable(), |ui| {
-                let mut off = false;
-                rows::switch(ui, &mut off);
-            });
-            rows.row(Row::new("Dossier de réception").unavailable(), |ui| {
-                let mut folder = 0;
-                rows::pick(ui, "bt-dossier", &mut folder, &[(0, "Téléchargements")]);
-            });
+            let row = Row::new("Recevoir des fichiers")
+                .hint("Un appareil associé peut vous proposer des fichiers ; vous acceptez ou refusez");
+            save_reception = rows.row(row, |ui| rows::switch(ui, &mut receive)).0;
+            let row = Row::new("Dossier de réception");
+            save_folder = rows
+                .row(row, |ui| {
+                    ui.add_enabled_ui(receive, |ui| rows::pick(ui, "bt-dossier", &mut folder, &folders))
+                        .inner
+                })
+                .0;
         });
-        if save_icon {
+        if save_icon || save_reception || save_folder {
             settings.set_flag("barre_bluetooth", bar_icon);
+            settings.set_flag(reception::SETTING_ENABLED, receive);
+            settings.set(reception::SETTING_FOLDER, reception::FOLDERS[folder].0);
             self.save(&settings);
         }
         match action {
@@ -1945,9 +1962,32 @@ impl SettingsState {
             }
         });
         group(ui, icons, "Espaces de travail", |rows| {
-            rows.row(Row::new("Mode").unavailable(), |ui| {
-                rows::segments(ui, &["Dynamiques", "Nombre fixe"], 0);
-            });
+            let fixed = settings.fixed_workspaces().is_some();
+            let hint = if fixed {
+                "Toujours le même nombre de bureaux, vides ou non"
+            } else {
+                "Un bureau vide au bout ; un bureau vide qu’on quitte disparaît"
+            };
+            let chosen = rows
+                .row(Row::new("Mode").hint(hint), |ui| {
+                    rows::segments(ui, &["Dynamiques", "Nombre fixe"], usize::from(fixed))
+                })
+                .0;
+            if let Some(choice) = chosen {
+                settings.set("espaces_mode", if choice == 1 { "fixe" } else { "dynamiques" });
+            }
+            if fixed {
+                let mut count = settings.workspace_count();
+                let labels: Vec<(usize, String)> = (1..=9).map(|n| (n, n.to_string())).collect();
+                let labels: Vec<(usize, &str)> = labels.iter().map(|(n, text)| (*n, text.as_str())).collect();
+                let row = Row::new("Nombre de bureaux").hint("Sans compter le bureau des widgets");
+                if rows
+                    .row(row, |ui| rows::pick(ui, "espaces-nombre", &mut count, &labels))
+                    .0
+                {
+                    settings.set("espaces_nombre", &count.to_string());
+                }
+            }
             rows.row(Row::new("Écran principal uniquement").unavailable(), |ui| {
                 let mut on = true;
                 rows::switch(ui, &mut on);
@@ -2198,15 +2238,51 @@ impl SettingsState {
         let mut settings = Settings::load();
         let before = settings.clone();
         let icons = &mut self.icons;
+        let minute = ferrite_system::night::local_now().1 as u32;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |elapsed| elapsed.as_secs());
+        let (start, end) = settings.do_not_disturb_hours();
         group(ui, icons, "", |rows| {
+            let mut on = settings.do_not_disturb();
+            let in_force = !on && settings.do_not_disturb_at(minute, now);
+            let hint = if in_force {
+                format!(
+                    "Activé par la programmation jusqu’à {}",
+                    ferrite_system::night::format_time(end)
+                )
+            } else {
+                "Ni bannière ni son ; les alertes urgentes passent quand même".to_owned()
+            };
+            let mut shown = on || in_force;
+            if rows
+                .row(Row::new("Ne pas déranger").hint(&hint), |ui| {
+                    rows::switch(ui, &mut shown)
+                })
+                .0
+            {
+                on = shown;
+                if on {
+                    settings.set_flag(ferrite_system::config::DO_NOT_DISTURB, true);
+                } else {
+                    settings.turn_off_do_not_disturb(minute, now);
+                }
+            }
             flag_row(
                 rows,
                 &mut settings,
-                Row::new("Ne pas déranger")
-                    .hint("Ni bannière ni son ; les alertes urgentes passent quand même"),
-                ferrite_system::config::DO_NOT_DISTURB,
+                Row::new("Programmer").hint("Chaque jour, entre deux heures"),
+                ferrite_system::config::DO_NOT_DISTURB_SCHEDULED,
                 false,
             );
+            if settings.flag(ferrite_system::config::DO_NOT_DISTURB_SCHEDULED, false) {
+                let (mut from, mut to) = (start, end);
+                rows.row(Row::new("Début"), |ui| time_editor(ui, &mut from));
+                rows.row(Row::new("Fin"), |ui| time_editor(ui, &mut to));
+                if (from, to) != (start, end) {
+                    settings.set_do_not_disturb_hours((from, to));
+                }
+            }
         });
         group(ui, icons, "Bannières", |rows| {
             let mut preview = settings.notification_preview();
@@ -2229,6 +2305,30 @@ impl SettingsState {
                 "notifications_son",
                 true,
             );
+        });
+        let apps = settings.notification_apps();
+        let muted = settings.muted_notification_apps();
+        group(ui, icons, "Applications", |rows| {
+            if apps.is_empty() {
+                rows.text(
+                    Row::new("Aucune application pour l’instant")
+                        .hint("Chaque application apparaît ici après sa première notification"),
+                );
+            }
+            for (entry, name) in &apps {
+                let mut allowed = !muted.contains(entry);
+                let hint = if allowed {
+                    "Bannières et sons"
+                } else {
+                    "Sans bannière ni son, rangées dans l’historique"
+                };
+                if rows
+                    .row(Row::new(name).hint(hint), |ui| rows::switch(ui, &mut allowed))
+                    .0
+                {
+                    settings.set_notification_app_muted(entry, !allowed);
+                }
+            }
         });
         rows::group_note(
             ui,
@@ -2318,63 +2418,62 @@ impl SettingsState {
         }
     }
 
-    /// Rubriques pas encore branchées sur le système : la maquette, avec le même gabarit,
-    /// ses réglages grisés et une note qui le dit. Les réglages qui existent déjà
-    /// (animations, transparence) restent actifs.
+    /// Imprimantes, pas encore branchée sur le système (CUPS absent) : la maquette, avec le
+    /// même gabarit, grisée, et une note qui le dit.
     fn pending_page(&mut self, ui: &mut egui::Ui) {
-        const PLANNED: &str =
-            "Maquette proposée : cette rubrique n’est pas encore disponible dans Ferrite OS.";
+        group(ui, &mut self.icons, "", |rows| {
+            let row = Row::new("Aucune imprimante")
+                .hint("Ajoute une imprimante pour imprimer depuis tes applications.")
+                .lead(Lead::Tile(Page::Printers.icon(), Page::Printers.color()))
+                .unavailable();
+            rows.row(row, |ui| rows::button(ui, "Ajouter…", true));
+        });
+        rows::group_note(
+            ui,
+            "Maquette proposée : cette rubrique n’est pas encore disponible dans Ferrite OS.",
+        );
+    }
+
+    /// Accessibilité : contraste, transparence, animations, touches rémanentes.
+    fn accessibility_page(&mut self, ui: &mut egui::Ui) {
         let mut settings = Settings::load();
         let before = settings.clone();
         let icons = &mut self.icons;
-        let off = |rows: &mut rows::Group<'_>, row: Row<'_>, on: bool| {
-            rows.row(row.unavailable(), |ui| {
-                let mut on = on;
-                rows::switch(ui, &mut on);
-            });
-        };
-        match self.page {
-            Page::Printers => {
-                group(ui, icons, "", |rows| {
-                    let row = Row::new("Aucune imprimante")
-                        .hint("Ajoute une imprimante pour imprimer depuis tes applications.")
-                        .lead(Lead::Tile(Page::Printers.icon(), Page::Printers.color()))
-                        .unavailable();
-                    rows.row(row, |ui| rows::button(ui, "Ajouter…", true));
-                });
-                rows::group_note(ui, PLANNED);
+        group(ui, icons, "Vision", |rows| {
+            flag_row(
+                rows,
+                &mut settings,
+                Row::new("Contraste élevé").hint("Textes plus nets, contours et séparations bien marqués"),
+                ferrite_system::config::HIGH_CONTRAST,
+                false,
+            );
+            let mut less = !settings.flag("barre_translucide", true);
+            let row = Row::new("Réduire la transparence").hint("Barre supérieure opaque");
+            if rows.row(row, |ui| rows::switch(ui, &mut less)).0 {
+                settings.set_flag("barre_translucide", !less);
             }
-            Page::Accessibility => {
-                group(ui, icons, "Vision", |rows| {
-                    off(rows, Row::new("Contraste élevé"), false);
-                    let mut less = !settings.flag("barre_translucide", true);
-                    let row = Row::new("Réduire la transparence").hint("Barre supérieure opaque");
-                    if rows.row(row, |ui| rows::switch(ui, &mut less)).0 {
-                        settings.set_flag("barre_translucide", !less);
-                    }
-                    flag_row(
-                        rows,
-                        &mut settings,
-                        Row::new("Réduire les animations").hint("Sans effet de transition sur les fenêtres"),
-                        "reduire_animations",
-                        false,
-                    );
-                });
-                group(ui, icons, "Clavier", |rows| {
-                    off(
-                        rows,
-                        Row::new("Touches rémanentes")
-                            .hint("Permet de saisir un raccourci une touche à la fois"),
-                        false,
-                    );
-                });
-                rows::group_note(
-                    ui,
-                    "Contraste élevé et touches rémanentes ne sont pas encore disponibles.",
-                );
-            }
-            _ => {}
-        }
+            flag_row(
+                rows,
+                &mut settings,
+                Row::new("Réduire les animations").hint("Sans effet de transition sur les fenêtres"),
+                "reduire_animations",
+                false,
+            );
+        });
+        group(ui, icons, "Clavier", |rows| {
+            flag_row(
+                rows,
+                &mut settings,
+                Row::new("Touches rémanentes")
+                    .hint("Maj, Ctrl, Alt ou Super appuyée seule vaut pour la touche suivante"),
+                ferrite_system::config::STICKY_KEYS,
+                false,
+            );
+        });
+        rows::group_note(
+            ui,
+            "Touche rémanente tenue : appuyez une deuxième fois dessus pour la relâcher.",
+        );
         if settings != before {
             style::apply_preferences(ui.ctx(), &settings);
             self.save(&settings);

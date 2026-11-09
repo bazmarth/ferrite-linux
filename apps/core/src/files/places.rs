@@ -1,10 +1,12 @@
-//! Emplacements de la barre latérale qui ne sont pas des dossiers : fichiers récents
-//! (liste partagée `recently-used.xbel` des applications), étiquettes, et espace des disques.
+//! Emplacements de la barre latérale qui ne sont pas des dossiers : récents (fichiers
+//! ouverts, d'après la liste partagée `recently-used.xbel` des applications, et fichiers ou
+//! dossiers créés depuis peu dans le dossier perso), étiquettes, et espace des disques.
 
 use std::{
     collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
+    time::{Duration, SystemTime},
 };
 
 use ferrite_system::{command, config::Accent};
@@ -26,6 +28,169 @@ fn data_home() -> PathBuf {
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".local/share")))
         .unwrap_or_else(|| PathBuf::from("/tmp"))
+}
+
+/// Ancienneté maximale d'un élément de « Récents ».
+const RECENT_DAYS: u64 = 30;
+/// Nombre maximal d'éléments de « Récents ».
+const RECENT_ITEMS: usize = 80;
+/// Profondeur et nombre d'entrées au plus lus dans le dossier perso.
+const SCAN_DEPTH: usize = 4;
+const SCAN_LIMIT: usize = 20_000;
+/// Dossiers habituels du dossier perso : jamais montrés eux-mêmes, mais fouillés.
+const STANDARD_DIRS: [&str; 16] = [
+    "Bureau",
+    "Desktop",
+    "Documents",
+    "Téléchargements",
+    "Downloads",
+    "Images",
+    "Pictures",
+    "Musique",
+    "Music",
+    "Vidéos",
+    "Videos",
+    "Public",
+    "Modèles",
+    "Templates",
+    "snap",
+    "go",
+];
+/// Dossiers techniques (dépendances, compilation, environnements) : ni montrés ni fouillés.
+const TECHNICAL_DIRS: [&str; 10] = [
+    "node_modules",
+    "target",
+    "__pycache__",
+    "venv",
+    "env",
+    "build",
+    "dist",
+    "vendor",
+    "site-packages",
+    "Steam",
+];
+/// Fichiers de passage : téléchargements en cours, sauvegardes d'éditeur, verrous.
+const TEMPORARY_ENDINGS: [&str; 8] = [
+    "~",
+    ".part",
+    ".crdownload",
+    ".tmp",
+    ".swp",
+    ".lock",
+    ".partial",
+    ".download",
+];
+
+/// Récents : fichiers ouverts récemment, et fichiers ou dossiers créés depuis moins de
+/// 30 jours dans le dossier perso, du plus récent au plus ancien. Ni le dossier perso ni ses
+/// dossiers habituels (Documents, Téléchargements…), ni les dossiers cachés ou techniques ;
+/// un dossier nouveau est montré seul, sans tout son contenu.
+pub fn recent_items(home: &Path) -> Vec<PathBuf> {
+    let since = SystemTime::now()
+        .checked_sub(Duration::from_secs(RECENT_DAYS * 86_400))
+        .unwrap_or(SystemTime::UNIX_EPOCH);
+    let mut found: BTreeMap<PathBuf, SystemTime> = BTreeMap::new();
+    let mut keep = |path: PathBuf, when: SystemTime| {
+        let date = found.entry(path).or_insert(when);
+        *date = (*date).max(when);
+    };
+    if let Ok(text) = fs::read_to_string(data_home().join("recently-used.xbel")) {
+        for (when, path) in parse_recent(&text) {
+            let when = parse_iso_date(&when).unwrap_or(SystemTime::UNIX_EPOCH);
+            if when >= since && path.exists() && !is_home_folder(&path, home) && !hidden_under(&path, home) {
+                keep(path, when);
+            }
+        }
+    }
+    let mut budget = SCAN_LIMIT;
+    scan_created(home, 0, since, &mut budget, &mut keep);
+    let mut list: Vec<(SystemTime, PathBuf)> = found.into_iter().map(|(path, when)| (when, path)).collect();
+    list.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    list.into_iter()
+        .take(RECENT_ITEMS)
+        .map(|(_, path)| path)
+        .collect()
+}
+
+/// Le dossier perso ou l'un de ses dossiers habituels.
+fn is_home_folder(path: &Path, home: &Path) -> bool {
+    path == home
+        || (path.parent() == Some(home)
+            && path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| STANDARD_DIRS.contains(&name)))
+}
+
+/// Sous un dossier caché du dossier perso (`.config`, `.cache`…).
+fn hidden_under(path: &Path, home: &Path) -> bool {
+    path.strip_prefix(home).is_ok_and(|rest| {
+        rest.components()
+            .any(|part| part.as_os_str().to_string_lossy().starts_with('.'))
+    })
+}
+
+/// Parcourt `dir` à la recherche de ce qui a été créé depuis `since`.
+fn scan_created(
+    dir: &Path,
+    depth: usize,
+    since: SystemTime,
+    budget: &mut usize,
+    keep: &mut impl FnMut(PathBuf, SystemTime),
+) {
+    let Ok(entries) = fs::read_dir(dir) else { return };
+    for entry in entries.filter_map(Result::ok) {
+        if *budget == 0 {
+            return;
+        }
+        *budget -= 1;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') {
+            continue;
+        }
+        let Ok(metadata) = entry.metadata() else { continue };
+        if metadata.file_type().is_symlink() {
+            continue;
+        }
+        let when = metadata.created().or_else(|_| metadata.modified()).ok();
+        let path = entry.path();
+        if metadata.is_dir() {
+            if TECHNICAL_DIRS.contains(&name.as_str()) {
+                continue;
+            }
+            let standard = depth == 0 && STANDARD_DIRS.contains(&name.as_str());
+            match when {
+                Some(when) if !standard && when >= since => keep(path, when),
+                _ if depth < SCAN_DEPTH => scan_created(&path, depth + 1, since, budget, keep),
+                _ => {}
+            }
+        } else if let Some(when) = when.filter(|when| *when >= since)
+            && !TEMPORARY_ENDINGS.iter().any(|ending| name.ends_with(ending))
+        {
+            keep(path, when);
+        }
+    }
+}
+
+/// « 2026-11-09T03:10:00.123456Z » (dates de `recently-used.xbel`, en UTC).
+pub fn parse_iso_date(text: &str) -> Option<SystemTime> {
+    let number = |range: std::ops::Range<usize>| text.get(range)?.parse::<i64>().ok();
+    let (year, month, day) = (number(0..4)?, number(5..7)?, number(8..10)?);
+    let (hour, minute, second) = (number(11..13)?, number(14..16)?, number(17..19)?);
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    // Jours depuis le 1er janvier 1970 (algorithme « days from civil »).
+    let year = if month <= 2 { year - 1 } else { year };
+    let era = year.div_euclid(400);
+    let year_of_era = year - era * 400;
+    let day_of_year = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    let days = era * 146_097 + day_of_era - 719_468;
+    let seconds = days * 86_400 + hour * 3_600 + minute * 60 + second;
+    u64::try_from(seconds)
+        .ok()
+        .map(|seconds| SystemTime::UNIX_EPOCH + Duration::from_secs(seconds))
 }
 
 /// Fichiers récemment ouverts qui existent encore, du plus récent au plus ancien.
@@ -436,6 +601,65 @@ pub fn disk_usage(path: &Path) -> Option<(u64, u64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dates_iso() {
+        let date = parse_iso_date("2026-11-09T03:10:05.123Z").unwrap();
+        let seconds = date.duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs();
+        assert_eq!(seconds, 1_794_193_805);
+        assert_eq!(
+            parse_iso_date("1970-01-01T00:00:00Z"),
+            Some(SystemTime::UNIX_EPOCH)
+        );
+        assert_eq!(parse_iso_date("pas une date"), None);
+    }
+
+    #[test]
+    fn recents_sans_les_dossiers_du_perso() {
+        let home = std::env::temp_dir().join(format!("ferrite-recents-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&home);
+        for dir in [
+            "Documents/Cours",
+            "Téléchargements",
+            ".cache/vieux",
+            "projet/src",
+            "code/target/debug",
+        ] {
+            fs::create_dir_all(home.join(dir)).unwrap();
+        }
+        for file in [
+            "Documents/rapport.pdf",
+            "Téléchargements/photo.zip",
+            "Téléchargements/film.mp4.part",
+            ".cache/vieux/x.bin",
+            "projet/src/main.rs",
+            "code/target/debug/app",
+            "notes.txt~",
+        ] {
+            fs::write(home.join(file), "x").unwrap();
+        }
+        let since = SystemTime::now() - Duration::from_secs(3_600);
+        let mut found = Vec::new();
+        let mut budget = SCAN_LIMIT;
+        scan_created(&home, 0, since, &mut budget, &mut |path: PathBuf, _| {
+            found.push(path.strip_prefix(&home).unwrap().to_path_buf());
+        });
+        found.sort();
+        let _ = fs::remove_dir_all(&home);
+        let expected: Vec<PathBuf> = [
+            "Documents/Cours",
+            "Documents/rapport.pdf",
+            "Téléchargements/photo.zip",
+            "code",
+            "projet",
+        ]
+        .iter()
+        .map(PathBuf::from)
+        .collect();
+        assert_eq!(found, expected);
+        assert!(is_home_folder(&home.join("Documents"), &home));
+        assert!(hidden_under(&home.join(".config/x"), &home));
+    }
 
     #[test]
     fn icones_personnalisees() {

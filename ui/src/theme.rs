@@ -4,7 +4,10 @@
 //! utilisé à l'échelle 2, soit 1440×900 pixels logiques. Les valeurs sont celles de la
 //! « Spécification des fenêtres et dispositions » et de ses planches.
 
-use std::time::Duration;
+use std::{
+    sync::atomic::{AtomicBool, Ordering},
+    time::Duration,
+};
 
 use crate::tokens::{colors, motion};
 
@@ -248,6 +251,78 @@ impl Palette {
             ThemeMode::Dark => Palette::DARK,
         }
     }
+
+    /// Palette en vigueur pour ce thème : contrastée si le réglage d'accessibilité
+    /// « Contraste élevé » est allumé (voir [`set_high_contrast`]).
+    pub fn themed(dark: bool) -> Palette {
+        let base = if dark { Palette::DARK } else { Palette::LIGHT };
+        if high_contrast() {
+            base.contrasted(dark)
+        } else {
+            base
+        }
+    }
+
+    /// Variante « Contraste élevé » : textes plus francs, contours et filets bien marqués,
+    /// sélection pleine. Les fonds ne changent pas.
+    pub const fn contrasted(self, dark: bool) -> Palette {
+        if dark {
+            Palette {
+                text: Color::WHITE,
+                text_secondary: Color::rgb(0xE5E7EB),
+                heading: Color::rgb(0xF3F4F6),
+                window_title_active: Color::WHITE,
+                window_title_inactive: Color::rgb(0xD1D5DB),
+                titlebar_action_active: Color::WHITE,
+                titlebar_action_inactive: Color::rgb(0xD1D5DB),
+                titlebar_line: Color::rgb(0x9CA3AF),
+                titlebar_line_inactive: Color::rgb(0x6B7280),
+                separator: Color::rgb(0x9CA3AF),
+                control_separator: Color::rgb(0x6B7280),
+                border: Color::rgb(0xC9CED6),
+                border_hover: Color::WHITE,
+                window_glyph: Color::WHITE,
+                window_ring: Color::WHITE.with_alpha(110),
+                selection: Color::rgb(0xCFE3FB),
+                selection_text: Color::rgb(0x0B1F3A),
+                track: Color::rgb(0x9CA3AF),
+                ..self
+            }
+        } else {
+            Palette {
+                text: Color::BLACK,
+                text_secondary: Color::rgb(0x1F2937),
+                heading: Color::rgb(0x111827),
+                window_title_active: Color::BLACK,
+                window_title_inactive: Color::rgb(0x374151),
+                titlebar_action_active: Color::rgb(0x111827),
+                titlebar_action_inactive: Color::rgb(0x374151),
+                titlebar_line: Color::rgb(0x4B5563),
+                titlebar_line_inactive: Color::rgb(0x6B7280),
+                separator: Color::rgb(0x6B7280),
+                control_separator: Color::rgb(0x9CA3AF),
+                border: Color::rgb(0x4B5563),
+                border_hover: Color::rgb(0x111827),
+                window_glyph: Color::rgb(0x111827),
+                window_ring: Color::BLACK.with_alpha(130),
+                selection: Color::rgb(0x174F9E),
+                selection_text: Color::WHITE,
+                track: Color::rgb(0x6B7280),
+                ..self
+            }
+        }
+    }
+}
+
+/// Réglage d'accessibilité « Contraste élevé », partagé par tout le processus.
+static HIGH_CONTRAST: AtomicBool = AtomicBool::new(false);
+
+pub fn set_high_contrast(on: bool) {
+    HIGH_CONTRAST.store(on, Ordering::Relaxed);
+}
+
+pub fn high_contrast() -> bool {
+    HIGH_CONTRAST.load(Ordering::Relaxed)
 }
 
 /// Facteur d'échelle, stocké en 120es comme le protocole Wayland `wp_fractional_scale_v1`
@@ -381,6 +456,17 @@ mod tests {
         assert_ne!(Palette::LIGHT.text, Palette::DARK.text);
         assert_eq!(Palette::LIGHT.danger, Palette::DARK.danger);
         assert_eq!((Palette::LIGHT.border.a, Palette::DARK.border.a), (255, 255));
+    }
+
+    #[test]
+    fn contraste_eleve_garde_les_fonds_et_fonce_le_texte() {
+        let light = Palette::LIGHT.contrasted(false);
+        assert_eq!(light.window_background, Palette::LIGHT.window_background);
+        assert_eq!(light.text, Color::BLACK);
+        assert_ne!(light.border, Palette::LIGHT.border);
+        let dark = Palette::DARK.contrasted(true);
+        assert_eq!(dark.window_background, Palette::DARK.window_background);
+        assert_eq!(dark.text, Color::WHITE);
     }
 
     #[test]

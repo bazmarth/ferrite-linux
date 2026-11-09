@@ -14,6 +14,7 @@ mod kit;
 mod markdown;
 mod monitor;
 mod music;
+mod pairing;
 mod pdf_viewer;
 mod settings;
 mod single;
@@ -220,6 +221,11 @@ fn main() -> eframe::Result {
     // de session (et par le Calendrier), il annonce les rappels même Calendrier fermé.
     if env::args().nth(1).as_deref() == Some("rappels") {
         std::process::exit(calendar::reminders::run_service());
+    }
+    // Réception de fichiers par Bluetooth, sans fenêtre : lancée par le bureau à
+    // l'ouverture de session.
+    if env::args().nth(1).as_deref() == Some("reception-bluetooth") {
+        std::process::exit(files::run_bluetooth_reception());
     }
     let Some(info) = args.next().and_then(|arg| catalog::by_command(&arg)) else {
         let commands: Vec<&str> = catalog::APPS.iter().map(|app| app.command).collect();

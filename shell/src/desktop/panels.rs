@@ -124,7 +124,7 @@ static DARK_THEME: AtomicBool = AtomicBool::new(false);
 static ACCENT_RGB: AtomicU32 = AtomicU32::new(0);
 
 fn palette() -> Palette {
-    themed(Palette::LIGHT, Palette::DARK)
+    Palette::themed(DARK_THEME.load(Ordering::Relaxed))
 }
 
 fn themed<T>(light: T, dark: T) -> T {
@@ -435,6 +435,8 @@ pub struct OverviewTile {
 pub struct OverviewView {
     pub tiles: Vec<OverviewTile>,
     pub spaces: Vec<SpaceThumb>,
+    /// Nombre fixe de bureaux : pas de vignette « nouvel espace » au bout.
+    pub fixed: bool,
 }
 
 /// Ce que montre le centre de contrôle.
@@ -3194,10 +3196,11 @@ impl Panels {
         let soft = themed(Color::rgb(0x4A5563), Color::rgb(0xC9D4E3));
         let thumb_fill = themed(Color::rgb(0xCDD5DF), Color::rgb(0x16202D));
         let ring = themed(Color::rgb(0x2F7FDB), Color::rgb(0x6CB8FF));
-        // Bande des espaces de travail ; le dernier, vide, est le « nouvel espace ».
+        // Bande des espaces de travail ; en mode dynamique, le dernier, vide, est le
+        // « nouvel espace ».
         for (index, space) in overview.spaces.iter().enumerate() {
             let thumb = overview_space_rect(layout.w, layout.bar, overview.spaces.len(), index);
-            if space.windows == 0 && index + 1 == overview.spaces.len() {
+            if !overview.fixed && space.windows == 0 && index + 1 == overview.spaces.len() {
                 canvas.stroke(thumb, 8.0, tint(90), 1.5);
                 let center = thumb.center();
                 canvas.line((center.0 - 6.0, center.1), (center.0 + 6.0, center.1), 2.0, soft);

@@ -189,6 +189,7 @@ fn run(options: Options) -> Result<u8, Box<dyn std::error::Error>> {
     // partage la session de celui qui l'a lancé).
     if !has_display {
         desktop::apps::App::start_reminders(&state.client_environment());
+        desktop::apps::App::start_bluetooth_reception(&state.client_environment());
     }
 
     if let Some((program, args)) = options.command.split_first() {

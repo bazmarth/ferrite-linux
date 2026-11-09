@@ -25,6 +25,19 @@ pub const KEYBOARD_LAYOUTS: &[(&str, &str)] = &[
 
 /// Clé du réglage « Ne pas déranger » (voir [`Settings::do_not_disturb`]).
 pub const DO_NOT_DISTURB: &str = "ne_pas_deranger";
+/// Accessibilité : contraste élevé (oui/non).
+pub const HIGH_CONTRAST: &str = "contraste_eleve";
+/// Accessibilité : touches rémanentes (oui/non).
+pub const STICKY_KEYS: &str = "touches_remanentes";
+/// « Ne pas déranger » programmé chaque jour entre deux heures (oui/non).
+pub const DO_NOT_DISTURB_SCHEDULED: &str = "ne_pas_deranger_programme";
+/// Applications dont les notifications arrivent sans bannière ni son (liste d'identifiants).
+pub const NOTIFICATIONS_MUTED: &str = "notifications_muettes";
+/// Applications qui ont déjà envoyé une notification : « identifiant|Nom », séparées par
+/// des virgules. Tenue par le bureau, lue par Paramètres.
+pub const NOTIFICATIONS_APPS: &str = "notifications_applis";
+/// Plage par défaut de « Ne pas déranger » programmé : 22:00 à 07:00.
+const DO_NOT_DISTURB_HOURS: (u32, u32) = (22 * 60, 7 * 60);
 
 pub const SHORTCUT_CTRL: u8 = 1;
 pub const SHORTCUT_ALT: u8 = 2;
@@ -623,6 +636,19 @@ impl Settings {
         DockSize::parse(self.get("dock_taille").unwrap_or_default())
     }
 
+    /// Nombre fixe de bureaux ordinaires (1 à 9, 4 par défaut) si `espaces_mode = fixe` ;
+    /// `None` : bureaux dynamiques.
+    pub fn fixed_workspaces(&self) -> Option<usize> {
+        (self.get("espaces_mode") == Some("fixe")).then(|| self.workspace_count())
+    }
+
+    /// Nombre de bureaux choisi pour le mode fixe (gardé même en mode dynamique).
+    pub fn workspace_count(&self) -> usize {
+        self.get("espaces_nombre")
+            .and_then(|value| value.parse().ok())
+            .map_or(4, |count: usize| count.clamp(1, 9))
+    }
+
     pub fn dock_hiding(&self) -> DockHiding {
         DockHiding::parse(self.get("dock_masquage").unwrap_or_default())
     }
@@ -704,6 +730,104 @@ impl Settings {
     /// Réglé dans Paramètres → Notifications ou le centre de contrôle.
     pub fn do_not_disturb(&self) -> bool {
         self.flag(DO_NOT_DISTURB, false)
+    }
+
+    /// Plage de « Ne pas déranger » programmé (minutes depuis minuit), qu'elle soit
+    /// active ou non.
+    pub fn do_not_disturb_hours(&self) -> (u32, u32) {
+        let read = |key: &str, default: u32| {
+            self.get(key)
+                .and_then(crate::night::parse_time)
+                .unwrap_or(default)
+        };
+        (
+            read("ne_pas_deranger_debut", DO_NOT_DISTURB_HOURS.0),
+            read("ne_pas_deranger_fin", DO_NOT_DISTURB_HOURS.1),
+        )
+    }
+
+    pub fn set_do_not_disturb_hours(&mut self, (start, end): (u32, u32)) {
+        self.set("ne_pas_deranger_debut", &crate::night::format_time(start));
+        self.set("ne_pas_deranger_fin", &crate::night::format_time(end));
+    }
+
+    /// « Ne pas déranger » en vigueur à `minute` (minutes depuis minuit, heure locale ;
+    /// `now` : secondes Unix) : réglé à la main, ou programmé, dans la plage et pas levé.
+    pub fn do_not_disturb_at(&self, minute: u32, now: u64) -> bool {
+        if self.do_not_disturb() {
+            return true;
+        }
+        let lifted = self
+            .get("ne_pas_deranger_leve")
+            .and_then(|value| value.parse::<u64>().ok())
+            .is_some_and(|until| now < until);
+        self.scheduled_do_not_disturb_at(minute) && !lifted
+    }
+
+    /// La programmation seule met « Ne pas déranger » à `minute`.
+    pub fn scheduled_do_not_disturb_at(&self, minute: u32) -> bool {
+        let (start, end) = self.do_not_disturb_hours();
+        self.flag(DO_NOT_DISTURB_SCHEDULED, false) && within_hours(minute, start, end)
+    }
+
+    /// Coupé à la main (centre de contrôle, Paramètres) pendant la plage programmée : levé
+    /// jusqu'à la fin de cette plage, puis la programmation reprend le lendemain.
+    pub fn turn_off_do_not_disturb(&mut self, minute: u32, now: u64) {
+        self.set_flag(DO_NOT_DISTURB, false);
+        if self.scheduled_do_not_disturb_at(minute) {
+            let day = 24 * 60;
+            let left = (self.do_not_disturb_hours().1 + day - minute % day) % day;
+            self.set("ne_pas_deranger_leve", &(now + u64::from(left) * 60).to_string());
+        }
+    }
+
+    /// Applications dont les notifications arrivent sans bannière ni son.
+    pub fn muted_notification_apps(&self) -> Vec<String> {
+        self.get(NOTIFICATIONS_MUTED).map(split_list).unwrap_or_default()
+    }
+
+    pub fn set_notification_app_muted(&mut self, entry: &str, muted: bool) {
+        let mut list = self.muted_notification_apps();
+        list.retain(|known| known != entry);
+        if muted {
+            list.push(entry.to_owned());
+        }
+        self.set(NOTIFICATIONS_MUTED, &list.join(","));
+    }
+
+    /// Applications qui ont déjà envoyé une notification : identifiant et nom affiché,
+    /// dans l'ordre d'arrivée.
+    pub fn notification_apps(&self) -> Vec<(String, String)> {
+        self.get(NOTIFICATIONS_APPS)
+            .map(split_list)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|item| match item.split_once('|') {
+                Some((entry, name)) => (entry.to_owned(), name.to_owned()),
+                None => (item.clone(), item),
+            })
+            .collect()
+    }
+
+    /// Ajoute une application à la liste ; renvoie vrai si elle n'y était pas.
+    pub fn add_notification_app(&mut self, entry: &str, name: &str) -> bool {
+        let clean = |text: &str| text.replace([',', '|', '\n', '\r'], " ").trim().to_owned();
+        let (entry, name) = (clean(entry), clean(name));
+        if entry.is_empty() {
+            return false;
+        }
+        let mut apps = self.notification_apps();
+        if apps.iter().any(|(known, _)| *known == entry) {
+            return false;
+        }
+        let name = if name.is_empty() { entry.clone() } else { name };
+        apps.push((entry, name));
+        let list: Vec<String> = apps
+            .iter()
+            .map(|(entry, name)| format!("{entry}|{name}"))
+            .collect();
+        self.set(NOTIFICATIONS_APPS, &list.join(","));
+        true
     }
 
     /// Son joué à l'arrivée d'une notification.
@@ -1122,6 +1246,18 @@ impl ScrollBars {
 }
 
 /// Liste séparée par des virgules, sans éléments vides.
+/// `minute` est dans la plage quotidienne `start`–`end` (minutes depuis minuit) ; la plage
+/// peut passer minuit (22:00 à 07:00). Début inclus, fin exclue ; plage vide si égaux.
+pub fn within_hours(minute: u32, start: u32, end: u32) -> bool {
+    let day = 24 * 60;
+    let (minute, start, end) = (minute % day, start % day, end % day);
+    if start <= end {
+        (start..end).contains(&minute)
+    } else {
+        minute >= start || minute < end
+    }
+}
+
 fn split_list(value: &str) -> Vec<String> {
     value
         .split(',')
@@ -1324,6 +1460,48 @@ fn parse_speed(value: Option<&str>) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ne_pas_deranger_programme_passe_minuit() {
+        assert!(within_hours(23 * 60, 22 * 60, 7 * 60));
+        assert!(within_hours(3 * 60, 22 * 60, 7 * 60));
+        assert!(!within_hours(7 * 60, 22 * 60, 7 * 60));
+        assert!(!within_hours(12 * 60, 22 * 60, 7 * 60));
+        assert!(within_hours(13 * 60, 12 * 60, 14 * 60));
+        assert!(!within_hours(13 * 60, 12 * 60, 12 * 60));
+        let mut settings = Settings::parse("");
+        assert!(!settings.do_not_disturb_at(23 * 60, 0));
+        settings.set_flag(DO_NOT_DISTURB_SCHEDULED, true);
+        assert!(settings.do_not_disturb_at(23 * 60, 0));
+        assert!(!settings.do_not_disturb_at(9 * 60, 0));
+        // Coupé à 23:00 : levé jusqu'à 07:00 (8 h plus tard), puis de retour.
+        settings.turn_off_do_not_disturb(23 * 60, 1000);
+        assert!(!settings.do_not_disturb_at(2 * 60, 1000 + 3 * 3600));
+        assert!(settings.do_not_disturb_at(23 * 60, 1000 + 24 * 3600));
+        settings.set_do_not_disturb_hours((8 * 60, 18 * 60));
+        assert!(settings.do_not_disturb_at(9 * 60, 1000 + 48 * 3600));
+        assert_eq!(settings.get("ne_pas_deranger_debut"), Some("08:00"));
+    }
+
+    #[test]
+    fn applications_des_notifications() {
+        let mut settings = Settings::parse("");
+        assert!(settings.add_notification_app("org.gnome.Evolution", "Evolution"));
+        assert!(!settings.add_notification_app("org.gnome.Evolution", "Autre nom"));
+        assert!(settings.add_notification_app("brave", "Brave, le navigateur|x"));
+        assert!(!settings.add_notification_app("", "Rien"));
+        assert_eq!(
+            settings.notification_apps(),
+            vec![
+                ("org.gnome.Evolution".to_owned(), "Evolution".to_owned()),
+                ("brave".to_owned(), "Brave  le navigateur x".to_owned()),
+            ]
+        );
+        settings.set_notification_app_muted("brave", true);
+        assert_eq!(settings.muted_notification_apps(), vec!["brave".to_owned()]);
+        settings.set_notification_app_muted("brave", false);
+        assert!(settings.muted_notification_apps().is_empty());
+    }
 
     #[test]
     fn reglages_d_apparence() {

@@ -23,7 +23,7 @@ use zbus::{
 use super::{Action, Dialog, FilesState, file_name, ops::Job, paint_path_icon};
 use crate::style::{self, IconStyle};
 
-const OBEX: &str = "org.bluez.obex";
+pub(super) const OBEX: &str = "org.bluez.obex";
 /// Temps laissé à l'autre appareil pour accepter un fichier.
 const ACCEPT: Duration = Duration::from_secs(90);
 /// Silence maximal pendant un envoi en cours.
@@ -250,7 +250,7 @@ fn device_row(ui: &mut egui::Ui, icons: &mut style::Icons, device: &Device) -> e
 }
 
 /// Message en français pour une erreur d'`obexd`.
-fn explain(error: &zbus::Error) -> String {
+pub(super) fn explain(error: &zbus::Error) -> String {
     let text = error.to_string();
     if text.contains("ServiceUnknown") || text.contains("org.bluez.obex was not provided") {
         "Le service d’envoi Bluetooth est absent (paquet bluez-obexd)".into()
@@ -270,10 +270,10 @@ fn explain(error: &zbus::Error) -> String {
 
 /// Changement d'état d'un transfert, lu dans un signal `PropertiesChanged`.
 #[derive(Debug, Default, PartialEq)]
-struct Change {
-    path: String,
-    status: Option<String>,
-    transferred: Option<u64>,
+pub(super) struct Change {
+    pub(super) path: String,
+    pub(super) status: Option<String>,
+    pub(super) transferred: Option<u64>,
 }
 
 /// Envoie `paths` à l'appareil `address`, un fichier après l'autre, en suivant
@@ -326,8 +326,8 @@ fn push_all(
     Ok(())
 }
 
-/// Relaie les signaux `PropertiesChanged` des transferts de la session.
-fn watch(connection: &Connection, session: &str) -> Result<Receiver<Change>, String> {
+/// Relaie les signaux `PropertiesChanged` des transferts placés sous `session`.
+pub(super) fn watch(connection: &Connection, session: &str) -> Result<Receiver<Change>, String> {
     let rule = zbus::MatchRule::builder()
         .msg_type(zbus::message::Type::Signal)
         .interface("org.freedesktop.DBus.Properties")

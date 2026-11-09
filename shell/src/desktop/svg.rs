@@ -34,6 +34,7 @@ macro_rules! icons {
 
 icons![
     "app-code",
+    "app-files",
     "ferrite-logo",
     "ferrite-symbol",
     "ferrite-symbol-white",
@@ -86,7 +87,6 @@ icons![
     "file-spreadsheet",
     "file-presentation",
     ;
-    "app-files" => "apps/system-file-manager",
     "app-terminal" => "apps/utilities-terminal",
     "app-web" => "apps/web-browser",
     "app-settings" => "apps/preferences-system",

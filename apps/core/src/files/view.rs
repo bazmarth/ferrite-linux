@@ -1582,8 +1582,8 @@ impl FilesState {
             ("La Corbeille est vide", "Les éléments supprimés arrivent ici.")
         } else if self.location == Location::Recent {
             (
-                "Aucun fichier récent",
-                "Les fichiers ouverts récemment apparaissent ici.",
+                "Rien de récent",
+                "Les fichiers ouverts ou créés ces 30 derniers jours apparaissent ici.",
             )
         } else if matches!(self.location, Location::Tag(_)) {
             (

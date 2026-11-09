@@ -457,8 +457,8 @@ Reste :
 
 1. Reconstruire l'ISO (liste des paquets changée, dont `poppler-utils` ajouté le
    2026-11-07), l'essayer en VM, et publier une release depuis un arbre commité.
-2. Finir la phase 5 : réglages encore grisés dans Paramètres (position du Dock, mode des
-   espaces de travail, réception Bluetooth) et rubriques en maquette (Notifications, Imprimantes, Accessibilité, Mises à jour).
+2. Finir la phase 5 : réglages encore grisés dans Paramètres (position du Dock ; mode des
+   espaces de travail : fait le 2026-11-09) et rubriques en maquette (Imprimantes, qui demande CUPS ; Notifications et Accessibilité complétées le 2026-11-09, Mises à jour à vérifier).
 3. Logithèque (phase 7) : PackageKit + Flatpak, notification des mises à jour (polkit est prêt).
 4. Batterie et fiabilité (phase 10) : moins d'images au repos (l'appli Claude soumet ~50
    images/s), démarrage < 20 s, tests automatiques des écrans par captures de référence.

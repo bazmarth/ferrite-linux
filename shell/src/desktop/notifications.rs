@@ -95,11 +95,16 @@ struct Item {
 }
 
 /// Réglages de Paramètres → Notifications.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Preferences {
+    /// Réglé à la main, ou programmé et dans la plage horaire.
     pub do_not_disturb: bool,
     pub sound: bool,
     pub preview: bool,
+    /// Applications sans bannière ni son (identifiants).
+    pub muted: Vec<String>,
+    /// Applications déjà retenues dans les réglages (identifiants).
+    pub known: Vec<String>,
 }
 
 impl Default for Preferences {
@@ -108,16 +113,25 @@ impl Default for Preferences {
             do_not_disturb: false,
             sound: true,
             preview: true,
+            muted: Vec::new(),
+            known: Vec::new(),
         }
     }
 }
 
 impl Preferences {
-    pub fn from_settings(settings: &ferrite_system::config::Settings) -> Self {
+    /// `minute` : minute du jour, heure locale (pour « Ne pas déranger » programmé).
+    pub fn from_settings(settings: &ferrite_system::config::Settings, minute: u32) -> Self {
         Self {
-            do_not_disturb: settings.do_not_disturb(),
+            do_not_disturb: settings.do_not_disturb_at(minute, unix_now()),
             sound: settings.notification_sound(),
             preview: settings.notification_preview(),
+            muted: settings.muted_notification_apps(),
+            known: settings
+                .notification_apps()
+                .into_iter()
+                .map(|(entry, _)| entry)
+                .collect(),
         }
     }
 }
@@ -131,6 +145,10 @@ pub struct Center {
     pub sound: bool,
     /// Texte de la notification dans la bannière.
     pub preview: bool,
+    /// Applications sans bannière ni son.
+    muted: Vec<String>,
+    /// Applications connues des réglages, ou en train d'y être ajoutées.
+    known: Vec<String>,
 }
 
 impl Default for Center {
@@ -141,6 +159,8 @@ impl Default for Center {
             do_not_disturb: preferences.do_not_disturb,
             sound: preferences.sound,
             preview: preferences.preview,
+            muted: preferences.muted,
+            known: preferences.known,
         }
     }
 }
@@ -150,12 +170,32 @@ impl Center {
         self.do_not_disturb = preferences.do_not_disturb;
         self.sound = preferences.sound;
         self.preview = preferences.preview;
+        self.muted = preferences.muted;
+        for entry in preferences.known {
+            if !self.known.contains(&entry) {
+                self.known.push(entry);
+            }
+        }
+    }
+
+    /// Application encore inconnue des réglages, à y ajouter : identifiant et nom. Les
+    /// notifications du bureau lui-même (sans identifiant) n'y vont pas.
+    pub fn first_from(&mut self, notice: &Notice) -> Option<(String, String)> {
+        let entry = notice.entry.trim();
+        if entry.is_empty() || self.known.iter().any(|known| known == entry) {
+            return None;
+        }
+        self.known.push(entry.to_owned());
+        Some((entry.to_owned(), notice.app.clone()))
     }
 
     /// Ajoute une notification, ou remplace à sa place celle de même identifiant. Renvoie
     /// vrai si elle mérite un son : nouvelle, montrée en bulle, et l'application le veut.
+    /// Une application coupée dans les réglages, ou « Ne pas déranger », la range sans
+    /// bulle ni son (sauf alerte urgente).
     pub fn notify(&mut self, notice: Notice, now: Instant) -> bool {
-        let bubble = !self.do_not_disturb || notice.critical;
+        let muted = self.muted.contains(&notice.entry);
+        let bubble = !(self.do_not_disturb || muted) || notice.critical;
         let until = notice.timeout.filter(|_| bubble).map(|timeout| now + timeout);
         let item = Item {
             notice,
@@ -258,6 +298,48 @@ fn timeout_from(expire_timeout: i32, critical: bool) -> Option<Duration> {
 /// Texte d'un client ramené à une taille raisonnable.
 fn limited(text: &str, max: usize) -> String {
     text.chars().take(max).collect()
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
+}
+
+/// Minute du jour, heure locale.
+pub fn local_minute() -> u32 {
+    ferrite_system::night::local_now().1 as u32
+}
+
+/// Coupe ou met « Ne pas déranger » et l'enregistre (hors du fil principal : un disque
+/// lent ne doit pas figer le bureau). Coupé pendant la plage programmée, il le reste
+/// jusqu'à la fin de la plage.
+pub fn store_do_not_disturb(on: bool) {
+    let (minute, now) = (local_minute(), unix_now());
+    std::thread::spawn(move || {
+        let mut settings = ferrite_system::config::Settings::load();
+        if on {
+            settings.set_flag(ferrite_system::config::DO_NOT_DISTURB, true);
+        } else {
+            settings.turn_off_do_not_disturb(minute, now);
+        }
+        if let Err(error) = settings.save() {
+            tracing::warn!(%error, "« Ne pas déranger » non enregistré");
+        }
+    });
+}
+
+/// Retient dans les réglages une application qui notifie pour la première fois (elle
+/// apparaît alors dans Paramètres → Notifications). Fichier écrit hors de la boucle.
+fn remember_app(entry: String, name: String) {
+    std::thread::spawn(move || {
+        let mut settings = ferrite_system::config::Settings::load();
+        if settings.add_notification_app(&entry, &name)
+            && let Err(error) = settings.save()
+        {
+            tracing::warn!(%error, "application des notifications non retenue");
+        }
+    });
 }
 
 /// Notification du bureau lui-même, avec la durée par défaut.
@@ -472,6 +554,9 @@ impl Ferrite {
     pub fn on_notification_event(&mut self, event: Event) {
         match event {
             Event::Notify(notice) => {
+                if let Some((entry, name)) = self.notifications.first_from(&notice) {
+                    remember_app(entry, name);
+                }
                 if self.notifications.notify(notice, Instant::now()) {
                     ferrite_system::sounds::play(ferrite_system::sounds::Sound::Alert(
                         ferrite_system::sounds::Alert::Drop,
@@ -644,7 +729,7 @@ mod tests {
         let mut center = Center::default();
         let settings =
             ferrite_system::config::Settings::parse("notifications_son = non\nne_pas_deranger = oui");
-        center.set_preferences(Preferences::from_settings(&settings));
+        center.set_preferences(Preferences::from_settings(&settings, 12 * 60));
         assert!(center.do_not_disturb && !center.sound && center.preview);
         // Même l'alerte urgente arrive sans son ; sa bulle s'affiche quand même.
         let urgente = Notice {
@@ -654,6 +739,46 @@ mod tests {
         };
         assert!(!center.notify(urgente, now));
         assert_eq!(center.bubbles().count(), 1);
+    }
+
+    #[test]
+    fn application_coupee_sans_bulle_ni_son() {
+        let now = Instant::now();
+        let mut center = Center::default();
+        let settings = ferrite_system::config::Settings::parse(
+            "notifications_muettes = bavarde\nne_pas_deranger_programme = oui",
+        );
+        // 12:00 : hors de la plage programmée (22:00 à 07:00).
+        center.set_preferences(Preferences::from_settings(&settings, 12 * 60));
+        assert!(!center.do_not_disturb);
+        let bavarde = Notice {
+            entry: "bavarde".to_owned(),
+            sound: true,
+            ..notice(1)
+        };
+        assert!(!center.notify(bavarde, now));
+        assert_eq!(center.bubbles().count(), 0);
+        assert_eq!(center.history().count(), 1);
+        // 23:00 : dans la plage.
+        center.set_preferences(Preferences::from_settings(&settings, 23 * 60));
+        assert!(center.do_not_disturb);
+    }
+
+    #[test]
+    fn une_application_est_retenue_une_fois() {
+        let mut center = Center::default();
+        let brave = Notice {
+            entry: "brave".to_owned(),
+            app: "Brave".to_owned(),
+            ..notice(1)
+        };
+        assert_eq!(
+            center.first_from(&brave),
+            Some(("brave".to_owned(), "Brave".to_owned()))
+        );
+        assert_eq!(center.first_from(&brave), None);
+        // Le bureau lui-même n'est pas une application à régler.
+        assert_eq!(center.first_from(&local_notice("Capture", "")), None);
     }
 
     #[test]

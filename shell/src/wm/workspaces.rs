@@ -2,8 +2,10 @@
 //! gauche ou la droite ; les pages suivent les doigts.
 //!
 //! Seules les fenêtres de la page affichée sont dans le `Space` : celles des autres bureaux
-//! attendent ici, avec leur position. Il reste toujours un bureau vide au bout, et un
-//! bureau vide qu'on quitte disparaît : il n'y a rien à créer ni à supprimer à la main.
+//! attendent ici, avec leur position. En mode dynamique (par défaut), il reste toujours un
+//! bureau vide au bout, et un bureau vide qu'on quitte disparaît : il n'y a rien à créer ni
+//! à supprimer à la main. En nombre fixe (Paramètres › Bureau et dock), les bureaux
+//! ordinaires sont toujours là, vides ou non.
 
 use std::time::{Duration, Instant};
 
@@ -163,6 +165,9 @@ pub struct Workspaces<T> {
     motion: Motion,
     /// Position imposée pour les captures (`--demo-page`).
     frozen: Option<f64>,
+    /// Nombre fixe de bureaux ordinaires (sans compter celui des widgets) ; `None` :
+    /// bureaux dynamiques.
+    fixed: Option<usize>,
 }
 
 impl<T> Default for Workspaces<T> {
@@ -172,6 +177,7 @@ impl<T> Default for Workspaces<T> {
             current: 0,
             motion: Motion::Rest,
             frozen: None,
+            fixed: None,
         }
     }
 }
@@ -360,10 +366,19 @@ impl<T> Workspaces<T> {
         target as usize
     }
 
+    /// Nombre fixe de bureaux ordinaires, ou `None` pour des bureaux dynamiques.
+    pub fn set_fixed(&mut self, fixed: Option<usize>) {
+        self.fixed = fixed.map(|count| count.max(1));
+    }
+
     /// Retire les bureaux vides qu'on a quittés et garde un bureau vide au bout.
     /// `occupied` : le bureau affiché a des fenêtres. Rien ne bouge pendant un glissement.
     fn sync(&mut self, occupied: bool, now: Instant) {
         if !self.settle(now) {
+            return;
+        }
+        if let Some(count) = self.fixed {
+            self.sync_fixed(count);
             return;
         }
         let mut index = 0;
@@ -388,6 +403,20 @@ impl<T> Workspaces<T> {
             self.desktops.last().is_some_and(Vec::is_empty) && !(self.current + 1 == count && occupied);
         if !last_is_free {
             self.desktops.push(Vec::new());
+        }
+    }
+
+    /// Nombre fixe : les `count` bureaux ordinaires existent toujours. Au-delà (nombre
+    /// réduit, fenêtre envoyée plus loin), seuls les bureaux vides et quittés disparaissent,
+    /// en partant de la fin : aucune fenêtre n'est perdue.
+    fn sync_fixed(&mut self, count: usize) {
+        let pages = count + 1;
+        self.ensure_page(pages - 1);
+        while self.desktops.len() > pages
+            && self.current + 1 < self.desktops.len()
+            && self.desktops.last().is_some_and(Vec::is_empty)
+        {
+            self.desktops.pop();
         }
     }
 
@@ -705,6 +734,7 @@ impl Ferrite {
         }
         self.session_restore_deadline = None;
         self.keep_widgets_page_free();
+        self.workspaces.set_fixed(self.dock_config.fixed_workspaces);
         let occupied = self
             .space
             .elements()
@@ -861,6 +891,40 @@ mod tests {
         pages.sync(false, now);
         assert_eq!(pages.current(), 2);
         assert_eq!(pages.page_count(), 5);
+    }
+
+    #[test]
+    fn en_nombre_fixe_les_bureaux_restent() {
+        let mut pages: Workspaces<u32> = Workspaces::at_start();
+        pages.set_fixed(Some(4));
+        pages.sync(false, at(0));
+        // Le bureau des widgets et quatre bureaux ordinaires, même vides.
+        assert_eq!(pages.page_count(), 5);
+        // Une fenêtre sur le dernier : pas de bureau de plus.
+        pages.current = 4;
+        pages.sync(true, at(0));
+        assert_eq!(pages.page_count(), 5);
+        // On quitte un bureau vide du milieu : il reste.
+        pages.current = 1;
+        pages.sync(false, at(0));
+        assert_eq!(pages.page_count(), 5);
+    }
+
+    #[test]
+    fn nombre_fixe_reduit_sans_perdre_de_fenetre() {
+        let mut pages: Workspaces<u32> = Workspaces::at_start();
+        pages.ensure_page(6);
+        pages.park(5, 7);
+        pages.set_fixed(Some(2));
+        pages.sync(false, at(0));
+        // Le bureau 6, vide, disparaît ; le 5 garde sa fenêtre.
+        assert_eq!(pages.page_count(), 6);
+        assert_eq!(pages.parked(5), &[7]);
+        // Repassé en dynamique : les bureaux vides quittés disparaissent, un seul vide au bout.
+        pages.set_fixed(None);
+        pages.sync(false, at(0));
+        assert_eq!(pages.page_count(), 4);
+        assert_eq!(pages.parked(2), &[7]);
     }
 
     #[test]

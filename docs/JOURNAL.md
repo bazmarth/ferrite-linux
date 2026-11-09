@@ -2903,3 +2903,152 @@ Vérifié : CI (sans shellcheck) ; tests (choix des appareils, message de fin) ;
 bureau imbriqué, dialogue ouvert (cas « Bluetooth éteint », celui du PC).
 Pas vérifié : un vrai envoi vers un téléphone (`bluez-obexd` n'est pas installé sur le PC,
 et le Bluetooth y était éteint) ; liste des appareils à l'écran ; thème sombre.
+
+## 2026-11-09 — Bluetooth : recevoir des fichiers
+
+Demande de l'utilisateur : après l'envoi, la réception.
+- `ferrite-apps reception-bluetooth` (`files/reception.rs`) : service sans fenêtre lancé par
+  le bureau à l'ouverture de session (pas par un bureau imbriqué), unique par session.
+  Il s'inscrit comme agent auprès d'`obexd` (réinscription toutes les 30 s si `obexd`
+  redémarre).
+- Fichier proposé : notification « Fichier reçu par Bluetooth », « Pixel veut vous envoyer
+  « photo.jpg » (2,3 Mo) », boutons Accepter / Refuser ; sans réponse en 55 s, ou
+  notification fermée, c'est un refus. Une seule demande à la fois.
+- Fichier accepté : écrit dans `~/.cache/obexd`, puis rangé dans Téléchargements une fois
+  complet (« nom (2).ext » si le nom est pris) ; notification « Fichier reçu », clic :
+  Fichiers sur Téléchargements. Réception coupée : fichier partiel effacé, notification.
+  Nom envoyé par l'appareil nettoyé (pas de dossier, pas de « .. »).
+- `ferrite_system::bluetooth::device_name` : nom d'un appareil d'après son adresse.
+Vérifié : CI (sans shellcheck) ; tests (nom nettoyé, nom libre) ; service lancé sur la
+vraie session : `obexd` démarre et l'agent s'inscrit sans erreur.
+Pas vérifié : une vraie réception depuis un téléphone (Bluetooth du PC éteint) ;
+notification Accepter / Refuser à l'écran ; lancement automatique sur le vrai bureau.
+
+## 2026-11-09 — Fichiers : Récents montre aussi ce qui vient d'être créé
+
+Demande de l'utilisateur : dans Récents, les dossiers et fichiers utiles créés récemment,
+sans les dossiers du dossier perso.
+- `places::recent_items` : fichiers ouverts (`recently-used.xbel`, date de la dernière
+  ouverture) et fichiers ou dossiers créés depuis moins de 30 jours dans le dossier perso
+  (date de création, sinon de modification), du plus récent au plus ancien, 80 au plus.
+- Jamais montrés : le dossier perso, ses dossiers habituels (Documents, Téléchargements,
+  Images…, fouillés quand même), les dossiers cachés et ce qu'ils contiennent, les dossiers
+  techniques (`target`, `node_modules`, `build`…), les fichiers de passage (`.part`,
+  `.crdownload`, `~`, `.tmp`…). Un dossier nouveau est montré seul, pas tout son contenu.
+- Parcours limité à 4 niveaux et 20 000 entrées (environ 0,05 s sur le PC).
+- La bande « Récemment ouverts » du dossier perso ne change pas.
+Vérifié : CI (sans shellcheck) ; tests (dates ISO, tri des dossiers) ; capture de Récents
+sur un dossier perso d'essai (adresse d'essai le temps de la capture, retirée ensuite).
+Pas vérifié : sur le vrai dossier perso du PC.
+
+## 2026-11-09 — Fichiers : nouvelle icône d'application
+
+Demande de l'utilisateur : changer l'icône de l'application Fichiers. Nouvelle
+`icons/SVG/app-files.svg`, sans fond (demande de l'utilisateur : pas de carré clair
+derrière) : dossier bleu d'où dépassent trois feuilles, chacune avec son étiquette de couleur (rouge,
+orange, vert), comme les nouvelles icônes de fichiers. Le Dock, le menu Applications et
+les applis la prennent dans `icons/SVG` au lieu du thème (`style.rs`, `desktop/svg.rs`).
+Vérifié : CI (sans shellcheck) ; rendu de l'icône seule ; captures du Dock et du menu
+Applications dans le bureau imbriqué (sombre).
+Pas vérifié : vrai bureau ; l'image ISO garde `Icon=system-file-manager` dans
+`ferrite-files.desktop` (icône du thème, vue seulement par les applis hors Ferrite).
+
+## 2026-11-09 — Paramètres : réglages de la réception Bluetooth
+
+Suite de la réception : les deux lignes grisées de Paramètres › Bluetooth › Options marchent.
+- « Recevoir des fichiers » (oui par défaut, réglage `bluetooth_reception`) : coupé, le
+  service refuse tout fichier proposé, sans notification.
+- « Dossier de réception » (réglage `bluetooth_dossier`) : Téléchargements, Bureau,
+  Documents ou Images (le nom anglais sert s'il est seul présent : Pictures, Desktop…) ;
+  grisé quand la réception est coupée. La notification « Fichier reçu » nomme ce dossier.
+- Réglages relus à chaque fichier : pas besoin de relancer le service.
+Vérifié : CI (sans shellcheck) ; test du choix du dossier ; captures de la rubrique dans le
+bureau imbriqué (réception permise avec Images, réception coupée avec le menu grisé).
+Pas vérifié : une vraie réception (Bluetooth du PC éteint).
+
+## 2026-11-09 — Bureau : espaces de travail en nombre fixe
+
+Suite du plan (phase 5, réglages grisés) : Paramètres › Bureau et dock › Espaces de travail ›
+Mode fonctionne.
+- « Dynamiques » (par défaut, comme avant) : un bureau vide au bout, un bureau vide qu'on
+  quitte disparaît.
+- « Nombre fixe » (réglage `espaces_mode = fixe`) : les bureaux ordinaires sont toujours là,
+  vides ou non ; leur nombre se choisit de 1 à 9 (`espaces_nombre`, 4 par défaut), sans
+  compter le bureau des widgets. Nombre réduit : seuls les bureaux vides et quittés au-delà
+  disparaissent, en partant de la fin ; aucune fenêtre n'est perdue.
+- Vue d'ensemble : en nombre fixe, pas de vignette « + » au bout.
+- Le compositeur relit le réglage avec les autres réglages du Dock (`DockConfig`).
+- « Écran principal uniquement » reste grisé (un seul écran géré pour l'instant).
+Vérifié : CI (sans shellcheck) ; tests (bureaux qui restent, nombre réduit sans perte) ;
+captures du bureau imbriqué : vue d'ensemble à 3 bureaux fixes (4 vignettes, sans « + »),
+section Espaces de travail dans les deux modes.
+Pas vérifié : sur le vrai bureau ; passage d'un mode à l'autre pendant la session.
+
+## 2026-11-09 — Notifications : « Ne pas déranger » programmé et réglages par application
+
+Suite du plan (phase 5). La rubrique Notifications avait déjà « Ne pas déranger », l'aperçu
+et le son ; elle gagne :
+- « Programmer » : « Ne pas déranger » chaque jour entre deux heures (22:00 à 07:00 par
+  défaut ; réglages `ne_pas_deranger_programme`, `_debut`, `_fin`), plage qui peut passer
+  minuit. Pendant la plage, l'interrupteur est allumé avec « Activé par la programmation
+  jusqu'à 07:00 ». Le couper (Paramètres ou centre de contrôle) le lève jusqu'à la fin de
+  la plage (`ne_pas_deranger_leve`), comme sur macOS ; il revient le lendemain.
+- « Applications » : chaque application apparaît après sa première notification (le bureau
+  la retient dans `notifications_applis`, fichier écrit hors de la boucle). Un interrupteur
+  par application ; coupée (`notifications_muettes`), ses notifications arrivent sans
+  bannière ni son et restent dans l'historique. Les alertes urgentes passent toujours. Les
+  notifications du bureau lui-même ne sont pas listées.
+- Fil système du bureau : préférences des notifications recalculées chaque seconde (la
+  programmation suit l'heure), envoyées seulement si elles changent.
+Vérifié : CI (sans shellcheck) ; tests (plage qui passe minuit, levée jusqu'à la fin de la
+plage, appli coupée sans bulle ni son, appli retenue une fois) ; bureau imbriqué : deux
+notifications envoyées par `gdbus`, les deux applis retenues dans les réglages, captures de
+la rubrique (liste avec une appli coupée ; programmation en cours).
+Pas vérifié : sur le vrai bureau ; tuile du centre de contrôle pendant une plage programmée ;
+pas d'option pour retirer une application de la liste.
+
+## 2026-11-09 — Bluetooth : code d'appairage affiché
+
+Signalé par l'utilisateur : à l'appairage, aucun code n'apparaissait. L'appairage passait
+par un agent `bluetoothctl` « NoInputNoOutput » (sans code), et un appairage lancé depuis
+le téléphone ne trouvait aucun agent sur l'ordinateur.
+- `pairing.rs` : agent BlueZ du bureau (`org.bluez.Agent1`, bus système, « KeyboardDisplay »,
+  agent par défaut, réinscrit toutes les 30 s), dans le service `reception-bluetooth`
+  (toute la session, même réception coupée).
+- Code à comparer : notification « Code d’appairage : 482 913 », « Vérifiez que « Pixel 8 »
+  affiche le même code. », boutons Confirmer / Refuser (refus après 28 s ou si on la
+  ferme). Appareil qui demande à s'appairer sans code : Accepter… idem. Clavier : code à
+  taper affiché. Ancien code PIN : « 0000 » pour les casques. Services (son, fichiers)
+  autorisés pour un appareil appairé seulement.
+- `ferrite_system::bluetooth::connect` : si l'agent du bureau tourne (numéro de processus
+  dans `$XDG_RUNTIME_DIR/ferrite-agent-bluetooth.verrou`), plus d'agent sans code ;
+  sinon comme avant.
+Vérifié : CI (sans shellcheck) ; test du format du code ; agent lancé à part sur la vraie
+session : inscrit auprès de BlueZ sans erreur ; capture du bureau imbriqué de la
+notification (code en titre, Confirmer / Refuser).
+Pas vérifié : un vrai appairage avec un téléphone ; le vrai bureau (il faut
+`tools/dev-on.sh` et relancer : l'ancien service, sans agent, tourne encore).
+
+## 2026-11-09 — Accessibilité : contraste élevé et touches rémanentes
+
+Suite du plan (phase 5, rubriques en maquette). Imprimantes est laissée de côté : CUPS
+n'est ni sur le PC ni dans l'image, rien ne pourrait être essayé. La rubrique Accessibilité
+n'est plus une maquette :
+- « Contraste élevé » (`contraste_eleve`) : variante des deux palettes
+  (`Palette::contrasted`, `ui/src/theme.rs`) avec textes noirs (clair) ou blancs (sombre),
+  contours, filets et bord des fenêtres bien marqués, sélection pleine ; fonds inchangés.
+  Interrupteur commun `ferrite_ui::theme::set_high_contrast`, lu par les applications
+  (`style::apply_preferences`) et par le bureau (panneaux, barres de titre) via `DockConfig`.
+- « Touches rémanentes » (`touches_remanentes`) : Maj, Ctrl, Alt, AltGr ou Super appuyée
+  puis relâchée seule reste tenue jusqu'à la touche ordinaire suivante (Ctrl, puis Maj,
+  puis C = Ctrl+Maj+C) ; réappuyée, elle est relâchée. Un raccourci tapé d'un coup marche
+  comme avant. `StickyKeys` dans `shell/src/input.rs` ; réglage coupé : tout est relâché.
+  Avec les touches rémanentes, Super appuyée seule n'ouvre plus le menu Applications (elle
+  reste tenue).
+- Imprimantes garde sa maquette, seule rubrique encore en attente avec ce gabarit.
+Vérifié : CI (sans shellcheck) ; tests (palette contrastée, Ctrl puis Maj puis C,
+annulation, raccourci tapé d'un coup) ; captures de la rubrique sans et avec contraste
+élevé, en clair et en sombre.
+Pas vérifié : les touches rémanentes au clavier (pas moyen de taper dans le bureau imbriqué
+depuis ici) ; aucun signe à l'écran d'une touche tenue ; contraste élevé dans toutes les
+applis et sur le bureau réel.

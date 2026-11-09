@@ -152,6 +152,11 @@ pub struct DockConfig {
     pub tiling: bool,
     pub double_click: DoubleClick,
     pub reduce_motion: bool,
+    /// Nombre fixe de bureaux ordinaires ; `None` : bureaux dynamiques.
+    pub fixed_workspaces: Option<usize>,
+    /// Accessibilité : contraste élevé et touches rémanentes.
+    pub high_contrast: bool,
+    pub sticky_keys: bool,
 }
 
 impl Default for DockConfig {
@@ -178,6 +183,9 @@ impl Default for DockConfig {
             tiling: false,
             double_click: DoubleClick::Maximize,
             reduce_motion: false,
+            fixed_workspaces: None,
+            high_contrast: false,
+            sticky_keys: false,
         }
     }
 }
@@ -201,6 +209,9 @@ impl DockConfig {
             tiling: settings.flag("tuilage", false),
             double_click: settings.double_click(),
             reduce_motion: settings.flag("reduire_animations", false),
+            fixed_workspaces: settings.fixed_workspaces(),
+            high_contrast: settings.flag(ferrite_system::config::HIGH_CONTRAST, false),
+            sticky_keys: settings.flag(ferrite_system::config::STICKY_KEYS, false),
         }
     }
 

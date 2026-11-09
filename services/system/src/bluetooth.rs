@@ -75,6 +75,15 @@ pub fn adapter_name() -> Option<String> {
     parse_field(&show, "Alias").map(str::to_owned)
 }
 
+/// Nom affiché d'un appareil (« Alias » de BlueZ).
+pub fn device_name(address: &str) -> Option<String> {
+    let info = command::run_with_timeout("bluetoothctl", &["info", address], Duration::from_secs(3)).ok()?;
+    parse_field(&info, "Alias")
+        .or_else(|| parse_field(&info, "Name"))
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+}
+
 /// Valeur d'une ligne « Nom: valeur » de `bluetoothctl show` ou `info`.
 fn parse_field<'a>(text: &'a str, name: &str) -> Option<&'a str> {
     text.lines()
@@ -158,6 +167,24 @@ pub fn scan() -> Result<(), Error> {
     .map(drop)
 }
 
+/// Verrou tenu par l'agent d'appairage du bureau (`ferrite-apps reception-bluetooth`),
+/// dans `XDG_RUNTIME_DIR`.
+pub const AGENT_LOCK: &str = "ferrite-agent-bluetooth.verrou";
+
+/// L'agent d'appairage du bureau tourne-t-il ?
+fn desktop_agent_running() -> bool {
+    let Some(dir) = std::env::var_os("XDG_RUNTIME_DIR") else {
+        return false;
+    };
+    let path = std::path::Path::new(&dir).join(AGENT_LOCK);
+    // Le verrou contient le numéro du processus de l'agent : est-il encore en vie ?
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|pid| pid.trim().parse::<u32>().ok())
+        .and_then(|pid| fs::read(format!("/proc/{pid}/cmdline")).ok())
+        .is_some_and(|cmdline| String::from_utf8_lossy(&cmdline).contains("reception-bluetooth"))
+}
+
 /// Délai d'un appairage ou d'une connexion.
 const LONG: Duration = Duration::from_secs(30);
 /// Temps laissé à un appareil pour se montrer pendant la recherche.
@@ -197,8 +224,16 @@ impl Session {
             }
         });
         let mut session = Self { child, input, lines };
-        // NoInputNoOutput : appairage « Just Works » avec tout appareil, sans code à saisir
-        // ni à confirmer ici (un téléphone demande seulement d'accepter de son côté).
+        if desktop_agent_running() {
+            // L'agent du bureau affiche le code d'appairage et demande de le confirmer :
+            // pas d'agent ici, BlueZ passe par lui (agent par défaut).
+            session.send("agent off")?;
+            session.send("pairable on")?;
+            let _ = session.expect(&["pairable on succeeded", "Failed"], Duration::from_secs(3));
+            return Ok(session);
+        }
+        // Sans lui, NoInputNoOutput : appairage « Just Works » avec tout appareil, sans
+        // code à saisir ni à confirmer ici (un téléphone demande seulement d'accepter).
         session.send("agent NoInputNoOutput")?;
         session.send("default-agent")?;
         session.send("pairable on")?;

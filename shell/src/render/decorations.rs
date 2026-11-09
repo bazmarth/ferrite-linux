@@ -165,7 +165,7 @@ impl Decorations {
             dark_theme,
             ..
         } = look;
-        let palette = if dark_theme { Palette::DARK } else { Palette::LIGHT };
+        let palette = Palette::themed(dark_theme);
         let bar = decoration::titlebar(content);
 
         // Titre, centré dans la barre, sans empiéter sur les boutons.
@@ -311,7 +311,7 @@ impl Decorations {
             (frame.size.w + 2 * SHADOW_MARGIN, frame.size.h + 2 * SHADOW_MARGIN).into(),
         );
         let shadow = if active { SHADOW_ACTIVE } else { SHADOW_INACTIVE };
-        let ring = if dark_theme { Palette::DARK } else { Palette::LIGHT }.window_ring;
+        let ring = Palette::themed(dark_theme).window_ring;
         let shadow_uniforms = || {
             let margin = SHADOW_MARGIN as f32;
             vec![

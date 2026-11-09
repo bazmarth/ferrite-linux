@@ -268,6 +268,7 @@ fn worker(receiver: mpsc::Receiver<Change>, events: channel::Sender<Event>, nest
     let mut known_dark = None;
     let mut known_scroll_inverted = None;
     let mut known_notifications = None;
+    let mut notification_settings: Option<Settings> = None;
     let mut known_scroll_speed = None;
     let mut known_cursor: Option<(String, u32)> = None;
     let mut known_text_size = None;
@@ -354,13 +355,7 @@ fn worker(receiver: mpsc::Receiver<Change>, events: channel::Sender<Event>, nest
             if events.send(Event::Night(night, place)).is_err() {
                 return;
             }
-            let notifications = crate::desktop::notifications::Preferences::from_settings(&settings);
-            if known_notifications != Some(notifications) {
-                known_notifications = Some(notifications);
-                if events.send(Event::Notifications(notifications)).is_err() {
-                    return;
-                }
-            }
+            notification_settings = Some(settings.clone());
             let scroll_inverted = settings.scroll_inverted();
             if known_scroll_inverted != Some(scroll_inverted) {
                 known_scroll_inverted = Some(scroll_inverted);
@@ -417,6 +412,18 @@ fn worker(receiver: mpsc::Receiver<Change>, events: channel::Sender<Event>, nest
             let apps = Event::DockApps(settings.dock_pinned(), settings.multi_window_apps());
             if events.send(apps).is_err() {
                 return;
+            }
+        }
+        // Notifications : recalculées à chaque tour pour « Ne pas déranger » programmé, qui
+        // change avec l'heure ; envoyées seulement si quelque chose a changé.
+        if let Some(settings) = &notification_settings {
+            let minute = crate::desktop::notifications::local_minute();
+            let notifications = crate::desktop::notifications::Preferences::from_settings(settings, minute);
+            if known_notifications.as_ref() != Some(&notifications) {
+                known_notifications = Some(notifications.clone());
+                if events.send(Event::Notifications(notifications)).is_err() {
+                    return;
+                }
             }
         }
         if last_snapshot.is_none_or(|at: Instant| at.elapsed() >= REFRESH) {
@@ -532,6 +539,10 @@ impl Ferrite {
                 Err(message) => self.system_error = Some(message),
             },
             Event::Dock(config) => {
+                ferrite_ui::theme::set_high_contrast(config.high_contrast);
+                if !config.sticky_keys {
+                    self.release_sticky_keys();
+                }
                 self.dock_config = config;
                 if config.tiling != self.tiling {
                     self.toggle_tiling();

@@ -395,7 +395,51 @@ impl Ferrite {
         }
     }
 
+    /// Touche frappée : passe d'abord par les touches rémanentes si elles sont allumées.
     fn on_key<I: InputBackend>(&mut self, event: I::KeyboardKeyEvent) {
+        let time = event.time_msec();
+        if !self.dock_config.sticky_keys {
+            self.on_key_inner::<I>(event);
+            return;
+        }
+        let pressed = event.state() == KeyState::Pressed;
+        match self.sticky.step(event.key_code().raw(), pressed, time) {
+            StickyStep::Forward => self.on_key_inner::<I>(event),
+            StickyStep::Swallow => {}
+            StickyStep::ReleaseInstead(code) => self.release_key(code, time),
+            StickyStep::ForwardThenRelease(codes) => {
+                self.on_key_inner::<I>(event);
+                for code in codes {
+                    self.release_key(code, time);
+                }
+            }
+        }
+    }
+
+    /// Relâche pour de bon une touche de modification tenue par les touches rémanentes.
+    fn release_key(&mut self, code: u32, time: u32) {
+        let Some(keyboard) = self.seat.get_keyboard() else {
+            return;
+        };
+        keyboard.input::<(), _>(
+            self,
+            code.into(),
+            KeyState::Released,
+            SERIAL_COUNTER.next_serial(),
+            time,
+            |_, _, _| FilterResult::Forward,
+        );
+    }
+
+    /// Touches rémanentes coupées : les modificateurs encore tenus sont relâchés.
+    pub fn release_sticky_keys(&mut self) {
+        let time = self.sticky.time;
+        for code in self.sticky.clear() {
+            self.release_key(code, time);
+        }
+    }
+
+    fn on_key_inner<I: InputBackend>(&mut self, event: I::KeyboardKeyEvent) {
         let Some(keyboard) = self.seat.get_keyboard() else {
             return;
         };
@@ -1695,15 +1739,8 @@ impl Ferrite {
             DesktopAction::ToggleDoNotDisturb => {
                 let on = !self.notifications.do_not_disturb;
                 self.notifications.do_not_disturb = on;
-                // Gardé pour le prochain démarrage et montré dans Paramètres ; écrit hors du
-                // fil principal (un disque lent ne doit pas figer le bureau).
-                std::thread::spawn(move || {
-                    let mut settings = ferrite_system::config::Settings::load();
-                    settings.set_flag(ferrite_system::config::DO_NOT_DISTURB, on);
-                    if let Err(error) = settings.save() {
-                        tracing::warn!(%error, "« Ne pas déranger » non enregistré");
-                    }
-                });
+                // Gardé pour le prochain démarrage et montré dans Paramètres.
+                crate::desktop::notifications::store_do_not_disturb(on);
             }
             DesktopAction::ToggleDarkMode => self.toggle_dark_mode(),
             DesktopAction::TogglePowerSaver => {
@@ -2433,9 +2470,145 @@ impl Ferrite {
     }
 }
 
+/// Touches rémanentes (Accessibilité) : une touche de modification (Maj, Ctrl, Alt,
+/// AltGr, Super) appuyée puis relâchée seule reste tenue jusqu'à la prochaine touche
+/// ordinaire, pour saisir un raccourci une touche à la fois. Réappuyée, elle est relâchée.
+#[derive(Debug, Default)]
+pub struct StickyKeys {
+    /// Modificateurs tenus pour la prochaine touche (codes xkb).
+    latched: Vec<u32>,
+    /// Modificateur enfoncé en ce moment, et une autre touche frappée pendant ce temps.
+    held: Option<u32>,
+    chorded: bool,
+    /// Relâchements à ignorer : modificateur réappuyé pour l'annuler.
+    swallow: Vec<u32>,
+    /// Touche ordinaire enfoncée alors que des modificateurs étaient tenus.
+    used: bool,
+    /// Heure du dernier évènement (ms), pour les relâchements faits par le bureau.
+    pub time: u32,
+}
+
+/// Ce que devient une touche frappée.
+#[derive(Debug, PartialEq, Eq)]
+pub enum StickyStep {
+    /// Traitée normalement.
+    Forward,
+    /// Ignorée (le modificateur reste tenu, ou l'annulation est déjà faite).
+    Swallow,
+    /// Réappui d'un modificateur tenu : on le relâche à la place.
+    ReleaseInstead(u32),
+    /// Traitée normalement, puis ces modificateurs tenus sont relâchés.
+    ForwardThenRelease(Vec<u32>),
+}
+
+/// Codes xkb (evdev + 8) des touches de modification.
+fn is_modifier(code: u32) -> bool {
+    // Ctrl, Maj gauche, Maj droite, Alt, Ctrl droite, AltGr, Super gauche et droite.
+    matches!(code, 37 | 50 | 62 | 64 | 105 | 108 | 133 | 134)
+}
+
+impl StickyKeys {
+    pub fn step(&mut self, code: u32, pressed: bool, time: u32) -> StickyStep {
+        self.time = time;
+        match (is_modifier(code), pressed) {
+            (true, true) => {
+                if let Some(index) = self.latched.iter().position(|known| *known == code) {
+                    self.latched.remove(index);
+                    self.swallow.push(code);
+                    return StickyStep::ReleaseInstead(code);
+                }
+                self.held = Some(code);
+                self.chorded = false;
+                StickyStep::Forward
+            }
+            (true, false) => {
+                if let Some(index) = self.swallow.iter().position(|known| *known == code) {
+                    self.swallow.remove(index);
+                    return StickyStep::Swallow;
+                }
+                if self.held == Some(code) {
+                    self.held = None;
+                    if !self.chorded {
+                        self.latched.push(code);
+                        return StickyStep::Swallow;
+                    }
+                }
+                StickyStep::Forward
+            }
+            (false, true) => {
+                if self.held.is_some() {
+                    self.chorded = true;
+                }
+                if !self.latched.is_empty() {
+                    self.used = true;
+                }
+                StickyStep::Forward
+            }
+            (false, false) => {
+                if self.used && !self.latched.is_empty() {
+                    self.used = false;
+                    return StickyStep::ForwardThenRelease(std::mem::take(&mut self.latched));
+                }
+                StickyStep::Forward
+            }
+        }
+    }
+
+    /// Oublie tout ; renvoie les modificateurs qui étaient tenus.
+    pub fn clear(&mut self) -> Vec<u32> {
+        let latched = std::mem::take(&mut self.latched);
+        *self = Self {
+            time: self.time,
+            ..Self::default()
+        };
+        latched
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn touches_remanentes_un_raccourci_une_touche_a_la_fois() {
+        const CTRL: u32 = 37;
+        const SHIFT: u32 = 50;
+        const C: u32 = 54;
+        let mut sticky = StickyKeys::default();
+        // Ctrl seul : tenu.
+        assert_eq!(sticky.step(CTRL, true, 0), StickyStep::Forward);
+        assert_eq!(sticky.step(CTRL, false, 1), StickyStep::Swallow);
+        // Maj seule : tenue aussi.
+        assert_eq!(sticky.step(SHIFT, true, 2), StickyStep::Forward);
+        assert_eq!(sticky.step(SHIFT, false, 3), StickyStep::Swallow);
+        // C : Ctrl+Maj+C, puis les deux sont relâchés.
+        assert_eq!(sticky.step(C, true, 4), StickyStep::Forward);
+        assert_eq!(
+            sticky.step(C, false, 5),
+            StickyStep::ForwardThenRelease(vec![CTRL, SHIFT])
+        );
+        // Ensuite, C est une touche ordinaire.
+        assert_eq!(sticky.step(C, true, 6), StickyStep::Forward);
+        assert_eq!(sticky.step(C, false, 7), StickyStep::Forward);
+    }
+
+    #[test]
+    fn touches_remanentes_annulees_ou_raccourci_tenu() {
+        const CTRL: u32 = 37;
+        const C: u32 = 54;
+        let mut sticky = StickyKeys::default();
+        // Ctrl tenu puis réappuyé : relâché, et son vrai relâchement ignoré.
+        sticky.step(CTRL, true, 0);
+        sticky.step(CTRL, false, 1);
+        assert_eq!(sticky.step(CTRL, true, 2), StickyStep::ReleaseInstead(CTRL));
+        assert_eq!(sticky.step(CTRL, false, 3), StickyStep::Swallow);
+        // Ctrl+C tapé d'un coup, comme d'habitude : rien ne reste tenu.
+        assert_eq!(sticky.step(CTRL, true, 4), StickyStep::Forward);
+        assert_eq!(sticky.step(C, true, 5), StickyStep::Forward);
+        assert_eq!(sticky.step(C, false, 6), StickyStep::Forward);
+        assert_eq!(sticky.step(CTRL, false, 7), StickyStep::Forward);
+        assert!(sticky.clear().is_empty());
+    }
 
     #[test]
     fn modificateurs_d_une_touche_gardee_annonces_a_la_fenetre() {

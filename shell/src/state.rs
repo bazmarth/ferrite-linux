@@ -118,6 +118,8 @@ pub struct Ferrite {
     /// Touche Super enfoncée, et utilisée avec une autre touche (Super+V) : relâchée
     /// seule, elle ouvre le menu Applications, comme sous Windows.
     pub super_held: bool,
+    /// Touches rémanentes (Accessibilité) : modificateurs tenus pour la touche suivante.
+    pub sticky: crate::input::StickyKeys,
     pub super_used: bool,
     pub loop_handle: smithay::reexports::calloop::LoopHandle<'static, Ferrite>,
     /// Applications épinglées dans le Dock (`None` : Dock par défaut), applications à
@@ -451,6 +453,7 @@ impl Ferrite {
             clipboard_position: None,
             clipboard_drag_offset: None,
             super_held: false,
+            sticky: crate::input::StickyKeys::default(),
             super_used: false,
             loop_handle: event_loop.handle(),
             dock_pinned: settings.dock_pinned(),
@@ -513,6 +516,7 @@ impl Ferrite {
                 let mut center = crate::desktop::notifications::Center::default();
                 center.set_preferences(crate::desktop::notifications::Preferences::from_settings(
                     &settings,
+                    crate::desktop::notifications::local_minute(),
                 ));
                 center
             },

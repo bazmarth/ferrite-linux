@@ -28,6 +28,7 @@ mod look;
 mod open_with;
 mod ops;
 mod places;
+pub(crate) mod reception;
 pub(crate) use places::Looks;
 mod search;
 mod thumbs;
@@ -875,7 +876,7 @@ panneau={}
             }
             Location::Recent => {
                 self.loaded = None;
-                places::recent()
+                places::recent_items(&home())
                     .into_iter()
                     .filter_map(|path| entry_for(&path))
                     .collect()
@@ -2781,6 +2782,11 @@ fn natural_cmp(a: &str, b: &str) -> std::cmp::Ordering {
 /// Commande `ferrite-apps vignette-video` (voir `thumbs`).
 pub fn print_video_frame(path: &Path) -> bool {
     thumbs::print_video_frame(path)
+}
+
+/// Service de réception Bluetooth (`ferrite-apps reception-bluetooth`).
+pub fn run_bluetooth_reception() -> i32 {
+    reception::run_service()
 }
 
 pub fn put_in_trash(paths: &[PathBuf]) -> Vec<String> {

@@ -428,6 +428,16 @@ impl XwmHandler for Ferrite {
             None => Rectangle::new(requested.loc, size),
         };
         self.place_x11(&window, content);
+        // Grande fenêtre principale : agrandie plutôt que centrée (voir `opens_maximized`).
+        let frame_size = Size::from((content.size.w, content.size.h + titlebar));
+        let maximize = parent.is_none()
+            && !self.tiling
+            && self
+                .usable_area()
+                .is_some_and(|area| wm::opens_maximized(area, frame_size));
+        if maximize {
+            self.x11_set_maximized(&window, true);
+        }
         self.animate_opening(&window);
         self.focus_window(Some(window));
     }

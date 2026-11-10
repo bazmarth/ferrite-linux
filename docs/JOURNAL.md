@@ -3664,3 +3664,15 @@ Vérifié : CI (sans shellcheck), tests `un_tiers_de_page_suffit_meme_doigts_arr
 `des_evenements_rapproches_donnent_le_meme_elan_que_reguliers`.
 Pas vérifié : sur le vrai pavé (après `tools/dev-on.sh`) ; la fluidité pendant le geste
 n'est pas encore mesurée (fichier `ferrite-profil` créé pour la prochaine mesure).
+
+## 2026-11-10 — Nouvelles fenêtres : agrandies ou centrées
+
+Demande : « démarrer les fenêtres en plein écran ou au centre de l'écran » (capture : Brave
+ouvert presque à la taille de l'écran, collé en haut avec une marge et débordant en bas).
+- `wm::opens_maximized` : une nouvelle fenêtre qui couvre au moins les trois quarts de la
+  zone utile dans les deux sens s'ouvre agrandie ; les autres restent centrées.
+- Appliqué aux fenêtres Wayland (`place_new_window`) et X11 (`map_window_request`, sauf
+  boîtes de dialogue) ; pas en tuilage, qui place lui-même les fenêtres.
+Vérifié : CI (sans shellcheck), test `une_grande_fenetre_s_ouvre_agrandie_les_autres_centrees` ;
+captures en fenêtre avec `foot -W 400x200` (agrandie) et `foot -W 80x24` (centrée).
+Pas vérifié : avec Brave sur le vrai bureau (après `tools/dev-on.sh`).

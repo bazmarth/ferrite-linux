@@ -582,21 +582,22 @@ impl Ferrite {
             let min = with_states(surface, |states| {
                 states.cached_state.get::<SurfaceCachedState>().current().min_size
             });
-            let size = match (
-                wm::fitted_size(area, size, titlebar_height, min),
-                window.toplevel(),
-            ) {
-                (Some(fitted), Some(toplevel)) => {
-                    toplevel.with_pending_state(|state| state.size = Some(fitted));
-                    toplevel.send_pending_configure();
-                    fitted
-                }
-                _ => size,
-            };
+            let fitted = wm::fitted_size(area, size, titlebar_height, min);
+            let size = fitted.unwrap_or(size);
             let frame_size = Size::from((size.w, size.h + titlebar_height));
+            // Grande fenêtre (Brave, Firefox qui reprennent leur ancienne taille) : agrandie
+            // plutôt que centrée en débordant presque ; hors tuilage, qui la place lui-même.
+            let maximize = !self.tiling && wm::opens_maximized(area, frame_size);
+            if let (Some(fitted), Some(toplevel), false) = (fitted, window.toplevel(), maximize) {
+                toplevel.with_pending_state(|state| state.size = Some(fitted));
+                toplevel.send_pending_configure();
+            }
             let frame = wm::clamp_frame(area, wm::centered_position(area, frame_size), frame_size);
             let content = frame + Point::from((0, titlebar_height));
             self.space.map_element(window.clone(), content, true);
+            if let (true, Some(toplevel)) = (maximize, window.toplevel()) {
+                self.set_xdg_maximized(window.clone(), toplevel.clone(), true);
+            }
         }
         // En tuilage, elle apparaît directement à sa place dans la grille.
         self.retile();

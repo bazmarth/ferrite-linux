@@ -216,6 +216,14 @@ pub fn centered_position(area: Rectangle<i32, Logical>, window: Size<i32, Logica
     area.loc + Point::from((centered(area.size.w, window.w), centered(area.size.h, window.h)))
 }
 
+/// Une nouvelle fenêtre de cadre `frame` (barre de titre comprise) s'ouvre-t-elle
+/// agrandie ? Oui si elle couvre au moins les trois quarts de `area` dans les deux sens :
+/// centrée, elle toucherait presque les bords et paraîtrait décalée. Les autres sont
+/// centrées.
+pub fn opens_maximized(area: Rectangle<i32, Logical>, frame: Size<i32, Logical>) -> bool {
+    frame.w * 4 >= area.size.w * 3 && frame.h * 4 >= area.size.h * 3
+}
+
 /// La fenêtre couvre presque toute `area` (au moins 90 % dans chaque sens).
 pub fn fills_area(area: Rectangle<i32, Logical>, rect: Rectangle<i32, Logical>) -> bool {
     rect.size.w * 10 >= area.size.w * 9 && rect.size.h * 10 >= area.size.h * 9
@@ -811,6 +819,19 @@ mod tests {
         assert_eq!(restored_frame(area, None, area), fallback);
         // Fenêtre déjà petite sans taille d'avant : rien à changer.
         assert_eq!(restored_frame(area, None, small), None);
+    }
+
+    #[test]
+    fn une_grande_fenetre_s_ouvre_agrandie_les_autres_centrees() {
+        let area = rect(0, 47, 2000, 1203);
+        let size = |w, h| Size::from((w, h));
+        // Navigateur qui reprend presque tout l'écran : agrandi.
+        assert!(opens_maximized(area, size(2000, 1150)));
+        assert!(opens_maximized(area, size(1500, 903)));
+        // Fenêtre moyenne, ou grande dans un seul sens : centrée.
+        assert!(!opens_maximized(area, size(900, 600)));
+        assert!(!opens_maximized(area, size(800, 1203)));
+        assert!(!opens_maximized(area, size(2000, 500)));
     }
 
     #[test]

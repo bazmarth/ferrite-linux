@@ -588,6 +588,37 @@ fn code(text: &str, base: usize, kind: FileKind, out: &mut Vec<(Range<usize>, Ki
 mod tests {
     use super::*;
 
+    #[test]
+    fn les_accents_ne_font_jamais_planter_la_coloration() {
+        use crate::editor::icons::FileKind::*;
+        let pieces = [
+            "é", "à", "€", "😀", "\"", "'", "`", "```", "#", "//", "/*", "*/", "<!--", "-->", "<a", "</",
+            "=", ":", "-", "(", "0x1F", "12.5", "$x", "\n", "\\", "**", "_", "[", "]", "fn", "let", " ",
+            "\t", "<", ">", "{", "}", "@", "%",
+        ];
+        // Toutes les paires et triplets de morceaux, pour chaque langage.
+        let mut texts = Vec::new();
+        for a in pieces {
+            for b in pieces {
+                texts.push(format!("{a}{b}"));
+                for c in ["é", "€", "😀", "\"", "`", "#"] {
+                    texts.push(format!("{a}{b}{c}"));
+                    texts.push(format!("{c}{a}{b}"));
+                }
+            }
+        }
+        for kind in [
+            Markdown, React, TypeScript, JavaScript, Json, Rust, Css, Html, Shell, Python, Toml, Yaml, Text,
+        ] {
+            for text in &texts {
+                for (range, _) in spans(text, kind) {
+                    assert!(text.get(range.clone()).is_some(), "{kind:?} {text:?} {range:?}");
+                }
+                let _ = code_blocks(text);
+            }
+        }
+    }
+
     fn roles(text: &str, kind: FileKind) -> Vec<(&str, Kind)> {
         spans(text, kind)
             .into_iter()

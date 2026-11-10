@@ -25,6 +25,19 @@ firmware-intel-sound
 firmware-sof-signed
 firmware-misc-nonfree
 
+# Autres PC que le ThinkBook (sans eux : pas d'image sur une carte AMD récente, pas de
+# Wi-Fi sur les puces Atheros, Broadcom ou MediaTek). Environ 330 Mo avant compression.
+amd64-microcode
+firmware-linux-free
+firmware-amd-graphics
+firmware-nvidia-graphics
+firmware-atheros
+firmware-ath9k-htc
+firmware-brcm80211
+firmware-mediatek
+firmware-cirrus
+bluez-firmware
+
 # Graphisme et entrées du bureau ferrite-shell
 libgl1-mesa-dri
 libegl1
@@ -39,6 +52,8 @@ libwayland-client0
 xkb-data
 mesa-vulkan-drivers
 intel-media-va-driver
+# Décodage vidéo par la carte graphique sur AMD (et NVIDIA par nouveau)
+mesa-va-drivers
 xwayland
 
 # Services système utilisés par le bureau

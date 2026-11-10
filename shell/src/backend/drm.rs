@@ -347,16 +347,29 @@ fn pick_connector(
     let resources = device
         .resource_handles()
         .map_err(|err| format!("ressources DRM : {err}"))?;
-    let connected: Vec<connector::Info> = resources
-        .connectors()
-        .iter()
-        .filter_map(|handle| device.get_connector(*handle, true).ok())
-        .filter(|info| info.state() == connector::State::Connected && !info.modes().is_empty())
-        .collect();
-    let connector = connected
-        .iter()
-        .find(|info| info.interface() == connector::Interface::EmbeddedDisplayPort)
-        .or_else(|| connected.first())
+    let connected = |device: &DrmDevice| -> Vec<connector::Info> {
+        resources
+            .connectors()
+            .iter()
+            .filter_map(|handle| device.get_connector(*handle, true).ok())
+            .filter(|info| info.state() == connector::State::Connected && !info.modes().is_empty())
+            .collect()
+    };
+    // Un écran de bureau allumé en même temps que le PC (ou derrière un commutateur KVM)
+    // peut s'annoncer quelques secondes après la carte graphique : on l'attend un peu
+    // plutôt que d'abandonner (démarrage seulement, la boucle du bureau ne tourne pas).
+    let mut screens = connected(device);
+    for _ in 0..SCREEN_WAIT_TRIES {
+        if !screens.is_empty() {
+            break;
+        }
+        info!("aucun écran branché pour l'instant ; nouvel essai dans une seconde");
+        std::thread::sleep(Duration::from_secs(1));
+        screens = connected(device);
+    }
+    let interfaces: Vec<connector::Interface> = screens.iter().map(connector::Info::interface).collect();
+    let connector = preferred_screen(&interfaces, lid_closed())
+        .and_then(|index| screens.get(index))
         .cloned()
         .ok_or("aucun écran branché")?;
     let mode = connector
@@ -433,6 +446,42 @@ fn schedule_render(drm: &Rc<RefCell<Drm>>, handle: &LoopHandle<'static, Ferrite>
         Ok(token) => guard.render_scheduled = Some((token, !delay.is_zero())),
         Err(err) => error!("programmation du rendu impossible : {err}"),
     }
+}
+
+/// Essais (une seconde chacun) avant de renoncer faute d'écran branché au démarrage.
+const SCREEN_WAIT_TRIES: u32 = 10;
+
+/// Écran intégré d'un portable (eDP sur les récents, LVDS sur les anciens, DSI sur les
+/// tablettes).
+fn is_internal(interface: connector::Interface) -> bool {
+    matches!(
+        interface,
+        connector::Interface::EmbeddedDisplayPort | connector::Interface::LVDS | connector::Interface::DSI
+    )
+}
+
+/// Rang de l'écran à utiliser parmi les écrans branchés : l'écran intégré, sauf si le
+/// couvercle est fermé et qu'un écran externe est branché (portable fermé posé sur un
+/// bureau) ; sur un PC fixe, le premier écran branché.
+fn preferred_screen(interfaces: &[connector::Interface], lid_closed: bool) -> Option<usize> {
+    let internal = interfaces.iter().position(|interface| is_internal(*interface));
+    let external = interfaces.iter().position(|interface| !is_internal(*interface));
+    match (internal, external) {
+        (Some(_), Some(external)) if lid_closed => Some(external),
+        (Some(internal), _) => Some(internal),
+        (None, external) => external,
+    }
+}
+
+/// Couvercle du portable fermé (ACPI) ; faux s'il n'y a pas de couvercle (PC fixe).
+fn lid_closed() -> bool {
+    std::fs::read_dir("/proc/acpi/button/lid")
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|entry| {
+            std::fs::read_to_string(entry.path().join("state")).is_ok_and(|state| state.contains("closed"))
+        })
 }
 
 /// Mode nuit : table de gamma de l'écran multipliée par les gains (rouge, vert, bleu).
@@ -534,4 +583,25 @@ fn render(drm: &mut Drm, state: &mut Ferrite) -> bool {
         }
     }
     sent
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use connector::Interface::{DisplayPort, EmbeddedDisplayPort, HDMIA, LVDS};
+
+    #[test]
+    fn choix_de_l_ecran() {
+        // Portable ouvert : son écran, même avec un écran externe branché avant lui.
+        assert_eq!(preferred_screen(&[HDMIA, EmbeddedDisplayPort], false), Some(1));
+        // Portable fermé sur un bureau : l'écran externe.
+        assert_eq!(preferred_screen(&[EmbeddedDisplayPort, HDMIA], true), Some(1));
+        // Fermé sans écran externe : l'écran intégré quand même (rien d'autre à montrer).
+        assert_eq!(preferred_screen(&[EmbeddedDisplayPort], true), Some(0));
+        // Ancien portable (LVDS).
+        assert_eq!(preferred_screen(&[DisplayPort, LVDS], false), Some(1));
+        // PC fixe : le premier branché.
+        assert_eq!(preferred_screen(&[DisplayPort, HDMIA], false), Some(0));
+        assert_eq!(preferred_screen(&[], false), None);
+    }
 }

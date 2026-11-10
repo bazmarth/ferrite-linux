@@ -3441,6 +3441,29 @@ Pas vérifié : sur le vrai bureau (saccades disparues au déplacement d'une fen
 vrai passage à l'heure d'été ; un changement de fuseau dans Réglages pendant la session.
 Reste : l'appli Horloge garde sa propre lecture par `date` (déjà relue chaque minute).
 
+## 2026-11-09 — Robustesse et autres PC que le ThinkBook
+
+Demande : chercher d'autres défauts à corriger, en visant une ISO autonome qui marche
+bien sur plusieurs PC.
+- Vérifié sans défaut : aucune commande qui attend dans la boucle du bureau (toutes dans
+  des fils à part) ; mémoire (380 Mo) et descripteurs stables sur 25 min ; divisions et
+  soustractions sur des listes toutes protégées ; les lignes « ureq » du journal viennent
+  d'une application tierce.
+- Tests de résistance ajoutés : coloration de l'éditeur (13 langages) et Markdown sur des
+  milliers de mélanges d'accents, émojis et symboles : aucun plantage.
+- ISO : microprogrammes des autres matériels (cartes graphiques AMD et NVIDIA, Wi-Fi
+  Atheros, Broadcom, MediaTek, son Cirrus, Bluetooth Broadcom), microcode AMD, décodage
+  vidéo AMD (`mesa-va-drivers`). Environ 330 Mo de plus avant compression.
+- Écran (`backend/drm.rs`) : au démarrage, attend jusqu'à 10 s un écran pas encore
+  annoncé (PC fixe, commutateur KVM) au lieu d'abandonner ; reconnaît les écrans intégrés
+  LVDS et DSI en plus de l'eDP ; couvercle fermé avec un écran externe branché : l'écran
+  externe.
+Vérifié : CI (sans shellcheck), 564 tests dont `choix_de_l_ecran`.
+Pas vérifié : ISO non reconstruite (il faut `sudo`) ; aucun essai sur un PC AMD, NVIDIA
+ou avec un écran externe ; l'attente de l'écran n'a pas été essayée en vrai.
+Limites (dans TECHNIQUE §5.4) : un seul écran, pas de branchement à chaud, une seule
+carte graphique.
+
 ## 2026-11-10 — Fenêtres oubliées au démarrage
 
 Demande : ne plus rouvrir, au redémarrage ou après un arrêt, les fenêtres qui étaient

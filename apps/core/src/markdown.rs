@@ -767,6 +767,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn les_accents_ne_font_jamais_planter_le_markdown() {
+        let pieces = [
+            "é", "€", "😀", "`", "```", "#", "# ", "<!--", "-->", "**", "*", "_", "~~", "[", "](", ")", "!",
+            "- ", "1. ", "> ", "|", "---", "\n", " ", "\\", "<", "http://", "$",
+        ];
+        for a in pieces {
+            for b in pieces {
+                for c in pieces {
+                    let text = format!("{a}{b}{c}é{a}");
+                    let _ = parse(&text);
+                    let _ = inline(&text);
+                    let _ = front_matter(&format!("---\n{a}: {b}\n---\n{c}"));
+                }
+            }
+        }
+    }
+
+    #[test]
     fn liens_gardent_leur_adresse() {
         let spans = inline(r#"Voir [le **site**](https://exemple.fr "titre") et <https://a.b>."#);
         let links: Vec<(&str, &str)> = spans

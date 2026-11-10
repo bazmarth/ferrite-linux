@@ -942,12 +942,10 @@ impl ViewerState {
                 let lift = if slideshow { Vec2::ZERO } else { vec2(0.0, -20.0) };
                 let center = area.center() + lift + self.offset;
                 if !slideshow {
-                    // Ombre portée sous l'image (maquette : 0 12 40, noir 35 %).
-                    let shadow = Rect::from_center_size(center + vec2(0.0, 12.0), turned * scale);
-                    painter.add(
-                        egui::epaint::RectShape::filled(shadow, 4.0, Color32::from_black_alpha(90))
-                            .with_blur_width(40.0),
-                    );
+                    // Ombre portée sous l'image : celle d'une fenêtre active.
+                    let image = Rect::from_center_size(center, turned * scale);
+                    let shadow = style::elevation(ferrite_ui::tokens::elevation::WINDOW_ACTIVE);
+                    painter.add(shadow.as_shape(image, 4.0));
                 }
                 let mut mesh = egui::Mesh::with_texture(texture);
                 mesh.add_rect_with_uv(

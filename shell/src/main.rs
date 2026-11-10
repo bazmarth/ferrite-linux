@@ -138,6 +138,17 @@ fn run(options: Options) -> Result<u8, Box<dyn std::error::Error>> {
     if options.demo_power {
         state.open_power_dialog(crate::state::PowerAction::Sleep);
     }
+    if options.demo_screens {
+        state.screen_count = 2;
+        state.osd = Some((
+            desktop::panels::Osd {
+                icon: "cc-screen",
+                label: "Écran branché : dupliqué",
+                level: None,
+            },
+            std::time::Instant::now() + std::time::Duration::from_secs(3600),
+        ));
+    }
     if options.demo_osd {
         let osd = desktop::panels::Osd {
             icon: desktop::svg::volume_icon(60),

@@ -77,6 +77,18 @@ impl Color {
         Color { a, ..self }
     }
 
+    /// Encre lisible posée sur ce fond : blanc sur un fond foncé, presque noir sur un
+    /// fond clair (le bleu clair du thème sombre, une accentuation jaune…). Même seuil
+    /// de luminosité perçue partout, bureau et applications.
+    pub fn ink_on(self) -> Color {
+        let brightness = (299 * u32::from(self.r) + 587 * u32::from(self.g) + 114 * u32::from(self.b)) / 1000;
+        if brightness > 145 {
+            Color::rgb(0x0B1A2E)
+        } else {
+            Color::WHITE
+        }
+    }
+
     /// Mélange linéaire : `t = 0` donne `self`, `t = 1` donne `other`.
     pub fn mix(self, other: Color, t: f32) -> Color {
         let t = t.clamp(0.0, 1.0);
@@ -156,6 +168,10 @@ pub struct Palette {
     pub inverse: Color,
     pub inverse_text: Color,
     pub inverse_action: Color,
+    /// Carte de groupe (lignes de réglage), sans bordure, sur le fond de la fenêtre.
+    pub surface: Color,
+    /// Pastille de l'élément choisi dans une colonne, un cran plus clair qu'elle.
+    pub sidebar_pill: Color,
 }
 
 impl Palette {
@@ -200,6 +216,8 @@ impl Palette {
         inverse: Color::rgb(0x16181C),
         inverse_text: Color::WHITE,
         inverse_action: Color::rgb(0x9CC7FF),
+        surface: Color::rgb(0xF4F5F7),
+        sidebar_pill: Color::WHITE,
     };
 
     pub const DARK: Palette = Palette {
@@ -243,6 +261,8 @@ impl Palette {
         inverse: Color::rgb(0xE5E7EB),
         inverse_text: Color::rgb(0x16181C),
         inverse_action: Color::rgb(0x174F9E),
+        surface: Color::rgb(0x2B2F36),
+        sidebar_pill: Color::rgb(0x343840),
     };
 
     pub const fn for_mode(mode: ThemeMode) -> Palette {

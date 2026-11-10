@@ -880,7 +880,7 @@ impl PdfViewerState {
                     let caption = wrapped(
                         ui,
                         &format!("Page {} · {}", item.page + 1, item.kind.label()),
-                        egui::FontId::proportional(11.5),
+                        egui::FontId::proportional(ferrite_ui::tokens::typography::CAPTION),
                         style::text_secondary(),
                         inner - 44.0,
                         1,
@@ -890,7 +890,7 @@ impl PdfViewerState {
                         wrapped(
                             ui,
                             &quote,
-                            egui::FontId::proportional(12.5),
+                            egui::FontId::proportional(ferrite_ui::tokens::typography::SMALL),
                             style::text_secondary(),
                             inner - 26.0,
                             3,
@@ -1027,7 +1027,7 @@ impl PdfViewerState {
                     let indent = 10.0 + 12.0 * item.level.min(4) as f32;
                     let number = ui.painter().layout_no_wrap(
                         (item.page + 1).to_string(),
-                        egui::FontId::proportional(11.5),
+                        egui::FontId::proportional(ferrite_ui::tokens::typography::CAPTION),
                         ink,
                     );
                     let title = wrapped(
@@ -1070,12 +1070,7 @@ fn bubble() -> egui::Frame {
         .stroke(Stroke::new(1.0, style::border()))
         .corner_radius(11.0)
         .inner_margin(egui::Margin::same(7))
-        .shadow(egui::Shadow {
-            offset: [0, 6],
-            blur: 22,
-            spread: 0,
-            color: style::shadow(),
-        })
+        .shadow(style::elevation(ferrite_ui::tokens::elevation::MENU))
 }
 
 /// Les encres du surligneur, en ligne : rend celle qu'on vient de cliquer. `selected` est

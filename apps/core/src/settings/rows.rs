@@ -14,10 +14,10 @@ pub const COLUMN: f32 = 680.0;
 /// Marge minimale de part et d'autre de la colonne.
 pub const COLUMN_MARGIN: f32 = 24.0;
 
-/// Fond de la page, sous les cartes de groupe (un cran plus foncé qu'elles en clair, plus
-/// clair que la barre latérale en sombre).
+/// Fond de la page : celui de la fenêtre ; les cartes de groupe s'en détachent par leur
+/// teinte ([`style::surface`]), sans bordure.
 pub fn page_color() -> Color32 {
-    style::themed(style::header_color(), style::sidebar_color())
+    style::background()
 }
 
 /// Ce qui précède le libellé d'une ligne.
@@ -272,8 +272,7 @@ pub fn hero(
 ) -> bool {
     let mut changed = false;
     Frame::new()
-        .fill(style::background())
-        .stroke(Stroke::new(1.0, style::separator()))
+        .fill(style::surface())
         .corner_radius(12)
         .inner_margin(Margin::symmetric(16, 12))
         .show(ui, |ui| {
@@ -305,13 +304,13 @@ pub fn hero(
     changed
 }
 
-/// Titre de groupe : 13 px, semi-gras, couleur secondaire. Le même partout.
+/// Titre de groupe : 12 px, semi-gras, couleur secondaire. Le même partout.
 pub fn group_title(ui: &mut egui::Ui, title: &str) {
     ui.horizontal(|ui| {
         ui.add_space(4.0);
         ui.label(
             RichText::new(title)
-                .size(13.0)
+                .size(12.0)
                 .family(style::strong_family())
                 .color(style::text_secondary()),
         );
@@ -333,8 +332,7 @@ pub fn group_note(ui: &mut egui::Ui, text: &str) {
 pub fn card<R>(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     group_title(ui, title);
     let result = Frame::new()
-        .fill(style::background())
-        .stroke(Stroke::new(1.0, style::separator()))
+        .fill(style::surface())
         .corner_radius(12)
         .inner_margin(Margin::same(16))
         .show(ui, |ui| {
@@ -357,8 +355,7 @@ pub fn group<R>(
         group_title(ui, title);
     }
     let result = Frame::new()
-        .fill(style::background())
-        .stroke(Stroke::new(1.0, style::separator()))
+        .fill(style::surface())
         .corner_radius(12)
         .show(ui, |ui| {
             ui.set_width(ui.available_width());

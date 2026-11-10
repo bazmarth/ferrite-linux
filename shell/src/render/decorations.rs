@@ -28,32 +28,13 @@ use tracing::warn;
 
 use super::{
     OutputElement,
-    shaders::{Shaders, premultiplied},
+    shaders::{Shaders, premultiplied, shadow_layer},
     title::{TITLE_SIZE, TitleFont},
 };
 use crate::wm::decoration;
 
 /// Débord de l'ombre autour du cadre.
 const SHADOW_MARGIN: i32 = elevation::WINDOW_MARGIN;
-
-/// Ombre d'une fenêtre selon son état.
-#[derive(Debug, Clone, Copy, PartialEq)]
-struct Shadow {
-    offset_y: f32,
-    blur: f32,
-    alpha: f32,
-}
-
-const SHADOW_ACTIVE: Shadow = Shadow {
-    offset_y: elevation::ACTIVE_OFFSET_Y,
-    blur: elevation::ACTIVE_BLUR,
-    alpha: elevation::ACTIVE_ALPHA,
-};
-const SHADOW_INACTIVE: Shadow = Shadow {
-    offset_y: elevation::INACTIVE_OFFSET_Y,
-    blur: elevation::INACTIVE_BLUR,
-    alpha: elevation::INACTIVE_ALPHA,
-};
 
 /// Ombre déjà prête : (active, thème sombre), zone et élément.
 type ShadowCache = ((bool, bool), Rectangle<i32, Logical>, PixelShaderElement);
@@ -310,16 +291,19 @@ impl Decorations {
             frame.loc - Point::from((SHADOW_MARGIN, SHADOW_MARGIN)),
             (frame.size.w + 2 * SHADOW_MARGIN, frame.size.h + 2 * SHADOW_MARGIN).into(),
         );
-        let shadow = if active { SHADOW_ACTIVE } else { SHADOW_INACTIVE };
+        let level = if active {
+            elevation::WINDOW_ACTIVE
+        } else {
+            elevation::WINDOW_INACTIVE
+        };
         let ring = Palette::themed(dark_theme).window_ring;
         let shadow_uniforms = || {
             let margin = SHADOW_MARGIN as f32;
             vec![
                 Uniform::new("rect", [margin, margin, frame.size.w as f32, frame.size.h as f32]),
-                Uniform::new("offset_y", shadow.offset_y),
                 Uniform::new("radius", WINDOW_RADIUS as f32),
-                Uniform::new("blur", shadow.blur),
-                Uniform::new("strength", shadow.alpha),
+                Uniform::new("contact", shadow_layer(elevation::CONTACT)),
+                Uniform::new("level", shadow_layer(level)),
                 Uniform::new("ring", premultiplied(ring)),
             ]
         };

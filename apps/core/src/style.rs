@@ -20,7 +20,7 @@ use eframe::egui::{
 use ferrite_system::config::{Accent, DockSize, DoubleClick, ScrollBars, Settings};
 use ferrite_ui::{
     theme::{Color, Palette},
-    tokens::{border, control, radius, spacing, typography},
+    tokens::{border, control, elevation, radius, spacing, typography},
 };
 
 /// Hauteur de la barre d'outils, et de la zone des boutons en haut de la colonne.
@@ -80,12 +80,24 @@ pub fn scrim() -> Color32 {
     )
 }
 
-/// Ombre d'un panneau qui flotte au-dessus du contenu.
-pub fn shadow() -> Color32 {
-    themed(
-        Color32::from_rgba_unmultiplied(15, 23, 42, 64),
-        Color32::from_black_alpha(140),
-    )
+/// Ombre de la charte (`elevation::MENU`, `PANEL`…) pour egui. Le flou d'egui s'étale sur
+/// la moitié de sa valeur de chaque côté, celui de la charte (CSS) sur une fois et demie :
+/// il est triplé pour la même douceur. Plus marquée en thème sombre, où un fond foncé
+/// l'absorbe.
+pub fn elevation(level: elevation::Shadow) -> egui::Shadow {
+    let strength = themed(1.0, 1.8);
+    egui::Shadow {
+        offset: [0, level.offset_y.round() as i8],
+        blur: (level.blur * 3.0).round().min(255.0) as u8,
+        spread: 0,
+        color: Color32::from_black_alpha((level.alpha * strength * 255.0).round().min(255.0) as u8),
+    }
+}
+
+/// Ombre de la charte sous un bouton rond (curseurs, interrupteurs) de rayon `radius`.
+pub fn knob_shadow(painter: &egui::Painter, center: egui::Pos2, radius: f32) {
+    let rect = egui::Rect::from_center_size(center, egui::vec2(radius * 2.0, radius * 2.0));
+    painter.add(elevation(elevation::SMALL).as_shape(rect, radius));
 }
 
 /// Segment choisi d'un contrôle à segments, sur [`control_background`].
@@ -343,13 +355,15 @@ pub fn accent() -> Color32 {
 
 pub fn accent_text() -> Color32 {
     let accent = accent();
-    let brightness =
-        (299 * u32::from(accent.r()) + 587 * u32::from(accent.g()) + 114 * u32::from(accent.b())) / 1000;
-    if brightness > 145 {
-        Color32::BLACK
-    } else {
-        Color32::WHITE
-    }
+    color(
+        Color {
+            r: accent.r(),
+            g: accent.g(),
+            b: accent.b(),
+            a: 255,
+        }
+        .ink_on(),
+    )
 }
 
 /// Couleur d'une accentuation de Paramètres (le bleu Ferrite dépend du thème).
@@ -405,7 +419,15 @@ pub fn apply_preferences(context: &egui::Context, settings: &Settings) {
         0.6,
     );
     let scroll = match settings.scroll_bars() {
-        ScrollBars::Auto => egui::style::ScrollStyle::thin(),
+        // Automatique : fine barre posée par-dessus le contenu (rien n'est rétréci), sans
+        // rail, visible seulement quand le pointeur est sur la zone qui défile.
+        ScrollBars::Auto => egui::style::ScrollStyle {
+            floating_allocated_width: 0.0,
+            dormant_background_opacity: 0.0,
+            dormant_handle_opacity: 0.0,
+            active_background_opacity: 0.0,
+            ..egui::style::ScrollStyle::thin()
+        },
         ScrollBars::WhenScrolling => egui::style::ScrollStyle::floating(),
         ScrollBars::Always => egui::style::ScrollStyle::solid(),
     };
@@ -645,12 +667,7 @@ fn apply_theme(context: &egui::Context) {
         visuals.window_fill = background;
         // Menus et popovers : coins de 10, ombre flottante.
         visuals.menu_corner_radius = CornerRadius::same(10);
-        visuals.popup_shadow = egui::Shadow {
-            offset: [0, 12],
-            blur: 32,
-            spread: 0,
-            color: Color32::from_black_alpha(77),
-        };
+        visuals.popup_shadow = elevation(elevation::MENU);
         visuals.extreme_bg_color = background;
         visuals.faint_bg_color = color(palette.content_background);
         visuals.override_text_color = Some(text);
@@ -716,8 +733,11 @@ pub fn toolbar_with(
     // ailleurs ; sans `buttons` (feuille), aucun.
     let left: i8 = 14;
     let right: i8 = if buttons { 106 } else { 14 };
+    // Le filet est dessiné ici, à la couleur voulue (transparent : pas de filet), jamais
+    // celui d'egui.
     egui::Panel::top(ui.scope_id().with("ferrite-header"))
         .resizable(false)
+        .show_separator_line(false)
         .exact_size(TOOLBAR_HEIGHT)
         .frame(Frame::new().fill(fill).inner_margin(Margin {
             left,
@@ -999,11 +1019,7 @@ pub fn switch_sized(ui: &mut egui::Ui, on: &mut bool, enabled: bool, size: egui:
     painter.rect_filled(rect, rect.height() / 2.0, track);
     let radius = rect.height() / 2.0 - 2.0;
     let x = egui::lerp(rect.left() + radius + 2.0..=rect.right() - radius - 2.0, progress);
-    painter.circle_filled(
-        egui::pos2(x, rect.center().y + 1.0),
-        radius,
-        Color32::from_black_alpha(46),
-    );
+    knob_shadow(painter, egui::pos2(x, rect.center().y), radius);
     painter.circle_filled(egui::pos2(x, rect.center().y), radius, Color32::WHITE);
     response
 }
@@ -1158,94 +1174,75 @@ fn paint_texture(ui: &egui::Ui, texture: &TextureHandle, rect: egui::Rect) {
     ui.painter().image(texture.id(), rect, uv, Color32::WHITE);
 }
 
-/// Ligne de colonne des Paramètres, comme dans les Réglages de macOS : pastille colorée
-/// avec un symbole blanc, puis le titre ; choisie, la ligne prend le fond de sélection.
-pub fn sidebar_tile_item(
-    ui: &mut egui::Ui,
-    icons: &mut Icons,
-    icon: &'static str,
-    tile: Color32,
-    text: &str,
-    selected: bool,
-) -> egui::Response {
-    tile_item(ui, icons, icon, tile, text, selected, false)
+/// Fond des cartes de groupe (lignes de réglage, aperçus), sans bordure, posées sur le fond
+/// de la fenêtre (charte, `docs/CHARTE.md`).
+pub fn surface() -> Color32 {
+    color(palette().surface)
 }
 
-/// Comme [`sidebar_tile_item`], l'élément choisi en pleine couleur d'accent, texte
-/// contrasté (Paramètres).
-pub fn sidebar_tile_item_accent(
-    ui: &mut egui::Ui,
-    icons: &mut Icons,
-    icon: &'static str,
-    tile: Color32,
-    text: &str,
-    selected: bool,
-) -> egui::Response {
-    tile_item(ui, icons, icon, tile, text, selected, true)
+/// Pastille de l'élément choisi dans une colonne : un cran plus clair que la colonne.
+pub fn sidebar_pill() -> Color32 {
+    color(palette().sidebar_pill)
 }
 
-fn tile_item(
+/// Ligne de colonne (Réglages, Logithèque, Calendrier, sélecteur de fichiers) : symbole au
+/// trait d'une seule couleur, puis le titre. Choisie, la ligne prend une pastille claire,
+/// le symbole passe à l'accent et le titre en semi-gras (charte, `docs/CHARTE.md`).
+pub fn sidebar_item(
     ui: &mut egui::Ui,
     icons: &mut Icons,
     icon: &'static str,
-    tile: Color32,
     text: &str,
     selected: bool,
-    accent_fill: bool,
 ) -> egui::Response {
     let scale = sidebar_scale();
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), 34.0 * scale),
+        egui::vec2(ui.available_width(), 32.0 * scale),
         egui::Sense::click(),
     );
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     if selected {
-        let fill = if accent_fill { accent() } else { sidebar_selected() };
-        ui.painter().rect_filled(rect, 8.0, fill);
+        let pill = elevation(elevation::CONTACT);
+        ui.painter().add(pill.as_shape(rect, 8));
+        ui.painter().rect_filled(rect, 8.0, sidebar_pill());
     } else if response.hovered() {
         ui.painter().rect_filled(rect, 8.0, tint(9));
     }
-    let side = 24.0 * scale;
+    let side = 17.0 * scale;
     let icon_rect = egui::Rect::from_center_size(
-        egui::pos2(rect.left() + 8.0 + side / 2.0, rect.center().y),
+        egui::pos2(rect.left() + 10.0 + side / 2.0, rect.center().y),
         egui::Vec2::splat(side),
     );
-    ui.painter().rect_filled(icon_rect, 7.0 * scale, tile);
-    icons.paint(
-        ui,
-        icon,
-        icon_rect.shrink(side * 0.2),
-        IconStyle::Tinted(Color32::WHITE),
-    );
+    let ink = if selected { accent() } else { text_secondary() };
+    icons.paint(ui, icon, icon_rect, IconStyle::Tinted(ink));
     ui.painter().text(
-        egui::pos2(icon_rect.right() + 10.0, rect.center().y),
+        egui::pos2(icon_rect.right() + 11.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
         text,
-        if selected && accent_fill {
-            FontId::new(14.0, strong_family())
+        if selected {
+            FontId::new(typography::LABEL, strong_family())
         } else {
-            FontId::proportional(14.0)
+            FontId::proportional(typography::LABEL)
         },
-        match (selected, accent_fill) {
-            (true, true) => accent_text(),
-            (true, false) => sidebar_selected_text(),
-            _ => primary_text(),
-        },
+        primary_text(),
     );
     response
 }
 
-/// Titre de groupe d'une barre latérale (« Favoris », « Appareils »…).
+/// Titre de groupe d'une barre latérale (« Favoris », « Appareils »…) : petit, semi-gras,
+/// gris, sans capitales forcées ; aligné sur les symboles des lignes.
 pub fn sidebar_heading(ui: &mut egui::Ui, text: &str) {
-    ui.add_space(6.0);
-    ui.label(
-        egui::RichText::new(text.to_uppercase())
-            .size(11.0)
-            .strong()
-            .extra_letter_spacing(0.66)
-            .color(text_secondary()),
-    );
-    ui.add_space(2.0);
+    ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        ui.add_space(10.0);
+        ui.label(
+            egui::RichText::new(text)
+                .size(typography::CAPTION)
+                .family(strong_family())
+                .color(text_secondary()),
+        );
+    });
+    ui.add_space(3.0);
 }
 
 /// Symboles au trait des pages de Paramètres, repris tels quels des planches.
@@ -1499,7 +1496,7 @@ mod tests {
         apply_preferences(&context, &dark);
         assert_eq!(background(), color(Palette::DARK.window_background));
         assert_eq!(primary_text(), color(Palette::DARK.text));
-        assert_eq!(accent_text(), Color32::BLACK);
+        assert_eq!(accent_text(), color(Color::rgb(0x0B1A2E)));
         assert!(context.style_of(egui::Theme::Dark).visuals.dark_mode);
 
         let light = Settings::parse("apparence = clair\n");

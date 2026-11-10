@@ -24,7 +24,6 @@ use std::{
 };
 
 use eframe::egui::{self, FontId, Frame, Margin, RichText, Sense};
-use ferrite_system::config::Accent;
 
 use self::appstream::{App, Block, Component, Origin};
 use crate::{kit, packagekit, style};
@@ -57,18 +56,18 @@ const SELECTION: &[&str] = &[
     "com.github.tchx84.Flatseal",
 ];
 
-/// Rubriques : catégorie freedesktop, nom, symbole, couleur de la pastille.
-const CATEGORIES: [(&str, &str, &str, Accent); 10] = [
-    ("AudioVideo", "Son et vidéo", "glyph-play", Accent::Red),
-    ("Graphics", "Graphisme et photo", "glyph-brush", Accent::Purple),
-    ("Office", "Bureautique", "glyph-doc", Accent::Blue),
-    ("Network", "Internet", "glyph-globe", Accent::Teal),
-    ("Game", "Jeux", "glyph-game", Accent::Green),
-    ("Education", "Éducation", "glyph-book", Accent::Orange),
-    ("Development", "Développement", "glyph-code", Accent::Graphite),
-    ("Science", "Sciences", "glyph-flask", Accent::Pink),
-    ("Utility", "Accessoires", "glyph-grid", Accent::Yellow),
-    ("System", "Système", "glyph-screen", Accent::Graphite),
+/// Rubriques : catégorie freedesktop, nom, symbole.
+const CATEGORIES: [(&str, &str, &str); 10] = [
+    ("AudioVideo", "Son et vidéo", "glyph-play"),
+    ("Graphics", "Graphisme et photo", "glyph-brush"),
+    ("Office", "Bureautique", "glyph-doc"),
+    ("Network", "Internet", "glyph-globe"),
+    ("Game", "Jeux", "glyph-game"),
+    ("Education", "Éducation", "glyph-book"),
+    ("Development", "Développement", "glyph-code"),
+    ("Science", "Sciences", "glyph-flask"),
+    ("Utility", "Accessoires", "glyph-grid"),
+    ("System", "Système", "glyph-screen"),
 ];
 
 fn in_category(component: &Component, key: &str) -> bool {
@@ -492,11 +491,10 @@ impl StoreState {
         egui::ScrollArea::vertical().show(ui, |ui| {
             let browsing = self.detail.is_none() && self.deb.is_none() && self.search.trim().is_empty();
             let mut go = None;
-            if style::sidebar_tile_item(
+            if style::sidebar_item(
                 ui,
                 &mut self.icons,
                 "glyph-star",
-                style::accent_color(Accent::Blue),
                 "Découvrir",
                 browsing && self.page == Page::Discover,
             )
@@ -506,12 +504,11 @@ impl StoreState {
             }
             ui.add_space(6.0);
             style::sidebar_heading(ui, "Catégories");
-            for (index, (_, label, glyph, color)) in CATEGORIES.iter().enumerate() {
-                if style::sidebar_tile_item(
+            for (index, (_, label, glyph)) in CATEGORIES.iter().enumerate() {
+                if style::sidebar_item(
                     ui,
                     &mut self.icons,
                     glyph,
-                    style::accent_color(*color),
                     label,
                     browsing && self.page == Page::Category(index),
                 )
@@ -522,11 +519,10 @@ impl StoreState {
             }
             ui.add_space(6.0);
             style::sidebar_heading(ui, "Mes applications");
-            if style::sidebar_tile_item(
+            if style::sidebar_item(
                 ui,
                 &mut self.icons,
                 "glyph-installed",
-                style::accent_color(Accent::Green),
                 "Installées",
                 browsing && self.page == Page::Installed,
             )
@@ -540,11 +536,10 @@ impl StoreState {
             } else {
                 "Mises à jour".to_owned()
             };
-            if style::sidebar_tile_item(
+            if style::sidebar_item(
                 ui,
                 &mut self.icons,
                 "glyph-update",
-                style::accent_color(Accent::Orange),
                 &label,
                 browsing && self.page == Page::Updates,
             )
@@ -560,11 +555,10 @@ impl StoreState {
                 } else {
                     format!("Pilotes ({})", self.drivers.len())
                 };
-                if style::sidebar_tile_item(
+                if style::sidebar_item(
                     ui,
                     &mut self.icons,
                     "glyph-screen",
-                    style::accent_color(Accent::Purple),
                     &label,
                     browsing && self.page == Page::Drivers,
                 )
@@ -657,7 +651,7 @@ impl StoreState {
                 kit::heading(ui, "Sélection");
                 self.grid(ui, &selection);
             }
-            for (index, (key, label, _, _)) in CATEGORIES.iter().enumerate().take(6) {
+            for (index, (key, label, _)) in CATEGORIES.iter().enumerate().take(6) {
                 let mut picks: Vec<&App> = apps
                     .iter()
                     .filter(|app| in_category(app.main(), key) && app.main().icon.is_some())
@@ -743,7 +737,7 @@ impl StoreState {
     }
 
     fn category_page(&mut self, ui: &mut egui::Ui, index: usize) {
-        let (key, label, _, _) = CATEGORIES[index];
+        let (key, label, _) = CATEGORIES[index];
         ui.add_space(4.0);
         kit::heading(ui, label);
         if self.loading(ui) {
@@ -1124,7 +1118,7 @@ impl StoreState {
         );
         let mut job = egui::text::LayoutJob::simple(
             main.summary.clone(),
-            FontId::proportional(12.5),
+            FontId::proportional(ferrite_ui::tokens::typography::SMALL),
             style::text_secondary(),
             text_width,
         );
@@ -1148,7 +1142,7 @@ impl StoreState {
             egui::pos2(text_left, rect.bottom() - 10.0),
             egui::Align2::LEFT_BOTTOM,
             tags.join(" · "),
-            FontId::proportional(11.0),
+            FontId::proportional(ferrite_ui::tokens::typography::CAPTION),
             style::tertiary_text(),
         );
         response

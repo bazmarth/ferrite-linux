@@ -47,13 +47,11 @@ impl PointerGrab<Ferrite> for MoveSurfaceGrab {
         data.snap_preview = if data.tiling && data.tile_order.contains(&self.window) {
             data.tile_at(event.location, &self.window).map(|(_, frame)| frame)
         } else {
-            data.usable_area()
-                .zip(data.screen_area())
-                .and_then(|(area, screen)| {
-                    super::snap_at(area, screen, event.location)
-                        .filter(|_| data.dock_config.snapping)
-                        .map(|snap| super::snap_zone(area, snap))
-                })
+            data.areas_at(event.location).and_then(|(area, screen)| {
+                super::snap_at(area, screen, event.location)
+                    .filter(|_| data.dock_config.snapping)
+                    .map(|snap| super::snap_zone(area, snap))
+            })
         };
         if self.window.x11_surface().is_some() {
             let size = self.window.geometry().size;
@@ -87,11 +85,15 @@ impl PointerGrab<Ferrite> for MoveSurfaceGrab {
             data.snap_preview = None;
             if data.drop_tiled(&self.window, handle.current_location()) {
                 // Rangée par le tuilage : échangée, ou remise à sa place.
-            } else if let Some((area, screen)) = data.usable_area().zip(data.screen_area()) {
+            } else if let Some((area, screen)) = data.areas_at(handle.current_location()) {
                 if let Some(snap) = super::snap_at(area, screen, handle.current_location())
                     .filter(|_| data.dock_config.snapping)
                 {
+                    // Accrochée sur l'écran où on l'a lâchée, même si son centre est
+                    // encore sur l'autre.
+                    data.snap_area = Some(area);
                     data.snap_window(&self.window, snap);
+                    data.snap_area = None;
                 }
             }
             handle.unset_grab(self, data, event.serial, event.time, true);

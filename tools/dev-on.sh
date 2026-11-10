@@ -80,6 +80,6 @@ if ! grep -q disk_dev /usr/local/bin/ferrite-session 2>/dev/null; then
         "$REPO/image/config/includes.chroot/usr/local/bin/ferrite-session"
     printf '  puis redémarrer la session (ou le PC).\n'
 else
-    printf '\n  Bouton rouge → « Relancer le bureau » (ou Ctrl+Alt+Retour arrière) : bureau relancé avec cette version.\n'
+    printf '\n  Centre de contrôle, bouton éteindre → « Relancer le bureau » (ou Ctrl+Alt+Retour arrière) : bureau relancé avec cette version.\n'
     printf '  Les fenêtres ouvertes se ferment ; Claude retrouve la conversation dans la barre latérale.\n'
 fi

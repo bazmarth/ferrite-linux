@@ -253,6 +253,30 @@ pub fn restored_frame(
     }
 }
 
+/// Où va le pointeur qui passe de `from` à `to` : là, si c'est sur un écran (il passe
+/// d'un écran à l'autre par leur bord commun) ; sinon il reste au bord de l'écran où il
+/// était. `None` sans écran.
+pub fn pointer_target(
+    screens: &[Rectangle<i32, Logical>],
+    from: Point<f64, Logical>,
+    to: Point<f64, Logical>,
+) -> Option<Point<f64, Logical>> {
+    let inside =
+        |screen: &Rectangle<i32, Logical>, point: Point<f64, Logical>| screen.to_f64().contains(point);
+    if screens.iter().any(|screen| inside(screen, to)) {
+        return Some(to);
+    }
+    let screen = screens
+        .iter()
+        .find(|screen| inside(screen, from))
+        .or_else(|| screens.first())?;
+    let (x, y) = (screen.loc.x as f64, screen.loc.y as f64);
+    Some(Point::from((
+        to.x.clamp(x, x + screen.size.w as f64 - 1.0),
+        to.y.clamp(y, y + screen.size.h as f64 - 1.0),
+    )))
+}
+
 /// Ramène un cadre dans `area` autant que possible (le haut reste toujours visible).
 pub fn clamp_frame(
     area: Rectangle<i32, Logical>,
@@ -874,6 +898,36 @@ mod tests {
         assert_eq!(at(0.0, 899.0), Some(2));
         assert_eq!(at(1439.0, 899.0), Some(3));
         assert_eq!(at(700.0, 0.0), None);
+    }
+
+    #[test]
+    fn le_pointeur_passe_d_un_ecran_a_l_autre() {
+        let screens = [
+            Rectangle::new((0, 0).into(), (1440, 900).into()),
+            Rectangle::new((1440, 0).into(), (1920, 1080).into()),
+        ];
+        let at = |x: f64, y: f64| Point::<f64, Logical>::from((x, y));
+        // Vers la droite : il entre dans le second écran.
+        assert_eq!(
+            pointer_target(&screens, at(1430.0, 500.0), at(1450.0, 500.0)),
+            Some(at(1450.0, 500.0))
+        );
+        // Sous le premier écran (plus petit) : il reste sur son bord du bas.
+        assert_eq!(
+            pointer_target(&screens, at(100.0, 890.0), at(100.0, 950.0)),
+            Some(at(100.0, 899.0))
+        );
+        // Plus bas sur le second écran que la hauteur du premier : il peut y descendre.
+        assert_eq!(
+            pointer_target(&screens, at(1500.0, 890.0), at(1500.0, 1000.0)),
+            Some(at(1500.0, 1000.0))
+        );
+        // Un seul écran : borné comme avant.
+        assert_eq!(
+            pointer_target(&screens[..1], at(1430.0, 10.0), at(1500.0, 10.0)),
+            Some(at(1439.0, 10.0))
+        );
+        assert_eq!(pointer_target(&[], at(0.0, 0.0), at(1.0, 1.0)), None);
     }
 
     #[test]

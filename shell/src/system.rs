@@ -103,6 +103,8 @@ pub enum Event {
     LockAvatar(Option<crate::clipboard::Thumbnail>),
     /// Délais de verrouillage et de mise en veille automatiques.
     Idle(ferrite_system::idle::IdleSettings),
+    /// Plusieurs écrans : dupliquer ou étendre.
+    Screens(ferrite_system::screens::ScreenMode),
     /// Réglages du mode nuit et ville (pour le lever et le coucher du soleil).
     Night(
         ferrite_system::night::NightSettings,
@@ -375,6 +377,10 @@ fn worker(receiver: mpsc::Receiver<Change>, events: channel::Sender<Event>, nest
             if events.send(Event::Night(night, place)).is_err() {
                 return;
             }
+            let screens = ferrite_system::screens::ScreenMode::load(&settings);
+            if events.send(Event::Screens(screens)).is_err() {
+                return;
+            }
             notification_settings = Some(settings.clone());
             let scroll_inverted = settings.scroll_inverted();
             if known_scroll_inverted != Some(scroll_inverted) {
@@ -595,6 +601,12 @@ impl Ferrite {
                 }
             }
             Event::Idle(settings) => self.idle.settings = settings,
+            Event::Screens(mode) => {
+                if self.screen_mode != mode {
+                    self.screen_mode = mode;
+                    self.request_redraw();
+                }
+            }
             Event::Night(night, place) => {
                 if self.night.settings != night || self.night.place.as_ref() != Some(&place) {
                     self.night.settings = night;

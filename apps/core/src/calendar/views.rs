@@ -128,7 +128,7 @@ fn paint_chip(ui: &egui::Ui, rect: egui::Rect, color: Color32, text: &str, hover
     let font = if strong {
         FontId::new(11.5, style::strong_family())
     } else {
-        FontId::proportional(11.5)
+        FontId::proportional(ferrite_ui::tokens::typography::CAPTION)
     };
     let text = fit(painter, text, &font, rect.width() - 10.0);
     painter.text(
@@ -154,7 +154,7 @@ fn paint_task_chip(ui: &egui::Ui, rect: egui::Rect, color: Color32, task: &Task,
         color,
         false,
     );
-    let font = FontId::proportional(11.5);
+    let font = FontId::proportional(ferrite_ui::tokens::typography::CAPTION);
     let text = fit(painter, &task.title, &font, rect.width() - 20.0);
     let ink = if task.done {
         style::text_secondary()
@@ -347,7 +347,7 @@ pub fn month(ui: &mut egui::Ui, view: &mut Painter, cursor: Date) {
                     painter.rect_filled(chip, 4.0, style::tint(10));
                 }
                 painter.circle_filled(egui::pos2(chip.left() + 6.0, chip.center().y), 3.5, color);
-                let font = FontId::proportional(11.5);
+                let font = FontId::proportional(ferrite_ui::tokens::typography::CAPTION);
                 let text = fit(&painter, &text, &font, chip.width() - 16.0);
                 painter.text(
                     egui::pos2(chip.left() + 13.0, chip.center().y),
@@ -466,7 +466,7 @@ pub fn time_grid(
                 egui::Align2::RIGHT_CENTER
             },
             name,
-            FontId::proportional(12.5),
+            FontId::proportional(ferrite_ui::tokens::typography::SMALL),
             style::text_secondary(),
         );
         painter.text(
@@ -511,7 +511,7 @@ pub fn time_grid(
             egui::pos2(strip.left() + GUTTER - 8.0, strip.top() + 4.0 + CHIP / 2.0),
             egui::Align2::RIGHT_CENTER,
             "Journée",
-            FontId::proportional(10.5),
+            FontId::proportional(ferrite_ui::tokens::typography::CAPTION),
             style::text_secondary(),
         );
     }
@@ -653,7 +653,7 @@ pub fn time_grid(
                     egui::pos2(grid.left() + GUTTER - 10.0, y),
                     egui::Align2::RIGHT_CENTER,
                     format!("{hour:02}:00"),
-                    FontId::proportional(11.0),
+                    FontId::proportional(ferrite_ui::tokens::typography::CAPTION),
                     style::text_secondary(),
                 );
             }
@@ -737,7 +737,7 @@ pub fn time_grid(
                         egui::pos2(rect.left() + 8.0, rect.top() + 19.0),
                         egui::Align2::LEFT_TOP,
                         detail,
-                        FontId::proportional(11.0),
+                        FontId::proportional(ferrite_ui::tokens::typography::CAPTION),
                         style::text_secondary(),
                     );
                 }
@@ -834,7 +834,7 @@ pub fn occurrence_row(ui: &mut egui::Ui, view: &mut Painter, occurrence: &Occurr
                 egui::pos2(rect.left() + 10.0, rect.center().y + 8.0),
                 egui::Align2::LEFT_CENTER,
                 second,
-                FontId::proportional(11.5),
+                FontId::proportional(ferrite_ui::tokens::typography::CAPTION),
                 style::text_secondary(),
             );
         }

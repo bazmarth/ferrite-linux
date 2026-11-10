@@ -2692,30 +2692,32 @@ impl FilesState {
                     );
                 },
             );
-            details::section(ui, t, 0.0, "Général", None, |rows| {
-                let change = (!in_trash && !directory).then_some("Changer…");
-                outcome.change_opener =
-                    rows.value("Type", &properties.kind, false, opener.as_deref(), change);
-                let reveal = (!in_trash).then_some("Afficher");
-                outcome.reveal = rows.value("Emplacement", &parent, true, None, reveal);
-                rows.value("Taille", &size, false, on_disk.as_deref(), None);
-                let (when, date) = (format_time(properties.modified), format_date(properties.modified));
-                let date = (date != when).then_some(date.as_str());
-                rows.value("Modifié", &when, false, date, None);
-            });
-            let mode = mode_text(properties.mode);
-            details::section(ui, t, 18.0, "Autorisations", Some(&mode), |rows| {
-                let group = properties.group.clone();
-                for (who, sub, shift) in [
-                    ("Propriétaire", owner.as_str(), 6),
-                    ("Groupe", group.as_str(), 3),
-                    ("Autres", "tous les utilisateurs", 0),
-                ] {
-                    let mut level = access_level(properties.mode, shift);
-                    if rows.choice(who, sub, &["Aucun", "Lecture", "Lecture et écriture"], &mut level) {
-                        outcome.mode = Some(with_access(properties.mode, shift, level));
+            details::body(ui, |ui| {
+                details::section(ui, t, 0.0, "Général", None, |rows| {
+                    let change = (!in_trash && !directory).then_some("Changer…");
+                    outcome.change_opener =
+                        rows.value("Type", &properties.kind, false, opener.as_deref(), change);
+                    let reveal = (!in_trash).then_some("Afficher");
+                    outcome.reveal = rows.value("Emplacement", &parent, true, None, reveal);
+                    rows.value("Taille", &size, false, on_disk.as_deref(), None);
+                    let (when, date) = (format_time(properties.modified), format_date(properties.modified));
+                    let date = (date != when).then_some(date.as_str());
+                    rows.value("Modifié", &when, false, date, None);
+                });
+                let mode = mode_text(properties.mode);
+                details::section(ui, t, 18.0, "Autorisations", Some(&mode), |rows| {
+                    let group = properties.group.clone();
+                    for (who, sub, shift) in [
+                        ("Propriétaire", owner.as_str(), 6),
+                        ("Groupe", group.as_str(), 3),
+                        ("Autres", "tous les utilisateurs", 0),
+                    ] {
+                        let mut level = access_level(properties.mode, shift);
+                        if rows.choice(who, sub, &["Aucun", "Lecture", "Lecture et écriture"], &mut level) {
+                            outcome.mode = Some(with_access(properties.mode, shift, level));
+                        }
                     }
-                }
+                });
             });
             let footer = details::footer(
                 ui,

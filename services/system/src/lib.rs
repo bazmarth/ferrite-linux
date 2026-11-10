@@ -27,6 +27,7 @@ pub mod night;
 pub mod power;
 pub mod printers;
 pub mod rfkill;
+pub mod screens;
 pub mod shortcuts;
 pub mod sounds;
 pub mod time;

@@ -20,6 +20,7 @@ use std::{
 use ferrite_system::config::{Accent, ClockStyle};
 use ferrite_ui::{
     theme::{Color, Palette},
+    tokens::elevation,
     wallpaper::Image,
 };
 use fontdue::{Font, FontSettings};
@@ -76,17 +77,24 @@ const LAUNCHER_HEADER: f64 = 76.0;
 const LAUNCHER_TITLE: f64 = 40.0;
 const LAUNCHER_GAP: f64 = 14.0;
 const LAUNCHER_MAX_HEIGHT: f64 = 560.0;
-const LAUNCHER_RADIUS: f32 = 16.0;
+const LAUNCHER_RADIUS: f32 = 20.0;
 /// Défilement d'un cran de molette, en pixels.
 pub const LAUNCHER_SCROLL_STEP: f64 = 48.0;
-const CONTROLS_WIDTH: f64 = 380.0;
+const CONTROLS_WIDTH: f64 = 364.0;
 /// Écart entre les modules des réglages rapides, et entre eux et le bord du panneau.
 const CONTROLS_GAP: f64 = 14.0;
-const CONTROLS_PAD: f64 = 16.0;
-const CONTROLS_TILE: f64 = 64.0;
-/// Rangées de tuiles du centre de contrôle, deux par rangée.
-const CONTROLS_TILE_ROWS: f64 = 5.0;
-const CONTROLS_ROW: f64 = 36.0;
+const CONTROLS_PAD: f64 = 14.0;
+/// Grandes tuiles Wi-Fi et Bluetooth, côte à côte en tête du panneau.
+const CONTROLS_TILE: f64 = 60.0;
+/// Grille des bascules rondes : quatre par rangée, deux rangées ; cellule (disque de 46 et
+/// libellé dessous) et écart entre deux rangées.
+const CONTROLS_ROUND: f64 = 46.0;
+const CONTROLS_ROUND_CELL: f64 = 66.0;
+const CONTROLS_ROUND_ROWS: f64 = 2.0;
+const CONTROLS_ROUND_GAP: f64 = 12.0;
+/// Curseurs épais (volume, luminosité) et pied (batterie, boutons ronds).
+const CONTROLS_ROW: f64 = 40.0;
+const CONTROLS_FOOTER: f64 = 36.0;
 /// Listes Wi-Fi et Bluetooth : haut (retour, titre), bas (état, lien), ligne, titre de groupe,
 /// et place du mot de passe demandé sur une ligne.
 const CONTROLS_LIST_TOP: f64 = 62.0;
@@ -143,8 +151,9 @@ fn tint(alpha: u8) -> Color {
     themed(Color::BLACK, Color::WHITE).with_alpha(alpha)
 }
 
-/// Barre du haut : #0A0E14 à 55 % sur le fond d'écran, écriture blanche.
-const BAR_VEIL: Color = Color::rgb(0x0A0E14).with_alpha(140);
+/// Barre du haut : voile léger (#0A0E14 à 35 %) sur le fond d'écran, écriture blanche ;
+/// le fond d'écran se devine dessous (charte).
+const BAR_VEIL: Color = Color::rgb(0x0A0E14).with_alpha(90);
 
 /// Taille à donner à `Canvas::label` pour un texte de `css` pixels (la police y est agrandie
 /// de 1,22 fois).
@@ -152,9 +161,16 @@ const fn px(css: f32) -> f32 {
     css / 1.22
 }
 
-/// Fond des panneaux système : #FAFBFC à 97 %, ou la surface sombre.
+/// Fond des panneaux système : gris très clair à 97 %, ou la surface sombre. Les
+/// commandes posées dessus sont plus claires ([`raised_fill`]).
 fn panel_fill() -> Color {
-    themed(Color::rgb(0xFAFBFC), Color::rgb(0x2A2E35)).with_alpha(247)
+    themed(Color::rgb(0xF2F3F5), Color::rgb(0x2A2E35)).with_alpha(247)
+}
+
+/// Commande posée sur un panneau (bascule éteinte, curseur, bouton rond) : blanche en
+/// clair, un cran plus claire que le panneau en sombre.
+fn raised_fill() -> Color {
+    themed(palette().window_background, palette().control_pressed)
 }
 
 /// Fond des boutons et des tuiles éteintes.
@@ -173,6 +189,11 @@ fn text_secondary() -> Color {
 fn accent() -> Color {
     let rgb = ACCENT_RGB.load(Ordering::Relaxed);
     accent_for(palette(), (rgb != 0).then_some(rgb))
+}
+
+/// Encre lisible sur l'accent : blanc sur un bleu foncé, foncée sur un bleu clair.
+fn accent_ink() -> Color {
+    accent().ink_on()
 }
 
 fn accent_for(palette: Palette, rgb: Option<u32>) -> Color {
@@ -227,9 +248,10 @@ pub enum DesktopAction {
     ToggleAirplane,
     /// Rétroéclairage du clavier : niveau suivant, puis éteint.
     CycleKeyboardLight,
-    /// Mode nuit : allumer ou éteindre tout de suite, ou ouvrir ses réglages.
+    /// Mode nuit : allumer ou éteindre tout de suite.
     ToggleNight,
-    OpenNightSettings,
+    /// Second écran : dupliquer ou étendre.
+    ToggleScreens,
     /// Tuile Clavier : passe à l'autre disposition.
     ToggleKeyboardLayout,
     /// Chevron d'une tuile, ou retour aux tuiles.
@@ -723,6 +745,8 @@ pub struct DesktopView {
     pub power_saver: Option<bool>,
     /// Mode nuit : teinte active, et l'état écrit sur sa tuile.
     pub night: (bool, String),
+    /// Second écran branché : son mode (sinon pas de tuile « Second écran »).
+    pub second_screen: Option<ferrite_system::screens::ScreenMode>,
     pub power: Option<PowerAction>,
     /// Mot de passe administrateur demandé (polkit).
     pub auth: Option<AuthView>,
@@ -844,7 +868,58 @@ fn without_unseen(mut state: VisualState) -> VisualState {
 }
 
 /// État dessiné, image plein écran des panneaux et panneau animé.
-type PanelsCache = (VisualState, Option<MemoryRenderBuffer>, Option<PopoverLayer>);
+type PanelsCache = (VisualState, Option<Raster>, Option<PopoverLayer>);
+
+/// Image des panneaux, réduite à sa partie non transparente : seule cette partie est
+/// envoyée à la carte graphique et mélangée par-dessus les fenêtres.
+#[derive(Debug)]
+struct Raster {
+    buffer: MemoryRenderBuffer,
+    /// Place et taille de l'image dans l'écran, en pixels physiques.
+    origin: (u32, u32),
+    size: (u32, u32),
+}
+
+/// Plus petit rectangle (x, y, largeur, hauteur) qui contient tous les pixels non
+/// transparents d'une image ARGB, aligné sur `step` pixels ; `None` si tout est transparent.
+fn opaque_bounds(pixels: &[u8], width: u32, height: u32, step: u32) -> Option<(u32, u32, u32, u32)> {
+    let (w, h) = (width as usize, height as usize);
+    if w == 0 || h == 0 || pixels.len() < w * h * 4 {
+        return None;
+    }
+    let row = |y: usize| &pixels[y * w * 4..(y + 1) * w * 4];
+    // Seul l'alpha compte (octet 3 de chaque pixel, ordre B, V, R, A en mémoire).
+    let empty = |line: &[u8]| line.chunks_exact(4).all(|pixel| pixel[3] == 0);
+    let top = (0..h).find(|y| !empty(row(*y)))?;
+    let bottom = (top..h).rev().find(|y| !empty(row(*y)))?;
+    let (mut left, mut right) = (w, 0);
+    for y in top..=bottom {
+        let line = row(y);
+        if let Some(first) = (0..left).find(|x| line[x * 4 + 3] != 0) {
+            left = first;
+        }
+        if let Some(last) = (right..w).rev().find(|x| line[x * 4 + 3] != 0) {
+            right = last;
+        }
+    }
+    let step = step.max(1) as usize;
+    let x0 = left / step * step;
+    let y0 = top / step * step;
+    let x1 = (right + 1).div_ceil(step) * step;
+    let y1 = (bottom + 1).div_ceil(step) * step;
+    let (x1, y1) = (x1.min(w), y1.min(h));
+    Some((x0 as u32, y0 as u32, (x1 - x0) as u32, (y1 - y0) as u32))
+}
+
+/// Recopie le rectangle `(x, y, largeur, hauteur)` d'une image ARGB de `width` de large.
+fn crop_pixels(pixels: &[u8], width: u32, (x, y, w, h): (u32, u32, u32, u32)) -> Vec<u8> {
+    let mut out = Vec::with_capacity(w as usize * h as usize * 4);
+    for line in y..y + h {
+        let start = (line as usize * width as usize + x as usize) * 4;
+        out.extend_from_slice(&pixels[start..start + w as usize * 4]);
+    }
+    out
+}
 
 /// Vrai quand l'image plein écran des panneaux (`rasterize`) resterait transparente : pas
 /// de verrouillage, de menu, de vue d'ensemble, de sélection ni de dialogue. La barre,
@@ -1274,8 +1349,8 @@ impl Panels {
             }
         }
 
-        if let (Some(lock), Some(buffer)) = (&lock_now, buffer) {
-            for layer in self.lock_elements(state, lock, scale, buffer) {
+        if let (Some(lock), Some(raster)) = (&lock_now, buffer) {
+            for layer in self.lock_elements(state, lock, scale, &raster.buffer) {
                 let rect = layer.rect;
                 let source = (f64::from(layer.pixels.0), f64::from(layer.pixels.1));
                 match MemoryRenderBufferRenderElement::from_buffer(
@@ -1298,15 +1373,25 @@ impl Panels {
                     ),
                 }
             }
-        } else if let Some(buffer) = buffer {
-            let physical_size = (output_geo.size.w as f64 * scale, output_geo.size.h as f64 * scale);
+        } else if let Some(raster) = buffer {
+            let (x, y) = raster.origin;
+            let (w, h) = raster.size;
+            // Image entière : taille de l'écran ; découpée : échelle entière, donc exacte.
+            let size = if (w, h) == physical_size(state, scale) {
+                output_geo.size
+            } else {
+                Size::from((
+                    (w as f64 / scale).round() as i32,
+                    (h as f64 / scale).round() as i32,
+                ))
+            };
             match MemoryRenderBufferRenderElement::from_buffer(
                 renderer,
-                Point::from((0.0, 0.0)),
-                buffer,
+                Point::from((x as f64, y as f64)),
+                &raster.buffer,
                 None,
-                Some(Rectangle::<f64, Logical>::from_size(physical_size.into())),
-                Some(output_geo.size),
+                Some(Rectangle::<f64, Logical>::from_size((w as f64, h as f64).into())),
+                Some(size),
                 Kind::Unspecified,
             ) {
                 Ok(element) => out.push(super::super::render::OutputElement::Memory(element)),
@@ -1927,7 +2012,7 @@ impl Panels {
         (buffer, (width, height))
     }
 
-    fn rasterize(&self, state: &VisualState, scale: f64) -> MemoryRenderBuffer {
+    fn rasterize(&self, state: &VisualState, scale: f64) -> Raster {
         let width = (state.width as f64 * scale).round().max(1.0) as u32;
         let height = (state.height as f64 * scale).round().max(1.0) as u32;
         let mut canvas = Canvas {
@@ -1961,7 +2046,7 @@ impl Panels {
             if let Some(power) = view.power {
                 self.draw_dialog(&mut canvas, &layout, power, view);
             }
-            return MemoryRenderBuffer::from_slice(
+            let buffer = MemoryRenderBuffer::from_slice(
                 &canvas.pixels,
                 Fourcc::Argb8888,
                 (width as i32, height as i32),
@@ -1969,6 +2054,11 @@ impl Panels {
                 smithay::utils::Transform::Normal,
                 None,
             );
+            return Raster {
+                buffer,
+                origin: (0, 0),
+                size: (width, height),
+            };
         }
 
         // Barre du haut : dessinée à part, par `rasterize_bar`.
@@ -2037,14 +2127,32 @@ impl Panels {
             self.draw_auth(&mut canvas, &layout, auth);
         }
 
-        MemoryRenderBuffer::from_slice(
-            &canvas.pixels,
-            Fourcc::Argb8888,
-            (width as i32, height as i32),
-            1,
-            smithay::utils::Transform::Normal,
-            None,
-        )
+        // Seule la partie dessinée part vers la carte graphique (un menu, pas tout l'écran).
+        // À une échelle fractionnaire, la découpe tomberait entre deux pixels : image entière.
+        let whole = (0, 0, width, height);
+        let bounds = if scale.fract().abs() < 1e-3 {
+            opaque_bounds(&canvas.pixels, width, height, scale.round() as u32).unwrap_or(whole)
+        } else {
+            whole
+        };
+        let pixels = if bounds == whole {
+            canvas.pixels
+        } else {
+            crop_pixels(&canvas.pixels, width, bounds)
+        };
+        let (x, y, w, h) = bounds;
+        Raster {
+            buffer: MemoryRenderBuffer::from_slice(
+                &pixels,
+                Fourcc::Argb8888,
+                (w as i32, h as i32),
+                1,
+                smithay::utils::Transform::Normal,
+                None,
+            ),
+            origin: (x, y),
+            size: (w, h),
+        }
     }
 
     /// Panneau animé ouvert, seul, découpé à sa place (ombre comprise).
@@ -2066,11 +2174,13 @@ impl Panels {
         let layout = Layout::new(state.width as f64, state.height as f64, view);
         self.draw_controls(&mut canvas, &layout, state);
         let card = layout.controls();
-        // Marge pour l'ombre, en pixels physiques entiers.
-        let left = ((card.x - 16.0) * scale).floor().max(0.0) as u32;
-        let top = ((card.y - 16.0) * scale).floor().max(0.0) as u32;
-        let right = (((card.x + card.w + 16.0) * scale).ceil() as u32).min(width);
-        let bottom = (((card.y + card.h + 20.0) * scale).ceil() as u32).min(height);
+        // Ombre entière (`Canvas::panel_shadow`), en pixels physiques entiers : la couper
+        // laisserait un bord net sur un fond clair.
+        let (side, above, below) = shadow_margins(elevation::PANEL);
+        let left = ((card.x - side) * scale).floor().max(0.0) as u32;
+        let top = ((card.y - above) * scale).floor().max(0.0) as u32;
+        let right = (((card.x + card.w + side) * scale).ceil() as u32).min(width);
+        let bottom = (((card.y + card.h + below) * scale).ceil() as u32).min(height);
         if right <= left || bottom <= top {
             return None;
         }
@@ -2161,12 +2271,21 @@ impl Panels {
 
     fn draw_bar(&self, canvas: &mut Canvas, layout: &Layout, state: &VisualState) {
         let view = &state.view;
-        let (veil, ink, pill) = if view.bar_opaque {
-            (palette().titlebar, primary_text(), tint(26))
+        let (veil, ink, pill, rest) = if view.bar_opaque {
+            (palette().titlebar, primary_text(), tint(26), tint(12))
         } else {
-            (BAR_VEIL, Color::WHITE, Color::WHITE.with_alpha(46))
+            (
+                BAR_VEIL,
+                Color::WHITE,
+                Color::WHITE.with_alpha(56),
+                Color::WHITE.with_alpha(26),
+            )
         };
         canvas.fill(Rect::new(0.0, 0.0, layout.w, layout.bar), 0.0, veil);
+        // Indicateurs groupés dans une pastille, toujours visible : on voit qu'ils ouvrent
+        // le centre de contrôle.
+        let group = layout.indicators_group();
+        canvas.fill(Rect::new(group.x, 5.0, group.w, layout.bar - 10.0), 13.0, rest);
         let applications = layout.applications_button();
         // Pastille sous l'élément de la barre dont le panneau est ouvert.
         let open = view.popover.and_then(|popover| match popover {
@@ -2176,7 +2295,7 @@ impl Panels {
             Popover::Clipboard | Popover::DockMenu | Popover::DesktopMenu | Popover::Screenshot => None,
         });
         if let Some(rect) = open {
-            canvas.fill(Rect::new(rect.x, 4.0, rect.w, layout.bar - 8.0), 8.0, pill);
+            canvas.fill(Rect::new(rect.x, 5.0, rect.w, layout.bar - 10.0), 13.0, pill);
         }
         // Symbole de Ferrite OS sans tuile, de la teinte du texte de la barre : blanc sur le
         // voile sombre ou la barre opaque du thème sombre, sombre sur la barre opaque claire.
@@ -2185,20 +2304,7 @@ impl Panels {
         } else {
             "ferrite-symbol"
         };
-        canvas.icon(
-            symbol,
-            (applications.x + 20.0, layout.bar / 2.0),
-            20.0,
-            Style::Color,
-        );
-        canvas.bar_label(
-            &self.bold,
-            "Applications",
-            applications.x + 40.0,
-            px(14.0),
-            ink,
-            layout.bar,
-        );
+        canvas.icon(symbol, applications.center(), 19.0, Style::Color);
         // Une marque par bureau : une pilule pour celui qui est affiché.
         for page in 0..view.page_count {
             let slot = layout.page_dot(page);
@@ -2268,31 +2374,7 @@ impl Panels {
         let card = layout.launcher();
         let content = layout.launcher_content();
         let frost = self.frost(canvas, card);
-        // Voile de 40 % sur tout le bureau, ombre et verre : ils ne changent qu'avec
-        // l'écran, alors que le reste est redessiné à chaque touche de la recherche et à
-        // chaque pas de défilement. Le menu est dessiné le premier, sur une toile vide.
-        let key = (
-            canvas.width,
-            canvas.height,
-            canvas.scale.to_bits(),
-            card,
-            panel_fill(),
-        );
-        let mut backdrop = self.launcher_backdrop.borrow_mut();
-        match backdrop.as_ref() {
-            Some((known, pixels)) if *known == key => canvas.pixels.copy_from_slice(pixels),
-            _ => {
-                canvas.fill(
-                    Rect::new(0.0, 0.0, layout.w, layout.h),
-                    0.0,
-                    Color::BLACK.with_alpha(102),
-                );
-                canvas.panel_shadow(card, LAUNCHER_RADIUS);
-                canvas.blit_frost(&frost, None);
-                *backdrop = Some((key, canvas.pixels.clone()));
-            }
-        }
-        drop(backdrop);
+        self.launcher_backdrop(canvas, card, &frost);
 
         // Ce qui défile peut déborder du panneau : l'écran autour est gardé puis remis.
         let margin = LAUNCHER_CELL.1 + LAUNCHER_TITLE + LAUNCHER_GAP;
@@ -2305,10 +2387,10 @@ impl Panels {
                     let title = &launcher.sections[section].title;
                     canvas.label(
                         &self.bold,
-                        &title.to_uppercase(),
+                        title,
                         rect.x,
                         rect.y + 15.0,
-                        px(11.0),
+                        px(12.0),
                         text_secondary(),
                     );
                 }
@@ -2326,7 +2408,7 @@ impl Panels {
         canvas.blit_frost(&frost, Some((content.bottom(), card.bottom())));
         // Champ de recherche de 48 px.
         let field = Rect::new(card.x + 16.0, card.y + 16.0, card.w - 32.0, 48.0);
-        canvas.fill(field, 10.0, control_fill());
+        canvas.fill(field, 12.0, raised_fill());
         canvas.icon(
             "cc-search",
             (field.x + 24.0, field.y + 24.0),
@@ -2489,6 +2571,67 @@ impl Panels {
         }
     }
 
+    /// Ombre et verre du lanceur (sans voile : le bureau reste visible autour), posés sur
+    /// une toile vide. Ils ne changent qu'avec l'écran et le thème, alors que le reste est
+    /// redessiné à chaque touche de la recherche et à chaque pas de défilement : ils sont
+    /// gardés, et préparés d'avance quand le lanceur est fermé
+    /// ([`Panels::warm_launcher_backdrop`]).
+    fn launcher_backdrop(&self, canvas: &mut Canvas, card: Rect, frost: &Frost) {
+        let key = (
+            canvas.width,
+            canvas.height,
+            canvas.scale.to_bits(),
+            card,
+            panel_fill(),
+        );
+        let mut backdrop = self.launcher_backdrop.borrow_mut();
+        match backdrop.as_ref() {
+            Some((known, pixels)) if *known == key => canvas.pixels.copy_from_slice(pixels),
+            _ => {
+                canvas.panel_shadow(card, LAUNCHER_RADIUS);
+                canvas.blit_frost(frost, None);
+                *backdrop = Some((key, canvas.pixels.clone()));
+            }
+        }
+    }
+
+    /// Lanceur fermé : prépare son ombre et son verre s'ils ne sont pas prêts (au
+    /// démarrage, après un changement d'écran ou de thème), pour que la première
+    /// ouverture n'attende pas (environ 45 ms sinon).
+    pub fn warm_launcher_backdrop(
+        &self,
+        output_geo: Rectangle<i32, Logical>,
+        scale: f64,
+        view: &DesktopView,
+    ) {
+        let (w, h) = (output_geo.size.w.max(1) as f64, output_geo.size.h.max(1) as f64);
+        let width = (w * scale).round().max(1.0) as u32;
+        let height = (h * scale).round().max(1.0) as u32;
+        let layout = Layout::new(w, h, view);
+        let card = layout.launcher();
+        let key = (width, height, (scale as f32).to_bits(), card, panel_fill());
+        if self
+            .launcher_backdrop
+            .borrow()
+            .as_ref()
+            .is_some_and(|(known, _)| *known == key)
+        {
+            return;
+        }
+        let mut canvas = Canvas {
+            pixels: vec![0; width as usize * height as usize * 4],
+            width,
+            height,
+            scale: scale as f32,
+            bold: &self.bold,
+            icons: &self.icons,
+        };
+        let frost = self.frost(&canvas, card);
+        crate::render::profile::raster("fond du lanceur", || {
+            self.launcher_backdrop(&mut canvas, card, &frost);
+        });
+    }
+
     /// Fond du lanceur dans le rectangle arrondi `card`, gardé pour recouvrir ce qui déborde
     /// au défilement, tant que la place, l'échelle et le thème ne changent pas.
     fn frost(&self, canvas: &Canvas, card: Rect) -> Arc<Frost> {
@@ -2574,7 +2717,7 @@ impl Panels {
                 canvas.pixels[*offset..*offset + saved.len()].copy_from_slice(saved);
             }
             _ => {
-                canvas.glass(card, 16.0);
+                canvas.glass(card, 20.0);
                 *backdrop = Some((key, canvas.save_rows(rows.0, rows.1)));
             }
         }
@@ -2605,33 +2748,11 @@ impl Panels {
             Some(true) if view.controls.connected_devices > 0 => devices.as_str(),
             Some(on) => on_off(on),
         };
-        let dark = if view.dark_theme { "Activé" } else { "Désactivé" };
-        let dnd = on_off(view.notifications.do_not_disturb);
-        let saver = match view.power_saver {
-            None => "Indisponible",
-            Some(true) => "Activée",
-            Some(false) => "Désactivée",
-        };
-        let airplane = match view.airplane {
-            None => "Aucune radio",
-            Some(on) => on_off(on),
-        };
-        let keyboard_light = match view.keyboard_light {
-            None => "Absent",
-            Some((0, _)) => "Éteint",
-            Some((level, max)) if level >= max => "Fort",
-            Some(_) => "Faible",
-        };
-        let tiles: [(Control, &str, &str, &str, bool); 9] = [
-            (
-                Control::Night,
-                "cc-night",
-                "Mode nuit",
-                view.night.1.as_str(),
-                view.night.0,
-            ),
+        // Tête : Wi-Fi et Bluetooth, grandes tuiles ; le chevron ouvre la liste.
+        let big = [
             (
                 Control::Wifi,
+                Control::WifiMore,
                 "cc-wifi",
                 "Wi-Fi",
                 wifi_state,
@@ -2639,55 +2760,20 @@ impl Panels {
             ),
             (
                 Control::Bluetooth,
+                Control::BluetoothMore,
                 "cc-bluetooth",
                 "Bluetooth",
                 bluetooth_state,
                 view.bluetooth == Some(true),
             ),
-            (Control::Dark, "cc-dark", "Mode sombre", dark, view.dark_theme),
-            (
-                Control::DoNotDisturb,
-                "cc-dnd",
-                "Ne pas déranger",
-                dnd,
-                view.notifications.do_not_disturb,
-            ),
-            (
-                Control::Saver,
-                "cc-saver",
-                "Économie d’énergie",
-                saver,
-                view.power_saver == Some(true),
-            ),
-            (Control::Keyboard, "cc-keyboard", "Clavier", &view.keyboard, false),
-            (
-                Control::Airplane,
-                "cc-airplane",
-                "Mode avion",
-                airplane,
-                view.airplane == Some(true),
-            ),
-            (
-                Control::KeyboardLight,
-                "cc-keyboard-light",
-                "Rétroéclairage",
-                keyboard_light,
-                view.keyboard_light.is_some_and(|(level, _)| level > 0),
-            ),
         ];
-        for (control, glyph, name, status, on) in tiles {
+        for (control, more, glyph, name, status, on) in big {
             let tile = layout.control_row(control);
-            let (fill, disc, ink, title, sub) = if on {
-                let white = Color::WHITE;
-                (accent(), white.with_alpha(56), white, white, Color::rgb(0xE4EEFB))
+            let (fill, disc, ink, sub) = if on {
+                let ink = accent_ink();
+                (accent(), ink.with_alpha(40), ink, ink.with_alpha(205))
             } else {
-                (
-                    control_fill(),
-                    palette().window_background,
-                    palette().heading,
-                    primary_text(),
-                    text_secondary(),
-                )
+                (raised_fill(), tint(10), palette().heading, text_secondary())
             };
             canvas.fill(tile, 16.0, fill);
             let center = (tile.x + 29.0, tile.y + tile.h / 2.0);
@@ -2697,30 +2783,97 @@ impl Panels {
                 disc,
             );
             canvas.icon(glyph, center, 18.0, Style::Symbolic(ink));
-            // Wi-Fi et Bluetooth : la tuile active, le chevron ouvre la liste.
-            let chevron = match control {
-                Control::Wifi => Some(layout.control_row(Control::WifiMore)),
-                Control::Bluetooth => Some(layout.control_row(Control::BluetoothMore)),
-                Control::Night => Some(layout.control_row(Control::NightMore)),
-                _ => None,
-            };
-            let mut room = tile.w - 56.0 - 8.0;
-            if let Some(more) = chevron {
-                room -= more.w;
-                let line = if on { Color::WHITE.with_alpha(51) } else { tint(26) };
-                canvas.fill(Rect::new(more.x, tile.y, 1.0, tile.h), 0.0, line);
-                canvas.icon("cc-chevron", more.center(), 14.0, Style::Symbolic(ink));
-            }
+            let more = layout.control_row(more);
+            canvas.icon("cc-chevron", more.center(), 13.0, Style::Symbolic(ink));
+            let room = tile.w - 56.0 - more.w;
             let name = canvas.fit_text(&self.bold, name, px(13.0), room);
-            canvas.label(&self.bold, &name, tile.x + 56.0, tile.y + 14.0, px(13.0), title);
+            let title = if on { ink } else { primary_text() };
+            canvas.label(&self.bold, &name, tile.x + 56.0, tile.y + 12.0, px(13.0), title);
             let status = canvas.fit_text(&self.regular, status, px(12.0), room);
             canvas.label(
                 &self.regular,
                 &status,
                 tile.x + 56.0,
-                tile.y + 33.0,
+                tile.y + 31.0,
                 px(12.0),
                 sub,
+            );
+        }
+
+        // Bascules rondes : la couleur seule dit l'état ; grisées si la machine ne les
+        // offre pas.
+        let layout_code = view.keyboard.split_whitespace().next().unwrap_or("");
+        let keyboard_name = if layout_code.is_empty() {
+            "Clavier".to_owned()
+        } else {
+            format!("Clavier {layout_code}")
+        };
+        let mut rounds: Vec<(Control, &str, &str, bool, bool)> = vec![
+            (Control::Dark, "cc-dark", "Mode sombre", view.dark_theme, true),
+            (
+                Control::DoNotDisturb,
+                "cc-dnd",
+                "Silence",
+                view.notifications.do_not_disturb,
+                true,
+            ),
+            (Control::Night, "cc-night", "Mode nuit", view.night.0, true),
+            (
+                Control::Airplane,
+                "cc-airplane",
+                "Mode avion",
+                view.airplane == Some(true),
+                view.airplane.is_some(),
+            ),
+            (
+                Control::Saver,
+                "cc-saver",
+                "Économie",
+                view.power_saver == Some(true),
+                view.power_saver.is_some(),
+            ),
+            (
+                Control::KeyboardLight,
+                "cc-keyboard-light",
+                "Rétroéclairage",
+                view.keyboard_light.is_some_and(|(level, _)| level > 0),
+                view.keyboard_light.is_some(),
+            ),
+            (Control::Keyboard, "cc-keyboard", &keyboard_name, false, true),
+        ];
+        if let Some(mode) = view.second_screen {
+            use ferrite_system::screens::ScreenMode;
+            let (name, on) = match mode {
+                ScreenMode::Duplicate => ("Écran dupliqué", false),
+                ScreenMode::Extend => ("Écran étendu", true),
+            };
+            rounds.push((Control::Screens, "cc-screen", name, on, true));
+        }
+        for (control, glyph, name, on, available) in rounds {
+            let cell = layout.control_row(control);
+            let disc = Rect::new(
+                cell.x + (cell.w - CONTROLS_ROUND) / 2.0,
+                cell.y,
+                CONTROLS_ROUND,
+                CONTROLS_ROUND,
+            );
+            let (fill, ink) = if on {
+                (accent(), accent_ink())
+            } else {
+                (raised_fill(), palette().heading)
+            };
+            let dim = |color: Color| if available { color } else { color.with_alpha(90) };
+            canvas.fill(disc, (CONTROLS_ROUND / 2.0) as f32, dim(fill));
+            canvas.icon(glyph, disc.center(), 19.0, Style::Symbolic(dim(ink)));
+            let name = canvas.fit_text(&self.regular, name, px(11.0), cell.w - 2.0);
+            let width = canvas.text_width(&self.regular, &name, px(11.0));
+            canvas.label(
+                &self.regular,
+                &name,
+                cell.x + (cell.w - width) / 2.0,
+                disc.bottom() + 6.0,
+                px(11.0),
+                dim(palette().heading),
             );
         }
 
@@ -2731,33 +2884,18 @@ impl Panels {
         for (control, glyph, value) in sliders {
             // Pas de curseur pour un réglage que la machine n'offre pas.
             let Some(value) = value else { continue };
-            let row = layout.control_row(control);
-            let ink = palette().heading;
+            let track = layout.slider_track(control);
+            canvas.slider(track, value);
+            let ink = themed(palette().heading, palette().inverse_text);
             canvas.icon(
                 glyph,
-                (row.x + 10.0, row.y + row.h / 2.0),
-                20.0,
+                (track.x + track.h / 2.0, track.y + track.h / 2.0),
+                18.0,
                 Style::Symbolic(ink),
-            );
-            canvas.slider(layout.slider_track(control), value);
-            let text = format!("{value} %");
-            let width = canvas.text_width(&self.regular, &text, px(12.0));
-            canvas.label(
-                &self.regular,
-                &text,
-                row.right() - width,
-                row.y + 11.0,
-                px(12.0),
-                text_secondary(),
             );
         }
 
         let footer = layout.controls_footer();
-        canvas.fill(
-            Rect::new(footer.x, footer.y, footer.w, 1.0),
-            0.0,
-            palette().separator,
-        );
         let battery = state.battery.map_or(String::new(), |battery| {
             let status = if battery.charging { " · en charge" } else { "" };
             format!("{} %{status}", battery.percent)
@@ -2765,27 +2903,23 @@ impl Panels {
         canvas.label(
             &self.regular,
             &battery,
-            footer.x,
-            footer.y + 23.0,
-            px(13.0),
-            palette().heading,
+            footer.x + 2.0,
+            footer.y + (footer.h - 12.0 * 1.22) / 2.0 - 1.0,
+            px(12.0),
+            text_secondary(),
         );
-        // Boutons ronds, de gauche à droite : compte, Paramètres, verrouiller, éteindre.
+        // Boutons ronds, de gauche à droite : compte, Paramètres, verrouiller, éteindre ;
+        // tous neutres, l'arrêt demande de toute façon confirmation.
         let round = [
-            (Control::Account, "cc-account", control_fill()),
-            (Control::Settings, "glyph-gear", control_fill()),
-            (Control::Lock, "cc-lock", control_fill()),
-            (Control::Power, "cc-power", destructive()),
+            (Control::Account, "cc-account"),
+            (Control::Settings, "glyph-gear"),
+            (Control::Lock, "cc-lock"),
+            (Control::Power, "cc-power"),
         ];
-        for (control, glyph, fill) in round {
+        for (control, glyph) in round {
             let button = layout.control_row(control);
-            canvas.fill(button, button.h as f32 / 2.0, fill);
-            let ink = if control == Control::Power {
-                Color::WHITE
-            } else {
-                palette().heading
-            };
-            canvas.icon(glyph, button.center(), 16.0, Style::Symbolic(ink));
+            canvas.fill(button, button.h as f32 / 2.0, raised_fill());
+            canvas.icon(glyph, button.center(), 16.0, Style::Symbolic(palette().heading));
         }
 
         if let Some(error) = &view.error {
@@ -3020,7 +3154,7 @@ impl Panels {
             control_fill(),
             primary_text(),
         );
-        canvas.button(layout.password_submit(), "Se connecter", accent(), Color::WHITE);
+        canvas.button(layout.password_submit(), "Se connecter", accent(), accent_ink());
     }
 
     fn draw_controls_bluetooth(&self, canvas: &mut Canvas, layout: &Layout, view: &DesktopView) {
@@ -3065,7 +3199,7 @@ impl Panels {
             }
             let center = (row.x + 33.0, row.y + CONTROLS_LIST_ROW / 2.0);
             let (disc, ink) = if device.connected {
-                (accent(), Color::WHITE)
+                (accent(), accent_ink())
             } else {
                 (control_fill(), primary_text())
             };
@@ -3100,8 +3234,8 @@ impl Panels {
             );
             let (text, fill, text_ink) = match (device.connected, device.paired) {
                 (true, _) => ("Déconnecter", control_fill(), primary_text()),
-                (false, true) => ("Connecter", accent(), Color::WHITE),
-                (false, false) => ("Associer", accent(), Color::WHITE),
+                (false, true) => ("Connecter", accent(), accent_ink()),
+                (false, false) => ("Associer", accent(), accent_ink()),
             };
             let (fill, text_ink) = if device.busy {
                 (control_fill(), text_secondary())
@@ -3160,7 +3294,7 @@ impl Panels {
         if hovered {
             canvas.fill(row, 6.0, accent());
         }
-        let ink = if hovered { Color::WHITE } else { primary_text() };
+        let ink = if hovered { accent_ink() } else { primary_text() };
         canvas.label(&self.regular, text, row.x + 10.0, row.y + 8.0, px(13.0), ink);
     }
 
@@ -3299,7 +3433,7 @@ impl Panels {
         // Bandeau d'une suppression, avec « Annuler ».
         if let Some(text) = view.toast {
             let toast = layout.clipboard_toast();
-            canvas.panel_shadow(toast, 12.0);
+            canvas.floating_shadow(toast, 12.0, elevation::MENU);
             canvas.fill(toast, 12.0, t.toast_bg);
             let fit = ellipsize_to(canvas, &self.regular, text, px(13.0), toast.w - 120.0);
             canvas.text(
@@ -3621,14 +3755,14 @@ impl Panels {
                 );
             }
             let (font, ink) = if current {
-                (&self.bold, Color::WHITE)
+                (&self.bold, accent_ink())
             } else {
                 (&self.regular, primary_text())
             };
             let width = canvas.text_width(font, &text, px(13.0));
             canvas.label(font, &text, center.0 - width / 2.0, center.1 - 9.0, px(13.0), ink);
             if busy & (1 << (day - 1)) != 0 {
-                let dot = if current { Color::WHITE } else { accent() };
+                let dot = if current { accent_ink() } else { accent() };
                 canvas.fill(Rect::new(center.0 - 2.0, center.1 + 9.0, 4.0, 4.0), 2.0, dot);
             }
         }
@@ -4332,10 +4466,10 @@ pub fn action_at(
             ControlsPage::Main => {
                 let on = |control| layout.control_row(control).contains(pos);
                 let percent = |control| slider_percent(layout.slider_track(control), pos.x);
-                if on(Control::NightMore) {
-                    DesktopAction::OpenNightSettings
-                } else if on(Control::Night) {
+                if on(Control::Night) {
                     DesktopAction::ToggleNight
+                } else if on(Control::Screens) {
+                    DesktopAction::ToggleScreens
                 } else if on(Control::WifiMore) && view.wifi.is_some() {
                     DesktopAction::ControlsPage(ControlsPage::Wifi)
                 } else if on(Control::BluetoothMore) && view.bluetooth.is_some() {
@@ -4713,9 +4847,9 @@ enum Control {
     Keyboard,
     Airplane,
     KeyboardLight,
-    /// Tuile large du mode nuit, et son chevron (réglages).
+    /// Bascules rondes du mode nuit et du second écran (quand un écran est branché).
     Night,
-    NightMore,
+    Screens,
     Volume,
     Brightness,
     /// Chevrons des tuiles Wi-Fi et Bluetooth.
@@ -4743,6 +4877,8 @@ struct Layout {
     volume: bool,
     brightness: bool,
     error: bool,
+    /// Un second écran est branché : une rangée de tuiles en plus.
+    second_screen: bool,
 }
 
 impl Layout {
@@ -4796,8 +4932,8 @@ impl Layout {
     }
 
     fn applications_button(&self) -> Rect {
-        // Logo de 20 px, « Applications » en demi-gras, et une marge de chaque côté.
-        Rect::new(6.0, 0.0, 138.0, self.bar)
+        // Le symbole seul (charte : barre épurée), dans une case de 40 px.
+        Rect::new(6.0, 0.0, 40.0, self.bar)
     }
 
     /// Indicateurs présents, de gauche à droite.
@@ -4912,13 +5048,14 @@ impl Layout {
                     .count() as f64;
                 let error = if self.error { 22.0 } else { 0.0 };
                 2.0 * CONTROLS_PAD
-                    + CONTROLS_TILE_ROWS * CONTROLS_TILE
-                    + (CONTROLS_TILE_ROWS - 1.0) * 10.0
+                    + CONTROLS_TILE
                     + CONTROLS_GAP
-                    + sliders * (CONTROLS_ROW + 6.0)
+                    + Self::round_grid_height()
                     + CONTROLS_GAP
-                    + 13.0
-                    + CONTROLS_ROW
+                    + sliders * (CONTROLS_ROW + 8.0)
+                    + CONTROLS_GAP
+                    - 8.0
+                    + CONTROLS_FOOTER
                     + error
             }
             ControlsPage::Wifi => CONTROLS_LIST_TOP + self.wifi_list_height() + CONTROLS_LIST_BOTTOM,
@@ -5124,73 +5261,71 @@ impl Layout {
         let inner = card.w - 2.0 * CONTROLS_PAD;
         let (left, top) = (card.x + CONTROLS_PAD, card.y + CONTROLS_PAD);
         let tile_w = (inner - 10.0) / 2.0;
-        let tile = |column: f64, row: f64| {
+        let tile = |column: f64| Rect::new(left + column * (tile_w + 10.0), top, tile_w, CONTROLS_TILE);
+        let chevron = |tile: Rect| Rect::new(tile.right() - 34.0, tile.y, 34.0, tile.h);
+        let grid_top = top + CONTROLS_TILE + CONTROLS_GAP;
+        let cell_w = inner / 4.0;
+        let round = |index: usize| {
+            let (column, row) = ((index % 4) as f64, (index / 4) as f64);
             Rect::new(
-                left + column * (tile_w + 10.0),
-                top + row * (CONTROLS_TILE + 10.0),
-                tile_w,
-                CONTROLS_TILE,
+                left + column * cell_w,
+                grid_top + row * (CONTROLS_ROUND_CELL + CONTROLS_ROUND_GAP),
+                cell_w,
+                CONTROLS_ROUND_CELL,
             )
         };
-        let sliders_top =
-            top + CONTROLS_TILE_ROWS * CONTROLS_TILE + (CONTROLS_TILE_ROWS - 1.0) * 10.0 + CONTROLS_GAP;
+        let sliders_top = grid_top + Self::round_grid_height() + CONTROLS_GAP;
         let row = |index: f64| {
             Rect::new(
                 left,
-                sliders_top + index * (CONTROLS_ROW + 6.0),
+                sliders_top + index * (CONTROLS_ROW + 8.0),
                 inner,
                 CONTROLS_ROW,
             )
         };
         let footer = self.controls_footer();
-        let round = |from_right: f64| {
+        let button = |from_right: f64| {
             Rect::new(
-                footer.right() - from_right * 40.0 + 8.0,
-                footer.y + 15.0,
-                32.0,
-                32.0,
+                footer.right() - from_right * 44.0 + 8.0,
+                footer.y,
+                CONTROLS_FOOTER,
+                CONTROLS_FOOTER,
             )
         };
-        let chevron = |tile: Rect| Rect::new(tile.right() - 36.0, tile.y, 36.0, tile.h);
+        let none = Rect::new(card.x, card.y, 0.0, 0.0);
         match control {
-            Control::Wifi => tile(0.0, 0.0),
-            Control::Bluetooth => tile(1.0, 0.0),
-            Control::Dark => tile(0.0, 1.0),
-            Control::DoNotDisturb => tile(1.0, 1.0),
-            Control::Saver => tile(0.0, 2.0),
-            Control::Keyboard => tile(1.0, 2.0),
-            Control::Airplane => tile(0.0, 3.0),
-            Control::KeyboardLight => tile(1.0, 3.0),
-            // Une rangée entière : le mode nuit a besoin de place pour son horaire.
-            Control::Night => {
-                let left = tile(0.0, 4.0);
-                Rect::new(left.x, left.y, inner, left.h)
-            }
-            Control::NightMore => {
-                let left = tile(0.0, 4.0);
-                chevron(Rect::new(left.x, left.y, inner, left.h))
-            }
+            Control::Wifi => tile(0.0),
+            Control::Bluetooth => tile(1.0),
+            Control::WifiMore => chevron(tile(0.0)),
+            Control::BluetoothMore => chevron(tile(1.0)),
+            Control::Dark => round(0),
+            Control::DoNotDisturb => round(1),
+            Control::Night => round(2),
+            Control::Airplane => round(3),
+            Control::Saver => round(4),
+            Control::KeyboardLight => round(5),
+            Control::Keyboard => round(6),
+            Control::Screens if self.second_screen => round(7),
+            Control::Screens => none,
             Control::Volume if self.volume => row(0.0),
             Control::Brightness if self.brightness => row(if self.volume { 1.0 } else { 0.0 }),
-            Control::Volume | Control::Brightness => Rect::new(card.x, card.y, 0.0, 0.0),
-            Control::WifiMore => chevron(tile(0.0, 0.0)),
-            Control::BluetoothMore => chevron(tile(1.0, 0.0)),
-            Control::Account => round(4.0),
-            Control::Settings => round(3.0),
-            Control::Lock => round(2.0),
-            Control::Power => round(1.0),
+            Control::Volume | Control::Brightness => none,
+            Control::Account => button(4.0),
+            Control::Settings => button(3.0),
+            Control::Lock => button(2.0),
+            Control::Power => button(1.0),
         }
     }
 
-    /// Bas du centre de contrôle : filet, batterie et boutons de session.
+    /// Bas du centre de contrôle : batterie et boutons de session.
     fn controls_footer(&self) -> Rect {
         let card = self.controls();
         let error = if self.error { 22.0 } else { 0.0 };
         Rect::new(
             card.x + CONTROLS_PAD,
-            card.bottom() - CONTROLS_PAD - error - CONTROLS_ROW - 13.0,
+            card.bottom() - CONTROLS_PAD - error - CONTROLS_FOOTER,
             card.w - 2.0 * CONTROLS_PAD,
-            CONTROLS_ROW + 13.0,
+            CONTROLS_FOOTER,
         )
     }
 
@@ -5205,15 +5340,9 @@ impl Layout {
         )
     }
 
-    /// Piste d'un curseur : le bouton de 20 px y circule, entre l'icône et le pourcentage.
+    /// Piste d'un curseur : toute la rangée, la part réglée part d'un disque de sa hauteur.
     fn slider_track(&self, control: Control) -> Rect {
-        let row = self.control_row(control);
-        Rect::new(
-            row.x + 32.0,
-            row.y + (row.h - 20.0) / 2.0,
-            row.w - 32.0 - 46.0,
-            20.0,
-        )
+        self.control_row(control)
     }
 
     /// Dialogue d'arrêt : 480 px, centré.
@@ -5280,7 +5409,13 @@ impl Layout {
             volume: view.volume.is_some(),
             brightness: view.brightness.is_some(),
             error: view.error.is_some(),
+            second_screen: view.second_screen.is_some(),
         }
+    }
+
+    /// Hauteur de la grille des bascules rondes.
+    fn round_grid_height() -> f64 {
+        CONTROLS_ROUND_ROWS * CONTROLS_ROUND_CELL + (CONTROLS_ROUND_ROWS - 1.0) * CONTROLS_ROUND_GAP
     }
 
     /// Menu du bureau : 260 de large, des lignes de 32, marge de 6, jamais hors de l'écran.
@@ -5320,7 +5455,7 @@ impl Layout {
         let before: f64 = (0..page).map(|index| width(index) + PAGE_MARK_GAP).sum();
         // La zone du clic déborde dans les écarts.
         Rect::new(
-            150.0 + before - PAGE_MARK_GAP / 2.0,
+            58.0 + before - PAGE_MARK_GAP / 2.0,
             0.0,
             width(page) + PAGE_MARK_GAP,
             self.bar,
@@ -6019,31 +6154,41 @@ impl Canvas<'_> {
         self.fill(rect, radius, panel_fill());
     }
 
-    /// Ombre flottante 0 12 32, noir 30 %, autour de `rect`.
+    /// Ombre d'un panneau (charte : contact puis `elevation::PANEL`) autour de `rect`.
     fn panel_shadow(&mut self, rect: Rect, radius: f32) {
-        const OFFSET_Y: f32 = 12.0;
-        const BLUR: f32 = 32.0;
-        const ALPHA: f32 = 0.30;
+        self.floating_shadow(rect, radius, elevation::PANEL);
+    }
+
+    /// Ombre de ce qui flotte : couche de contact puis celle du niveau `level`.
+    fn floating_shadow(&mut self, rect: Rect, radius: f32, level: elevation::Shadow) {
+        self.drop_shadow(rect, radius, elevation::CONTACT);
+        self.drop_shadow(rect, radius, level);
+    }
+
+    /// Une couche d'ombre de la charte sous `rect` (flou gaussien, voir
+    /// [`elevation::profile`]).
+    fn drop_shadow(&mut self, rect: Rect, radius: f32, layer: elevation::Shadow) {
         let s = self.scale;
         let (x, y, w, h) = (
             rect.x as f32 * s,
-            (rect.y as f32 + OFFSET_Y) * s,
+            (rect.y as f32 + layer.offset_y) * s,
             rect.w as f32 * s,
             rect.h as f32 * s,
         );
         let r = (radius * s).min(w.min(h) * 0.5);
-        let spread = BLUR * s;
+        let blur = layer.blur * s;
+        let spread = 1.5 * blur;
         let left = (x - spread).floor().max(0.0) as u32;
         let top = (y - spread).floor().max(0.0) as u32;
         let right = (x + w + spread).ceil().clamp(0.0, self.width as f32) as u32;
         let bottom = (y + h + spread).ceil().clamp(0.0, self.height as f32) as u32;
-        if right <= left || bottom <= top {
+        if right <= left || bottom <= top || layer.alpha <= 0.0 {
             return;
         }
         // Les mêmes ombres reviennent à chaque dessin (dialogues, compte à rebours) : leur
         // opacité pixel par pixel est gardée, il ne reste qu'à la poser.
         let key = ShadowKey {
-            geometry: [x, y, w, h, r, spread].map(f32::to_bits),
+            geometry: [x, y, w, h, r, blur, layer.alpha].map(f32::to_bits),
             canvas: (self.width, self.height),
         };
         let mask = SHADOWS.with_borrow_mut(|cache| {
@@ -6059,8 +6204,7 @@ impl Canvas<'_> {
                 w,
                 h,
                 r,
-                spread,
-                ALPHA,
+                (blur, layer.alpha),
                 (left, top, right, bottom),
             ));
             if cache.len() >= SHADOW_CACHE {
@@ -6069,7 +6213,7 @@ impl Canvas<'_> {
             cache.push((key, mask.clone()));
             mask
         });
-        let core = Ink::new(Color::BLACK.with_alpha((f32::from(Color::BLACK.a) * ALPHA).round() as u8));
+        let core = Ink::new(Color::BLACK.with_alpha((255.0 * layer.alpha).round() as u8));
         let span = (right - left) as usize;
         for (row, py) in (top..bottom).enumerate() {
             let (solid_start, solid_end) = mask.solid[row];
@@ -6091,27 +6235,15 @@ impl Canvas<'_> {
         }
     }
 
-    /// Curseur épais : partie réglée blanche, bouton rond à son extrémité et pictogramme
-    /// au début de la piste.
-    /// Curseur : piste de 6 px, partie réglée dans la couleur d'accent, bouton blanc de 20 px.
+    /// Curseur épais (charte) : pilule de la hauteur de `track` ; la part réglée, claire,
+    /// part d'un disque de cette hauteur (où se pose le pictogramme) et s'allonge avec la
+    /// valeur.
     fn slider(&mut self, track: Rect, value: u8) {
-        let center_y = track.y + track.h / 2.0;
-        let rail = Rect::new(track.x, center_y - 3.0, track.w, 6.0);
-        self.fill(rail, 3.0, palette().track);
-        let knob = track.h;
-        let x = track.x + (track.w - knob) * f64::from(value) / 100.0;
-        self.fill(
-            Rect::new(rail.x, rail.y, x + knob / 2.0 - rail.x, rail.h),
-            3.0,
-            accent(),
-        );
-        let shadow = Rect::new(x, track.y + 1.0, knob, knob);
-        self.fill(shadow, (knob / 2.0) as f32, Color::BLACK.with_alpha(60));
-        self.fill(
-            Rect::new(x, track.y, knob, knob),
-            (knob / 2.0) as f32,
-            Color::WHITE,
-        );
+        let radius = (track.h / 2.0) as f32;
+        self.fill(track, radius, palette().track);
+        let filled = track.h + (track.w - track.h) * f64::from(value) / 100.0;
+        let fill = themed(palette().window_background, palette().text);
+        self.fill(Rect::new(track.x, track.y, filled, track.h), radius, fill);
     }
 
     fn button(&mut self, rect: Rect, text: &str, background: Color, ink: Color) {
@@ -6613,13 +6745,25 @@ fn ellipsize(text: &str, max: usize) -> String {
     short
 }
 
-/// Ombres gardées (voir [`Canvas::panel_shadow`]) : les dernières calculées.
-const SHADOW_CACHE: usize = 6;
+/// Débord (côtés, haut, bas) en pixels logiques de l'ombre posée par
+/// [`Canvas::floating_shadow`] avec ce niveau, couche de contact comprise.
+fn shadow_margins(level: elevation::Shadow) -> (f64, f64, f64) {
+    let margins = |layer: elevation::Shadow| {
+        let spread = f64::from(1.5 * layer.blur);
+        let offset = f64::from(layer.offset_y);
+        (spread, (spread - offset).max(0.0), spread + offset)
+    };
+    let (a, b) = (margins(elevation::CONTACT), margins(level));
+    (a.0.max(b.0).ceil(), a.1.max(b.1).ceil(), a.2.max(b.2).ceil())
+}
+
+/// Ombres gardées (voir [`Canvas::drop_shadow`]) : les dernières calculées.
+const SHADOW_CACHE: usize = 16;
 
 /// Géométrie d'une ombre en pixels physiques (bits exacts) et taille de la toile.
 #[derive(PartialEq)]
 struct ShadowKey {
-    geometry: [u32; 6],
+    geometry: [u32; 7],
     canvas: (u32, u32),
 }
 
@@ -6635,23 +6779,23 @@ thread_local! {
 }
 
 /// Calcule l'ombre d'un rectangle arrondi (`x`, `y`, `w`, `h`, rayon `r`) floutée sur
-/// `spread`, dans le cadre `bounds` (gauche, haut, droite, bas) déjà rogné à la toile.
-#[allow(clippy::too_many_arguments)] // Géométrie de l'ombre, opacité et cadre.
+/// `blur` et d'opacité `opacity`, dans le cadre `bounds` (gauche, haut, droite, bas) déjà
+/// rogné à la toile.
 fn shadow_mask(
     x: f32,
     y: f32,
     w: f32,
     h: f32,
     r: f32,
-    spread: f32,
-    opacity: f32,
+    (blur, opacity): (f32, f32),
     bounds: (u32, u32, u32, u32),
 ) -> ShadowMask {
     let (left, top, right, bottom) = bounds;
     let span = (right - left) as usize;
     let mut alpha = vec![0; span * (bottom - top) as usize];
     let mut solid = Vec::with_capacity((bottom - top) as usize);
-    let inside = r - spread * 0.5;
+    // En deçà de cette distance du bord, l'ombre est pleine (voir `elevation::profile`).
+    let inside = r - 1.5 * blur;
     for (row, py) in (top..bottom).enumerate() {
         let qy = (py as f32 + 0.5 - (y + h * 0.5)).abs() - (h * 0.5 - r);
         let (solid_start, solid_end) = if qy <= inside {
@@ -6663,8 +6807,7 @@ fn shadow_mask(
         for px in (left..solid_start).chain(solid_end..right) {
             let qx = (px as f32 + 0.5 - (x + w * 0.5)).abs() - (w * 0.5 - r);
             let distance = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - r;
-            let t = ((distance + spread * 0.5) / spread).clamp(0.0, 1.0);
-            let amount = (1.0 - t * t * (3.0 - 2.0 * t)) * opacity;
+            let amount = elevation::profile(distance, blur) * opacity;
             if amount > 0.0 {
                 // Même arrondi que `Canvas::blend` pour une couleur opaque.
                 alpha[row * span + (px - left) as usize] = (255.0 * amount).round().clamp(0.0, 255.0) as u8;
@@ -6711,6 +6854,29 @@ fn solid_span(center: f32, half: f32, left: u32, right: u32) -> (u32, u32) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn la_decoupe_garde_tout_ce_qui_est_dessine() {
+        let (width, height) = (10, 8);
+        let mut pixels = vec![0u8; width as usize * height as usize * 4];
+        let mut set = |x: usize, y: usize| pixels[(y * width as usize + x) * 4 + 3] = 255;
+        set(3, 2);
+        set(6, 5);
+        // Échelle 2 : bords alignés sur des pixels pairs.
+        assert_eq!(
+            super::opaque_bounds(&pixels, width, height, 2),
+            Some((2, 2, 6, 4))
+        );
+        assert_eq!(
+            super::opaque_bounds(&pixels, width, height, 1),
+            Some((3, 2, 4, 4))
+        );
+        let cropped = super::crop_pixels(&pixels, width, (3, 2, 4, 4));
+        assert_eq!(cropped.len(), 4 * 4 * 4);
+        assert_eq!(cropped[3], 255);
+        assert_eq!(cropped[((3 * 4) + 3) * 4 + 3], 255);
+        assert_eq!(super::opaque_bounds(&[0; 16], 2, 2, 1), None);
+    }
+
     /// Ancien calcul, pixel par pixel, gardé pour vérifier que le remplissage d'un bloc
     /// donne exactement les mêmes pixels.
     fn fill_reference(canvas: &mut Canvas, rect: Rect, radius: f32, color: Color) {
@@ -6788,28 +6954,30 @@ mod tests {
     }
 
     fn shadow_reference(canvas: &mut Canvas, rect: Rect, radius: f32) {
-        let s = canvas.scale;
-        let (x, y, w, h) = (
-            rect.x as f32 * s,
-            (rect.y as f32 + 12.0) * s,
-            rect.w as f32 * s,
-            rect.h as f32 * s,
-        );
-        let r = (radius * s).min(w.min(h) * 0.5);
-        let spread = 32.0 * s;
-        let left = (x - spread).floor().max(0.0) as u32;
-        let top = (y - spread).floor().max(0.0) as u32;
-        let right = (x + w + spread).ceil().clamp(0.0, canvas.width as f32) as u32;
-        let bottom = (y + h + spread).ceil().clamp(0.0, canvas.height as f32) as u32;
-        for py in top..bottom {
-            for px in left..right {
-                let qx = (px as f32 + 0.5 - (x + w * 0.5)).abs() - (w * 0.5 - r);
-                let qy = (py as f32 + 0.5 - (y + h * 0.5)).abs() - (h * 0.5 - r);
-                let distance = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - r;
-                let t = ((distance + spread * 0.5) / spread).clamp(0.0, 1.0);
-                let amount = (1.0 - t * t * (3.0 - 2.0 * t)) * 0.30;
-                if amount > 0.0 {
-                    canvas.blend(px, py, Color::BLACK, amount);
+        for layer in [elevation::CONTACT, elevation::PANEL] {
+            let s = canvas.scale;
+            let (x, y, w, h) = (
+                rect.x as f32 * s,
+                (rect.y as f32 + layer.offset_y) * s,
+                rect.w as f32 * s,
+                rect.h as f32 * s,
+            );
+            let r = (radius * s).min(w.min(h) * 0.5);
+            let blur = layer.blur * s;
+            let spread = 1.5 * blur;
+            let left = (x - spread).floor().max(0.0) as u32;
+            let top = (y - spread).floor().max(0.0) as u32;
+            let right = (x + w + spread).ceil().clamp(0.0, canvas.width as f32) as u32;
+            let bottom = (y + h + spread).ceil().clamp(0.0, canvas.height as f32) as u32;
+            for py in top..bottom {
+                for px in left..right {
+                    let qx = (px as f32 + 0.5 - (x + w * 0.5)).abs() - (w * 0.5 - r);
+                    let qy = (py as f32 + 0.5 - (y + h * 0.5)).abs() - (h * 0.5 - r);
+                    let distance = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - r;
+                    let amount = layer.amount(distance, blur);
+                    if amount > 0.0 {
+                        canvas.blend(px, py, Color::BLACK, amount);
+                    }
                 }
             }
         }

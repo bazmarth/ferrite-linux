@@ -3,12 +3,13 @@
 //!
 //! - Session : libseat (logind), qui donne accès aux périphériques sans être root et
 //!   gère le changement de terminal virtuel.
-//! - Affichage : la carte graphique principale (udev), un seul écran (l'écran interne eDP
-//!   en priorité), son mode préféré, rendu GLES dans des tampons GBM présentés par
-//!   `DrmCompositor` au rythme du VBlank.
+//! - Affichage : la carte graphique principale (udev), tous ses écrans branchés, chacun
+//!   à son mode préféré, rendu GLES dans des tampons GBM présentés par `DrmCompositor`
+//!   au rythme de son VBlank. L'écran principal (l'écran intégré d'abord) porte la barre,
+//!   le Dock et les menus ; les autres le dupliquent ou prolongent le bureau
+//!   ([`ScreenMode`]). Un écran branché ou débranché (HDMI…) est pris en compte aussitôt
+//!   (événement udev).
 //! - Entrées : libinput.
-//!
-//! Plusieurs écrans et le branchement à chaud viendront ensuite.
 
 use std::{
     cell::RefCell,
@@ -17,6 +18,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use ferrite_system::screens::{ScreenInfo, ScreenMode};
 use smithay::{
     backend::{
         allocator::{
@@ -31,11 +33,18 @@ use smithay::{
         egl::{EGLContext, EGLDisplay},
         input::InputEvent,
         libinput::{LibinputInputBackend, LibinputSessionInterface},
+        renderer::{
+            Bind, Offscreen, Renderer as _,
+            damage::OutputDamageTracker,
+            element::{Id, Kind, texture::TextureRenderElement},
+            gles::GlesTexture,
+        },
         renderer::{ImportDma, ImportMemWl, gles::GlesRenderer},
         session::{Event as SessionEvent, Session, libseat::LibSeatSession},
-        udev::{all_gpus, primary_gpu},
+        udev::{UdevBackend, all_gpus, primary_gpu},
     },
     output::{Mode, Output, PhysicalProperties, Scale},
+    reexports::wayland_server::backend::GlobalId,
     reexports::{
         calloop::{
             EventLoop, LoopHandle, RegistrationToken,
@@ -46,7 +55,7 @@ use smithay::{
         input::{self as libinput, Libinput},
         rustix::fs::OFlags,
     },
-    utils::{DeviceFd, Transform},
+    utils::{DeviceFd, Physical, Point, Transform},
 };
 use tracing::{error, info, warn};
 
@@ -68,30 +77,64 @@ const IDLE_SLOW: Duration = Duration::from_millis(100);
 /// Formats des tampons d'affichage, par ordre de préférence.
 const COLOR_FORMATS: [Fourcc; 2] = [Fourcc::Argb8888, Fourcc::Abgr8888];
 
+/// Un écran branché et affiché.
+struct Screen {
+    connector: connector::Handle,
+    interface: connector::Interface,
+    output: Output,
+    global: GlobalId,
+    compositor: Compositor,
+    /// Contrôleur de l'écran, taille de sa table de gamma et gains déjà appliqués (mode nuit).
+    crtc: crtc::Handle,
+    gamma_size: usize,
+    gamma_applied: Option<(f64, f64, f64)>,
+    /// Une image a été envoyée et attend d'être affichée (VBlank).
+    frame_pending: bool,
+    /// Taille du mode en pixels et fréquence.
+    size: (i32, i32),
+    refresh: u32,
+    /// Échelle propre de l'écran.
+    scale: f64,
+    /// En « dupliquer » : image de l'écran principal, dessinée hors écran puis posée
+    /// réduite ou agrandie sur celui-ci.
+    mirror: Option<Mirror>,
+}
+
+/// Image de l'écran principal pour un écran qui le duplique : texture à la taille du
+/// principal, et suivi de ce qui change d'une image à l'autre.
+struct Mirror {
+    texture: GlesTexture,
+    tracker: OutputDamageTracker,
+    size: (i32, i32),
+    /// Une image a déjà été posée sur l'écran.
+    shown: bool,
+}
+
 struct Drm {
     device: DrmDevice,
+    gbm: GbmDevice<DrmDeviceFd>,
     renderer: GlesRenderer,
-    compositor: Compositor,
-    output: Output,
+    /// Écrans affichés ; le premier est l'écran principal.
+    screens: Vec<Screen>,
+    /// Facteur d'échelle demandé en ligne de commande (écran principal seulement).
+    forced_scale: Option<f64>,
+    /// Disposition appliquée aux écrans secondaires (`None` : à refaire).
+    layout: Option<ScreenMode>,
     assets: RenderAssets,
     /// La session a la main sur l'écran (faux pendant qu'un autre terminal est affiché).
     active: bool,
-    /// Une image a été envoyée et attend d'être affichée (VBlank).
-    frame_pending: bool,
     /// Affichage coupé (écran éteint pour inactivité) : plus aucune image jusqu'au réveil.
     blanked: bool,
     /// Rendu déjà programmé, et s'il s'agit d'un essai au repos (`IDLE_REDRAW`), qu'un
     /// changement à l'écran peut avancer.
     render_scheduled: Option<(RegistrationToken, bool)>,
-    /// Contrôleur de l'écran, taille de sa table de gamma et gains déjà appliqués (mode nuit).
-    crtc: crtc::Handle,
-    gamma_size: usize,
-    gamma_applied: Option<(f64, f64, f64)>,
     /// Essais au repos de suite sans rien à redessiner : au-delà de [`IDLE_STREAK`], ils
     /// s'espacent à [`IDLE_SLOW`].
     idle_streak: u32,
-    /// Derniers rappels d'image (`wl_surface.frame`) envoyés aux fenêtres.
+    /// Derniers rappels d'image (`wl_surface.frame`) envoyés aux fenêtres, et aux
+    /// fenêtres cachées par une autre.
     callbacks_at: Option<Instant>,
+    hidden_callbacks_at: Option<Instant>,
 }
 
 pub fn init(
@@ -135,83 +178,42 @@ pub fn init(
     #[allow(unsafe_code)]
     let mut renderer = unsafe { GlesRenderer::new(context)? };
 
-    // Écran.
+    // Écran principal.
     let (connector, crtc, drm_mode) = pick_connector(&device)?;
-    let name = format!("{}-{}", connector.interface().as_str(), connector.interface_id());
-    let (width_mm, height_mm) = connector.size().unwrap_or((0, 0));
-    let (width_px, height_px) = drm_mode.size();
-    let scale = options
-        .scale
-        .unwrap_or_else(|| super::auto_scale(width_px as u32, width_mm));
-    info!(
-        name,
-        mode = format!("{width_px}×{height_px} à {} Hz", drm_mode.vrefresh()),
-        taille_mm = format!("{width_mm}×{height_mm}"),
-        scale,
-        "écran"
-    );
-
-    let output = Output::new(
-        name,
-        PhysicalProperties {
-            size: (width_mm as i32, height_mm as i32).into(),
-            subpixel: connector.subpixel().into(),
-            make: "Ferrite".into(),
-            model: "Écran".into(),
-        },
-    );
-    let mode = Mode::from(drm_mode);
-    output.change_current_state(
-        Some(mode),
-        Some(Transform::Normal),
-        Some(Scale::Fractional(scale)),
-        Some((0, 0).into()),
-    );
-    output.set_preferred(mode);
-    let _global = output.create_global::<Ferrite>(&state.display_handle);
-    state.space.map_output(&output, (0, 0));
-
-    let surface = device.create_surface(crtc, drm_mode, &[connector.handle()])?;
-    let allocator = GbmAllocator::new(gbm.clone(), GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT);
-    let exporter = GbmFramebufferExporter::new(gbm.clone(), None);
-    let render_formats = renderer.egl_context().dmabuf_render_formats().clone();
-    let compositor = DrmCompositor::new(
-        &output,
-        surface,
-        None,
-        allocator,
-        exporter,
-        COLOR_FORMATS,
-        render_formats,
-        device.cursor_size(),
-        Some(gbm),
-    )
-    .map_err(|err| format!("préparation de l'affichage : {err:?}"))?;
+    let primary = open_screen(
+        &mut device,
+        &gbm,
+        &renderer,
+        state,
+        &connector,
+        crtc,
+        drm_mode,
+        options.scale,
+    )?;
+    state.space.map_output(&primary.output, (0, 0));
 
     state.shm_state.update_formats(renderer.shm_formats());
     let dmabuf_formats = renderer.dmabuf_formats().into_iter().collect::<Vec<_>>();
     state.publish_dmabuf(&display, dmabuf_formats);
     let assets = RenderAssets::new(&mut renderer)?;
 
-    let gamma_size = device
-        .get_crtc(crtc)
-        .map_or(0, |info| info.gamma_length() as usize);
     let drm = Rc::new(RefCell::new(Drm {
-        crtc,
-        gamma_size,
-        gamma_applied: None,
         device,
+        gbm,
         renderer,
-        compositor,
-        output,
+        screens: vec![primary],
+        forced_scale: options.scale,
+        layout: None,
         assets,
         active: true,
-        frame_pending: false,
         blanked: false,
         render_scheduled: None,
         idle_streak: 0,
         callbacks_at: None,
+        hidden_callbacks_at: None,
     }));
+    // Les autres écrans déjà branchés.
+    sync_screens(&mut drm.borrow_mut(), state, false);
     let handle = event_loop.handle();
 
     // Fin d'affichage d'une image : on prépare la suivante.
@@ -219,17 +221,38 @@ pub fn init(
         let drm = drm.clone();
         let loop_handle = handle.clone();
         handle.insert_source(drm_notifier, move |event, _, _state| match event {
-            DrmEvent::VBlank(_) => {
+            DrmEvent::VBlank(crtc) => {
                 {
                     let mut drm = drm.borrow_mut();
-                    drm.frame_pending = false;
-                    if let Err(err) = drm.compositor.frame_submitted() {
-                        warn!("image non confirmée : {err:?}");
+                    if let Some(screen) = drm.screens.iter_mut().find(|screen| screen.crtc == crtc) {
+                        screen.frame_pending = false;
+                        if let Err(err) = screen.compositor.frame_submitted() {
+                            warn!("image non confirmée : {err:?}");
+                        }
                     }
                 }
                 schedule_render(&drm, &loop_handle, Duration::ZERO);
             }
             DrmEvent::Error(err) => error!("erreur DRM : {err:?}"),
+        })?;
+    }
+
+    // Écran branché ou débranché : udev signale un changement de la carte graphique.
+    {
+        let drm = drm.clone();
+        let loop_handle = handle.clone();
+        let udev = UdevBackend::new(&seat)?;
+        handle.insert_source(udev, move |event, _, state| {
+            if let smithay::backend::udev::UdevEvent::Changed { .. } = event {
+                {
+                    let mut drm = drm.borrow_mut();
+                    if !drm.active {
+                        return;
+                    }
+                    sync_screens(&mut drm, state, true);
+                }
+                schedule_render(&drm, &loop_handle, Duration::ZERO);
+            }
         })?;
     }
 
@@ -311,15 +334,19 @@ pub fn init(
                     if let Err(err) = drm.device.activate(false) {
                         error!("reprise de l'écran impossible : {err}");
                     }
-                    if let Err(err) = drm.compositor.reset_state() {
-                        warn!("réinitialisation de l'affichage : {err}");
+                    for screen in &mut drm.screens {
+                        if let Err(err) = screen.compositor.reset_state() {
+                            warn!("réinitialisation de l'affichage : {err}");
+                        }
+                        screen.frame_pending = false;
+                        // Un autre terminal a pu changer la table de gamma : on la réapplique.
+                        screen.gamma_applied = None;
                     }
                     drm.active = true;
-                    drm.frame_pending = false;
                     drm.blanked = false;
-                    // Un autre terminal a pu changer la table de gamma : on la réapplique.
-                    drm.gamma_applied = None;
                 }
+                // Un écran a pu être branché ou débranché pendant ce temps.
+                sync_screens(&mut drm.borrow_mut(), _state, true);
                 schedule_render(&drm, &loop_handle, Duration::ZERO);
             }
         })?;
@@ -423,7 +450,9 @@ fn schedule_render(drm: &Rc<RefCell<Drm>>, handle: &LoopHandle<'static, Ferrite>
         let idle = {
             let mut drm = drm.borrow_mut();
             drm.render_scheduled = None;
-            let idle = drm.active && !drm.frame_pending && !render(&mut drm, state);
+            let idle = drm.active
+                && !drm.screens.first().is_some_and(|screen| screen.frame_pending)
+                && !render(&mut drm, state);
             drm.idle_streak = if idle {
                 drm.idle_streak.saturating_add(1)
             } else {
@@ -486,93 +515,514 @@ fn lid_closed() -> bool {
         })
 }
 
+/// Ouvre l'écran `connector` sur `crtc` à `mode` : sortie Wayland (pas encore placée dans
+/// l'espace) et compositeur DRM.
+#[allow(clippy::too_many_arguments)]
+fn open_screen(
+    device: &mut DrmDevice,
+    gbm: &GbmDevice<DrmDeviceFd>,
+    renderer: &GlesRenderer,
+    state: &Ferrite,
+    connector: &connector::Info,
+    crtc: crtc::Handle,
+    drm_mode: smithay::reexports::drm::control::Mode,
+    forced_scale: Option<f64>,
+) -> Result<Screen, Box<dyn Error>> {
+    let name = connector_name(connector);
+    let (width_mm, height_mm) = connector.size().unwrap_or((0, 0));
+    let (width_px, height_px) = drm_mode.size();
+    let scale = forced_scale.unwrap_or_else(|| super::auto_scale(width_px as u32, width_mm));
+    info!(
+        name,
+        mode = format!("{width_px}×{height_px} à {} Hz", drm_mode.vrefresh()),
+        taille_mm = format!("{width_mm}×{height_mm}"),
+        scale,
+        "écran"
+    );
+    let output = Output::new(
+        name,
+        PhysicalProperties {
+            size: (width_mm as i32, height_mm as i32).into(),
+            subpixel: connector.subpixel().into(),
+            make: "Ferrite".into(),
+            model: "Écran".into(),
+        },
+    );
+    let mode = Mode::from(drm_mode);
+    output.change_current_state(
+        Some(mode),
+        Some(Transform::Normal),
+        Some(Scale::Fractional(scale)),
+        Some((0, 0).into()),
+    );
+    output.set_preferred(mode);
+    let global = output.create_global::<Ferrite>(&state.display_handle);
+
+    let surface = device.create_surface(crtc, drm_mode, &[connector.handle()])?;
+    let allocator = GbmAllocator::new(gbm.clone(), GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT);
+    let exporter = GbmFramebufferExporter::new(gbm.clone(), None);
+    let render_formats = renderer.egl_context().dmabuf_render_formats().clone();
+    let compositor = DrmCompositor::new(
+        &output,
+        surface,
+        None,
+        allocator,
+        exporter,
+        COLOR_FORMATS,
+        render_formats,
+        device.cursor_size(),
+        Some(gbm.clone()),
+    );
+    let compositor = match compositor {
+        Ok(compositor) => compositor,
+        Err(err) => {
+            state.display_handle.remove_global::<Ferrite>(global);
+            return Err(format!("préparation de l'affichage : {err:?}").into());
+        }
+    };
+    let gamma_size = device
+        .get_crtc(crtc)
+        .map_or(0, |info| info.gamma_length() as usize);
+    Ok(Screen {
+        connector: connector.handle(),
+        interface: connector.interface(),
+        output,
+        global,
+        compositor,
+        crtc,
+        gamma_size,
+        gamma_applied: None,
+        frame_pending: false,
+        size: (width_px as i32, height_px as i32),
+        refresh: drm_mode.vrefresh(),
+        scale,
+        mirror: None,
+    })
+}
+
+/// Nom du branchement, comme le noyau : `eDP-1`, `HDMI-A-1`…
+fn connector_name(connector: &connector::Info) -> String {
+    format!("{}-{}", connector.interface().as_str(), connector.interface_id())
+}
+
+/// Écrans branchés (avec au moins un mode), dans l'ordre de la carte graphique.
+fn connected_screens(device: &DrmDevice) -> Vec<connector::Info> {
+    let Ok(resources) = device.resource_handles() else {
+        return Vec::new();
+    };
+    resources
+        .connectors()
+        .iter()
+        .filter_map(|handle| device.get_connector(*handle, true).ok())
+        .filter(|info| info.state() == connector::State::Connected && !info.modes().is_empty())
+        .collect()
+}
+
+/// Rangs des écrans à afficher parmi ceux branchés : tous, sauf l'écran intégré d'un
+/// portable fermé quand un écran externe est là.
+fn shown_screens(interfaces: &[connector::Interface], lid_closed: bool) -> Vec<usize> {
+    let external = interfaces.iter().any(|interface| !is_internal(*interface));
+    (0..interfaces.len())
+        .filter(|index| !(lid_closed && external && is_internal(interfaces[*index])))
+        .collect()
+}
+
+/// Met la liste des écrans affichés à jour : retire ceux débranchés, ouvre ceux qui
+/// viennent d'être branchés, puis refait la disposition.
+fn sync_screens(drm: &mut Drm, state: &mut Ferrite, announce: bool) {
+    let connected = connected_screens(&drm.device);
+    let interfaces: Vec<connector::Interface> = connected.iter().map(connector::Info::interface).collect();
+    let shown: Vec<&connector::Info> = shown_screens(&interfaces, lid_closed())
+        .into_iter()
+        .filter_map(|index| connected.get(index))
+        .collect();
+    // Aucun écran : on garde l'actuel (il revient souvent aussitôt, commutateur KVM).
+    if shown.is_empty() {
+        return;
+    }
+    let mut changed = false;
+    let (mut added, mut removed) = (false, false);
+    let mut kept = Vec::new();
+    for screen in drm.screens.drain(..) {
+        if shown.iter().any(|info| info.handle() == screen.connector) {
+            kept.push(screen);
+        } else {
+            info!(nom = screen.output.name(), "écran débranché");
+            changed = true;
+            removed = true;
+            state.space.unmap_output(&screen.output);
+            state.display_handle.remove_global::<Ferrite>(screen.global);
+        }
+    }
+    drm.screens = kept;
+    for info in shown {
+        if drm.screens.iter().any(|screen| screen.connector == info.handle()) {
+            continue;
+        }
+        let Some(mode) = preferred_mode(info) else {
+            continue;
+        };
+        let used: Vec<crtc::Handle> = drm.screens.iter().map(|screen| screen.crtc).collect();
+        let Some(crtc) = free_crtc(&drm.device, info, &used) else {
+            warn!(
+                nom = connector_name(info),
+                "écran branché, mais aucun contrôleur (CRTC) libre"
+            );
+            continue;
+        };
+        // Forcée en ligne de commande, l'échelle ne vaut que pour l'écran principal.
+        let scale = drm.forced_scale.filter(|_| drm.screens.is_empty());
+        let Drm {
+            device,
+            gbm,
+            renderer,
+            ..
+        } = drm;
+        match open_screen(device, gbm, renderer, state, info, crtc, mode, scale) {
+            Ok(screen) => {
+                info!(nom = screen.output.name(), "écran branché");
+                changed = true;
+                added = true;
+                drm.screens.push(screen);
+            }
+            Err(err) => warn!(nom = connector_name(info), "écran non utilisable : {err}"),
+        }
+    }
+    // L'écran intégré reste le principal s'il est affiché.
+    if let Some(index) = drm
+        .screens
+        .iter()
+        .position(|screen| is_internal(screen.interface))
+        && index != 0
+    {
+        let screen = drm.screens.remove(index);
+        drm.screens.insert(0, screen);
+        changed = true;
+    }
+    if changed {
+        drm.layout = None;
+    }
+    apply_layout(drm, state);
+    if announce && (added || removed) {
+        state.show_osd(screen_osd(added, drm.screens.len(), state.screen_mode));
+    }
+}
+
+/// Bulle montrée quand un écran est branché ou débranché.
+fn screen_osd(added: bool, screens: usize, mode: ScreenMode) -> crate::desktop::panels::Osd {
+    let label = match (added && screens > 1, mode) {
+        (false, _) => "Second écran débranché",
+        (true, ScreenMode::Duplicate) => "Écran branché : dupliqué",
+        (true, ScreenMode::Extend) => "Écran branché : étendu",
+    };
+    crate::desktop::panels::Osd {
+        icon: "cc-screen",
+        label,
+        level: None,
+    }
+}
+
+/// Mode préféré de l'écran (sinon le premier annoncé).
+fn preferred_mode(info: &connector::Info) -> Option<smithay::reexports::drm::control::Mode> {
+    info.modes()
+        .iter()
+        .find(|mode| mode.mode_type().contains(ModeTypeFlags::PREFERRED))
+        .or_else(|| info.modes().first())
+        .copied()
+}
+
+/// Un contrôleur d'affichage qui peut piloter cet écran et que `used` n'occupe pas.
+fn free_crtc(device: &DrmDevice, info: &connector::Info, used: &[crtc::Handle]) -> Option<crtc::Handle> {
+    let resources = device.resource_handles().ok()?;
+    info.encoders()
+        .iter()
+        .filter_map(|handle| device.get_encoder(*handle).ok())
+        .flat_map(|encoder| resources.filter_crtcs(encoder.possible_crtcs()))
+        .find(|crtc| !used.contains(crtc))
+}
+
+/// Place les écrans dans l'espace selon `state.screen_mode` : le principal en (0, 0) ;
+/// en « étendre », les autres à sa droite, côte à côte ; en « dupliquer », hors de
+/// l'espace (ils recopient l'image du principal). Les fenêtres restées hors de tout
+/// écran reviennent sur le principal.
+fn apply_layout(drm: &mut Drm, state: &mut Ferrite) {
+    let mode = state.screen_mode;
+    if drm.layout == Some(mode) {
+        return;
+    }
+    drm.layout = Some(mode);
+    // Tout est retiré puis replacé dans l'ordre : le bureau prend le premier écran de
+    // l'espace pour l'écran principal.
+    for screen in &drm.screens {
+        state.space.unmap_output(&screen.output);
+    }
+    let mut x = 0;
+    for (index, screen) in drm.screens.iter_mut().enumerate() {
+        // Image dupliquée à refaire entièrement (taille ou mode changés).
+        screen.mirror = None;
+        let scale = screen.scale;
+        screen
+            .output
+            .change_current_state(None, None, Some(Scale::Fractional(scale)), None);
+        let logical = screen
+            .output
+            .current_mode()
+            .map(|mode| mode.size.to_f64().to_logical(scale))
+            .map_or(0, |size| size.w.round() as i32);
+        if index == 0 || mode == ScreenMode::Extend {
+            screen
+                .output
+                .change_current_state(None, None, None, Some((x, 0).into()));
+            state.space.map_output(&screen.output, (x, 0));
+            x += logical;
+        } else {
+            state.space.unmap_output(&screen.output);
+        }
+    }
+    if let Some(primary) = drm.screens.first() {
+        state.gather_windows(&primary.output);
+    }
+    let infos: Vec<ScreenInfo> = drm
+        .screens
+        .iter()
+        .enumerate()
+        .map(|(index, screen)| ScreenInfo {
+            name: screen.output.name(),
+            width: screen.size.0.max(0) as u32,
+            height: screen.size.1.max(0) as u32,
+            refresh: screen.refresh,
+            primary: index == 0,
+        })
+        .collect();
+    info!(écrans = infos.len(), ?mode, "disposition des écrans");
+    state.screen_count = infos.len();
+    ferrite_system::screens::publish(&infos);
+    state.request_redraw();
+}
+
 /// Mode nuit : table de gamma de l'écran multipliée par les gains (rouge, vert, bleu).
-fn apply_night(drm: &mut Drm, gains: (f64, f64, f64)) {
+fn apply_night(device: &DrmDevice, screen: &mut Screen, gains: (f64, f64, f64)) {
     // Gains pas encore calculés (premier tour) : écran neutre.
     let gains = if gains == (0.0, 0.0, 0.0) {
         (1.0, 1.0, 1.0)
     } else {
         gains
     };
-    if drm.gamma_size == 0 || drm.gamma_applied == Some(gains) {
+    if screen.gamma_size == 0 || screen.gamma_applied == Some(gains) {
         return;
     }
-    let ramp = |gain| crate::desktop::night::gamma_ramp(drm.gamma_size, gain);
+    let ramp = |gain| crate::desktop::night::gamma_ramp(screen.gamma_size, gain);
     let (red, green, blue) = (ramp(gains.0), ramp(gains.1), ramp(gains.2));
-    match drm.device.set_gamma(drm.crtc, &red, &green, &blue) {
-        Ok(()) => drm.gamma_applied = Some(gains),
+    match device.set_gamma(screen.crtc, &red, &green, &blue) {
+        Ok(()) => screen.gamma_applied = Some(gains),
         Err(err) => {
             warn!("mode nuit : table de gamma refusée ({err})");
             // Inutile de réessayer à chaque image.
-            drm.gamma_size = 0;
+            screen.gamma_size = 0;
         }
     }
 }
 
-/// Dessine l'écran ; renvoie vrai si une nouvelle image a été envoyée.
+/// Échelle et décalage (pixels physiques) qui posent une image `source` au centre de
+/// `target`, entière et sans déformation (bandes noires si les proportions diffèrent).
+fn mirror_fit(source: (i32, i32), target: (i32, i32)) -> (f64, Point<i32, Physical>) {
+    let (sw, sh) = (f64::from(source.0.max(1)), f64::from(source.1.max(1)));
+    let (tw, th) = (f64::from(target.0), f64::from(target.1));
+    let scale = (tw / sw).min(th / sh);
+    let offset = (
+        ((tw - sw * scale) / 2.0).round() as i32,
+        ((th - sh * scale) / 2.0).round() as i32,
+    );
+    (scale, offset.into())
+}
+
+/// Image de l'écran principal pour `screen` (mode « dupliquer ») ; `None` si rien n'a
+/// changé depuis la dernière ou si la texture n'a pas pu être préparée.
+fn mirror_element(
+    renderer: &mut GlesRenderer,
+    state: &mut Ferrite,
+    assets: &RenderAssets,
+    primary: &Output,
+    primary_size: (i32, i32),
+    screen: &mut Screen,
+) -> Option<TextureRenderElement<GlesTexture>> {
+    if screen
+        .mirror
+        .as_ref()
+        .is_none_or(|mirror| mirror.size != primary_size)
+    {
+        let buffer = smithay::utils::Size::<i32, smithay::utils::Buffer>::from(primary_size);
+        let texture: GlesTexture = match renderer.create_buffer(Fourcc::Abgr8888, buffer) {
+            Ok(texture) => texture,
+            Err(err) => {
+                warn!("image dupliquée impossible : {err:?}");
+                return None;
+            }
+        };
+        screen.mirror = Some(Mirror {
+            texture,
+            tracker: OutputDamageTracker::from_output(primary),
+            size: primary_size,
+            shown: false,
+        });
+    }
+    let mirror = screen.mirror.as_mut()?;
+    let elements = render::output_elements(renderer, state, assets, primary, true);
+    let changed = {
+        let mut target = renderer.bind(&mut mirror.texture).ok()?;
+        match mirror
+            .tracker
+            .render_output(renderer, &mut target, 1, &elements, [0.0, 0.0, 0.0, 1.0])
+        {
+            Ok(result) => result.damage.is_some_and(|damage| !damage.is_empty()),
+            Err(err) => {
+                warn!("image dupliquée non dessinée : {err:?}");
+                return None;
+            }
+        }
+    };
+    if !changed && mirror.shown {
+        return None;
+    }
+    mirror.shown = true;
+    let (scale, offset) = mirror_fit(primary_size, screen.size);
+    let width = (f64::from(primary_size.0) * scale / screen.scale).round() as i32;
+    let height = (f64::from(primary_size.1) * scale / screen.scale).round() as i32;
+    // Nouvel identifiant : l'écran redessine toute l'image (petite, simple à poser).
+    Some(TextureRenderElement::from_static_texture(
+        Id::new(),
+        renderer.context_id(),
+        (f64::from(offset.x), f64::from(offset.y)),
+        mirror.texture.clone(),
+        1,
+        Transform::Normal,
+        None,
+        // Toute l'image du principal (sans cela, Smithay en prend un coin de la taille
+        // de destination : image tronquée et très agrandie).
+        Some(smithay::utils::Rectangle::from_size(
+            (f64::from(primary_size.0), f64::from(primary_size.1)).into(),
+        )),
+        Some((width.max(1), height.max(1)).into()),
+        None,
+        Kind::Unspecified,
+    ))
+}
+
+/// Envoie une image à un écran ; vrai si elle part.
+fn present<E>(renderer: &mut GlesRenderer, screen: &mut Screen, elements: &[E]) -> bool
+where
+    E: smithay::backend::renderer::element::RenderElement<GlesRenderer>,
+{
+    use render::profile::timed;
+    let frame = timed("rendu GPU", || {
+        screen
+            .compositor
+            .render_frame(renderer, elements, [0.0, 0.0, 0.0, 1.0], FrameFlags::DEFAULT)
+    });
+    match frame {
+        Ok(result) if !result.is_empty => match screen.compositor.queue_frame(()) {
+            Ok(()) => {
+                screen.frame_pending = true;
+                true
+            }
+            Err(err) => {
+                warn!(
+                    nom = screen.output.name(),
+                    "envoi de l'image impossible : {err:?}"
+                );
+                false
+            }
+        },
+        Ok(_) => false,
+        Err(err) => {
+            warn!(nom = screen.output.name(), "échec du rendu : {err:?}");
+            false
+        }
+    }
+}
+
+/// Dessine les écrans ; renvoie vrai si l'écran principal a reçu une nouvelle image.
 fn render(drm: &mut Drm, state: &mut Ferrite) -> bool {
     state.restack_kept_above();
     if state.idle.screen_off {
         if !drm.blanked {
             // Coupe l'affichage (DPMS) ; la prochaine image le rallume.
-            match drm.compositor.clear() {
-                Ok(()) => info!("affichage coupé"),
-                Err(err) => warn!("coupure de l'affichage impossible : {err:?}"),
+            for screen in &mut drm.screens {
+                match screen.compositor.clear() {
+                    Ok(()) => info!(nom = screen.output.name(), "affichage coupé"),
+                    Err(err) => warn!("coupure de l'affichage impossible : {err:?}"),
+                }
+                screen.frame_pending = false;
             }
             drm.blanked = true;
-            drm.frame_pending = false;
         }
         // Ni image ni rappel d'image : les applications cessent de dessiner.
         return false;
     }
     if drm.blanked {
         drm.blanked = false;
-        // Image entière : rien de l'écran précédent n'est plus affiché.
-        drm.compositor.reset_buffers();
-        // L'écran a pu oublier sa table de gamma : le mode nuit est réappliqué.
-        drm.gamma_applied = None;
+        for screen in &mut drm.screens {
+            // Image entière : rien de l'écran précédent n'est plus affiché.
+            screen.compositor.reset_buffers();
+            // L'écran a pu oublier sa table de gamma : le mode nuit est réappliqué.
+            screen.gamma_applied = None;
+        }
         info!("affichage rallumé");
     }
-    apply_night(drm, state.night.gains);
+    // Réglage « dupliquer / étendre » changé dans Paramètres.
+    if drm.layout != Some(state.screen_mode) {
+        apply_layout(drm, state);
+    }
     let Drm {
+        device,
         renderer,
-        compositor,
-        output,
+        screens,
         assets,
-        frame_pending,
         callbacks_at,
+        hidden_callbacks_at,
         ..
     } = drm;
+    for screen in screens.iter_mut() {
+        apply_night(device, screen, state.night.gains);
+    }
+    let Some((primary, others)) = screens.split_first_mut() else {
+        return false;
+    };
     state.run_genie_demo();
     use render::profile::timed;
     timed("capture d'écran", || {
-        render::take_screenshot(renderer, state, assets, output)
+        render::take_screenshot(renderer, state, assets, &primary.output)
     });
     timed("partage d'écran", || {
-        render::serve_screencopy(renderer, state, assets, output)
+        render::serve_screencopy(renderer, state, assets, &primary.output)
     });
-    let elements = render::output_elements(renderer, state, assets, output, true);
-    let frame = timed("rendu GPU", || {
-        compositor.render_frame(renderer, &elements, [0.0, 0.0, 0.0, 1.0], FrameFlags::DEFAULT)
-    });
-    let sent = match frame {
-        Ok(result) if !result.is_empty => match compositor.queue_frame(()) {
-            Ok(()) => {
-                *frame_pending = true;
-                render::profile::sent();
-                true
-            }
-            Err(err) => {
-                warn!("envoi de l'image impossible : {err:?}");
-                false
-            }
-        },
-        Ok(_) => false,
-        Err(err) => {
-            warn!("échec du rendu : {err:?}");
-            false
+    let mut sent = false;
+    if !primary.frame_pending {
+        let elements = render::output_elements(renderer, state, assets, &primary.output, true);
+        sent = present(renderer, primary, &elements);
+        if sent {
+            render::profile::sent();
         }
-    };
+    }
+    for screen in others.iter_mut().filter(|screen| !screen.frame_pending) {
+        match state.screen_mode {
+            ScreenMode::Extend => {
+                let elements = render::extended_elements(renderer, state, assets, &screen.output);
+                present(renderer, screen, &elements);
+            }
+            ScreenMode::Duplicate => {
+                // L'image de l'écran principal, dessinée entière hors écran (coins arrondis
+                // et découpes à leur vraie place), puis posée au centre de celui-ci,
+                // agrandie ou réduite.
+                let Some(element) =
+                    mirror_element(renderer, state, assets, &primary.output, primary.size, screen)
+                else {
+                    continue;
+                };
+                present(renderer, screen, &[element]);
+            }
+        }
+    }
 
     // Rien de neuf à l'écran (fenêtre cachée, image identique) : les rappels attendent au
     // moins [`IDLE_REDRAW`]. Sinon une application qui redessine dès son rappel (Musique)
@@ -580,11 +1030,39 @@ fn render(drm: &mut Drm, state: &mut Ferrite) -> bool {
     if sent || callbacks_at.is_none_or(|at| at.elapsed() >= IDLE_REDRAW) {
         *callbacks_at = Some(Instant::now());
         let elapsed = state.start_time.elapsed();
-        for window in state.space.elements() {
+        let output = &primary.output;
+        // Fenêtre entièrement cachée par une autre : un rappel par seconde suffit (elle
+        // continue de vivre sans dessiner 60 fois par seconde pour rien).
+        let hidden_turn = hidden_callbacks_at.is_none_or(|at| at.elapsed() >= HIDDEN_REDRAW);
+        if hidden_turn {
+            *hidden_callbacks_at = Some(Instant::now());
+        }
+        let frames: Vec<_> = state
+            .space
+            .elements()
+            .rev()
+            .map(|window| (window, state.window_frame(window)))
+            .collect();
+        for (index, (window, frame)) in frames.iter().enumerate() {
+            let above = frames[..index].iter().filter_map(|(_, frame)| *frame);
+            if !hidden_turn && frame.is_some_and(|frame| covered(frame, above)) {
+                continue;
+            }
             window.send_frame(output, elapsed, Some(Duration::ZERO), |_, _| Some(output.clone()));
         }
     }
     sent
+}
+
+/// Rappels d'image des fenêtres cachées par une autre.
+const HIDDEN_REDRAW: Duration = Duration::from_secs(1);
+
+/// `frame` est-il entièrement sous l'un des cadres `above` ?
+fn covered(
+    frame: smithay::utils::Rectangle<i32, smithay::utils::Logical>,
+    mut above: impl Iterator<Item = smithay::utils::Rectangle<i32, smithay::utils::Logical>>,
+) -> bool {
+    above.any(|top| top.contains_rect(frame))
 }
 
 #[cfg(test)]
@@ -605,5 +1083,38 @@ mod tests {
         // PC fixe : le premier branché.
         assert_eq!(preferred_screen(&[DisplayPort, HDMIA], false), Some(0));
         assert_eq!(preferred_screen(&[], false), None);
+    }
+
+    #[test]
+    fn fenetre_cachee() {
+        use smithay::utils::Rectangle;
+        let big = Rectangle::new((0, 0).into(), (1440, 900).into());
+        let small = Rectangle::new((100, 100).into(), (400, 300).into());
+        assert!(covered(small, [big].into_iter()));
+        assert!(!covered(big, [small].into_iter()));
+        assert!(!covered(small, std::iter::empty()));
+    }
+
+    #[test]
+    fn ecrans_affiches() {
+        // Portable ouvert avec une télévision : les deux.
+        assert_eq!(shown_screens(&[EmbeddedDisplayPort, HDMIA], false), vec![0, 1]);
+        // Portable fermé avec une télévision : la télévision seule.
+        assert_eq!(shown_screens(&[EmbeddedDisplayPort, HDMIA], true), vec![1]);
+        // Fermé sans rien d'autre : l'écran intégré quand même.
+        assert_eq!(shown_screens(&[EmbeddedDisplayPort], true), vec![0]);
+        assert_eq!(shown_screens(&[DisplayPort, HDMIA], true), vec![0, 1]);
+    }
+
+    #[test]
+    fn image_dupliquee_centree_sans_deformation() {
+        // 2880×1800 (16:10) sur une télévision 1920×1080 (16:9) : bandes sur les côtés.
+        let (scale, offset) = mirror_fit((2880, 1800), (1920, 1080));
+        assert!((scale - 0.6).abs() < 1e-9);
+        assert_eq!(offset, Point::from((96, 0)));
+        // Même proportion : plein écran.
+        let (scale, offset) = mirror_fit((1920, 1080), (3840, 2160));
+        assert!((scale - 2.0).abs() < 1e-9);
+        assert_eq!(offset, Point::from((0, 0)));
     }
 }

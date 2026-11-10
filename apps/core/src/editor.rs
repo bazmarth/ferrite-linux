@@ -2204,12 +2204,7 @@ impl EditorState {
                 Frame::new()
                     .fill(style::background())
                     .corner_radius(12.0)
-                    .shadow(egui::Shadow {
-                        offset: [0, 8],
-                        blur: 28,
-                        spread: 0,
-                        color: Color32::from_black_alpha(60),
-                    }),
+                    .shadow(style::elevation(ferrite_ui::tokens::elevation::MENU)),
             )
             .show(ctx, |ui| {
                 let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
@@ -3184,7 +3179,7 @@ impl Row<'_> {
                 egui::pos2(right, y),
                 egui::Align2::RIGHT_CENTER,
                 detail,
-                FontId::proportional(11.5),
+                FontId::proportional(ferrite_ui::tokens::typography::CAPTION),
                 style::text_secondary(),
             );
             shown.width() + 8.0
@@ -3192,7 +3187,7 @@ impl Row<'_> {
         let font = if self.strong {
             FontId::new(14.0, style::strong_family())
         } else {
-            FontId::proportional(13.5)
+            FontId::proportional(ferrite_ui::tokens::typography::LABEL)
         };
         let color = if self.selected {
             style::accent()
@@ -3271,7 +3266,7 @@ fn folder_menu(response: &egui::Response, path: &Path, as_root: bool, commands: 
 
 /// Onglet de l'aperçu : symbole et titre, soulignés d'un trait bleu s'il est choisi.
 fn preview_tab(ui: &mut egui::Ui, icon: Icon, text: &str, selected: bool, bottom: f32) -> egui::Response {
-    let font = FontId::proportional(13.5);
+    let font = FontId::proportional(ferrite_ui::tokens::typography::LABEL);
     let width = ui
         .painter()
         .layout_no_wrap(text.to_owned(), font.clone(), style::primary_text())

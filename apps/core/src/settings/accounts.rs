@@ -939,7 +939,7 @@ fn square(image: &ferrite_ui::wallpaper::Image) -> ferrite_ui::wallpaper::Image 
 }
 
 /// Image de profil réduite pour la page (pastille de 30 px, nette en HiDPI).
-fn load_picture(path: &Path) -> Option<egui::ColorImage> {
+pub(super) fn load_picture(path: &Path) -> Option<egui::ColorImage> {
     // Au plus quelques mégaoctets : une image de profil n'est jamais plus lourde.
     if std::fs::metadata(path).ok()?.len() > 8 * 1024 * 1024 {
         return None;

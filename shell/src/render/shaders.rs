@@ -5,6 +5,7 @@
 //! logique) sert à l'anticrénelage, sur un pixel physique.
 
 use ferrite_ui::theme::{Color, WINDOW_BUTTON_GAP, WINDOW_BUTTON_INSET, WINDOW_BUTTON_RADIUS};
+use ferrite_ui::tokens::elevation;
 use smithay::backend::renderer::gles::{
     GlesError, GlesPixelProgram, GlesRenderer, GlesTexProgram, UniformName, UniformType,
 };
@@ -27,6 +28,19 @@ float coverage(float d, float scale) {
 // Composition « par-dessus » en alpha prémultiplié.
 vec4 over(vec4 dst, vec3 rgb, float a) {
     return dst * (1.0 - a) + vec4(rgb * a, a);
+}
+
+// Part d'ombre (0 à 1) à la distance signée d d'un bord flouté sur `blur` (CSS : écart
+// type = blur / 2), comme `ferrite_ui::tokens::elevation::profile`.
+float shadow_profile(float d, float blur) {
+    float sigma = max(blur * 0.5, 0.25);
+    float x = d / (sigma * 1.41421356);
+    // Fonction d'erreur (Abramowitz et Stegun 7.1.26).
+    float ax = abs(x);
+    float t = 1.0 / (1.0 + 0.3275911 * ax);
+    float poly = t * (0.2548296 + t * (-0.28449674 + t * (1.4214137 + t * (-1.4531521 + t * 1.0614054))));
+    float e = sign(x) * (1.0 - poly * exp(-ax * ax));
+    return clamp((0.5 - 0.5 * e - 0.0013499) / 0.9973002, 0.0, 1.0);
 }
 
 vec4 finish(vec4 color) {
@@ -108,10 +122,10 @@ void main() {
 
 const SHADOW: &str = r#"
 uniform vec4 rect;
-uniform float offset_y;
 uniform float radius;
-uniform float blur;
-uniform float strength;
+// Couches de la charte : (décalage vertical, flou, opacité, inutilisé).
+uniform vec4 contact;
+uniform vec4 level;
 uniform vec4 ring;
 
 float rounded_box(vec2 p, vec2 half_size, float r) {
@@ -119,13 +133,17 @@ float rounded_box(vec2 p, vec2 half_size, float r) {
     return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
 }
 
+float layer(vec2 p, vec2 center, vec4 shadow) {
+    float d = rounded_box(p - center - vec2(0.0, shadow.x), rect.zw * 0.5, radius);
+    return shadow.z * shadow_profile(d, shadow.y);
+}
+
 void main() {
     vec2 p = v_coords * size;
     vec2 center = rect.xy + rect.zw * 0.5;
-    // Le flou CSS s'étale de part et d'autre du bord, sur la valeur du flou en tout.
-    float d = rounded_box(p - center - vec2(0.0, offset_y), rect.zw * 0.5, radius);
-    float a = 1.0 - smoothstep(-blur * 0.5, blur * 0.5, d);
-    vec4 color = vec4(0.0, 0.0, 0.0, strength * a);
+    float a = layer(p, center, contact);
+    a = a + layer(p, center, level) * (1.0 - a);
+    vec4 color = vec4(0.0, 0.0, 0.0, a);
     // Bordure d'un pixel logique, juste à l'extérieur du cadre.
     float edge = rounded_box(p - center, rect.zw * 0.5, radius);
     float line = clamp(edge + 0.5, 0.0, 1.0) * clamp(1.5 - edge, 0.0, 1.0);
@@ -153,8 +171,8 @@ void main() {
 "#;
 
 /// Fond du Dock : gris moyen à 20 % puis blanc à 12 % (lisible sur un fond clair comme
-/// sombre), filet blanc à 28 % bordé d'un filet noir à 14 %, rayon 24, ombre 0 12 32 noir
-/// 25 %. La zone dessinée déborde du fond de `MARGIN` de chaque côté, pour l'ombre.
+/// sombre), filet blanc à 28 % bordé d'un filet noir à 14 %, rayon 24, ombre d'un panneau
+/// de la charte (contact puis `elevation::PANEL`). La zone dessinée déborde du fond de `MARGIN` de chaque côté, pour l'ombre.
 const DOCK: &str = r#"
 uniform float scale;
 
@@ -166,14 +184,17 @@ float rounded_box(vec2 p, vec2 half_size, float r) {
 void main() {
     vec2 p = v_coords * size;
     vec2 half_plate = size * 0.5 - MARGIN;
-    float d = rounded_box(p - size * 0.5, half_plate, 24.0);
-    float shadow = rounded_box(p - size * 0.5 - vec2(0.0, 12.0), half_plate, 24.0);
+    float d = rounded_box(p - size * 0.5, half_plate, 22.0);
+    float near = rounded_box(p - size * 0.5 - vec2(0.0, CONTACT.x), half_plate, 22.0);
+    float far = rounded_box(p - size * 0.5 - vec2(0.0, LEVEL.x), half_plate, 22.0);
+    float a = CONTACT.z * shadow_profile(near, CONTACT.y);
+    a = a + LEVEL.z * shadow_profile(far, LEVEL.y) * (1.0 - a);
     float outside = 1.0 - coverage(d, scale);
-    vec4 color = vec4(0.0, 0.0, 0.0, 0.25 * (1.0 - smoothstep(-16.0, 16.0, shadow)) * outside);
-    color = over(color, vec3(0.5), 0.20 * coverage(d, scale));
-    color = over(color, vec3(1.0), 0.12 * coverage(d, scale));
-    color = over(color, vec3(0.0), 0.14 * coverage(abs(d - 0.5) - 0.5, scale));
-    color = over(color, vec3(1.0), 0.28 * coverage(abs(d + 0.5) - 0.5, scale));
+    vec4 color = vec4(0.0, 0.0, 0.0, a * outside);
+    // Plateau sombre et discret (charte) : ardoise à 76 %, liseré clair très fin.
+    color = over(color, vec3(0.11, 0.133, 0.172), 0.76 * coverage(d, scale));
+    color = over(color, vec3(0.0), 0.16 * coverage(abs(d - 0.5) - 0.5, scale));
+    color = over(color, vec3(1.0), 0.09 * coverage(abs(d + 0.5) - 0.5, scale));
     gl_FragColor = finish(color);
 }
 "#;
@@ -342,21 +363,14 @@ impl Shaders {
             format!("{COMMON}{SHADOW}"),
             &[
                 vec4("rect"),
-                float("offset_y"),
                 float("radius"),
-                float("blur"),
-                float("strength"),
+                vec4("contact"),
+                vec4("level"),
                 vec4("ring"),
             ],
         )?;
         let snap = renderer.compile_custom_pixel_shader(format!("{COMMON}{SNAP}"), &[float("scale")])?;
-        let dock = renderer.compile_custom_pixel_shader(
-            format!(
-                "#define MARGIN {}\n{COMMON}{DOCK}",
-                self::float(crate::desktop::dock::PLATE_SHADOW_MARGIN as f32)
-            ),
-            &[float("scale")],
-        )?;
+        let dock = renderer.compile_custom_pixel_shader(dock_source(), &[float("scale")])?;
         let rounded = renderer.compile_custom_texture_shader(
             ROUNDED_TEXTURE,
             &[vec4("geo"), vec4("clip"), float("radius"), float("top")],
@@ -392,6 +406,29 @@ fn titlebar_source() -> String {
         float(WINDOW_BUTTON_INSET as f32),
         float(WINDOW_BUTTON_GAP as f32),
     )
+}
+
+/// Source du shader du Dock : marge et couches d'ombre de la charte.
+fn dock_source() -> String {
+    let layer = |shadow: elevation::Shadow| {
+        format!(
+            "vec3({}, {}, {})",
+            float(shadow.offset_y),
+            float(shadow.blur),
+            float(shadow.alpha)
+        )
+    };
+    format!(
+        "#define MARGIN {}\n#define CONTACT {}\n#define LEVEL {}\n{COMMON}{DOCK}",
+        float(crate::desktop::dock::PLATE_SHADOW_MARGIN as f32),
+        layer(elevation::CONTACT),
+        layer(elevation::PANEL),
+    )
+}
+
+/// Couche d'ombre en `vec4` (décalage, flou, opacité, 0), pour les uniformes.
+pub fn shadow_layer(shadow: elevation::Shadow) -> [f32; 4] {
+    [shadow.offset_y, shadow.blur, shadow.alpha, 0.0]
 }
 
 fn float(value: f32) -> String {

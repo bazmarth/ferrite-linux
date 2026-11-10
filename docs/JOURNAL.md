@@ -3676,3 +3676,213 @@ ouvert presque à la taille de l'écran, collé en haut avec une marge et débor
 Vérifié : CI (sans shellcheck), test `une_grande_fenetre_s_ouvre_agrandie_les_autres_centrees` ;
 captures en fenêtre avec `foot -W 400x200` (agrandie) et `foot -W 80x24` (centrée).
 Pas vérifié : avec Brave sur le vrai bureau (après `tools/dev-on.sh`).
+
+## 2026-11-10 — Fluidité (étape 2) et plusieurs écrans
+
+Demande : « étapes 2, et prendre en compte plusieurs écrans branchés en HDMI, dupliquer,
+étendre ».
+- Panneaux : `rasterize` renvoie un `Raster` découpé au rectangle non transparent
+  (`opaque_bounds`, `crop_pixels`, aligné sur l'échelle entière) ; un menu n'envoie plus
+  16 Mo à la carte graphique, et le mélange par image ne couvre plus tout l'écran.
+  Écran verrouillé : image entière, inchangé.
+- Fenêtres cachées : une fenêtre entièrement sous une autre ne reçoit plus qu'un rappel
+  d'image par seconde (`covered`, `HIDDEN_REDRAW`).
+- Plusieurs écrans (`backend/drm.rs`) : liste de `Screen` (le premier est le principal,
+  l'écran intégré d'abord), un `DrmCompositor` et un CRTC libre chacun, VBlank par CRTC ;
+  `UdevBackend` → `sync_screens` au branchement/débranchement et au retour de session ;
+  `apply_layout` place les écrans selon `ScreenMode` et publie la liste dans
+  `$XDG_RUNTIME_DIR/ferrite-ecrans` (`ferrite_system::screens`). Dupliquer :
+  éléments de l'écran principal passés par `RescaleRenderElement` +
+  `RelocateRenderElement` (`mirror_fit`). Étendre : `render::extended_elements`
+  (pointeur, fenêtres, fond à part `second_wallpaper`).
+- Pointeur : passe d'un écran à l'autre (`wm::pointer_target`). Agrandir/accrocher sur
+  l'écran de la fenêtre (`areas_at`, `window_area`, `snap_area` au lâcher).
+  `gather_windows` ramène les fenêtres perdues.
+- Paramètres › Écrans : groupe « Plusieurs écrans » (écrans branchés, Dupliquer/Étendre).
+  Raccourci Super+P (`toggle_screens`).
+Vérifié : CI (sans shellcheck), tests `la_decoupe_garde_tout_ce_qui_est_dessine`,
+`ecrans_affiches`, `image_dupliquee_centree_sans_deformation`,
+`le_pointeur_passe_d_un_ecran_a_l_autre`, `fenetre_cachee`, `une_ligne_relue_donne_le_meme_ecran`,
+`dupliquer_par_defaut` ; captures identiques avant/après du presse-papiers, captures du
+lanceur et du dialogue d'arrêt ; capture de Paramètres › Écrans (deux écrans simulés).
+Pas vérifié : tout le backend DRM (rien ne peut le lancer en fenêtre) : un seul écran
+après `tools/dev-on.sh`, puis un vrai écran HDMI branché, dupliqué et étendu. Pas fait :
+accélérer le centre de contrôle et le lanceur (à mesurer d'abord sur le vrai PC).
+
+## 2026-11-10 — Mesures sur le vrai bureau
+
+Demande : mesurer le centre de contrôle et le lanceur sur le PC.
+- Relevés (`ferrite-profil`, bureau de 18:56, avant la nouvelle version) : 90 images/s,
+  préparation moyenne 0,2–0,6 ms. Centre de contrôle à l'ouverture : calque 9–11 ms, pire
+  image 24 ms (une image sautée au plus) ; pas de quoi refaire son dessin.
+- Seul vrai à-coup : 2,7 s à 20:10:20 (îlot 966 ms, panneaux 1,8 s), pendant `tools/ci.sh`.
+  Système et dépôt (NTFS) sur le même SSD SATA, ordonnanceur `mq-deadline` qui ignore
+  `ionice` → règle udev BFQ ajoutée à l'image.
+Suite, sur le PC (BFQ appliqué par l'utilisateur, nouveau bureau relancé à 20:19) :
+- Écrans : « disposition des écrans écrans=1 mode=Duplicate », aucune erreur.
+- Lanceur : 70 ms à la première ouverture après le démarrage, puis 5–7 ms ; centre de
+  contrôle : calque 3,5–4,4 ms (9–11 ms avant la découpe).
+- Fenêtres cachées : Claude recouvert passe de 57 à 1–3 images soumises par seconde.
+- Compilation complète de `ferrite-shell` en release (71 s, `nice 15` + `ionice -c 3`)
+  pendant l'usage : pire image 59 ms (ouverture du lanceur), sinon ≤ 15 ms ; plus aucun
+  blocage de plusieurs secondes.
+Reste : ouverture du lanceur à 20–60 ms (deux dessins plein écran de ~21 ms), une à
+quatre images sautées à l'ouverture.
+
+## 2026-11-10 — Lanceur : sans voile, fond préparé d'avance
+
+Demande : accélérer l'ouverture du lanceur ; « ne pas faire de voile noir, juste sa
+fenêtre en blanc ».
+- Mesure (release, en fenêtre) : première ouverture 80 ms (fond 45 ms : voile plein
+  écran, ombre, verre ; icônes 33 ms) ; ensuite 7–9 ms, mais image de tout l'écran
+  (20 Mo) envoyée à chaque fois, à cause du voile.
+- Voile de 40 % retiré : le bureau reste visible autour du panneau ; la découpe des
+  panneaux ne garde plus que le panneau et son ombre.
+- `launcher_backdrop` (ombre et verre gardés) et `warm_launcher_backdrop` : préparés
+  lanceur fermé, une fois les icônes prêtes (raster « fond du lanceur » dans le profil).
+Vérifié : CI (sans shellcheck) ; capture du lanceur sans voile.
+Mesuré sur le vrai bureau (relancé à 20:30) : fond du lanceur préparé au démarrage
+(16,6 ms, une fois) ; ouvertures du lanceur 4,5–5 ms de dessin dès la première (avant :
+21 ms, 58–70 ms la première fois) ; pire image 25 ms, avec un redessin des widgets dans
+la même seconde.
+Vu en passant : widgets 21 ms par dessin juste après le démarrage (2 fois).
+
+## 2026-11-10 — Écran HDMI : premier essai réel et corrections
+
+Essai de l'utilisateur avec une télévision (HDMI-A-1, mode préféré 1280×720 à 60 Hz) :
+détection, passage dupliquer/étendre (Super+P) et débranchement vus dans le journal.
+Deux défauts signalés :
+- Dupliquer : « l'écran reste petit ». Cause : les éléments sont préparés à l'échelle du
+  principal (2) mais l'écran secondaire les mesurait à la sienne (1) : tout était deux
+  fois trop petit avant la mise à la taille. `Screen::scale` garde l'échelle propre ;
+  `apply_layout` donne au secondaire l'échelle du principal en « dupliquer », la sienne
+  en « étendre ».
+- Étendre : décalage entre la souris et les boutons. Cause probable : la barre du haut
+  et les actions du bureau (`over_shell_chrome`, `desktop_action_at`) étaient testées
+  sans regarder l'écran ; sur le second écran, le haut se comportait comme une barre
+  invisible. Elles ne valent plus que sur l'écran principal.
+Demande ajoutée : bulle à l'écran au branchement/débranchement (`screen_osd`, icône
+`cc-screen`) et au Super+P ; tuile large « Second écran » dans le centre de contrôle
+quand un écran est branché (`DesktopView::second_screen`, `Control::Screens`, une rangée
+de plus) ; option `--demo-screens` pour les captures.
+Vérifié : CI (sans shellcheck) ; captures de la tuile et de la bulle.
+Pas vérifié : les deux corrections avec la télévision (le décalage de la souris en
+« étendre » n'est expliqué que par lecture du code).
+
+## 2026-11-10 — Dupliquer : image du principal dessinée hors écran
+
+Photos de la télévision après la correction d'échelle : l'image remplit la télé, mais des
+morceaux de fenêtres sont découpés ou décalés (coin arraché, barre latérale déplacée,
+textes superposés). Cause : les éléments réduits un à un (`RescaleRenderElement`) gardent
+leurs découpes en coordonnées de l'écran principal (coins arrondis `RoundedSurface`).
+- `mirror_element` : l'image entière du principal est dessinée dans une texture
+  (`Mirror` : `GlesTexture` + `OutputDamageTracker` du principal), puis posée centrée,
+  réduite ou agrandie (`TextureRenderElement`), seulement quand elle a changé. Le second
+  écran garde sa propre échelle (retour de la correction précédente).
+Essai suivant (télévision) : « juste une partie, très zoomée ». Cause : sans `src`,
+`TextureRenderElement` prend un coin de la texture de la taille de destination. `src`
+donné : toute la texture du principal.
+Vérifié : CI (sans shellcheck), avec le chantier des ombres de l'autre session terminé.
+Pas vérifié : nouvel essai avec la télévision.
+
+
+## 2026-11-10 — Ombres : douces et les mêmes partout
+
+Demande : l'ombre du centre de contrôle est mal dessinée (bord net sur fond clair) ;
+harmoniser partout.
+- Cause : le calque animé du centre de contrôle était découpé 16–20 px autour du panneau,
+  ce qui tranchait l'ombre. Marge désormais calculée sur l'ombre (`shadow_margins`).
+- Toutes les ombres suivaient une rampe courte (±flou/2) : remplacée par un vrai flou
+  gaussien façon CSS (écart type = flou/2, effacé sur 1,5 × flou), `elevation::profile`,
+  repris à l'identique dans les shaders.
+- Niveaux uniques dans `ui/src/tokens.rs` (`elevation`) : CONTACT 0 1 3 10 % sous tout ce
+  qui flotte, SMALL (boutons de curseur, îlot), MENU, PANEL (centre de contrôle, lanceur,
+  Dock, dialogues), WINDOW_ACTIVE / WINDOW_INACTIVE. Bureau (toile), fenêtres et Dock
+  (shaders), applications (`style::elevation`, `style::knob_shadow`) les lisent tous.
+Vérifié : captures sur fond clair (centre de contrôle, Dock, fenêtre Réglages) et thème
+sombre, dégradé régulier jusqu'au fond ; clippy, tests, couleurs. `cargo fmt --check`
+bloque sur `shell/src/backend/drm.rs`, modifié par une autre session (non touché).
+Non vérifié : vrai bureau, menus des applications.
+
+## 2026-11-10 — Charte : contraste sur l'accent, icône Logithèque, tailles de texte
+
+Bilan du design demandé par l'utilisateur (cohérent, pas complet) ; corrections :
+- Texte sur l'accent : le bleu clair du thème sombre (#6CB8FF) portait du blanc (contraste
+  ≈ 2:1). Règle unique `Color::ink_on` (`ui/src/theme.rs`) : encre foncée #0B1A2E sur un
+  fond clair, blanc sinon. Bureau (`accent_ink` dans `panels.rs` : tuiles allumées,
+  boutons Connecter/Associer/Se connecter, ligne de menu survolée, jour du calendrier) et
+  applications (`style::accent_text`) la suivent.
+- Tuile « Économie d'énergie » coupée : renommée « Économie ».
+- Icône `app-store` (Logithèque) absente de la table du bureau (`svg.rs`) : ajoutée.
+- Tailles de texte : `typography::CAPTION` (11) et `LABEL` (13) ajoutés ; les demi-tailles
+  (10,5, 11,5, 12,5, 13,5) et les 11 écrits à la main prennent la taille de la charte
+  juste en dessous (Calendrier, Éditeur, PDF, Musique, Logithèque, sélecteur de fichiers).
+Laissé tel quel : « 10 » de l'icône vidéo (dessin), coins de 2–3 px des pages PDF (papier).
+Vérifié : CI (sans shellcheck) ; captures du centre de contrôle clair et sombre.
+Non vérifié : rendu des applications après le changement de tailles, vrai bureau.
+Note : `cargo fmt --all` a aussi reformaté des fichiers en cours dans une autre session.
+
+## 2026-11-10 — Colonnes latérales : barre de défilement et alignement
+
+Capture de l'utilisateur (Réglages) : rail de défilement toujours visible, sélection qui
+s'arrête avant lui (plus étroite que le champ de recherche), titres de section décalés
+par rapport aux pastilles.
+- Barres de défilement « Automatique » (`style::apply_preferences`) : fine barre posée
+  sur le contenu, sans rail ni place réservée, visible quand le pointeur est sur la zone.
+  Vaut pour toutes les applications ; « Toujours » garde la barre pleine.
+- `style::sidebar_heading` : retrait de 8 (aligné sur les pastilles), taille
+  `typography::CAPTION`, 4 px sous le titre au lieu de 2. Vaut pour toutes les colonnes.
+Vérifié : CI (sans shellcheck) ; capture des Réglages dans le bureau imbriqué.
+Astuce capture : une appli déjà ouverte sur le vrai bureau prend la main ; lancer
+`-- sh -c "WAYLAND_DISPLAY=\$XDG_RUNTIME_DIR/\$WAYLAND_DISPLAY XDG_RUNTIME_DIR=/tmp/court exec ferrite-apps settings"`
+sous `dbus-run-session`.
+Non vérifié : autres applications à colonne (Fichiers, Calendrier, Logithèque), vrai bureau.
+
+## 2026-11-10 — Réglages : compte en tête de colonne, champ de recherche
+
+Demandes : champ de recherche « très haut et petit » ; mettre la photo de profil en haut,
+plus grande.
+- `kit::search_field` (nouveau, `SEARCH_HEIGHT` 32) : pastille teintée, loupe, sans
+  bordure, anneau d'accent au focus — même dessin que celui des Fichiers.
+- Colonne des Réglages : ligne du compte en tête (photo 40 px d'AccountsService, sinon
+  `~/.face`, sinon l'initiale sur l'accent ; nom, « Compte »), un clic ouvre Comptes ;
+  dessous, le champ de recherche. Photo relue si le fichier change (`profile_texture`).
+Vérifié : CI (sans shellcheck) ; capture des Réglages avec la vraie photo.
+Non vérifié : vrai bureau, thème sombre, clic vers Comptes.
+
+## 2026-11-10 — Charte épurée appliquée au bureau et aux applications
+
+Demande : un design plus propre et cohérent pour tout le système, d'après la maquette
+validée (artifact « Ferrite OS — nouveau design »), sans toucher aux icônes d'applications.
+- `docs/CHARTE.md` (nouveau) : principes, rôles de couleur, tailles de texte, formes et
+  composants.
+- Palette : rôles `surface` (cartes de groupe) et `sidebar_pill` (élément choisi d'une
+  colonne) ; `typography::TITLE` (24).
+- Applications : `style::sidebar_item` remplace `sidebar_tile_item(_accent)` (symbole gris,
+  pastille claire quand choisi) ; titres de section sans capitales ; groupes de réglages
+  sans bordure sur le fond de la fenêtre ; Réglages : titre de page en grand dans le
+  contenu, bande du haut sans titre ni filet (`show_separator_line(false)` partout).
+- Centre de contrôle : Wi-Fi et Bluetooth en grandes tuiles, sept bascules rondes
+  (huit avec un second écran), curseurs épais sans pourcentage, boutons du bas neutres ;
+  « Ne pas déranger » s'appelle « Silence » sous sa bascule. `OpenNightSettings` retiré.
+- Barre du haut : voile plus léger, symbole seul, indicateurs dans une pastille.
+- Dock : plateau ardoise plus sombre et plus fin (tests de mesures mis à jour).
+- Lanceur : champ blanc sur panneau gris clair, rayon 20, titres sans capitales.
+Vérifié : CI (sans shellcheck) ; captures du centre de contrôle clair et sombre, des
+Réglages clair et sombre, du lanceur.
+Non vérifié : vrai bureau, listes Wi-Fi/Bluetooth du centre de contrôle, Logithèque,
+Calendrier et sélecteur de fichiers après le changement de colonne.
+
+## 2026-11-10 — Dialogues de détails : ils tiennent dans la fenêtre
+
+Constat (capture de l'utilisateur) : la fiche « Détails » du Wi-Fi dépassait de la fenêtre
+des Réglages, titre coupé en haut et boutons coupés en bas ; ligne « Mot de passe » avec
+son explication tronquée et décalée.
+- `details::body` (nouveau) : le corps défile entre l'en-tête et le pied, qui restent
+  visibles (marge de 24 points avec les bords). Utilisé par le Wi-Fi, le Bluetooth et les
+  propriétés d'un fichier ; l'espace de 20 points avant le pied passe dans le corps.
+- `Rows::value` sans valeur : l'explication se range sous l'intitulé, sur toute la largeur.
+Vérifié : CI (sans shellcheck) ; capture de la fiche Wi-Fi avec le QR code (en-tête et pied
+visibles, corps coupé proprement).
+Non vérifié : ligne « Mot de passe » avant « Afficher », défilement à la molette, fiches
+Bluetooth et propriétés d'un fichier, vrai bureau, thème sombre.

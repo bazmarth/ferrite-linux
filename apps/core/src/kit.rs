@@ -247,7 +247,7 @@ pub fn slider(ui: &mut egui::Ui, value: &mut u8, text: &str) -> egui::Response {
     painter.rect_filled(rail, 3.0, style::track());
     let done = egui::Rect::from_min_max(rail.min, egui::pos2(x, rail.bottom()));
     painter.rect_filled(done, 3.0, style::accent());
-    painter.circle_filled(egui::pos2(x, center + 1.0), 10.0, Color32::from_black_alpha(50));
+    style::knob_shadow(painter, egui::pos2(x, center), 10.0);
     painter.circle_filled(egui::pos2(x, center), 10.0, Color32::WHITE);
     response
 }
@@ -402,4 +402,50 @@ pub fn tabular_text(
         x += advance;
     }
     rect
+}
+
+/// Hauteur d'un champ de recherche de colonne ou de barre d'outils.
+pub const SEARCH_HEIGHT: f32 = 32.0;
+
+/// Champ de recherche : pastille légèrement teintée, loupe à gauche, sans bordure ; anneau
+/// d'accent quand on y tape. Posé dans `rect` (hauteur [`SEARCH_HEIGHT`] conseillée).
+pub fn search_field(ui: &mut egui::Ui, rect: egui::Rect, text: &mut String, hint: &str) -> egui::Response {
+    let painter = ui.painter().clone();
+    painter.rect_filled(rect, f32::from(radius::CONTROL), style::tint(14));
+    let ink = style::text_secondary();
+    let lens = egui::pos2(rect.left() + 16.0, rect.center().y - 1.0);
+    painter.circle_stroke(lens, 4.6, Stroke::new(1.6, ink));
+    painter.line_segment(
+        [lens + egui::vec2(3.4, 3.4), lens + egui::vec2(6.8, 6.8)],
+        Stroke::new(1.6, ink),
+    );
+    let input = egui::Rect::from_min_max(
+        egui::pos2(rect.left() + 32.0, rect.top()),
+        egui::pos2(rect.right() - 10.0, rect.bottom()),
+    );
+    let font = FontId::proportional(typography::BODY);
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(input)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
+    let response = child.add(
+        egui::TextEdit::singleline(text)
+            // Même police que le texte tapé : sinon l'invitation, plus grande, remonte.
+            .hint_text(RichText::new(hint).font(font.clone()).color(ink))
+            .font(font)
+            .min_size(egui::vec2(0.0, input.height()))
+            .align(egui::Align2::LEFT_CENTER)
+            .frame(Frame::NONE)
+            .desired_width(input.width()),
+    );
+    if response.has_focus() {
+        painter.rect_stroke(
+            rect,
+            f32::from(radius::CONTROL),
+            Stroke::new(ferrite_ui::tokens::border::FOCUS, style::accent()),
+            egui::StrokeKind::Outside,
+        );
+    }
+    response
 }

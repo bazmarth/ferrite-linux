@@ -32,6 +32,7 @@ Options :
   --demo-power          ouvre le dialogue d'arrêt au démarrage (pour les captures)
   --demo-auth           affiche une demande de mot de passe administrateur (pour les captures)
   --demo-osd            affiche la bulle du volume au démarrage (pour les captures)
+  --demo-screens        simule un second écran branché (pour les captures)
   --demo-selection MODE icônes du bureau sélectionnées : groupe (deux icônes en cours de
                         déplacement) ou rectangle (rectangle de sélection tiré)
   --demo-region         ouvre la sélection d'une zone à capturer au démarrage
@@ -100,6 +101,9 @@ pub struct Options {
     pub demo_power: bool,
     /// Bulle du volume affichée au démarrage (`--demo-osd`).
     pub demo_osd: bool,
+    /// Simule un second écran branché (`--demo-screens`) : tuile du centre de contrôle et
+    /// bulle « Écran branché ».
+    pub demo_screens: bool,
     /// Sélection des icônes du bureau figée (`--demo-selection groupe|rectangle`).
     pub demo_selection: Option<String>,
     pub demo_controls: Option<ControlsPage>,
@@ -136,6 +140,7 @@ impl Default for Options {
             demo_auth: false,
             demo_power: false,
             demo_osd: false,
+            demo_screens: false,
             demo_selection: None,
             demo_controls: None,
             demo_screenshot: false,
@@ -229,6 +234,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
             "--demo-power" => options.demo_power = true,
             "--demo-auth" => options.demo_auth = true,
             "--demo-osd" => options.demo_osd = true,
+            "--demo-screens" => options.demo_screens = true,
             "--demo-selection" => options.demo_selection = Some(value("--demo-selection")?),
             "--demo-controls" => {
                 options.demo_controls = Some(match value("--demo-controls")?.as_str() {

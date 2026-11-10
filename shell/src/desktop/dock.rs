@@ -44,21 +44,21 @@ use smithay::{
     utils::{Logical, Point, Rectangle, Size},
 };
 
-const ICON_GAP: f64 = 10.0;
-const PAD_X: f64 = 12.0;
+const ICON_GAP: f64 = 8.0;
+const PAD_X: f64 = 10.0;
 /// Marge du haut et du bas du fond, identique : les icônes sont centrées, et le point des
 /// applications ouvertes se pose dans la marge du bas.
-const PAD_Y: f64 = 14.0;
-const DOT_BOTTOM: f64 = 4.0;
+const PAD_Y: f64 = 11.0;
+const DOT_BOTTOM: f64 = 3.0;
 const BOTTOM_MARGIN: i32 = 18;
 const RUNNING_DOT: f64 = 5.0;
 /// Contour sombre du point, qui le garde lisible sur un fond d'écran clair.
 const DOT_HALO: f64 = 1.0;
 /// Place ajoutée pour chaque trait (applications ouvertes non épinglées, corbeille).
 const SEPARATOR: f64 = 9.0;
-const SEPARATOR_HEIGHT: f64 = 54.0;
-/// Débord du fond du Dock pour son ombre (0 12 32).
-pub const PLATE_SHADOW_MARGIN: i32 = 44;
+const SEPARATOR_HEIGHT: f64 = 40.0;
+/// Débord du fond du Dock pour son ombre (`elevation::PANEL` entière : 12 + 1,5 × 32).
+pub const PLATE_SHADOW_MARGIN: i32 = 64;
 /// Zone du bas où un mouvement rapide vers le bas rappelle un Dock masqué : il ne sort
 /// que si on y glisse vite la souris, pas quand elle passe simplement par là.
 const REVEAL_APPROACH_ZONE: f64 = 20.0;
@@ -884,9 +884,9 @@ mod tests {
     #[test]
     fn dock_centre_et_laisse_une_marge_en_bas() {
         let dock = layout(output(), medium(), &items(&App::dock(), &[]), 1.0, None, 0.0);
-        assert_eq!(dock.plate.size.w, 354.0);
-        assert_eq!(dock.plate.size.h, 86.0);
-        assert_eq!(dock.plate.loc, Point::from((463.0, 616.0)));
+        assert_eq!(dock.plate.size.w, 342.0);
+        assert_eq!(dock.plate.size.h, 80.0);
+        assert_eq!(dock.plate.loc, Point::from((469.0, 622.0)));
         // Icônes au milieu du fond : autant de marge en haut qu'en bas.
         let icon = dock.icons[0];
         let above = icon.loc.y - dock.plate.loc.y;
@@ -912,7 +912,7 @@ mod tests {
         assert_eq!(dock.icons.len(), 8);
         assert_eq!(
             dock.plate.size.w,
-            354.0 + 3.0 * (58.0 + ICON_GAP) + 2.0 * SEPARATOR
+            342.0 + 3.0 * (58.0 + ICON_GAP) + 2.0 * SEPARATOR
         );
         // Un trait entre épinglées et ouvertes, un autre devant la corbeille.
         let [opened, trash] = dock.separators[..] else {
@@ -1028,7 +1028,7 @@ mod tests {
             windows: &over,
             ..base
         }));
-        assert_eq!(never.reserved_height(), 110);
+        assert_eq!(never.reserved_height(), 104);
         assert_eq!(medium().reserved_height(), 0);
         let always = DockConfig {
             hiding: DockHiding::Always,

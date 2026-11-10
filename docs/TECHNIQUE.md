@@ -489,8 +489,11 @@ reste le navigateur. La Logithèque (phase 7) est considérée comme suffisante.
 - Le portail ne gère pas `Request.Close` (une demande fermée par l'application).
 - Applications Electron à barre maison (VS Code, Claude) : leurs propres boutons de fenêtre.
 - Une résolution DNS de 51 s a été vue une fois, non reproduite.
-- Un seul écran : choisi au démarrage (l'écran intégré, ou l'externe si le couvercle est
-  fermé) ; pas de second écran, pas de bascule quand on branche ou débranche un écran.
+- Plusieurs écrans (2026-11-10, pas encore essayé avec un vrai écran HDMI) : la barre, le
+  Dock, les menus et les widgets restent sur l'écran principal ; en « étendre », le second
+  écran n'a que le fond et les fenêtres ; une fenêtre en plein écran (vidéo) va toujours
+  sur le principal ; les calques d'autres bureaux ne sont pas dessinés sur le second
+  écran. Fermer le couvercle pendant l'usage ne bascule pas encore sur l'écran externe.
 - Une seule carte graphique (celle du démarrage) : sur un portable hybride, les sorties
   câblées sur la carte NVIDIA ne sont pas utilisées.
 - XWayland en bureau imbriqué : « Could not find a free socket » (sans conséquence en session réelle).

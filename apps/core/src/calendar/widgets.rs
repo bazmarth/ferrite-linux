@@ -178,7 +178,7 @@ pub fn mini_month(
             egui::pos2(letters.left() + cell * (index as f32 + 0.5), letters.center().y),
             egui::Align2::CENTER_CENTER,
             *letter,
-            FontId::proportional(10.5),
+            FontId::proportional(ferrite_ui::tokens::typography::CAPTION),
             style::text_secondary(),
         );
     }

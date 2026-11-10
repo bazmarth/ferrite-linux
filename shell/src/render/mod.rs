@@ -78,6 +78,8 @@ const WIDGETS_FADED_ALPHA: f32 = 0.35;
 #[derive(Debug)]
 pub struct RenderAssets {
     pub wallpaper: Wallpaper,
+    /// Fond du second écran en mode « étendre » (autre taille : cache à part).
+    pub second_wallpaper: Wallpaper,
     pub decorations: Decorations,
     pub cursor: Cursor,
     /// Image des fichiers glissés sous le pointeur.
@@ -113,6 +115,7 @@ impl RenderAssets {
         );
         Ok(RenderAssets {
             wallpaper: Wallpaper::default(),
+            second_wallpaper: Wallpaper::default(),
             decorations: Decorations::new(renderer)?,
             cursor: Cursor::default(),
             ghost: ghost::Ghost::default(),
@@ -260,6 +263,14 @@ fn build_output_elements(
         assets.panels.warm_launcher_icon(tiles, scale);
     }
     let view = profile::timed("vue du bureau", || desktop_view(state));
+    // Puis, les icônes prêtes, son ombre et son verre (une fois, ~45 ms).
+    if state.popover != Some(crate::desktop::panels::Popover::Launcher)
+        && !assets
+            .panels
+            .launcher_icons_pending(state.launcher_entries().len())
+    {
+        assets.panels.warm_launcher_backdrop(output_geo, scale, &view);
+    }
     profile::timed("panneaux", || {
         assets
             .panels
@@ -523,6 +534,84 @@ fn build_output_elements(
         overlays,
         &mut elements,
     );
+    elements
+}
+
+/// Second écran en mode « étendre » : pointeur, fenêtres du bureau courant qui le
+/// touchent, et fond d'écran. La barre, le Dock, les menus et les widgets restent sur
+/// l'écran principal ; verrouillé ou écran éteint, il reste noir.
+pub fn extended_elements(
+    renderer: &mut GlesRenderer,
+    state: &Ferrite,
+    assets: &RenderAssets,
+    output: &Output,
+) -> Vec<OutputElement> {
+    let mut elements = Vec::new();
+    let Some(output_geo) = state.space.output_geometry(output) else {
+        return elements;
+    };
+    if state.lock.is_some() || state.session_lock.is_some() {
+        return elements;
+    }
+    let scale = output.current_scale().fractional_scale();
+    let pointer = state.seat.get_pointer();
+    if !matches!(state.cursor_status, CursorImageStatus::Hidden)
+        && let Some(pointer) = &pointer
+    {
+        let location = pointer.current_location() - output_geo.loc.to_f64();
+        if Rectangle::from_size(output_geo.size).to_f64().contains(location) {
+            let image = assets.cursor.image(
+                state.cursor_shape(),
+                scale,
+                state.cursor_size,
+                state.cursor_theme.as_deref(),
+            );
+            push_cursor(renderer, &image, location, scale, &mut elements);
+        }
+    }
+    let hover = pointer
+        .filter(|pointer| !pointer.is_grabbed())
+        .map(|pointer| pointer.current_location());
+    let dark_theme = state.appearance.is_dark();
+    for window in state.space.elements().rev() {
+        let Some(content) = state.space.element_geometry(window) else {
+            continue;
+        };
+        let frame = state.window_frame(window).unwrap_or(content);
+        if !frame.overlaps(output_geo) {
+            continue;
+        }
+        push_window(
+            renderer,
+            assets,
+            window,
+            content,
+            output_geo,
+            0,
+            hover,
+            dark_theme,
+            scale,
+            &mut elements,
+        );
+    }
+    let physical = output_geo.size.to_f64().to_physical(scale);
+    let (wallpaper, source) = assets.second_wallpaper.buffer(
+        &state.wallpaper,
+        physical.w.round() as i32,
+        physical.h.round() as i32,
+    );
+    match MemoryRenderBufferRenderElement::from_buffer(
+        renderer,
+        Point::from((0.0, 0.0)),
+        &wallpaper,
+        None,
+        Some(source),
+        Some(output_geo.size),
+        Kind::Unspecified,
+    ) {
+        Ok(element) => elements.push(OutputElement::Memory(element)),
+        Err(err) => warn!("fond du second écran non importé : {err:?}"),
+    }
     elements
 }
 
@@ -1225,6 +1314,10 @@ impl Ferrite {
         let Some(output) = self.screen_area() else {
             return false;
         };
+        // La barre et le Dock ne sont que sur l'écran principal.
+        if !output.to_f64().contains(pos) {
+            return false;
+        }
         let bar_bottom = f64::from(output.loc.y) + f64::from(self.dock_config.bar_height);
         if pos.y < bar_bottom && self.bar_visible() {
             return true;
@@ -1356,6 +1449,7 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
         keyboard_light: system.keyboard_light,
         power_saver: system.power_saver,
         night: night_view(state),
+        second_screen: (state.screen_count > 1).then_some(state.screen_mode),
         power: state.pending_power,
         // Pas par-dessus l'écran verrouillé : elle attend le déverrouillage.
         auth: state.auth.front().filter(|_| state.lock.is_none()).map(|auth| {

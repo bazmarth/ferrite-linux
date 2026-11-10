@@ -715,7 +715,7 @@ impl VideoState {
         slider_track(&painter, track, fraction, Color32::from_white_alpha(51));
         if response.hovered() || response.dragged() || self.duration > 0.0 {
             let knob = egui::pos2(track.left() + track.width() * fraction, track.center().y);
-            painter.circle_filled(knob + egui::vec2(0.0, 1.0), 7.5, Color32::from_black_alpha(90));
+            style::knob_shadow(&painter, knob, 7.0);
             painter.circle_filled(knob, 7.0, Color32::WHITE);
         }
 
@@ -1052,12 +1052,7 @@ impl VideoState {
                 egui::Frame::new()
                     .fill(style::background())
                     .corner_radius(12.0)
-                    .shadow(egui::Shadow {
-                        offset: [0, 8],
-                        blur: 28,
-                        spread: 0,
-                        color: Color32::from_black_alpha(60),
-                    }),
+                    .shadow(style::elevation(ferrite_ui::tokens::elevation::MENU)),
             )
             .show(ctx, |ui| {
                 let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());

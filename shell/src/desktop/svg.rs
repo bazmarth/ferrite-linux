@@ -96,6 +96,7 @@ icons![
     "app-music" => "apps/multimedia-audio-player",
     "app-calendar" => "apps/x-office-calendar",
     "app-clock" => "apps/preferences-system-time",
+    "app-store" => "apps/system-software-install",
     "file-generic" => "mimetypes/text-x-generic",
     "places-trash" => "places/user-trash",
     // Fichiers glissés depuis Fichiers (image sous le pointeur).
@@ -149,6 +150,10 @@ const GLYPHS: &[(&str, &str)] = &[
     (
         "cc-saver",
         r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 8 H18 V16 H3 Z M20 11 V13 M9 9.5 L7 12.5 H11 L9 15" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
+    ),
+    (
+        "cc-screen",
+        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 5 H21 V16 H3 Z M12 16 V20 M8 20 H16" fill="none" stroke="#000" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
     ),
     (
         "cc-keyboard",

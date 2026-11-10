@@ -351,6 +351,8 @@ pub struct SettingsState {
     /// Confidentialité : enregistrement du visage.
     face: face::FaceState,
     accounts: accounts::AccountsState,
+    /// Photo de profil de la colonne : date du fichier lu et image (rechargée s'il change).
+    profile_picture: Option<(Option<std::time::SystemTime>, Option<egui::TextureHandle>)>,
     /// Applications installées, lues à l'ouverture de « Applications par défaut ».
     installed_apps: Option<Vec<ferrite_system::applications::DesktopEntry>>,
 }
@@ -424,6 +426,7 @@ impl Default for SettingsState {
             input_meter_failed: false,
             face: face::FaceState::default(),
             accounts: accounts::AccountsState::default(),
+            profile_picture: None,
             installed_apps: None,
         }
     }
@@ -721,10 +724,9 @@ impl SettingsState {
             self.sidebar(ui)
         });
         let title = self.page.title();
-        style::toolbar(ui, true, |ui| {
-            ui.add_space(10.0);
-            ui.label(RichText::new(title).size(16.0).family(style::strong_family()));
-        });
+        // Bande du haut sans titre ni filet, du même fond que la page : elle porte les
+        // boutons de fenêtre et sert à déplacer. Le titre est dans la page, en grand.
+        style::toolbar_with(ui, true, rows::page_color(), Color32::TRANSPARENT, |_| {});
         egui::CentralPanel::no_frame()
             .frame(Frame::new().fill(rows::page_color()))
             .show(ui, |ui| {
@@ -733,11 +735,21 @@ impl SettingsState {
                     // réglage restent proches, même sur un grand écran.
                     let width = (ui.available_width() - 2.0 * rows::COLUMN_MARGIN).min(rows::COLUMN);
                     let side = ((ui.available_width() - width) / 2.0).max(0.0);
-                    ui.add_space(24.0);
+                    ui.add_space(2.0);
                     ui.horizontal_top(|ui| {
                         ui.add_space(side);
                         ui.vertical(|ui| {
                             ui.set_width(width);
+                            ui.horizontal(|ui| {
+                                ui.add_space(4.0);
+                                ui.label(
+                                    RichText::new(title)
+                                        .size(ferrite_ui::tokens::typography::TITLE)
+                                        .family(style::strong_family())
+                                        .color(style::primary_text()),
+                                );
+                            });
+                            ui.add_space(18.0);
                             self.page_body(ui, &ctx);
                             ui.add_space(32.0);
                         });
@@ -807,19 +819,16 @@ impl SettingsState {
     }
 
     fn sidebar(&mut self, ui: &mut egui::Ui) {
-        // Champ de recherche en haut de la colonne, à hauteur de la barre d'outils.
+        // Bande du haut : le compte ; dessous, le champ de recherche.
         let body = ui.max_rect();
-        let field = egui::Rect::from_min_size(
-            egui::pos2(body.left(), body.top() - style::TOOLBAR_HEIGHT + 7.0),
-            egui::vec2(body.width(), 28.0),
+        let below = self.profile_row(ui, body);
+        ui.add_space(below + 8.0);
+        let (field, _) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), crate::kit::SEARCH_HEIGHT),
+            egui::Sense::hover(),
         );
-        ui.put(
-            field,
-            egui::TextEdit::singleline(&mut self.search)
-                .hint_text("Rechercher un réglage")
-                .desired_width(f32::INFINITY)
-                .margin(Margin::symmetric(10, 4)),
-        );
+        crate::kit::search_field(ui, field, &mut self.search, "Rechercher un réglage");
+        ui.add_space(4.0);
         let query = self.search.trim().to_lowercase();
         egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 1.0;
@@ -835,11 +844,10 @@ impl SettingsState {
                 ui.add_space(8.0);
                 style::sidebar_heading(ui, name);
                 for page in pages {
-                    let response = style::sidebar_tile_item_accent(
+                    let response = style::sidebar_item(
                         ui,
                         &mut self.icons,
                         page.icon(),
-                        rgb(page.color()),
                         page.title(),
                         self.page == page,
                     );
@@ -849,6 +857,95 @@ impl SettingsState {
                 }
             }
         });
+    }
+
+    /// Ligne du compte dans la bande du haut de la colonne : photo de profil (sinon
+    /// l'initiale), nom, « Compte » ; un clic ouvre la page Comptes.
+    /// Rend la hauteur qu'elle prend sous la bande, à sauter avant la suite.
+    fn profile_row(&mut self, ui: &mut egui::Ui, body: egui::Rect) -> f32 {
+        let top = body.top() - style::TOOLBAR_HEIGHT + 6.0;
+        let row =
+            egui::Rect::from_min_max(egui::pos2(body.left(), top), egui::pos2(body.right(), top + 56.0));
+        let response = ui
+            .interact(row, ui.scope_id().with("profil"), egui::Sense::click())
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text("Comptes");
+        if self.page == Page::Accounts {
+            ui.painter().rect_filled(row, 10.0, style::tint(14));
+        } else if response.hovered() {
+            ui.painter().rect_filled(row, 10.0, style::tint(9));
+        }
+        let side = 40.0;
+        let disc = egui::Rect::from_center_size(
+            egui::pos2(row.left() + 8.0 + side / 2.0, row.center().y),
+            egui::Vec2::splat(side),
+        );
+        let picture = self.profile_texture(ui.ctx());
+        let (name, login) = &self.user;
+        let shown = if name.is_empty() { login } else { name };
+        match picture {
+            Some(texture) => {
+                egui::Image::new((texture.id(), disc.size()))
+                    .corner_radius(side / 2.0)
+                    .paint_at(ui, disc);
+            }
+            None => {
+                ui.painter()
+                    .circle_filled(disc.center(), side / 2.0, style::accent());
+                let initial: String = shown
+                    .chars()
+                    .next()
+                    .map(|c| c.to_uppercase().collect())
+                    .unwrap_or_default();
+                ui.painter().text(
+                    disc.center(),
+                    egui::Align2::CENTER_CENTER,
+                    initial,
+                    egui::FontId::new(ferrite_ui::tokens::typography::HEADING, style::strong_family()),
+                    style::accent_text(),
+                );
+            }
+        }
+        let x = disc.right() + 12.0;
+        ui.painter().text(
+            egui::pos2(x, row.center().y),
+            egui::Align2::LEFT_BOTTOM,
+            shown,
+            egui::FontId::new(ferrite_ui::tokens::typography::HEADING, style::strong_family()),
+            style::primary_text(),
+        );
+        ui.painter().text(
+            egui::pos2(x, row.center().y + 2.0),
+            egui::Align2::LEFT_TOP,
+            "Compte",
+            egui::FontId::proportional(ferrite_ui::tokens::typography::SMALL),
+            style::text_secondary(),
+        );
+        if response.clicked() {
+            self.go(Page::Accounts);
+        }
+        (row.bottom() - body.top()).max(0.0)
+    }
+
+    /// Photo de profil (AccountsService, sinon `~/.face`), relue si le fichier change.
+    fn profile_texture(&mut self, ctx: &egui::Context) -> Option<egui::TextureHandle> {
+        let path = profile_picture_path();
+        let modified = path
+            .as_ref()
+            .and_then(|path| std::fs::metadata(path).and_then(|m| m.modified()).ok());
+        let fresh = self
+            .profile_picture
+            .as_ref()
+            .is_some_and(|(seen, _)| *seen == modified);
+        if !fresh {
+            let texture = path
+                .and_then(|path| accounts::load_picture(&path))
+                .map(|image| ctx.load_texture("profil-colonne", image, egui::TextureOptions::LINEAR));
+            self.profile_picture = Some((modified, texture));
+        }
+        self.profile_picture
+            .as_ref()
+            .and_then(|(_, texture)| texture.clone())
     }
 
     // ---- À propos ---------------------------------------------------------------------
@@ -1191,74 +1288,76 @@ impl SettingsState {
                 },
                 |ui| details::title_and_state(ui, t, &network.ssid, "Connecté", t.ok),
             );
-            details::tiles(
-                ui,
-                t,
-                &[
-                    ("Sécurité", security_label(&network.security)),
-                    ("Bande", band_label(&network.frequency)),
-                    ("Signal", signal_label(network.signal)),
-                ],
-            );
-            details::section(ui, t, 18.0, "Adresses", None, |rows| {
-                let mut dns = 0;
-                for (label, value) in &addresses {
-                    let label = match label.as_str() {
-                        "DNS" => {
-                            dns += 1;
-                            match dns {
-                                1 => "DNS principal".to_owned(),
-                                2 => "DNS secondaire".to_owned(),
-                                n => format!("DNS {n}"),
+            details::body(ui, |ui| {
+                details::tiles(
+                    ui,
+                    t,
+                    &[
+                        ("Sécurité", security_label(&network.security)),
+                        ("Bande", band_label(&network.frequency)),
+                        ("Signal", signal_label(network.signal)),
+                    ],
+                );
+                details::section(ui, t, 18.0, "Adresses", None, |rows| {
+                    let mut dns = 0;
+                    for (label, value) in &addresses {
+                        let label = match label.as_str() {
+                            "DNS" => {
+                                dns += 1;
+                                match dns {
+                                    1 => "DNS principal".to_owned(),
+                                    2 => "DNS secondaire".to_owned(),
+                                    n => format!("DNS {n}"),
+                                }
                             }
-                        }
-                        other => other.to_owned(),
-                    };
-                    rows.copy(&label, value);
-                }
-            });
-            let share = self.wifi_share.as_ref().filter(|(ssid, _)| *ssid == network.ssid);
-            details::section(ui, t, 18.0, "Partager", None, |rows| match share {
-                None => {
-                    if rows.value(
-                        "Mot de passe",
-                        "",
-                        false,
-                        Some("QR code à scanner avec l’appareil photo d’un téléphone"),
-                        Some("Afficher"),
-                    ) {
-                        show_share = true;
-                    }
-                }
-                Some((_, None)) => {
-                    rows.value("Mot de passe", "Lecture…", false, None, None);
-                }
-                Some((_, Some(Ok((password, texture))))) => {
-                    rows.picture(texture, 200.0, "Scannez avec l’appareil photo du téléphone");
-                    rows.copy("Mot de passe", password);
-                }
-                Some((_, Some(Err(error)))) => {
-                    rows.value("Mot de passe", "Illisible", false, Some(error), None);
-                }
-            });
-            if let Some(flags) = flags.as_mut() {
-                details::section(ui, t, 18.0, "Options", None, |rows| {
-                    if rows.switch(
-                        "Connexion automatique",
-                        "Se reconnecter dès que le réseau est à portée",
-                        &mut flags.autoconnect,
-                    ) {
-                        changed = Some((network::WifiFlag::Autoconnect, flags.autoconnect));
-                    }
-                    if rows.switch(
-                        "Connexion limitée",
-                        "Réduit les téléchargements en arrière-plan",
-                        &mut flags.metered,
-                    ) {
-                        changed = Some((network::WifiFlag::Metered, flags.metered));
+                            other => other.to_owned(),
+                        };
+                        rows.copy(&label, value);
                     }
                 });
-            }
+                let share = self.wifi_share.as_ref().filter(|(ssid, _)| *ssid == network.ssid);
+                details::section(ui, t, 18.0, "Partager", None, |rows| match share {
+                    None => {
+                        if rows.value(
+                            "Mot de passe",
+                            "",
+                            false,
+                            Some("QR code à scanner avec l’appareil photo d’un téléphone"),
+                            Some("Afficher"),
+                        ) {
+                            show_share = true;
+                        }
+                    }
+                    Some((_, None)) => {
+                        rows.value("Mot de passe", "Lecture…", false, None, None);
+                    }
+                    Some((_, Some(Ok((password, texture))))) => {
+                        rows.picture(texture, 200.0, "Scannez avec l’appareil photo du téléphone");
+                        rows.copy("Mot de passe", password);
+                    }
+                    Some((_, Some(Err(error)))) => {
+                        rows.value("Mot de passe", "Illisible", false, Some(error), None);
+                    }
+                });
+                if let Some(flags) = flags.as_mut() {
+                    details::section(ui, t, 18.0, "Options", None, |rows| {
+                        if rows.switch(
+                            "Connexion automatique",
+                            "Se reconnecter dès que le réseau est à portée",
+                            &mut flags.autoconnect,
+                        ) {
+                            changed = Some((network::WifiFlag::Autoconnect, flags.autoconnect));
+                        }
+                        if rows.switch(
+                            "Connexion limitée",
+                            "Réduit les téléchargements en arrière-plan",
+                            &mut flags.metered,
+                        ) {
+                            changed = Some((network::WifiFlag::Metered, flags.metered));
+                        }
+                    });
+                }
+            });
             footer = details::footer(
                 ui,
                 t,
@@ -1316,12 +1415,7 @@ impl SettingsState {
                         bottom: 22,
                     })
                     .stroke(Stroke::new(1.0, style::separator()))
-                    .shadow(egui::Shadow {
-                        offset: [0, 14],
-                        blur: 40,
-                        spread: 0,
-                        color: Color32::from_black_alpha(42),
-                    }),
+                    .shadow(style::elevation(ferrite_ui::tokens::elevation::PANEL)),
             )
             .show(ctx, |ui| {
                 ui.set_width(420.0);
@@ -1635,31 +1729,33 @@ impl SettingsState {
                 },
                 |ui| details::title_and_state(ui, t, &device.name, state, state_color),
             );
-            details::tiles(
-                ui,
-                t,
-                &[
-                    ("Type", device_kind(glyph).to_owned()),
-                    (
-                        "Batterie",
-                        device
-                            .battery
-                            .map_or_else(|| "—".to_owned(), |battery| format!("{battery} %")),
-                    ),
-                    ("Associé", if device.paired { "Oui" } else { "Non" }.to_owned()),
-                ],
-            );
-            details::section(ui, t, 18.0, "Appareil", None, |rows| {
-                rows.copy("Adresse", &device.address);
-            });
-            details::section(ui, t, 18.0, "Options", None, |rows| {
-                if rows.switch(
-                    "Connexion automatique",
-                    "Se reconnecter dès qu’il est allumé et à portée",
-                    &mut device.trusted,
-                ) {
-                    trust = Some(device.trusted);
-                }
+            details::body(ui, |ui| {
+                details::tiles(
+                    ui,
+                    t,
+                    &[
+                        ("Type", device_kind(glyph).to_owned()),
+                        (
+                            "Batterie",
+                            device
+                                .battery
+                                .map_or_else(|| "—".to_owned(), |battery| format!("{battery} %")),
+                        ),
+                        ("Associé", if device.paired { "Oui" } else { "Non" }.to_owned()),
+                    ],
+                );
+                details::section(ui, t, 18.0, "Appareil", None, |rows| {
+                    rows.copy("Adresse", &device.address);
+                });
+                details::section(ui, t, 18.0, "Options", None, |rows| {
+                    if rows.switch(
+                        "Connexion automatique",
+                        "Se reconnecter dès qu’il est allumé et à portée",
+                        &mut device.trusted,
+                    ) {
+                        trust = Some(device.trusted);
+                    }
+                });
             });
             footer = details::footer(
                 ui,
@@ -2249,7 +2345,44 @@ impl SettingsState {
                 self.act(ctx, "", move || display::set_brightness(brightness.max(5)));
             }
         }
+        self.screens_group(ui);
         self.night_group(ui);
+    }
+
+    /// Plusieurs écrans : écrans branchés (d'après le bureau) et choix entre dupliquer et
+    /// étendre. Le bureau applique le choix dans la seconde ; Super+P bascule aussi.
+    fn screens_group(&mut self, ui: &mut egui::Ui) {
+        use ferrite_system::screens::{ScreenMode, connected};
+        let screens = connected();
+        let mut settings = Settings::load();
+        let mut mode = ScreenMode::load(&settings);
+        let before = mode;
+        let options: Vec<(ScreenMode, &str)> =
+            ScreenMode::ALL.iter().map(|mode| (*mode, mode.label())).collect();
+        group(ui, &mut self.icons, "Plusieurs écrans", |rows| {
+            for screen in &screens {
+                let role = if screen.primary { " · principal" } else { "" };
+                let text = format!(
+                    "{} × {} à {} Hz{role}",
+                    screen.width, screen.height, screen.refresh
+                );
+                rows.text(Row::new(screen.kind()).hint(&text));
+            }
+            let hint = if screens.len() > 1 {
+                "Dupliquer : même image partout ; étendre : glissez les fenêtres vers la droite"
+            } else {
+                "S’applique dès qu’un second écran est branché (HDMI, DisplayPort)"
+            };
+            rows.row(Row::new("Second écran").hint(hint), |ui| {
+                rows::pick(ui, "ecrans-mode", &mut mode, &options)
+            });
+        });
+        if mode != before {
+            mode.store(&mut settings);
+            if let Err(error) = settings.save() {
+                eprintln!("mode des écrans non enregistré : {error}");
+            }
+        }
     }
 
     /// Mode nuit : programmation, horaires et chaleur de la teinte. Le bureau suit les
@@ -3820,6 +3953,18 @@ fn qr_texture(ctx: &egui::Context, text: &str) -> egui::TextureHandle {
 }
 
 /// Nom complet (champ GECOS de `/etc/passwd`) et identifiant de l'utilisateur.
+/// Image de profil du compte : celle qu'AccountsService garde (choisie dans Comptes),
+/// sinon `~/.face`. Même règle que l'écran de verrouillage.
+fn profile_picture_path() -> Option<std::path::PathBuf> {
+    let user = std::env::var("USER").ok().filter(|user| !user.is_empty())?;
+    let kept = std::path::Path::new("/var/lib/AccountsService/icons").join(&user);
+    if kept.is_file() {
+        return Some(kept);
+    }
+    let face = std::path::PathBuf::from(std::env::var_os("HOME")?).join(".face");
+    face.is_file().then_some(face)
+}
+
 fn current_user() -> (String, String) {
     let login = std::env::var("USER").unwrap_or_else(|_| "ferrite".to_owned());
     let full = std::fs::read_to_string("/etc/passwd")

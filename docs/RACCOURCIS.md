@@ -49,6 +49,7 @@ sans redémarrer. L'écran s'assombrit progressivement avant le verrouillage et 
 | Verrouiller | Super + L |
 | Dialogue d'arrêt | Super + Échap |
 | Widgets devant les fenêtres, puis derrière | Super + W, Échap |
+| Second écran : dupliquer ou étendre | Super + P |
 | Modifier les widgets | clic droit sur le bureau |
 | Raccourci sur le bureau : ajouter une application / un dossier | clic droit sur son icône (Dock ou menu Applications) → « Ajouter au bureau » ; dans Fichiers, clic droit → « Ajouter au bureau » ; clic droit sur le bureau → « Ajouter un dossier au bureau… » |
 | Raccourci sur le bureau : ouvrir / retirer | clic / clic droit → « Retirer du bureau » (toute la sélection si l'icône en fait partie) |

@@ -861,43 +861,18 @@ impl CalendarState {
                     .filter(|task| !task.done)
                     .count();
             let upcoming = self.agenda.upcoming_tasks(now, 14).len();
-            let items: [(Page, &'static str, Accent, &str, usize); 5] = [
-                (Page::Calendar, "glyph-calendar", Accent::Red, "Calendrier", 0),
-                (
-                    Page::Today,
-                    "glyph-today",
-                    Accent::Blue,
-                    "Aujourd’hui",
-                    today_count,
-                ),
-                (
-                    Page::Upcoming,
-                    "glyph-upcoming",
-                    Accent::Purple,
-                    "À venir",
-                    upcoming,
-                ),
-                (
-                    Page::Overdue,
-                    "glyph-overdue",
-                    Accent::Orange,
-                    "En retard",
-                    overdue,
-                ),
-                (Page::Tasks, "glyph-tasks", Accent::Green, "Tâches", open),
+            let items: [(Page, &'static str, &str, usize); 5] = [
+                (Page::Calendar, "glyph-calendar", "Calendrier", 0),
+                (Page::Today, "glyph-today", "Aujourd’hui", today_count),
+                (Page::Upcoming, "glyph-upcoming", "À venir", upcoming),
+                (Page::Overdue, "glyph-overdue", "En retard", overdue),
+                (Page::Tasks, "glyph-tasks", "Tâches", open),
             ];
-            for (page, icon, color, label, count) in items {
+            for (page, icon, label, count) in items {
                 let selected = self.page == page
                     && self.search.trim().is_empty()
                     && (page != Page::Tasks || self.filter.list.is_none());
-                let response = style::sidebar_tile_item(
-                    ui,
-                    &mut self.icons,
-                    icon,
-                    style::accent_color(color),
-                    label,
-                    selected,
-                );
+                let response = style::sidebar_item(ui, &mut self.icons, icon, label, selected);
                 if count > 0 {
                     let ink = if page == Page::Overdue {
                         style::error()
@@ -1081,7 +1056,7 @@ fn collection_row(
         egui::pos2(rect.left() + 34.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
         name,
-        FontId::proportional(13.5),
+        FontId::proportional(ferrite_ui::tokens::typography::LABEL),
         ink,
     );
     if let Some(count) = count.filter(|count| *count > 0) {
@@ -1089,7 +1064,7 @@ fn collection_row(
             rect.right_center() - egui::vec2(10.0, 0.0),
             egui::Align2::RIGHT_CENTER,
             count.to_string(),
-            FontId::proportional(12.5),
+            FontId::proportional(ferrite_ui::tokens::typography::SMALL),
             style::text_secondary(),
         );
     }

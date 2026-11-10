@@ -1,0 +1,6 @@
+# Disques SATA : ordonnanceur BFQ au lieu de mq-deadline. mq-deadline ignore les
+# priorités d'entrées-sorties (ionice) : une grosse compilation ou une copie qui écrit sur
+# le disque système faisait attendre le bureau jusqu'à 2,7 s (lecture d'une icône, d'une
+# page du programme). BFQ sert d'abord les lectures du bureau ; les tâches en `ionice -c 3`
+# (tools/ci.sh, tools/dev-on.sh) passent après. Les disques NVMe gardent leur réglage.
+ACTION=="add|change", SUBSYSTEM=="block", KERNEL=="sd[a-z]", ATTR{queue/rotational}=="0", ATTR{queue/scheduler}="bfq"

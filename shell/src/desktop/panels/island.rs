@@ -20,6 +20,7 @@ const SEED_W: f64 = 200.0;
 const BUBBLE_GAP: f64 = 8.0;
 /// Haut de l'îlot déplié, et marge autour de sa forme pour son ombre.
 const OPEN_TOP: f64 = 6.0;
+/// Débord de l'ombre autour de l'îlot (`elevation::SMALL` entière).
 const SHADOW: f64 = 6.0;
 /// Lecteur déplié : milieu de la ligne de la pochette et des boutons, depuis le haut, et
 /// hauteur avec la barre d'avancement en dessous.
@@ -361,18 +362,7 @@ impl Panels {
             };
             let local = Rect::new(SHADOW, SHADOW, rect.w, rect.h);
             let radius = island_radius(local);
-            for (grow, shade) in [(3.0, 16), (2.0, 22), (1.0, 34)] {
-                canvas.fill(
-                    Rect::new(
-                        local.x - grow,
-                        local.y - grow + 1.5,
-                        local.w + grow * 2.0,
-                        local.h + grow * 2.0,
-                    ),
-                    radius + grow as f32,
-                    Color::BLACK.with_alpha(shade),
-                );
-            }
+            canvas.drop_shadow(local, radius, elevation::SMALL);
             canvas.fill(local, radius, ISLAND_BG);
             let buffer = MemoryRenderBuffer::from_slice(
                 &canvas.pixels,
@@ -475,18 +465,7 @@ impl Panels {
         };
         let disc = Rect::new(SHADOW, SHADOW, side, side);
         let radius = (side / 2.0) as f32;
-        for (grow, shade) in [(3.0, 16), (2.0, 22), (1.0, 34)] {
-            canvas.fill(
-                Rect::new(
-                    disc.x - grow,
-                    disc.y - grow + 1.5,
-                    disc.w + grow * 2.0,
-                    disc.h + grow * 2.0,
-                ),
-                radius + grow as f32,
-                Color::BLACK.with_alpha(shade),
-            );
-        }
+        canvas.drop_shadow(disc, radius, elevation::SMALL);
         canvas.fill(disc, radius, ISLAND_BG);
         let center = disc.center();
         match kind {

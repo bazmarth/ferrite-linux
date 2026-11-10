@@ -50,12 +50,7 @@ fn dialog<R>(ctx: &egui::Context, id: &str, add: impl FnOnce(&mut egui::Ui) -> R
         .stroke(Stroke::new(1.0, style::separator()))
         .corner_radius(16)
         .inner_margin(Margin::symmetric(22, 18))
-        .shadow(egui::Shadow {
-            offset: [0, 18],
-            blur: 60,
-            spread: 0,
-            color: style::shadow(),
-        });
+        .shadow(style::elevation(ferrite_ui::tokens::elevation::PANEL));
     let response = egui::Modal::new(egui::Id::unique(id))
         .frame(frame)
         .backdrop_color(style::scrim())

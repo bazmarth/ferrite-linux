@@ -159,6 +159,7 @@ pub(crate) enum Action {
     AuthCancel,
     LockCancel,
     ToggleWidgets,
+    ToggleScreens,
     WidgetsDismiss,
     /// Super+Espace : bascule entre les dispositions française et américaine.
     ToggleKeyboardLayout,
@@ -231,6 +232,7 @@ fn shortcut_action(id: &str) -> Option<Action> {
         "toggle_notifications" => Action::ToggleNotifications,
         "toggle_clipboard" => Action::ToggleClipboard,
         "toggle_widgets" => Action::ToggleWidgets,
+        "toggle_screens" => Action::ToggleScreens,
         "toggle_keyboard_layout" => Action::ToggleKeyboardLayout,
         "show_desktop" => Action::ShowDesktop,
         "lock_screen" => Action::Lock,
@@ -345,16 +347,18 @@ impl Ferrite {
                 let Some(pointer) = self.seat.get_pointer() else {
                     return;
                 };
-                let Some(output) = self.space.outputs().next() else {
+                let screens: Vec<_> = self
+                    .space
+                    .outputs()
+                    .filter_map(|output| self.space.output_geometry(output))
+                    .collect();
+                let Some(location) = crate::wm::pointer_target(
+                    &screens,
+                    pointer.current_location(),
+                    pointer.current_location() + event.delta(),
+                ) else {
                     return;
                 };
-                let Some(geo) = self.space.output_geometry(output) else {
-                    return;
-                };
-                let mut location = pointer.current_location() + event.delta();
-                let (min_x, min_y) = (geo.loc.x as f64, geo.loc.y as f64);
-                location.x = location.x.clamp(min_x, min_x + geo.size.w as f64 - 1.0);
-                location.y = location.y.clamp(min_y, min_y + geo.size.h as f64 - 1.0);
                 let relative = RelativeMotionEvent {
                     delta: event.delta(),
                     delta_unaccel: event.delta_unaccel(),
@@ -924,6 +928,7 @@ impl Ferrite {
                 }
             }
             Some(Action::ToggleWidgets) => self.toggle_widgets_front(),
+            Some(Action::ToggleScreens) => self.toggle_screens(),
             Some(Action::WidgetsDismiss) => self.stop_widgets_overlay(),
             Some(Action::ToggleKeyboardLayout) => self.toggle_keyboard_layout(),
             Some(Action::ToggleNotifications) => {
@@ -1001,6 +1006,29 @@ impl Ferrite {
         self.launch_app(&crate::desktop::apps::AppKey::Builtin(
             crate::desktop::apps::App::TERMINAL,
         ));
+    }
+
+    /// Super+P : le second écran passe de « dupliquer » à « étendre » (ou l'inverse). Le
+    /// choix est enregistré, comme depuis Paramètres.
+    pub(crate) fn toggle_screens(&mut self) {
+        let mode = self.screen_mode.toggled();
+        self.screen_mode = mode;
+        let mut settings = ferrite_system::config::Settings::load();
+        mode.store(&mut settings);
+        if let Err(err) = settings.save() {
+            tracing::warn!("mode des écrans non enregistré : {err}");
+        }
+        use ferrite_system::screens::ScreenMode;
+        self.show_osd(crate::desktop::panels::Osd {
+            icon: "cc-screen",
+            label: match (self.screen_count > 1, mode) {
+                (false, ScreenMode::Duplicate) => "Dupliquer (aucun écran)",
+                (false, ScreenMode::Extend) => "Étendre (aucun écran)",
+                (true, ScreenMode::Duplicate) => "Écrans : dupliqués",
+                (true, ScreenMode::Extend) => "Écrans : bureau étendu",
+            },
+            level: None,
+        });
     }
 
     fn place_clipboard_near_pointer(&mut self) {
@@ -1508,6 +1536,9 @@ impl Ferrite {
             .outputs()
             .next()
             .and_then(|output| self.space.output_geometry(output))
+            // Barre, Dock, menus et widgets ne sont que sur l'écran principal : sur un second
+            // écran, le clic va aux fenêtres.
+            .filter(|output_geo| output_geo.to_f64().contains(location))
             .and_then(|output_geo| {
                 panels::action_at(output_geo, location, &crate::render::desktop_view(self))
             });
@@ -1801,10 +1832,7 @@ impl Ferrite {
             }
             DesktopAction::ToggleKeyboardLayout => self.toggle_keyboard_layout(),
             DesktopAction::ToggleNight => self.toggle_night(),
-            DesktopAction::OpenNightSettings => {
-                self.popover = None;
-                crate::desktop::apps::App::open_settings_page("ecrans", &self.client_environment());
-            }
+            DesktopAction::ToggleScreens => self.toggle_screens(),
             DesktopAction::ToggleAirplane => {
                 let on = self.system.airplane != Some(true);
                 self.request_system_change(Change::Airplane(on));

@@ -451,3 +451,38 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
   redémarrage (bouton grisé, message). Les microprogrammes Wi-Fi restent dans l'ISO :
   sans réseau, rien ne se télécharge. Releases construites avec `tools/usb.sh --final`
   (compression xz).
+- **2026-11-10 — Plusieurs écrans : dupliquer par défaut, étendre à droite.** Un écran
+  branché (HDMI, DisplayPort) est détecté aussitôt (événement udev de la carte
+  graphique). Réglage `ecrans_mode = dupliquer | etendre` (Paramètres › Écrans, Super+P).
+  Dupliquer par défaut, comme Windows sur un portable : brancher une télévision ou un
+  projecteur montre tout de suite le bureau. En « dupliquer », l'image de l'écran
+  principal est recopiée, réduite ou agrandie, centrée, sans déformation (bandes noires
+  si les proportions diffèrent). En « étendre », le second écran est placé à droite du
+  principal ; il ne porte ni barre ni Dock (un seul exemplaire de l'interface, sur
+  l'écran intégré). Une fenêtre agrandie ou accrochée remplit l'écran où elle se trouve.
+  Les fenêtres laissées hors de tout écran (débranchement, retour à « dupliquer »)
+  reviennent au centre du principal.
+- **2026-11-10 — Panneaux découpés et fenêtres cachées ralenties.** L'image des menus et
+  dialogues n'est plus envoyée en entier à la carte graphique : seul le rectangle
+  dessiné part (à une échelle entière ; image entière à une échelle fractionnaire). Une
+  fenêtre entièrement couverte par une autre ne reçoit plus qu'un rappel d'image par
+  seconde (au lieu d'un par image) : elle ne redessine plus pour rien. Revers accepté :
+  derrière une fenêtre translucide, son contenu ne bouge qu'une fois par seconde.
+- **2026-11-10 — Ordonnanceur BFQ sur les disques SATA.** Mesure sur le ThinkBook : le
+  bureau s'est figé 2,7 s pendant une compilation (`tools/ci.sh`, pourtant en `nice 15` et
+  `ionice -c 3`). Le système et le dépôt sont sur le même SSD SATA (`sda`), dont
+  l'ordonnanceur `mq-deadline` ignore `ionice` : les écritures de la compilation passaient
+  devant les lectures du bureau. Règle udev `60-ferrite-disque-bfq.rules` (SATA non
+  rotatifs seulement ; le NVMe garde `none`).
+- **2026-11-10 — Lanceur sans voile sombre.** Demande de l'utilisateur : le lanceur
+  s'ouvre en panneau blanc par-dessus le bureau, sans assombrir l'écran. Gain : seule la
+  place du panneau est envoyée à la carte graphique.
+
+- **2026-11-10 — Charte épurée (`docs/CHARTE.md`).** Maquette validée par l'utilisateur.
+  Une seule couleur vive (l'accent, pour ce qui est allumé ou choisi) ; les surfaces se
+  séparent par leur teinte, pas par des bordures. Colonnes : symboles gris d'une seule
+  couleur au lieu de pastilles colorées (Réglages, Logithèque, Calendrier, sélecteur de
+  fichiers). Centre de contrôle : deux grandes tuiles puis des bascules rondes sans texte
+  d'état ; le chevron du mode nuit disparaît (ses réglages restent dans Réglages → Écrans).
+  Barre du haut : symbole seul à la place du mot « Applications ». Bouton d'arrêt neutre :
+  il demande déjà confirmation. Icônes d'applications inchangées.

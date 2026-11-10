@@ -185,6 +185,13 @@ pub struct Ferrite {
     pub greeter: Option<crate::desktop::greeter::Greeter>,
     /// Mode nuit : réglages, forçage depuis le centre de contrôle et teinte de l'écran.
     pub night: crate::desktop::night::Night,
+    /// Écrans branchés en plus du principal : même image ou bureau agrandi. Le backend
+    /// DRM l'applique à l'image suivante.
+    pub screen_mode: ferrite_system::screens::ScreenMode,
+    /// Zone imposée au prochain accrochage (écran où une fenêtre vient d'être lâchée).
+    /// Écrans affichés (tenu à jour par le backend DRM ; 1 en fenêtre).
+    pub screen_count: usize,
+    pub snap_area: Option<smithay::utils::Rectangle<i32, smithay::utils::Logical>>,
     /// Inactivité : verrouillage et mise en veille automatiques.
     pub idle: crate::desktop::idle::Idle,
     pub appearance: Appearance,
@@ -498,6 +505,9 @@ impl Ferrite {
             lock_avatar: None,
             greeter: None,
             night: Default::default(),
+            screen_mode: Default::default(),
+            snap_area: None,
+            screen_count: 1,
             idle: Default::default(),
             appearance: settings.appearance(),
             accent: settings.accent(),

@@ -126,6 +126,7 @@ const TOGGLE_CONTROLS: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::n
 const TOGGLE_NOTIFICATIONS: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(57, SUPER)];
 const TOGGLE_CLIPBOARD: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(55, SUPER)];
 const TOGGLE_WIDGETS: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(25, SUPER)];
+const TOGGLE_SCREENS: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(33, SUPER)];
 const TOGGLE_KEYBOARD_LAYOUT: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(65, SUPER)];
 const SHOW_DESKTOP: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(40, SUPER)];
 const LOCK_SCREEN: &[KeyboardShortcutBinding] = &[KeyboardShortcutBinding::new(46, SUPER)];
@@ -357,6 +358,12 @@ pub const KEYBOARD_SHORTCUTS: &[KeyboardShortcutDefinition] = &[
         group: "Bureau",
         label: "Afficher ou masquer les widgets",
         defaults: TOGGLE_WIDGETS,
+    },
+    KeyboardShortcutDefinition {
+        id: "toggle_screens",
+        group: "Bureau",
+        label: "Second écran : dupliquer ou étendre",
+        defaults: TOGGLE_SCREENS,
     },
     KeyboardShortcutDefinition {
         id: "toggle_keyboard_layout",

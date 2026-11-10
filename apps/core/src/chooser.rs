@@ -408,20 +408,17 @@ impl ChooserState {
             for (label, path) in places() {
                 let selected = self.folder == path;
                 let icon = path_icon(&path, true);
-                if style::sidebar_tile_item(ui, &mut self.icons, icon, style::accent(), label, selected)
-                    .clicked()
-                {
+                if style::sidebar_item(ui, &mut self.icons, icon, label, selected).clicked() {
                     self.enter(path);
                 }
             }
             ui.add_space(8.0);
             style::sidebar_heading(ui, "Disques");
             let root = Path::new("/");
-            if style::sidebar_tile_item(
+            if style::sidebar_item(
                 ui,
                 &mut self.icons,
                 "places-computer",
-                style::accent(),
                 "Système",
                 self.folder == root,
             )
@@ -436,14 +433,7 @@ impl ChooserState {
                     "places-computer"
                 };
                 let selected = device.mount.as_deref() == Some(self.folder.as_path());
-                let response = style::sidebar_tile_item(
-                    ui,
-                    &mut self.icons,
-                    icon,
-                    style::accent(),
-                    &device.label,
-                    selected,
-                );
+                let response = style::sidebar_item(ui, &mut self.icons, icon, &device.label, selected);
                 let response = if device.mount.is_none() {
                     response.on_hover_text("Pas encore monté : un clic l’ouvre")
                 } else {
@@ -578,7 +568,7 @@ impl ChooserState {
                         rect.left_center() + egui::vec2(42.0, 0.0),
                         egui::Align2::LEFT_CENTER,
                         &entry.name,
-                        egui::FontId::proportional(13.5),
+                        egui::FontId::proportional(ferrite_ui::tokens::typography::LABEL),
                         ink,
                     );
                     let detail = if entry.directory {

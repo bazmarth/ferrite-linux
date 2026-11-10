@@ -679,6 +679,44 @@ impl Ferrite {
             .collect()
     }
 
+    /// Fenêtres qui ne touchent plus aucun écran (second écran débranché, retour au mode
+    /// « dupliquer ») : recentrées sur l'écran `primary`.
+    pub fn gather_windows(&mut self, primary: &smithay::output::Output) {
+        let Some(area) = self.space.output_geometry(primary) else {
+            return;
+        };
+        let screens: Vec<_> = self
+            .space
+            .outputs()
+            .filter_map(|output| self.space.output_geometry(output))
+            .collect();
+        let lost: Vec<_> = self
+            .space
+            .elements()
+            .filter(|window| {
+                self.window_frame(window)
+                    .is_some_and(|frame| !screens.iter().any(|screen| screen.overlaps(frame)))
+            })
+            .cloned()
+            .collect();
+        for window in lost {
+            let (Some(content), Some(frame)) =
+                (self.space.element_geometry(&window), self.window_frame(&window))
+            else {
+                continue;
+            };
+            let titlebar = content.loc - frame.loc;
+            let place =
+                crate::wm::clamp_frame(area, crate::wm::centered_position(area, frame.size), frame.size);
+            let location = place + titlebar;
+            if window.x11_surface().is_some() {
+                self.place_x11(&window, Rectangle::new(location, content.size));
+            } else {
+                self.space.map_element(window, location, false);
+            }
+        }
+    }
+
     /// Cadre d'une fenêtre à sa place sur le bureau, barre de titre comprise.
     pub fn window_frame(&self, window: &Window) -> Option<Rectangle<i32, Logical>> {
         let content = self.space.element_geometry(window)?;

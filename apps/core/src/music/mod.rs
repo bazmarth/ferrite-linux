@@ -1283,7 +1283,7 @@ impl MusicState {
         };
         let position = self.seeking.unwrap_or(status.position).min(duration.max(0.0));
         let bar_y = middle.top() + 66.0;
-        let time_font = FontId::proportional(11.0);
+        let time_font = FontId::proportional(ferrite_ui::tokens::typography::CAPTION);
         ui.painter().text(
             pos2(middle.left() + 36.0, bar_y),
             Align2::RIGHT_CENTER,
@@ -1353,7 +1353,7 @@ impl MusicState {
                 pos2(middle.center().x, full.bottom() - 6.0),
                 Align2::CENTER_BOTTOM,
                 error,
-                FontId::proportional(11.0),
+                FontId::proportional(ferrite_ui::tokens::typography::CAPTION),
                 style::error(),
             );
         }

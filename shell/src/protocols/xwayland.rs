@@ -283,7 +283,9 @@ impl Ferrite {
             return;
         };
         if maximized {
-            let Some(area) = self.usable_area() else { return };
+            let Some(area) = self.window_area(window) else {
+                return;
+            };
             self.x11_save_geometry(window);
             let _ = surface.set_maximized(true);
             let content = wm::maximized_content(area, wm::is_server_decorated(window));

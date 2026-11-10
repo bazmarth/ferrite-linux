@@ -14,6 +14,10 @@ use crate::style;
 /// Largeur des dialogues et marge de leurs bords.
 pub const WIDTH: f32 = 600.0;
 const PAD: f32 = 22.0;
+/// Espace gardé libre entre le dialogue et les bords de la fenêtre.
+const MARGIN: f32 = 24.0;
+/// Hauteur du pied de page.
+const FOOTER: f32 = 64.0;
 /// Temps pendant lequel un bouton « Copier » montre une coche.
 const COPIED: Duration = Duration::from_millis(1500);
 
@@ -33,7 +37,6 @@ pub struct Tokens {
     pub danger: Color32,
     seg_on: Color32,
     scrim: Color32,
-    shadow: Color32,
 }
 
 pub fn tokens() -> Tokens {
@@ -52,7 +55,6 @@ pub fn tokens() -> Tokens {
         danger: style::error(),
         seg_on: style::segment_on(),
         scrim: style::scrim(),
-        shadow: style::shadow(),
     }
 }
 
@@ -111,12 +113,7 @@ pub fn show(ctx: &egui::Context, id: &str, add: impl FnOnce(&mut Ui, &Tokens)) -
         .fill(t.panel)
         .corner_radius(18)
         .stroke(Stroke::new(1.0, t.ring))
-        .shadow(egui::Shadow {
-            offset: [0, 30],
-            blur: 80,
-            spread: 0,
-            color: t.shadow,
-        });
+        .shadow(style::elevation(ferrite_ui::tokens::elevation::PANEL));
     let modal = egui::Modal::new(egui::Id::unique(id))
         .frame(frame)
         .backdrop_color(t.scrim)
@@ -126,6 +123,27 @@ pub fn show(ctx: &egui::Context, id: &str, add: impl FnOnce(&mut Ui, &Tokens)) -
             add(ui, &t);
         });
     modal.should_close()
+}
+
+/// Corps du dialogue, entre l'en-tête et le pied : il défile quand la fenêtre est trop
+/// basse pour tout montrer, afin que l'en-tête et le pied restent toujours visibles.
+pub fn body<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
+    let window = ui.ctx().content_rect().height();
+    let room = (window - 2.0 * MARGIN - ui.min_rect().height() - FOOTER).max(120.0);
+    ui.scope(|ui| {
+        // Barre flottante : elle ne prend pas de largeur sur les lignes.
+        ui.spacing_mut().scroll.floating = true;
+        egui::ScrollArea::vertical()
+            .max_height(room)
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                let result = add(ui);
+                ui.add_space(20.0);
+                result
+            })
+            .inner
+    })
+    .inner
 }
 
 /// En-tête : `lead` (carré de `lead_size`) à gauche, `body` (haut de `body_height`) au
@@ -318,15 +336,19 @@ impl Rows<'_> {
         let t = self.t;
         let rect = self.line(if sub.is_some() { 56.0 } else { 48.0 });
         let ui = &mut *self.ui;
-        text(
-            ui,
-            Pos2::new(rect.left() + 16.0, rect.center().y),
-            Align2::LEFT_CENTER,
-            key,
-            font(14.0, false),
-            t.fg2,
-            120.0,
-        );
+        // Sans valeur, l'explication se range sous l'intitulé, sur toute la largeur.
+        let stacked = value.is_empty() && sub.is_some();
+        if !stacked {
+            text(
+                ui,
+                Pos2::new(rect.left() + 16.0, rect.center().y),
+                Align2::LEFT_CENTER,
+                key,
+                font(14.0, false),
+                t.fg2,
+                120.0,
+            );
+        }
         let mut clicked = false;
         let mut right = rect.right() - 16.0;
         if let Some(action) = action {
@@ -347,6 +369,27 @@ impl Rows<'_> {
         let value_font = if monospace { mono(14.0) } else { font(14.0, false) };
         let width = right - x;
         match sub {
+            Some(sub) if stacked => {
+                let left = rect.left() + 16.0;
+                text(
+                    ui,
+                    Pos2::new(left, rect.center().y - 1.0),
+                    Align2::LEFT_BOTTOM,
+                    key,
+                    font(14.0, false),
+                    t.fg,
+                    right - left,
+                );
+                text(
+                    ui,
+                    Pos2::new(left, rect.center().y + 1.0),
+                    Align2::LEFT_TOP,
+                    sub,
+                    font(12.0, false),
+                    t.fg3,
+                    right - left,
+                );
+            }
             Some(sub) => {
                 text(
                     ui,
@@ -554,12 +597,7 @@ impl Rows<'_> {
                 .interact(button, ui.scope_id().with(("choix", who, slot)), Sense::click())
                 .on_hover_cursor(egui::CursorIcon::PointingHand);
             if on {
-                let shadow = egui::Shadow {
-                    offset: [0, 1],
-                    blur: 3,
-                    spread: 0,
-                    color: Color32::from_black_alpha(38),
-                };
+                let shadow = style::elevation(ferrite_ui::tokens::elevation::SMALL);
                 ui.painter().add(shadow.as_shape(button, 7.0));
                 ui.painter().rect_filled(button, 7.0, t.seg_on);
             }
@@ -619,11 +657,10 @@ pub struct Footer {
     pub button: Option<usize>,
 }
 
-/// Pied du dialogue : filet, action ou remarque à gauche, boutons à droite (le dernier en
+/// Pied du dialogue (à poser après [`body`]) : filet, action ou remarque à gauche, boutons à droite (le dernier en
 /// couleur d'accent).
 pub fn footer(ui: &mut Ui, t: &Tokens, left: Left, buttons: &[&str]) -> Footer {
-    ui.add_space(20.0);
-    let (rect, _) = ui.allocate_exact_size(vec2(WIDTH, 64.0), Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(vec2(WIDTH, FOOTER), Sense::hover());
     ui.painter()
         .hline(rect.x_range(), rect.top() + 0.5, Stroke::new(1.0, t.line));
     let row = Rect::from_min_max(rect.min + vec2(PAD, 14.0), rect.max - vec2(PAD, 14.0));

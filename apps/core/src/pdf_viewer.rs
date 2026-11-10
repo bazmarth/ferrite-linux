@@ -858,12 +858,7 @@ impl PdfViewerState {
 
     fn paint_page(&mut self, ui: &mut egui::Ui, page: usize, rect: Rect) {
         let painter = ui.painter();
-        let shadow = egui::Shadow {
-            offset: [0, 3],
-            blur: 14,
-            spread: 0,
-            color: style::shadow(),
-        };
+        let shadow = style::elevation(ferrite_ui::tokens::elevation::WINDOW_INACTIVE);
         painter.add(shadow.as_shape(rect, CornerRadius::same(2)));
         painter.rect_filled(rect, CornerRadius::same(2), Color32::WHITE);
         if let Some(rendered) = self.pages.get(&page) {
@@ -1766,12 +1761,7 @@ impl ViewerApp {
                 egui::Frame::new()
                     .fill(style::background())
                     .corner_radius(12.0)
-                    .shadow(egui::Shadow {
-                        offset: [0, 8],
-                        blur: 28,
-                        spread: 0,
-                        color: style::shadow(),
-                    }),
+                    .shadow(style::elevation(ferrite_ui::tokens::elevation::MENU)),
             )
             .show(ctx, |ui| {
                 let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
@@ -1921,12 +1911,7 @@ impl ViewerApp {
                                     Rect::from_center_size(cover_area.center(), vec2(card_w * 0.76, cover_h))
                                 }
                             };
-                            let shadow = egui::Shadow {
-                                offset: [0, 3],
-                                blur: 12,
-                                spread: 0,
-                                color: style::shadow(),
-                            };
+                            let shadow = style::elevation(ferrite_ui::tokens::elevation::WINDOW_INACTIVE);
                             painter.add(shadow.as_shape(paper, CornerRadius::same(3)));
                             painter.rect_filled(paper, CornerRadius::same(3), Color32::WHITE);
                             if let Some(texture) = cover {

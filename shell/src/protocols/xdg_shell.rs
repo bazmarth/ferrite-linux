@@ -332,7 +332,9 @@ pub fn handle_commit(popups: &mut PopupManager, space: &Space<Window>, surface: 
 impl Ferrite {
     fn set_xdg_maximized(&mut self, window: Window, surface: ToplevelSurface, maximized: bool) {
         if maximized {
-            let Some(area) = self.usable_area() else { return };
+            let Some(area) = self.window_area(&window) else {
+                return;
+            };
             if let Some(pending) = window.user_data().get::<PendingPlacement>() {
                 pending.waiting.set(false);
             }
@@ -398,6 +400,40 @@ impl Ferrite {
         self.space.output_geometry(output)
     }
 
+    /// Zones (utile, entière) de l'écran sous `point` : l'écran principal garde la place de
+    /// la barre et du Dock ; un second écran (mode « étendre ») est utilisable en entier.
+    pub fn areas_at(
+        &self,
+        point: Point<f64, Logical>,
+    ) -> Option<(Rectangle<i32, Logical>, Rectangle<i32, Logical>)> {
+        let primary = self.screen_area()?;
+        let other = self
+            .space
+            .outputs()
+            .skip(1)
+            .filter_map(|output| self.space.output_geometry(output))
+            .find(|geometry| geometry.to_f64().contains(point));
+        match other {
+            Some(geometry) => Some((geometry, geometry)),
+            None => Some((self.usable_area().unwrap_or(primary), primary)),
+        }
+    }
+
+    /// Zone utile de l'écran où se trouve le centre de la fenêtre (pour l'agrandir ou
+    /// l'accrocher), ou celle choisie par le dernier glisser ([`Ferrite::snap_area`]).
+    pub fn window_area(&mut self, window: &Window) -> Option<Rectangle<i32, Logical>> {
+        if let Some(area) = self.snap_area.take() {
+            return Some(area);
+        }
+        let center = self
+            .window_frame(window)
+            .map(|frame| (frame.loc + Point::from((frame.size.w / 2, frame.size.h / 2))).to_f64());
+        match center {
+            Some(center) => self.areas_at(center).map(|(area, _)| area),
+            None => self.usable_area(),
+        }
+    }
+
     /// Zone utile du premier écran (sous la barre de menus si elle ne se cache pas).
     pub fn usable_area(&self) -> Option<Rectangle<i32, Logical>> {
         let output = self.space.outputs().next()?;
@@ -437,7 +473,9 @@ impl Ferrite {
             return;
         }
         if window.x11_surface().is_some() {
-            let Some(area) = self.usable_area() else { return };
+            let Some(area) = self.window_area(window) else {
+                return;
+            };
             self.x11_save_geometry(window);
             self.place_x11(
                 window,
@@ -448,7 +486,9 @@ impl Ferrite {
         let Some(toplevel) = window.toplevel().cloned() else {
             return;
         };
-        let Some(area) = self.usable_area() else { return };
+        let Some(area) = self.window_area(window) else {
+            return;
+        };
         let target = wm::snapped_content(area, snap, wm::is_server_decorated(window));
         let Some(location) = self.space.element_location(window) else {
             return;

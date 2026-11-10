@@ -3647,3 +3647,20 @@ Demande : « réception de fichier par bluetooth ne marche pas ».
 Vérifié : CI (sans shellcheck), test du réglage ; sur le PC, réglage posé à la main et
 `obexd` relancé : `bluetoothctl show` annonce maintenant « OBEX Object Push ».
 Vérifié par l'utilisateur : un vrai envoi depuis son téléphone arrive bien.
+
+## 2026-11-10 — Glisser à trois doigts : mieux reconnu, élan juste
+
+Demande : « le geste de glisser 3 doigts n'est pas très fluide et reconnu facilement ».
+- Seuil : il fallait amener la page à mi-chemin (élan compris) pour changer de bureau, soit
+  300 unités brutes ; les gestes francs mesurés font 200 à 380. Désormais un quart de page
+  (`SWIPE_COMMIT`), soit 150 unités.
+- Élan : les mouvements arrivent souvent par paquets ; ils étaient datés à leur traitement
+  (`Instant::now()`), donc l'élan était faux (nul ou démesuré). Ils sont maintenant datés par
+  libinput (`event.time()`, rapporté à l'horloge du bureau dans `Swipe::instant`), et la
+  vitesse est une moyenne qui dépend du temps écoulé (`SWIPE_SMOOTHING`, 30 ms).
+- Mesure (`ferrite-profil`) : chaque geste note aussi sa durée et le bureau de départ et
+  d'arrivée.
+Vérifié : CI (sans shellcheck), tests `un_tiers_de_page_suffit_meme_doigts_arretes` et
+`des_evenements_rapproches_donnent_le_meme_elan_que_reguliers`.
+Pas vérifié : sur le vrai pavé (après `tools/dev-on.sh`) ; la fluidité pendant le geste
+n'est pas encore mesurée (fichier `ferrite-profil` créé pour la prochaine mesure).

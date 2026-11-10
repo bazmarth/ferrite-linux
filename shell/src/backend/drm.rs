@@ -271,8 +271,10 @@ pub fn init(
             // Gestes : les déplacements bruts, pour que la page suive les doigts de façon
             // régulière (l'accélération de libinput dépend de la vitesse).
             if let InputEvent::GestureSwipeUpdate { event } = &event {
-                use smithay::reexports::input::event::gesture::GestureEventCoordinates;
-                state.swipe_update(event.dx_unaccelerated(), event.dy_unaccelerated());
+                use smithay::{
+                    backend::input::Event as _, reexports::input::event::gesture::GestureEventCoordinates,
+                };
+                state.swipe_update(event.dx_unaccelerated(), event.dy_unaccelerated(), event.time());
                 state.request_redraw();
                 return;
             }

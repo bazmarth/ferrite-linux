@@ -32,6 +32,13 @@ const SWIPE_VERTICAL_RATIO: f64 = 1.6;
 /// Part de l'élan ajoutée à la position au lever des doigts (ms) : un geste vif et court
 /// suffit à changer de page.
 const SWIPE_MOMENTUM: f64 = 180.0;
+/// Course (en pages, élan compris) qui suffit pour changer de page au lever des doigts.
+/// À la moitié d'une page, un geste franc sur deux (200 à 380 unités, soit un tiers à deux
+/// tiers de page) revenait en place.
+const SWIPE_COMMIT: f64 = 0.25;
+/// Lissage de la vitesse des doigts (ms) : assez long pour ignorer le tremblement d'un
+/// événement à l'autre, assez court pour suivre un geste qui accélère.
+const SWIPE_SMOOTHING: f64 = 30.0;
 /// Sans mouvement depuis ce délai, les doigts levés n'ont plus d'élan.
 const SWIPE_STILL: Duration = Duration::from_millis(100);
 /// Course minimale d'un balayage vertical à trois doigts pour ouvrir ou fermer la vue
@@ -328,9 +335,12 @@ impl<T> Workspaces<T> {
         };
         let (low, high) = self.drag_bounds();
         let raw = (raw + pages).clamp(low - RUBBER_LIMIT, high + RUBBER_LIMIT);
-        let elapsed = now.duration_since(last).as_secs_f64() * 1000.0;
+        // Moyenne qui dépend du temps écoulé : les événements arrivent à intervalles
+        // irréguliers (parfois par paquets), un poids fixe par événement fausserait l'élan.
+        let elapsed = now.saturating_duration_since(last).as_secs_f64() * 1000.0;
         let velocity = if elapsed > 0.0 {
-            0.6 * pages / elapsed + 0.4 * velocity
+            let weight = 1.0 - (-elapsed / SWIPE_SMOOTHING).exp();
+            weight * pages / elapsed + (1.0 - weight) * velocity
         } else {
             velocity
         };
@@ -348,14 +358,14 @@ impl<T> Workspaces<T> {
             return self.current;
         };
         let from = self.resisted(raw);
-        let velocity = if now.duration_since(last) > SWIPE_STILL {
+        let velocity = if now.saturating_duration_since(last) > SWIPE_STILL {
             0.0
         } else {
             velocity
         };
         let moved = from + velocity * SWIPE_MOMENTUM - self.current as f64;
         let (low, high) = self.drag_bounds();
-        let target = if cancelled || moved.abs() < 0.5 {
+        let target = if cancelled || moved.abs() < SWIPE_COMMIT {
             self.current as f64
         } else if moved > 0.0 {
             high
@@ -442,9 +452,29 @@ impl<T> Workspaces<T> {
 pub struct Swipe {
     total: (f64, f64),
     horizontal: Option<bool>,
+    /// Date libinput (µs) du début du geste et instant correspondant : les événements
+    /// sont datés à leur arrivée sur le pavé, pas à leur traitement (souvent par paquets).
+    clock: Option<(u64, Instant)>,
 }
 
 impl Swipe {
+    /// Instant d'un événement daté par libinput (µs), sur l'horloge du bureau.
+    fn instant(&mut self, time_us: u64) -> Instant {
+        let now = Instant::now();
+        if time_us == 0 {
+            return now;
+        }
+        let (origin_us, origin) = *self.clock.get_or_insert((time_us, now));
+        (origin + Duration::from_micros(time_us.saturating_sub(origin_us))).min(now)
+    }
+
+    /// Durée du geste jusqu'à `end`.
+    fn duration(&self, end: Instant) -> Duration {
+        self.clock.map_or(Duration::ZERO, |(_, origin)| {
+            end.saturating_duration_since(origin)
+        })
+    }
+
     /// Ajoute un mouvement ; renvoie la course sur l'axe reconnu, le cas échéant.
     pub fn update(&mut self, dx: f64, dy: f64) -> Option<(f64, f64)> {
         self.total.0 += dx;
@@ -552,36 +582,45 @@ impl Ferrite {
         }
     }
 
-    pub fn swipe_begin(&mut self, fingers: u32) {
+    /// Début d'un geste à plusieurs doigts ; `time_us` : sa date libinput.
+    pub fn swipe_begin(&mut self, fingers: u32, time_us: u64) {
         let free = self.lock.is_none()
             && self
                 .seat
                 .get_pointer()
                 .is_some_and(|pointer| !pointer.is_grabbed());
-        self.swipe = (matches!(fingers, 3 | 4) && free && self.pending_power.is_none()).then(Swipe::default);
+        self.swipe = (matches!(fingers, 3 | 4) && free && self.pending_power.is_none()).then(|| {
+            let mut swipe = Swipe::default();
+            swipe.instant(time_us);
+            swipe
+        });
     }
 
-    pub fn swipe_update(&mut self, dx: f64, dy: f64) {
-        if let Some((horizontal, _)) = self.swipe.as_mut().and_then(|swipe| swipe.update(dx, dy)) {
-            if !self.overview && self.swipe.as_ref().is_some_and(Swipe::is_horizontal) {
+    pub fn swipe_update(&mut self, dx: f64, dy: f64, time_us: u64) {
+        let Some(swipe) = self.swipe.as_mut() else {
+            return;
+        };
+        let now = swipe.instant(time_us);
+        if let Some((horizontal, _)) = swipe.update(dx, dy) {
+            if !self.overview && swipe.is_horizontal() {
                 // Comme sur macOS, les pages suivent les doigts : vers la gauche, la page de droite.
-                self.workspaces.drag_by(-horizontal / SWIPE_PAGE, Instant::now());
+                self.workspaces.drag_by(-horizontal / SWIPE_PAGE, now);
             }
         }
     }
 
-    pub fn swipe_end(&mut self, cancelled: bool) {
-        if let Some(swipe) = self.swipe.as_ref() {
-            crate::render::profile::gesture(swipe.total, swipe.horizontal, cancelled);
-        }
-        if let Some(swipe) = self.swipe.take() {
+    pub fn swipe_end(&mut self, cancelled: bool, time_us: u64) {
+        if let Some(mut swipe) = self.swipe.take() {
+            let now = swipe.instant(time_us);
+            let from = self.workspaces.current();
+            let mut page = None;
             if swipe.is_horizontal() {
-                if self.overview {
-                    return;
-                }
-                let target = self.workspaces.drag_end(cancelled, Instant::now());
-                if target != self.workspaces.current() {
-                    self.swap_windows(target);
+                if !self.overview {
+                    let target = self.workspaces.drag_end(cancelled, now);
+                    if target != self.workspaces.current() {
+                        self.swap_windows(target);
+                    }
+                    page = Some((from, target));
                 }
             } else if swipe.is_vertical() && !cancelled {
                 let distance = swipe.vertical_distance();
@@ -591,6 +630,13 @@ impl Ferrite {
                     self.close_overview();
                 }
             }
+            crate::render::profile::gesture(
+                swipe.total,
+                swipe.horizontal,
+                cancelled,
+                swipe.duration(now),
+                page,
+            );
         }
     }
 
@@ -956,9 +1002,35 @@ mod tests {
     #[test]
     fn un_geste_lent_et_court_revient_en_place() {
         let mut pages = three_desktops();
-        pages.drag_by(0.1, at(0));
-        pages.drag_by(0.1, at(100));
+        pages.drag_by(0.05, at(0));
+        pages.drag_by(0.05, at(100));
         assert_eq!(pages.drag_end(false, at(100)), 1);
+    }
+
+    #[test]
+    fn un_tiers_de_page_suffit_meme_doigts_arretes() {
+        // Geste franc mesuré sur le pavé du ThinkBook (200 unités sur 600 par page).
+        let mut pages = three_desktops();
+        pages.drag_by(0.1, at(0));
+        pages.drag_by(0.23, at(80));
+        assert_eq!(pages.drag_end(false, at(500)), 2);
+    }
+
+    #[test]
+    fn des_evenements_rapproches_donnent_le_meme_elan_que_reguliers() {
+        // Même geste, événements réguliers ou arrivés par paires : élan semblable.
+        let velocity = |pages: &Workspaces<u32>| match pages.motion {
+            Motion::Drag { velocity, .. } => velocity,
+            _ => 0.0,
+        };
+        let mut regular = three_desktops();
+        let mut paired = three_desktops();
+        for step in 0..12u64 {
+            regular.drag_by(0.01, at(step * 8));
+            paired.drag_by(0.01, at(step / 2 * 16 + step % 2));
+        }
+        let (a, b) = (velocity(&regular), velocity(&paired));
+        assert!((a - b).abs() < a * 0.25, "{a} / {b}");
     }
 
     #[test]
@@ -980,10 +1052,10 @@ mod tests {
         let mut pages = three_desktops();
         pages.drag_by(0.9, at(0));
         assert_eq!(pages.drag_end(true, at(1)), 1);
-        // Arrêté avant de lever les doigts, sous la moitié : pas d'élan.
+        // Arrêté avant de lever les doigts, sous le quart de page : pas d'élan.
         let mut pages = three_desktops();
         pages.drag_by(0.1, at(0));
-        pages.drag_by(0.2, at(8));
+        pages.drag_by(0.1, at(8));
         assert_eq!(pages.drag_end(false, at(500)), 1);
     }
 

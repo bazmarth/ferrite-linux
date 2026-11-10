@@ -372,9 +372,11 @@ impl Ferrite {
                 self.on_button(button);
             }
             InputEvent::PointerAxis { event } => self.on_axis::<I>(event),
-            InputEvent::GestureSwipeBegin { event } => self.swipe_begin(event.fingers()),
-            InputEvent::GestureSwipeUpdate { event } => self.swipe_update(event.delta_x(), event.delta_y()),
-            InputEvent::GestureSwipeEnd { event } => self.swipe_end(event.cancelled()),
+            InputEvent::GestureSwipeBegin { event } => self.swipe_begin(event.fingers(), event.time()),
+            InputEvent::GestureSwipeUpdate { event } => {
+                self.swipe_update(event.delta_x(), event.delta_y(), event.time())
+            }
+            InputEvent::GestureSwipeEnd { event } => self.swipe_end(event.cancelled(), event.time()),
             // Pincement (deux doigts qui s'écartent ou se rapprochent) : transmis à la fenêtre
             // sous le pointeur, qui zoome (Lecteur PDF, navigateurs, cartes…).
             InputEvent::GesturePinchBegin { event } => {

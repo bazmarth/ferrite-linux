@@ -197,8 +197,15 @@ pub fn changed(name: &'static str, before: &impl std::fmt::Debug, after: &impl s
     );
 }
 
-/// Bilan d'un geste à plusieurs doigts : course totale, sens retenu, annulé ou non.
-pub fn gesture(total: (f64, f64), horizontal: Option<bool>, cancelled: bool) {
+/// Bilan d'un geste à plusieurs doigts : course totale, sens retenu, annulé ou non, durée
+/// et, pour un changement de bureau, page de départ et d'arrivée.
+pub fn gesture(
+    total: (f64, f64),
+    horizontal: Option<bool>,
+    cancelled: bool,
+    duration: Duration,
+    page: Option<(usize, usize)>,
+) {
     if !STATS.with_borrow(|stats| stats.enabled) {
         return;
     }
@@ -207,11 +214,14 @@ pub fn gesture(total: (f64, f64), horizontal: Option<bool>, cancelled: bool) {
         Some(false) => "vertical",
         None => "trop court",
     };
+    let bureau = page.map_or_else(String::new, |(from, to)| format!("{from} → {to}"));
     info!(
         course_x = format!("{:.0}", total.0),
         course_y = format!("{:.0}", total.1),
         sens,
         annule = cancelled,
+        duree_ms = duration.as_millis() as u64,
+        bureau,
         "geste"
     );
 }

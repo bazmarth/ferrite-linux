@@ -463,12 +463,13 @@ Reste :
    2026-11-07), l'essayer en VM, et publier une release depuis un arbre commité.
 2. Finir la phase 5 : réglages encore grisés dans Paramètres (position du Dock ; mode des
    espaces de travail : fait le 2026-11-09) et rubriques en maquette (Notifications, Accessibilité et Imprimantes complétées le 2026-11-09 ; Mises à jour à vérifier).
-3. Logithèque (phase 7) : PackageKit + Flatpak, notification des mises à jour (polkit est prêt).
-4. Batterie et fiabilité (phase 10) : moins d'images au repos (l'appli Claude soumet ~50
+3. Batterie et fiabilité (phase 10) : moins d'images au repos (l'appli Claude soumet ~50
    images/s), démarrage < 20 s, tests automatiques des écrans par captures de référence.
-5. Phases 8–9 : changement d'utilisateur sans fermer la session (second greetd), paquets `.deb`, dépôt apt signé, installateur
+4. Phases 8–9 : changement d'utilisateur sans fermer la session (second greetd), paquets `.deb`, dépôt apt signé, installateur
    graphique (tests en VM d'abord, Windows intact).
-6. Phase 6 en dernier : navigateur maison (Brave couvre le besoin).
+
+Abandonné le 2026-11-10 (décision de l'utilisateur) : le navigateur maison (phase 6), Brave
+reste le navigateur. La Logithèque (phase 7) est considérée comme suffisante.
 
 ### 5.4 Défauts connus
 
@@ -481,6 +482,10 @@ Reste :
 - Le portail ne gère pas `Request.Close` (une demande fermée par l'application).
 - Applications Electron à barre maison (VS Code, Claude) : leurs propres boutons de fenêtre.
 - Une résolution DNS de 51 s a été vue une fois, non reproduite.
+- Un seul écran : choisi au démarrage (l'écran intégré, ou l'externe si le couvercle est
+  fermé) ; pas de second écran, pas de bascule quand on branche ou débranche un écran.
+- Une seule carte graphique (celle du démarrage) : sur un portable hybride, les sorties
+  câblées sur la carte NVIDIA ne sont pas utilisées.
 - XWayland en bureau imbriqué : « Could not find a free socket » (sans conséquence en session réelle).
 
 ---

@@ -429,3 +429,8 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
   sont oubliées par défaut : le bureau repart vide. Réglage « Rouvrir les fenêtres au
   démarrage » (Paramètres > Fenêtres, `rouvrir_fenetres`, non par défaut) pour retrouver
   l'ancien comportement ; relu à l'arrêt, donc le changer prend effet tout de suite.
+- **2026-11-10 — Pas de navigateur maison, Logithèque suffisante.** Décision de
+  l'utilisateur : la phase 6 (port du navigateur de `D:\Os`) est abandonnée, Brave reste le
+  navigateur de Ferrite. La Logithèque actuelle (catalogues Debian et Flathub,
+  installation, mises à jour, `.deb`) couvre la phase 7 : plus de grand chantier dessus,
+  seulement des corrections.

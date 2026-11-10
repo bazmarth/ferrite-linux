@@ -3571,3 +3571,26 @@ visibles) et du lanceur.
 Pas vérifié : sur le vrai bureau. Vu en passant, déjà là avant : cartes des widgets qui se
 chevauchent dans la disposition enregistrée (météo sur le calendrier) ; icône de la
 Logithèque absente du lanceur (« icône inconnue app-store »).
+
+## 2026-11-10 — Fluidité de tout le bureau
+
+Demande : assurer la fluidité de tout l'OS.
+- Revue de toutes les démonstrations (`--demo-*`, `--menu`) en release avec le profil.
+  Dans le budget (< 11 ms une fois ouvert) : génie, échange de fenêtres, Alt+Tab, îlot,
+  OSD, vue d'ensemble, capture, Wi-Fi et Bluetooth du centre de contrôle, écran verrouillé
+  et accueil (barre 2–3 ms). Hors budget : dialogue d'arrêt (24 ms à chaque seconde du
+  compte à rebours), mot de passe administrateur (20 ms), presse-papiers (21 ms),
+  sélection de zone (20 ms), lanceur (26 ms à l'ouverture).
+- Cause commune : voile plein écran (13 ms), ombre recalculée (4–8 ms), contours qui
+  parcouraient tout leur intérieur.
+- `Ink` : table de mélange par couleur et lignes vides remplies d'un coup ; `stroke` saute
+  l'intérieur ; ombres gardées (`SHADOWS`, 6 dernières). Test étendu aux rectangles droits,
+  aux contours et aux ombres prises dans le cache : pixels identiques.
+Mesuré (bureau d'essai, ouverture) : dialogue d'arrêt 24 → 13,5 ms (voile 13 → 3,4,
+ombre 7,6 → 2,7), mot de passe 20 → 10, presse-papiers 21 → 12, sélection de zone
+20 → 12, notifications 15 → 6, centre de contrôle 13 → 9, widgets 19 → 15.
+Vérifié : CI (sans shellcheck) ; captures du dialogue d'arrêt et du presse-papiers.
+Pas vérifié : sur le vrai bureau (environ 3 fois plus lent pendant l'usage) ; les applications
+elles-mêmes (Claude, Brave, applis Ferrite) ne sont pas concernées par ces changements.
+Reste : premier affichage après le démarrage 100–120 ms (une fois) ; chaque redessin
+d'un panneau copie encore une image de tout l'écran (16 Mo) vers la carte graphique.

@@ -382,7 +382,14 @@ Elle prime sur la charte §3.4 de `PLAN.md` (voir `DECISIONS.md`, 2026-11-02).
 - Widgets de l'espace 0 : fond sombre uni à 84 % (`GLASS_TONE`), sans flou ni réfraction
   du fond d'écran (retirés le 2026-11-10) ; pas de flou GPU par image.
 - Panneaux arrondis et ombres (`Canvas::fill`, `panel_shadow`, `frosted`) : l'intérieur est
-  posé d'un bloc (`blend_span`), seuls bords et coins sont calculés pixel par pixel.
+  posé d'un bloc (`blend_span` et `Ink` : table de mélange par couleur, lignes encore vides
+  remplies d'un coup), seuls bords et coins sont calculés pixel par pixel. Contours
+  (`stroke`) : l'intérieur loin du trait est sauté. Ombres : les 6 dernières gardées
+  (`SHADOWS`, opacité par pixel). Pixels identiques à l'ancien calcul : test
+  `remplissage_et_ombre_d_un_bloc_identiques_au_calcul_pixel_par_pixel`.
+- Budget : 11 ms par image (90 images/s). Mesure : fichier `ferrite-profil` (§ ci-dessus),
+  et `--winit --capture … --demo-*` dans un `XDG_RUNTIME_DIR` à part (sinon les applis
+  Ferrite se confient à celles déjà ouvertes).
 
 ### 3.4 Comportements UX établis (à conserver)
 

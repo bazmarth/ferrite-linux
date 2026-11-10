@@ -9,6 +9,7 @@ use std::{
     cell::{Cell, RefCell},
     fs,
     path::PathBuf,
+    rc::Rc,
     sync::{
         Arc, Mutex, OnceLock,
         atomic::{AtomicBool, AtomicU32, Ordering},
@@ -5574,9 +5575,7 @@ impl Canvas<'_> {
                 x.ceil().max(0.0) as u32,
                 ((x + w).floor().max(0.0) as u32).min(self.width),
             );
-            let alpha = u32::from(color.a);
-            let inverse = 255 - alpha;
-            let source = [color.b, color.g, color.r].map(|channel| u32::from(channel) * alpha / 255);
+            let ink = Ink::new(color);
             for py in top..bottom {
                 let row = cover(py, y, y + h);
                 if row <= 0.0 {
@@ -5591,14 +5590,7 @@ impl Canvas<'_> {
                 for px in (left..inner.0).chain(inner.1..right) {
                     self.blend(px, py, color, cover(px, x, x + w));
                 }
-                let start = ((py * self.width + inner.0) * 4) as usize;
-                let end = ((py * self.width + inner.1) * 4) as usize;
-                for pixel in self.pixels[start..end].chunks_exact_mut(4) {
-                    for (channel, value) in source.iter().enumerate() {
-                        pixel[channel] = (value + u32::from(pixel[channel]) * inverse / 255).min(255) as u8;
-                    }
-                    pixel[3] = (alpha + u32::from(pixel[3]) * inverse / 255).min(255) as u8;
-                }
+                self.blend_span(py, inner.0, inner.1, &ink);
             }
             return;
         }
@@ -5609,6 +5601,7 @@ impl Canvas<'_> {
         } else {
             f32::NEG_INFINITY
         };
+        let ink = Ink::new(color);
         for py in top..bottom {
             let qy = (py as f32 + 0.5 - (y + h * 0.5)).abs() - (h * 0.5 - radius);
             let (solid_start, solid_end) = if qy <= inside {
@@ -5621,26 +5614,36 @@ impl Canvas<'_> {
                 let distance = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - radius;
                 self.blend(px, py, color, (0.5 - distance).clamp(0.0, 1.0));
             }
-            self.blend_span(py, solid_start, solid_end, color);
+            self.blend_span(py, solid_start, solid_end, &ink);
         }
     }
 
-    /// Pose `color` sans réduction (couverture 1) sur les pixels `start..end` de la ligne
+    /// Pose `ink` sans réduction (couverture 1) sur les pixels `start..end` de la ligne
     /// `py` : même résultat que [`Canvas::blend`] pixel par pixel, en une boucle serrée.
-    fn blend_span(&mut self, py: u32, start: u32, end: u32, color: Color) {
-        let alpha = u32::from(color.a);
-        if start >= end || alpha == 0 {
+    fn blend_span(&mut self, py: u32, start: u32, end: u32, ink: &Ink) {
+        if start >= end || ink.solid[3] == 0 {
             return;
         }
-        let inverse = 255 - alpha;
-        let source = [color.b, color.g, color.r].map(|channel| u32::from(channel) * alpha / 255);
         let first = ((py * self.width + start) * 4) as usize;
         let last = ((py * self.width + end) * 4) as usize;
-        for pixel in self.pixels[first..last].chunks_exact_mut(4) {
-            for (channel, value) in source.iter().enumerate() {
-                pixel[channel] = (value + u32::from(pixel[channel]) * inverse / 255).min(255) as u8;
+        let span = &mut self.pixels[first..last];
+        // Ligne encore vide (voiles sur une toile neuve) : vérifiée par blocs, remplie d'un coup.
+        let (blocks, rest) = span.split_at(span.len() / 64 * 64);
+        if blocks.chunks_exact(64).all(|block| block == [0; 64]) && rest.iter().all(|&byte| byte == 0) {
+            for pixel in span.chunks_exact_mut(4) {
+                pixel.copy_from_slice(&ink.solid);
             }
-            pixel[3] = (alpha + u32::from(pixel[3]) * inverse / 255).min(255) as u8;
+            return;
+        }
+        for pixel in span.chunks_exact_mut(4) {
+            if pixel == [0, 0, 0, 0] {
+                // Toile encore vide (cas des voiles) : le résultat est la couleur seule.
+                pixel.copy_from_slice(&ink.solid);
+            } else {
+                for (value, solid) in pixel.iter_mut().zip(ink.solid) {
+                    *value = solid.saturating_add(ink.over[usize::from(*value)]);
+                }
+            }
         }
     }
 
@@ -5652,8 +5655,24 @@ impl Canvas<'_> {
         let right = ((rect.right() + half) * s).ceil().min(self.width as f64) as u32;
         let bottom = ((rect.bottom() + half) * s).ceil().min(self.height as f64) as u32;
         let radius = (radius as f64 * s).clamp(0.0, rect.w.min(rect.h) * s * 0.5);
+        // L'intérieur, loin du trait (un pixel de marge), n'est pas touché : il est sauté
+        // au lieu d'être parcouru pixel par pixel.
+        if left >= right {
+            return;
+        }
+        let reach = half * s + 1.5;
+        let center_x = (rect.x + rect.w * 0.5) * s;
+        let hollow = rect.w * s * 0.5 - radius + (radius - reach).min(0.0);
         for y in top..bottom {
-            for x in left..right {
+            let row_qy = (y as f64 + 0.5 - (rect.y + rect.h * 0.5) * s).abs() - (rect.h * s * 0.5 - radius);
+            let (skip_start, skip_end) = if row_qy <= radius - reach && hollow > 0.0 {
+                let start = (center_x - hollow - 0.5).ceil().clamp(left as f64, right as f64) as u32;
+                let end = ((center_x + hollow - 0.5).floor() + 1.0).clamp(start as f64, right as f64) as u32;
+                (start, end)
+            } else {
+                (right, right)
+            };
+            for x in (left..skip_start).chain(skip_end..right) {
                 let px = x as f64 + 0.5;
                 let py = y as f64 + 0.5;
                 let qx = (px - (rect.x + rect.w * 0.5) * s).abs() - (rect.w * s * 0.5 - radius);
@@ -5983,26 +6002,57 @@ impl Canvas<'_> {
         let top = (y - spread).floor().max(0.0) as u32;
         let right = (x + w + spread).ceil().clamp(0.0, self.width as f32) as u32;
         let bottom = (y + h + spread).ceil().clamp(0.0, self.height as f32) as u32;
-        // Cœur de l'ombre (sous le panneau) : opacité constante, posée d'un bloc.
-        let inside = r - spread * 0.5;
-        let core = Color::BLACK.with_alpha((f32::from(Color::BLACK.a) * ALPHA).round() as u8);
-        for py in top..bottom {
-            let qy = (py as f32 + 0.5 - (y + h * 0.5)).abs() - (h * 0.5 - r);
-            let (solid_start, solid_end) = if qy <= inside {
-                solid_span(x + w * 0.5, w * 0.5 - r + inside.min(0.0), left, right)
-            } else {
-                (right, right)
-            };
-            for px in (left..solid_start).chain(solid_end..right) {
-                let qx = (px as f32 + 0.5 - (x + w * 0.5)).abs() - (w * 0.5 - r);
-                let distance = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - r;
-                let t = ((distance + spread * 0.5) / spread).clamp(0.0, 1.0);
-                let amount = (1.0 - t * t * (3.0 - 2.0 * t)) * ALPHA;
-                if amount > 0.0 {
-                    self.blend(px, py, Color::BLACK, amount);
-                }
+        if right <= left || bottom <= top {
+            return;
+        }
+        // Les mêmes ombres reviennent à chaque dessin (dialogues, compte à rebours) : leur
+        // opacité pixel par pixel est gardée, il ne reste qu'à la poser.
+        let key = ShadowKey {
+            geometry: [x, y, w, h, r, spread].map(f32::to_bits),
+            canvas: (self.width, self.height),
+        };
+        let mask = SHADOWS.with_borrow_mut(|cache| {
+            if let Some(index) = cache.iter().position(|(known, _)| *known == key) {
+                let entry = cache.remove(index);
+                let mask = entry.1.clone();
+                cache.push(entry);
+                return mask;
             }
-            self.blend_span(py, solid_start, solid_end, core);
+            let mask = Rc::new(shadow_mask(
+                x,
+                y,
+                w,
+                h,
+                r,
+                spread,
+                ALPHA,
+                (left, top, right, bottom),
+            ));
+            if cache.len() >= SHADOW_CACHE {
+                cache.remove(0);
+            }
+            cache.push((key, mask.clone()));
+            mask
+        });
+        let core = Ink::new(Color::BLACK.with_alpha((f32::from(Color::BLACK.a) * ALPHA).round() as u8));
+        let span = (right - left) as usize;
+        for (row, py) in (top..bottom).enumerate() {
+            let (solid_start, solid_end) = mask.solid[row];
+            let alphas = &mask.alpha[row * span..(row + 1) * span];
+            let first = ((py * self.width + left) * 4) as usize;
+            let pixels = &mut self.pixels[first..first + span * 4];
+            for (pixel, &alpha) in pixels.chunks_exact_mut(4).zip(alphas) {
+                if alpha == 0 {
+                    continue;
+                }
+                // Noir sur le pixel : comme `blend`, en calcul entier.
+                let (alpha, inverse) = (u32::from(alpha), 255 - u32::from(alpha));
+                for value in &mut pixel[..3] {
+                    *value = (u32::from(*value) * inverse / 255).min(255) as u8;
+                }
+                pixel[3] = (alpha + u32::from(pixel[3]) * inverse / 255).min(255) as u8;
+            }
+            self.blend_span(py, solid_start, solid_end, &core);
         }
     }
 
@@ -6528,6 +6578,91 @@ fn ellipsize(text: &str, max: usize) -> String {
     short
 }
 
+/// Ombres gardées (voir [`Canvas::panel_shadow`]) : les dernières calculées.
+const SHADOW_CACHE: usize = 6;
+
+/// Géométrie d'une ombre en pixels physiques (bits exacts) et taille de la toile.
+#[derive(PartialEq)]
+struct ShadowKey {
+    geometry: [u32; 6],
+    canvas: (u32, u32),
+}
+
+/// Opacité d'une ombre sur son cadre : un octet par pixel (0 : rien), et par ligne la
+/// partie entièrement sous le panneau, d'opacité constante, posée d'un bloc.
+struct ShadowMask {
+    alpha: Vec<u8>,
+    solid: Vec<(u32, u32)>,
+}
+
+thread_local! {
+    static SHADOWS: RefCell<Vec<(ShadowKey, Rc<ShadowMask>)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Calcule l'ombre d'un rectangle arrondi (`x`, `y`, `w`, `h`, rayon `r`) floutée sur
+/// `spread`, dans le cadre `bounds` (gauche, haut, droite, bas) déjà rogné à la toile.
+#[allow(clippy::too_many_arguments)] // Géométrie de l'ombre, opacité et cadre.
+fn shadow_mask(
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    r: f32,
+    spread: f32,
+    opacity: f32,
+    bounds: (u32, u32, u32, u32),
+) -> ShadowMask {
+    let (left, top, right, bottom) = bounds;
+    let span = (right - left) as usize;
+    let mut alpha = vec![0; span * (bottom - top) as usize];
+    let mut solid = Vec::with_capacity((bottom - top) as usize);
+    let inside = r - spread * 0.5;
+    for (row, py) in (top..bottom).enumerate() {
+        let qy = (py as f32 + 0.5 - (y + h * 0.5)).abs() - (h * 0.5 - r);
+        let (solid_start, solid_end) = if qy <= inside {
+            solid_span(x + w * 0.5, w * 0.5 - r + inside.min(0.0), left, right)
+        } else {
+            (right, right)
+        };
+        solid.push((solid_start, solid_end));
+        for px in (left..solid_start).chain(solid_end..right) {
+            let qx = (px as f32 + 0.5 - (x + w * 0.5)).abs() - (w * 0.5 - r);
+            let distance = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - r;
+            let t = ((distance + spread * 0.5) / spread).clamp(0.0, 1.0);
+            let amount = (1.0 - t * t * (3.0 - 2.0 * t)) * opacity;
+            if amount > 0.0 {
+                // Même arrondi que `Canvas::blend` pour une couleur opaque.
+                alpha[row * span + (px - left) as usize] = (255.0 * amount).round().clamp(0.0, 255.0) as u8;
+            }
+        }
+    }
+    ShadowMask { alpha, solid }
+}
+
+/// Couleur prête à poser d'un bloc (voir [`Canvas::blend_span`]) : sa part prémultipliée
+/// (BGRA) et, pour chaque valeur possible d'un canal dessous, ce qu'il en reste.
+struct Ink {
+    solid: [u8; 4],
+    over: [u8; 256],
+}
+
+impl Ink {
+    fn new(color: Color) -> Self {
+        let alpha = u32::from(color.a);
+        let inverse = 255 - alpha;
+        let premultiplied = |channel: u8| (u32::from(channel) * alpha / 255) as u8;
+        Self {
+            solid: [
+                premultiplied(color.b),
+                premultiplied(color.g),
+                premultiplied(color.r),
+                color.a,
+            ],
+            over: std::array::from_fn(|value| (value as u32 * inverse / 255) as u8),
+        }
+    }
+}
+
 /// Colonnes `start..end` (dans `left..right`) dont le centre est à au plus `half` de `center` :
 /// la partie d'une ligne qu'un rectangle arrondi couvre entièrement.
 fn solid_span(center: f32, half: f32, left: u32, right: u32) -> (u32, u32) {
@@ -6562,6 +6697,57 @@ mod tests {
                 let qy = (py as f32 + 0.5 - (y + h * 0.5)).abs() - (h * 0.5 - radius);
                 let distance = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - radius;
                 canvas.blend(px, py, color, (0.5 - distance).clamp(0.0, 1.0));
+            }
+        }
+    }
+
+    /// Ancien calcul des contours, pixel par pixel.
+    fn stroke_reference(canvas: &mut Canvas, rect: Rect, radius: f32, color: Color, width: f64) {
+        let s = canvas.scale as f64;
+        let half = width * 0.5;
+        let left = ((rect.x - half) * s).floor().max(0.0) as u32;
+        let top = ((rect.y - half) * s).floor().max(0.0) as u32;
+        let right = ((rect.right() + half) * s).ceil().min(canvas.width as f64) as u32;
+        let bottom = ((rect.bottom() + half) * s).ceil().min(canvas.height as f64) as u32;
+        let radius = (radius as f64 * s).clamp(0.0, rect.w.min(rect.h) * s * 0.5);
+        for y in top..bottom {
+            for x in left..right {
+                let px = x as f64 + 0.5;
+                let py = y as f64 + 0.5;
+                let qx = (px - (rect.x + rect.w * 0.5) * s).abs() - (rect.w * s * 0.5 - radius);
+                let qy = (py - (rect.y + rect.h * 0.5) * s).abs() - (rect.h * s * 0.5 - radius);
+                let distance = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - radius;
+                let coverage = (half * s + 0.5 - distance.abs()).clamp(0.0, 1.0) as f32;
+                if coverage > 0.0 {
+                    canvas.blend(x, y, color, coverage);
+                }
+            }
+        }
+    }
+
+    /// Ancien calcul des rectangles droits (voiles), pixel par pixel.
+    fn rect_reference(canvas: &mut Canvas, rect: Rect, color: Color) {
+        let s = canvas.scale;
+        let (x, y, w, h) = (
+            rect.x as f32 * s,
+            rect.y as f32 * s,
+            rect.w as f32 * s,
+            rect.h as f32 * s,
+        );
+        let left = (x - 1.0).floor().max(0.0) as u32;
+        let top = (y - 1.0).floor().max(0.0) as u32;
+        let right = (x + w + 1.0).ceil().clamp(0.0, canvas.width as f32) as u32;
+        let bottom = (y + h + 1.0).ceil().clamp(0.0, canvas.height as f32) as u32;
+        let cover = |p: u32, start: f32, end: f32| {
+            ((p as f32 + 1.0).min(end) - (p as f32).max(start)).clamp(0.0, 1.0)
+        };
+        for py in top..bottom {
+            let row = cover(py, y, y + h);
+            if row <= 0.0 {
+                continue;
+            }
+            for px in left..right {
+                canvas.blend(px, py, color, row * cover(px, x, x + w));
             }
         }
     }
@@ -6630,13 +6816,38 @@ mod tests {
                 fast.pixels == reference.pixels,
                 "remplissage différent : {rect:?} rayon {radius} échelle {scale}"
             );
-            let (mut fast, mut reference) = (canvas(background.clone()), canvas(background));
+            let (mut fast, mut reference) = (canvas(background.clone()), canvas(background.clone()));
             fast.panel_shadow(rect, radius);
             shadow_reference(&mut reference, rect, radius);
             assert!(
                 fast.pixels == reference.pixels,
                 "ombre différente : {rect:?} rayon {radius} échelle {scale}"
             );
+            // Même ombre une seconde fois : posée depuis le cache, identique.
+            let mut again = canvas(background.clone());
+            again.panel_shadow(rect, radius);
+            assert!(
+                again.pixels == reference.pixels,
+                "ombre gardée différente : {rect:?}"
+            );
+            let width = [0.5, 1.0, 1.5, 2.0, 6.0][next(5) as usize];
+            let (mut fast, mut reference) = (canvas(background.clone()), canvas(background.clone()));
+            fast.stroke(rect, radius, color, width);
+            stroke_reference(&mut reference, rect, radius, color, width);
+            assert!(
+                fast.pixels == reference.pixels,
+                "contour différent : {rect:?} rayon {radius} trait {width}"
+            );
+            // Rectangle droit, sur une toile vide (voile) puis sur un fond déjà dessiné.
+            for start in [vec![0; background.len()], background.clone()] {
+                let (mut fast, mut reference) = (canvas(start.clone()), canvas(start));
+                fast.fill(rect, 0.0, color);
+                rect_reference(&mut reference, rect, color);
+                assert!(
+                    fast.pixels == reference.pixels,
+                    "rectangle différent : {rect:?} échelle {scale}"
+                );
+            }
         }
     }
 

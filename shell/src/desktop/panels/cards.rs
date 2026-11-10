@@ -708,6 +708,7 @@ impl Canvas<'_> {
         let radius = (radius * s).min(w.min(h) * 0.5);
         // Presque couvrant : sans flou, le détail du fond d'écran gênerait la lecture.
         let tone = GLASS_TONE.with_alpha(215);
+        let ink = super::Ink::new(tone);
         let left = x.floor().max(0.0) as u32;
         let top = y.floor().max(0.0) as u32;
         let right = ((x + w).ceil() as u32).min(self.width);
@@ -737,7 +738,7 @@ impl Canvas<'_> {
                 let edge = (1.0 + distance / s).clamp(0.0, 1.0);
                 self.blend(px, py, Color::WHITE, 0.1 * edge * coverage);
             }
-            self.blend_span(py, solid_start, solid_end, tone);
+            self.blend_span(py, solid_start, solid_end, &ink);
         }
     }
 }

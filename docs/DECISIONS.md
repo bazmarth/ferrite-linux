@@ -434,3 +434,15 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
   navigateur de Ferrite. La Logithèque actuelle (catalogues Debian et Flathub,
   installation, mises à jour, `.deb`) couvre la phase 7 : plus de grand chantier dessus,
   seulement des corrections.
+- **2026-11-10 — Pilotes graphiques AMD et NVIDIA téléchargés à la demande.** Leurs
+  microprogrammes (15 et 40 Mo de paquets, environ 160 Mo une fois installés, recopiés
+  dans l'initrd) ne sont plus dans l'ISO. Sans eux, ces cartes affichent l'image sans
+  accélération (affichage simple du firmware). La Logithèque a une rubrique « Pilotes »,
+  visible seulement sur un PC qui en a besoin (`/sys/bus/pci/devices`, classe `0x03`,
+  fabricant `1002` ou `10de`, paquet absent de `/var/lib/dpkg/info`), qui installe le
+  paquet par PackageKit. Le service des mises à jour l'annonce deux minutes après
+  l'ouverture de session, une fois par semaine au plus. Pas sur le système live : il
+  faut redémarrer pour utiliser le pilote, et ce qu'on installe sur la clé est perdu au
+  redémarrage (bouton grisé, message). Les microprogrammes Wi-Fi restent dans l'ISO :
+  sans réseau, rien ne se télécharge. Releases construites avec `tools/usb.sh --final`
+  (compression xz).

@@ -2,6 +2,8 @@
 //! l'ouverture de session. Une fois par jour (la première fois dix minutes après le
 //! démarrage), il cherche les mises à jour de Debian et de Flathub et, s'il y en a, les
 //! annonce par une notification ; un clic ouvre la Logithèque sur « Mises à jour ».
+//! Deux minutes après le démarrage, il annonce aussi un pilote graphique manquant
+//! (`drivers.rs`), une fois par semaine au plus et jamais sur le système live.
 
 use std::{
     collections::HashMap,
@@ -18,7 +20,7 @@ use std::{
 
 use zbus::{MatchRule, blocking::MessageIterator, message::Type as MessageType};
 
-use super::flatpak;
+use super::{drivers, flatpak};
 use crate::packagekit;
 
 const BUS_NAME: &str = "org.freedesktop.Notifications";
@@ -27,6 +29,10 @@ const BUS_PATH: &str = "/org/freedesktop/Notifications";
 const EVERY: Duration = Duration::from_secs(24 * 60 * 60);
 /// Laisser la session s'installer avant la première recherche.
 const FIRST_DELAY: Duration = Duration::from_secs(10 * 60);
+/// Annonce d'un pilote manquant : peu après l'ouverture de session…
+const DRIVERS_DELAY: Duration = Duration::from_secs(2 * 60);
+/// … et une fois par semaine au plus.
+const DRIVERS_EVERY: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 /// Pas de la boucle (la machine a pu dormir : on regarde l'heure à chaque tour).
 const TICK: Duration = Duration::from_secs(30 * 60);
 
@@ -50,19 +56,23 @@ fn stamp() -> Option<PathBuf> {
     state_dir().map(|dir| dir.join("derniere-recherche"))
 }
 
-/// La dernière recherche date-t-elle de plus d'un jour ?
-fn due(now: SystemTime) -> bool {
-    let last = stamp()
-        .and_then(|path| fs::metadata(path).ok())
-        .and_then(|meta| meta.modified().ok());
-    is_due(last, now)
+fn drivers_stamp() -> Option<PathBuf> {
+    state_dir().map(|dir| dir.join("derniere-annonce-pilotes"))
 }
 
-fn is_due(last: Option<SystemTime>, now: SystemTime) -> bool {
+/// Le fichier `path` date-t-il de plus de `every` ?
+fn due(path: Option<PathBuf>, every: Duration, now: SystemTime) -> bool {
+    let last = path
+        .and_then(|path| fs::metadata(path).ok())
+        .and_then(|meta| meta.modified().ok());
+    is_due(last, every, now)
+}
+
+fn is_due(last: Option<SystemTime>, every: Duration, now: SystemTime) -> bool {
     match last {
         None => true,
         // Horloge revenue en arrière : on recherche, par prudence.
-        Some(last) => now.duration_since(last).map_or(true, |elapsed| elapsed >= EVERY),
+        Some(last) => now.duration_since(last).map_or(true, |elapsed| elapsed >= every),
     }
 }
 
@@ -98,7 +108,12 @@ fn message(debian: usize, security: usize, flatpak: usize) -> Option<(String, St
     ))
 }
 
-fn notify(connection: &zbus::blocking::Connection, summary: &str, body: &str) -> zbus::Result<u32> {
+fn notify(
+    connection: &zbus::blocking::Connection,
+    icon: &str,
+    summary: &str,
+    body: &str,
+) -> zbus::Result<u32> {
     use zbus::zvariant::Value;
     let actions = ["default", "Voir"];
     let mut hints: HashMap<&str, Value> = HashMap::new();
@@ -108,31 +123,23 @@ fn notify(connection: &zbus::blocking::Connection, summary: &str, body: &str) ->
         BUS_PATH,
         Some(BUS_NAME),
         "Notify",
-        &(
-            "Logithèque",
-            0u32,
-            "system-software-install",
-            summary,
-            body,
-            &actions[..],
-            hints,
-            0i32,
-        ),
+        &("Logithèque", 0u32, icon, summary, body, &actions[..], hints, 0i32),
     )?;
     reply.body().deserialize::<u32>()
 }
 
-fn open_updates() {
+/// Ouvre la Logithèque sur une rubrique (`mises-a-jour`, `pilotes`).
+fn open_store(page: &str) {
     let program = env::current_exe().unwrap_or_else(|_| PathBuf::from("ferrite-apps"));
     let mut command = std::process::Command::new(program);
-    command.args(["logitheque", "mises-a-jour"]);
+    command.args(["logitheque", page]);
     if let Err(error) = ferrite_system::command::spawn_detached(command) {
         tracing::warn!(%error, "Logithèque introuvable");
     }
 }
 
 /// Écoute les clics sur nos notifications.
-fn listen(connection: zbus::blocking::Connection, last: Arc<AtomicU32>) {
+fn listen(connection: zbus::blocking::Connection, last: Arc<AtomicU32>, last_drivers: Arc<AtomicU32>) {
     thread::spawn(move || {
         let Ok(rule) = MatchRule::builder()
             .msg_type(MessageType::Signal)
@@ -146,11 +153,16 @@ fn listen(connection: zbus::blocking::Connection, last: Arc<AtomicU32>) {
             return;
         };
         for message in signals.flatten() {
-            if let Ok((id, _action)) = message.body().deserialize::<(u32, String)>()
-                && id != 0
-                && id == last.load(Ordering::Relaxed)
-            {
-                open_updates();
+            let Ok((id, _action)) = message.body().deserialize::<(u32, String)>() else {
+                continue;
+            };
+            if id == 0 {
+                continue;
+            }
+            if id == last.load(Ordering::Relaxed) {
+                open_store("mises-a-jour");
+            } else if id == last_drivers.load(Ordering::Relaxed) {
+                open_store("pilotes");
             }
         }
     });
@@ -165,10 +177,13 @@ pub fn run_service() -> i32 {
         return 1;
     };
     let last = Arc::new(AtomicU32::new(0));
-    listen(connection.clone(), Arc::clone(&last));
-    thread::sleep(FIRST_DELAY);
+    let last_drivers = Arc::new(AtomicU32::new(0));
+    listen(connection.clone(), Arc::clone(&last), Arc::clone(&last_drivers));
+    thread::sleep(DRIVERS_DELAY);
+    announce_drivers(&connection, &last_drivers);
+    thread::sleep(FIRST_DELAY.saturating_sub(DRIVERS_DELAY));
     loop {
-        if due(SystemTime::now()) {
+        if due(stamp(), EVERY, SystemTime::now()) {
             // Relire les dépôts (sans mot de passe pour l'utilisateur de la session).
             let debian = packagekit::check(true).unwrap_or_default();
             let security = debian.iter().filter(|package| package.security).count();
@@ -177,13 +192,33 @@ pub fn run_service() -> i32 {
                 let _ = fs::write(path, b"");
             }
             if let Some((title, body)) = message(debian.len(), security, flatpak.len()) {
-                match notify(&connection, &title, &body) {
+                match notify(&connection, "system-software-install", &title, &body) {
                     Ok(id) => last.store(id, Ordering::Relaxed),
                     Err(error) => tracing::warn!(%error, "notification impossible"),
                 }
             }
         }
         thread::sleep(TICK);
+    }
+}
+
+/// Annonce les pilotes graphiques manquants (pas sur le système live : il faudrait
+/// redémarrer, et ce qu'on y installe disparaît au redémarrage).
+fn announce_drivers(connection: &zbus::blocking::Connection, last: &AtomicU32) {
+    if drivers::is_live() || !due(drivers_stamp(), DRIVERS_EVERY, SystemTime::now()) {
+        return;
+    }
+    let Some((title, body)) = drivers::message(&drivers::missing()) else {
+        return;
+    };
+    match notify(connection, "video-display", &title, &body) {
+        Ok(id) => {
+            last.store(id, Ordering::Relaxed);
+            if let Some(path) = drivers_stamp() {
+                let _ = fs::write(path, b"");
+            }
+        }
+        Err(error) => tracing::warn!(%error, "notification impossible"),
     }
 }
 
@@ -194,11 +229,12 @@ mod tests {
     #[test]
     fn une_fois_par_jour() {
         let now = SystemTime::now();
-        assert!(is_due(None, now));
-        assert!(!is_due(Some(now - Duration::from_secs(3600)), now));
-        assert!(is_due(Some(now - EVERY), now));
+        assert!(is_due(None, EVERY, now));
+        assert!(!is_due(Some(now - Duration::from_secs(3600)), EVERY, now));
+        assert!(is_due(Some(now - EVERY), EVERY, now));
+        assert!(!is_due(Some(now - EVERY), DRIVERS_EVERY, now));
         assert!(
-            is_due(Some(now + Duration::from_secs(60)), now),
+            is_due(Some(now + Duration::from_secs(60)), EVERY, now),
             "horloge en arrière"
         );
     }

@@ -3476,3 +3476,32 @@ ouvertes.
 Vérifié : CI (sans shellcheck) ; capture de Paramètres > Fenêtres avec l'interrupteur.
 Pas vérifié : un vrai redémarrage sur le bureau installé (il faut d'abord installer le
 nouveau `ferrite-shell`).
+
+## 2026-11-10 — ISO reconstruite et release v2026.11.10
+
+- Navigateur maison abandonné, Logithèque jugée suffisante (DECISIONS, TECHNIQUE §5.3).
+- ISO complète reconstruite (1,4 Go, microprogrammes d'autres PC compris) depuis le
+  commit 297acc0, publiée en release `v2026.11.10` avec sa somme SHA-256.
+Vérifié : CI (sans shellcheck) ; démarrage de l'ISO en QEMU UEFI jusqu'au bureau
+(capture après 2 min), aucune erreur dans la console série ; les deux fichiers de la
+release ont la bonne taille sur GitHub.
+Pas vérifié : menu GRUB et écran Plymouth (non capturés) ; clé USB ; vrai PC.
+
+## 2026-11-10 — ISO allégée, pilotes graphiques à la demande
+
+Demande : une ISO moins lourde ; proposer de télécharger les pilotes graphiques lourds
+seulement si nécessaire.
+- Mesures : microprogrammes AMD (78 Mo) et NVIDIA (62 Mo) présents deux fois, dans le
+  système et dans l'initrd (150 Mo) ; dernière ISO compressée en zstd, pas en xz.
+- `firmware-amd-graphics` et `firmware-nvidia-graphics` retirés de l'ISO.
+- `store/drivers.rs` : détection des cartes AMD et NVIDIA sans leur paquet. Logithèque :
+  rubrique « Pilotes » (`ferrite-apps logitheque pilotes`), bouton « Télécharger »
+  (PackageKit, mot de passe administrateur), « Redémarrez l'ordinateur » ensuite ;
+  grisée sur le système live. Service des mises à jour : notification deux minutes après
+  l'ouverture de session, une fois par semaine au plus, un clic ouvre la rubrique.
+- Démonstration : `FERRITE_DEMO_PILOTES=amd,nvidia`, `FERRITE_DEMO_LIVE=1`.
+Vérifié : CI (sans shellcheck), 566 tests dont `detection_des_cartes` ; captures de la
+rubrique dans un bureau imbriqué (deux cartes ; système live, bouton grisé).
+Pas vérifié : ISO non reconstruite (il faut `sudo`), gain de taille réel inconnu ;
+la notification n'a pas été vue ; aucune installation réelle d'un pilote ; aucun PC AMD
+ou NVIDIA essayé, ni le bureau sans accélération sur ces cartes.

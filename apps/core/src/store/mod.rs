@@ -7,6 +7,7 @@
 //! fil à part ; l'interface reçoit des messages.
 
 mod appstream;
+pub mod drivers;
 mod flatpak;
 mod media;
 pub mod notifier;
@@ -82,6 +83,7 @@ enum Page {
     Category(usize),
     Installed,
     Updates,
+    Drivers,
 }
 
 /// Opération en cours (une seule à la fois : PackageKit les fait de toute façon à la file).
@@ -89,6 +91,8 @@ enum Page {
 enum Target {
     App(String, Origin),
     Deb(PathBuf),
+    /// Pilote graphique (nom du paquet).
+    Driver(&'static str),
     Updates,
     DebianCatalog,
     Flathub,
@@ -196,6 +200,12 @@ pub struct StoreState {
     updates: Option<Updates>,
     checking_updates: bool,
     operation: Option<Operation>,
+    /// Pilotes graphiques utiles et absents (`drivers.rs`).
+    drivers: Vec<drivers::Driver>,
+    /// Un pilote vient d'être installé : il faut redémarrer.
+    restart_needed: bool,
+    /// Système live : un pilote installé serait perdu au redémarrage.
+    live: bool,
     /// Dernier message (réussite ou erreur).
     notice: Option<Result<String, String>>,
     media: media::Media,
@@ -233,6 +243,9 @@ impl StoreState {
             updates: None,
             checking_updates: false,
             operation: None,
+            drivers: drivers::missing(),
+            restart_needed: false,
+            live: drivers::is_live(),
             notice: None,
             media: media::Media::new(ctx),
             icons: style::Icons::default(),
@@ -248,6 +261,7 @@ impl StoreState {
         match target.to_str() {
             Some("mises-a-jour") => self.show_updates(false),
             Some("installees") => self.page = Page::Installed,
+            Some("pilotes") => self.page = Page::Drivers,
             Some(text) if text.starts_with("recherche:") => {
                 self.search = text["recherche:".len()..].to_owned();
             }
@@ -356,6 +370,10 @@ impl StoreState {
                                 self.loading = true;
                                 self.spawn(load_catalog);
                             }
+                            Target::Driver(_) => {
+                                self.drivers = drivers::missing();
+                                self.restart_needed = true;
+                            }
                             Target::App(..) | Target::Deb(_) => {
                                 // Les mises à jour connues peuvent avoir changé.
                                 if self.updates.is_some() {
@@ -462,6 +480,7 @@ impl StoreState {
                         Page::Category(index) => self.category_page(ui, index),
                         Page::Installed => self.installed_page(ui),
                         Page::Updates => self.updates_page(ui),
+                        Page::Drivers => self.drivers_page(ui),
                     }
                 }
             });
@@ -533,6 +552,26 @@ impl StoreState {
             {
                 self.search.clear();
                 self.show_updates(false);
+            }
+            // Seulement sur un PC qui en a besoin (ou juste après une installation).
+            if !self.drivers.is_empty() || self.restart_needed || self.page == Page::Drivers {
+                let label = if self.drivers.is_empty() {
+                    "Pilotes".to_owned()
+                } else {
+                    format!("Pilotes ({})", self.drivers.len())
+                };
+                if style::sidebar_tile_item(
+                    ui,
+                    &mut self.icons,
+                    "glyph-screen",
+                    style::accent_color(Accent::Purple),
+                    &label,
+                    browsing && self.page == Page::Drivers,
+                )
+                .clicked()
+                {
+                    go = Some(Page::Drivers);
+                }
             }
             if let Some(page) = go {
                 self.page = page;
@@ -887,6 +926,100 @@ impl StoreState {
                 }
                 ui.add_space(24.0);
             });
+    }
+
+    fn drivers_page(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(4.0);
+        kit::heading(ui, "Pilotes graphiques");
+        if self.restart_needed {
+            kit::card(ui, |ui| {
+                ui.label(RichText::new("Redémarrez l'ordinateur").size(14.0).strong());
+                kit::note(ui, "Le pilote installé sera utilisé au prochain démarrage.");
+            });
+            ui.add_space(12.0);
+        }
+        if self.drivers.is_empty() {
+            if !self.restart_needed {
+                kit::note(
+                    ui,
+                    "Aucun pilote à télécharger : votre carte graphique a tout ce qu'il lui faut.",
+                );
+            }
+            return;
+        }
+        if self.live {
+            kit::card(ui, |ui| {
+                ui.label(
+                    RichText::new("Vous utilisez le système live (clé USB).")
+                        .size(14.0)
+                        .color(style::warning()),
+                );
+                kit::note(
+                    ui,
+                    "Un pilote installé ici serait perdu au redémarrage, alors qu'il faut \
+                        redémarrer pour l'utiliser. Installez d'abord Ferrite sur le disque : le \
+                        pilote vous sera proposé ensuite.",
+                );
+            });
+            ui.add_space(12.0);
+        }
+        for driver in self.drivers.clone() {
+            let target = Target::Driver(driver.package);
+            kit::card(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.set_width((ui.available_width() - 190.0).max(160.0));
+                        ui.label(
+                            RichText::new(format!("Carte graphique {}", driver.brand))
+                                .size(15.0)
+                                .family(style::strong_family()),
+                        );
+                        ui.add_space(2.0);
+                        kit::note(
+                            ui,
+                            &format!(
+                                "Microprogramme de la carte (paquet {}), environ {} Mo à \
+                                    télécharger. Sans lui, l'écran marche sans accélération : \
+                                    vidéos, jeux et animations sont plus lents.",
+                                driver.package, driver.download_mb
+                            ),
+                        );
+                    });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if let Some(operation) = self
+                            .operation
+                            .as_ref()
+                            .filter(|operation| operation.target == target)
+                        {
+                            if let Some(percent) = operation.percent {
+                                ui.add(
+                                    egui::ProgressBar::new(percent as f32 / 100.0)
+                                        .desired_width(160.0)
+                                        .show_percentage(),
+                                );
+                            } else {
+                                ui.add(egui::Spinner::new().size(20.0));
+                            }
+                        } else {
+                            let enabled = self.operation.is_none() && !self.live;
+                            if kit::wide_button(ui, 160.0, "Télécharger", kit::Tone::Accent, enabled)
+                                .clicked()
+                            {
+                                let name = format!("pilote {}", driver.brand);
+                                self.start(target.clone(), Verb::Install, &name, move |progress| {
+                                    install_driver(driver, progress)
+                                });
+                            }
+                        }
+                    });
+                });
+            });
+            ui.add_space(10.0);
+        }
+        kit::note(
+            ui,
+            "Mot de passe administrateur demandé. Il faut être connecté à Internet.",
+        );
     }
 
     fn update_all(&mut self) {
@@ -1500,6 +1633,17 @@ fn find<'a>(apps: &'a [App], id: &str) -> Option<&'a App> {
 }
 
 /// Titre de partie avec, à droite sur la même ligne, des boutons ou un lien.
+/// Télécharge et installe un pilote graphique depuis les dépôts de Debian.
+fn install_driver(driver: drivers::Driver, progress: &dyn Fn(u32)) -> Result<String, String> {
+    let package = packagekit::resolve(driver.package)?
+        .ok_or_else(|| format!("Le paquet {} est introuvable dans les dépôts.", driver.package))?;
+    packagekit::install_packages(&[package.id], progress)?;
+    Ok(format!(
+        "Pilote {} installé. Redémarrez l'ordinateur pour l'utiliser.",
+        driver.brand
+    ))
+}
+
 fn heading_row(ui: &mut egui::Ui, text: &str, right: impl FnOnce(&mut egui::Ui)) {
     ui.add_space(20.0);
     ui.horizontal(|ui| {

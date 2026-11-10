@@ -43,6 +43,8 @@ Liste : `image/config/package-lists/ferrite.list.chroot`. Points notables :
 | `firmware-realtek` | firmware `rtw89/rtw8852b_fw*.bin` du Wi-Fi RTL8852BE |
 | `firmware-intel-graphics`, `intel-media-va-driver` | Intel Iris Xe (i915/xe, décodage vidéo) |
 | `firmware-sof-signed`, `alsa-ucm-conf` | son des portables Intel récents (Sound Open Firmware) |
+| `firmware-atheros`, `firmware-brcm80211`, `firmware-mediatek`, `firmware-cirrus`, `bluez-firmware`, `amd64-microcode` | autres PC : Wi-Fi, son et Bluetooth sans lesquels rien ne se télécharge ensuite |
+| *(absents)* `firmware-amd-graphics`, `firmware-nvidia-graphics` | retirés de l'ISO (55 Mo, copiés aussi dans l'initrd) ; proposés par la Logithèque, rubrique Pilotes |
 | `dbus-user-session` | services utilisateur PipeWire/WirePlumber sans environnement de bureau |
 | `libinput-tools`, `alsa-utils`, `pciutils`, `usbutils` | vérifications de la phase 1 (`ferrite-check`) |
 | `xwayland`, `mesa-vulkan-drivers`, `libegl1`, `libgles2` | préparés pour le compositeur (phase 2) |

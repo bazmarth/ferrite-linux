@@ -25,12 +25,12 @@ firmware-intel-sound
 firmware-sof-signed
 firmware-misc-nonfree
 
-# Autres PC que le ThinkBook (sans eux : pas d'image sur une carte AMD récente, pas de
-# Wi-Fi sur les puces Atheros, Broadcom ou MediaTek). Environ 330 Mo avant compression.
+# Autres PC que le ThinkBook (sans eux : pas de Wi-Fi sur les puces Atheros, Broadcom ou
+# MediaTek, donc rien à télécharger ensuite).
+# Pas de firmware-amd-graphics ni de firmware-nvidia-graphics (55 Mo de paquets, copiés
+# aussi dans l'initrd) : la Logithèque les propose sur un PC qui en a besoin (Pilotes).
 amd64-microcode
 firmware-linux-free
-firmware-amd-graphics
-firmware-nvidia-graphics
 firmware-atheros
 firmware-ath9k-htc
 firmware-brcm80211

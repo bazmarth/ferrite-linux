@@ -245,6 +245,20 @@ fn build_output_elements(
     let overview_target = if state.overview { 1.0 } else { 0.0 };
     let overview_shown =
         crate::desktop::dock::DockMotion::step(&state.overview_shown, overview_target, OVERVIEW_TRANSITION);
+    // Lanceur fermé : ses icônes sont préparées d'avance, une par image.
+    if state.popover != Some(crate::desktop::panels::Popover::Launcher)
+        && state.launcher_query.is_empty()
+        && assets
+            .panels
+            .launcher_icons_pending(state.launcher_entries().len())
+    {
+        let launcher = launcher_view(state);
+        let tiles = launcher
+            .sections
+            .first()
+            .map_or(&[][..], |section| &section.tiles[..]);
+        assets.panels.warm_launcher_icon(tiles, scale);
+    }
     let view = profile::timed("vue du bureau", || desktop_view(state));
     profile::timed("panneaux", || {
         assets

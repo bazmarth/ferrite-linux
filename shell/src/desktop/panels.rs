@@ -927,6 +927,8 @@ struct Battery {
 type PixelSize = (u32, u32);
 /// Toile (largeur, hauteur, échelle), panneau et teinte du verre du menu Applications.
 type LauncherBackdropKey = (u32, u32, u32, Rect, Color);
+/// Lignes de pixels gardées : position du premier octet et contenu.
+type SavedRows = (usize, Vec<u8>);
 /// Invitation de l'écran de verrouillage : écran (largeur, hauteur, échelle, thème
 /// sombre), image, et place en logique (haut, hauteur).
 type InvitationImage = ((u32, u32, u32, bool), MemoryRenderBuffer, (f64, f64));
@@ -964,6 +966,10 @@ pub struct Panels {
     frost: RefCell<Option<(FrostKey, Arc<Frost>)>>,
     /// Fond du menu Applications (voile, ombre et verre), gardé d'un dessin à l'autre.
     launcher_backdrop: RefCell<Option<(LauncherBackdropKey, Vec<u8>)>>,
+    /// Préparation des icônes du lanceur : nombre de tuiles vues et prochaine à préparer.
+    icon_warmup: Cell<(usize, usize)>,
+    /// Ombre et fond du centre de contrôle, gardés d'un dessin à l'autre (lignes de pixels).
+    controls_backdrop: RefCell<Option<(LauncherBackdropKey, SavedRows)>>,
     /// Fond de l'écran de verrouillage.
     lock_wall: RefCell<Option<(LockWallKey, MemoryRenderBuffer)>>,
     /// Autres couches de l'écran de verrouillage (voir `lock_elements`).
@@ -1041,9 +1047,36 @@ impl Panels {
             island: RefCell::new(island::IslandMotion::default()),
             frost: RefCell::new(None),
             launcher_backdrop: RefCell::new(None),
+            controls_backdrop: RefCell::new(None),
+            icon_warmup: Cell::new((0, 0)),
             lock_wall: RefCell::new(None),
             lock_layers: RefCell::new(lock_screen::LockLayers::default()),
         })
+    }
+
+    /// Vrai tant que des icônes du lanceur (`tiles` tuiles) restent à préparer.
+    pub fn launcher_icons_pending(&self, tiles: usize) -> bool {
+        self.icon_warmup.get() != (tiles, tiles)
+    }
+
+    /// Prépare une icône du lanceur par appel (une par image) : décodées d'avance, elles
+    /// ne font plus attendre la première ouverture (40 ms et plus pour toutes à la fois).
+    pub fn warm_launcher_icon(&self, tiles: &[Tile], scale: f64) {
+        let (known, mut next) = self.icon_warmup.get();
+        if known != tiles.len() {
+            next = 0;
+        }
+        if let Some(tile) = tiles.get(next) {
+            // Même taille que dans `draw_tile`.
+            let side = 72.0 * scale as f32;
+            match &tile.icon {
+                TileIcon::Builtin(name) => self.icons.prepare(name, side, Style::Color),
+                TileIcon::File(path) => self.icons.prepare_file(path, side),
+                TileIcon::Missing => {}
+            }
+            next += 1;
+        }
+        self.icon_warmup.set((tiles.len(), next.min(tiles.len())));
     }
 
     pub fn push_element(
@@ -1648,16 +1681,8 @@ impl Panels {
             bold: &self.bold,
             icons: &self.icons,
         };
-        let placement = cards::Placement {
-            x: card.x - LIFT_MARGIN,
-            y: card.y - LIFT_MARGIN,
-            screen: (
-                (state.width as f64 * scale).round().max(1.0),
-                (state.height as f64 * scale).round().max(1.0),
-            ),
-        };
         let local = Rect::new(LIFT_MARGIN, LIFT_MARGIN, card.w, card.h);
-        self.draw_card(&mut canvas, state, index, local, true, Some(placement));
+        self.draw_card(&mut canvas, state, index, local, true);
         canvas_buffer(canvas)
     }
 
@@ -1761,7 +1786,7 @@ impl Panels {
                 let row = (y * width as usize + x0) * 4..(y * width as usize + x1) * 4;
                 canvas.pixels[row.clone()].copy_from_slice(&glass[row]);
             }
-            self.draw_card(&mut canvas, state, index, card, false, None);
+            self.draw_card(&mut canvas, state, index, card, false);
             damage.push(Rectangle::new(
                 (x0 as i32, y0 as i32).into(),
                 ((x1 - x0) as i32, (y1 - y0) as i32).into(),
@@ -2495,7 +2520,29 @@ impl Panels {
     /// batterie et boutons de session.
     fn draw_controls(&self, canvas: &mut Canvas, layout: &Layout, state: &VisualState) {
         let view = &state.view;
-        canvas.glass(layout.controls(), 16.0);
+        // Ombre et fond ne changent qu'avec l'écran, alors que le reste est redessiné à
+        // chaque pas d'un curseur (volume, luminosité). Le panneau est dessiné le premier,
+        // sur une toile vide : les lignes gardées remplacent exactement ce dessin.
+        let card = layout.controls();
+        let key = (
+            canvas.width,
+            canvas.height,
+            canvas.scale.to_bits(),
+            card,
+            panel_fill(),
+        );
+        let rows = (card.y - 40.0, card.bottom() + 50.0);
+        let mut backdrop = self.controls_backdrop.borrow_mut();
+        match backdrop.as_ref() {
+            Some((known, (offset, saved))) if *known == key => {
+                canvas.pixels[*offset..*offset + saved.len()].copy_from_slice(saved);
+            }
+            _ => {
+                canvas.glass(card, 16.0);
+                *backdrop = Some((key, canvas.save_rows(rows.0, rows.1)));
+            }
+        }
+        drop(backdrop);
         match view.controls.page {
             ControlsPage::Main => self.draw_controls_main(canvas, layout, state),
             ControlsPage::Wifi => self.draw_controls_wifi(canvas, layout, view),
@@ -4550,22 +4597,6 @@ fn push_layer(
     }
 }
 
-/// Couleur du fond flouté au point (`u`, `v`) de l'écran (0 à 1), interpolée.
-fn sample(image: &Image, u: f64, v: f64) -> [f32; 3] {
-    let x = (u * image.width as f64 - 0.5).clamp(0.0, image.width as f64 - 1.0);
-    let y = (v * image.height as f64 - 0.5).clamp(0.0, image.height as f64 - 1.0);
-    let (x0, y0) = (x.floor() as u32, y.floor() as u32);
-    let (x1, y1) = ((x0 + 1).min(image.width - 1), (y0 + 1).min(image.height - 1));
-    let (fx, fy) = ((x - x0 as f64) as f32, (y - y0 as f64) as f32);
-    let at =
-        |x: u32, y: u32, channel: usize| image.rgba[((y * image.width + x) * 4) as usize + channel] as f32;
-    [0, 1, 2].map(|c| {
-        let top = at(x0, y0, c) + (at(x1, y0, c) - at(x0, y0, c)) * fx;
-        let bottom = at(x0, y1, c) + (at(x1, y1, c) - at(x0, y1, c)) * fx;
-        top + (bottom - top) * fy
-    })
-}
-
 /// Nom d'une application sur deux lignes au plus, coupé entre les mots ; la seconde
 /// ligne se termine par « … » si elle déborde.
 fn wrap_two_lines(canvas: &Canvas, font: &Font, text: &str, size: f32, width: f64) -> Vec<String> {
@@ -5571,13 +5602,45 @@ impl Canvas<'_> {
             }
             return;
         }
+        // Intérieur entièrement couvert (couverture 1) : rempli d'un bloc ; seuls les bords
+        // et les coins demandent le calcul de distance, pixel par pixel.
+        let inside = if radius >= 0.5 {
+            radius - 0.5
+        } else {
+            f32::NEG_INFINITY
+        };
         for py in top..bottom {
-            for px in left..right {
+            let qy = (py as f32 + 0.5 - (y + h * 0.5)).abs() - (h * 0.5 - radius);
+            let (solid_start, solid_end) = if qy <= inside {
+                solid_span(x + w * 0.5, w * 0.5 - radius + inside.min(0.0), left, right)
+            } else {
+                (right, right)
+            };
+            for px in (left..solid_start).chain(solid_end..right) {
                 let qx = (px as f32 + 0.5 - (x + w * 0.5)).abs() - (w * 0.5 - radius);
-                let qy = (py as f32 + 0.5 - (y + h * 0.5)).abs() - (h * 0.5 - radius);
                 let distance = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - radius;
                 self.blend(px, py, color, (0.5 - distance).clamp(0.0, 1.0));
             }
+            self.blend_span(py, solid_start, solid_end, color);
+        }
+    }
+
+    /// Pose `color` sans réduction (couverture 1) sur les pixels `start..end` de la ligne
+    /// `py` : même résultat que [`Canvas::blend`] pixel par pixel, en une boucle serrée.
+    fn blend_span(&mut self, py: u32, start: u32, end: u32, color: Color) {
+        let alpha = u32::from(color.a);
+        if start >= end || alpha == 0 {
+            return;
+        }
+        let inverse = 255 - alpha;
+        let source = [color.b, color.g, color.r].map(|channel| u32::from(channel) * alpha / 255);
+        let first = ((py * self.width + start) * 4) as usize;
+        let last = ((py * self.width + end) * 4) as usize;
+        for pixel in self.pixels[first..last].chunks_exact_mut(4) {
+            for (channel, value) in source.iter().enumerate() {
+                pixel[channel] = (value + u32::from(pixel[channel]) * inverse / 255).min(255) as u8;
+            }
+            pixel[3] = (alpha + u32::from(pixel[3]) * inverse / 255).min(255) as u8;
         }
     }
 
@@ -5920,10 +5983,18 @@ impl Canvas<'_> {
         let top = (y - spread).floor().max(0.0) as u32;
         let right = (x + w + spread).ceil().clamp(0.0, self.width as f32) as u32;
         let bottom = (y + h + spread).ceil().clamp(0.0, self.height as f32) as u32;
+        // Cœur de l'ombre (sous le panneau) : opacité constante, posée d'un bloc.
+        let inside = r - spread * 0.5;
+        let core = Color::BLACK.with_alpha((f32::from(Color::BLACK.a) * ALPHA).round() as u8);
         for py in top..bottom {
-            for px in left..right {
+            let qy = (py as f32 + 0.5 - (y + h * 0.5)).abs() - (h * 0.5 - r);
+            let (solid_start, solid_end) = if qy <= inside {
+                solid_span(x + w * 0.5, w * 0.5 - r + inside.min(0.0), left, right)
+            } else {
+                (right, right)
+            };
+            for px in (left..solid_start).chain(solid_end..right) {
                 let qx = (px as f32 + 0.5 - (x + w * 0.5)).abs() - (w * 0.5 - r);
-                let qy = (py as f32 + 0.5 - (y + h * 0.5)).abs() - (h * 0.5 - r);
                 let distance = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - r;
                 let t = ((distance + spread * 0.5) / spread).clamp(0.0, 1.0);
                 let amount = (1.0 - t * t * (3.0 - 2.0 * t)) * ALPHA;
@@ -5931,6 +6002,7 @@ impl Canvas<'_> {
                     self.blend(px, py, Color::BLACK, amount);
                 }
             }
+            self.blend_span(py, solid_start, solid_end, core);
         }
     }
 
@@ -6456,8 +6528,118 @@ fn ellipsize(text: &str, max: usize) -> String {
     short
 }
 
+/// Colonnes `start..end` (dans `left..right`) dont le centre est à au plus `half` de `center` :
+/// la partie d'une ligne qu'un rectangle arrondi couvre entièrement.
+fn solid_span(center: f32, half: f32, left: u32, right: u32) -> (u32, u32) {
+    if half < 0.0 || left >= right {
+        return (right, right);
+    }
+    let start = (center - half - 0.5).ceil().clamp(left as f32, right as f32) as u32;
+    let end = ((center + half - 0.5).floor() + 1.0).clamp(start as f32, right as f32) as u32;
+    (start, end)
+}
+
 #[cfg(test)]
 mod tests {
+    /// Ancien calcul, pixel par pixel, gardé pour vérifier que le remplissage d'un bloc
+    /// donne exactement les mêmes pixels.
+    fn fill_reference(canvas: &mut Canvas, rect: Rect, radius: f32, color: Color) {
+        let s = canvas.scale;
+        let (x, y, w, h) = (
+            rect.x as f32 * s,
+            rect.y as f32 * s,
+            rect.w as f32 * s,
+            rect.h as f32 * s,
+        );
+        let radius = (radius * s).clamp(0.0, w.min(h) * 0.5);
+        let left = (x - 1.0).floor().max(0.0) as u32;
+        let top = (y - 1.0).floor().max(0.0) as u32;
+        let right = (x + w + 1.0).ceil().clamp(0.0, canvas.width as f32) as u32;
+        let bottom = (y + h + 1.0).ceil().clamp(0.0, canvas.height as f32) as u32;
+        for py in top..bottom {
+            for px in left..right {
+                let qx = (px as f32 + 0.5 - (x + w * 0.5)).abs() - (w * 0.5 - radius);
+                let qy = (py as f32 + 0.5 - (y + h * 0.5)).abs() - (h * 0.5 - radius);
+                let distance = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - radius;
+                canvas.blend(px, py, color, (0.5 - distance).clamp(0.0, 1.0));
+            }
+        }
+    }
+
+    fn shadow_reference(canvas: &mut Canvas, rect: Rect, radius: f32) {
+        let s = canvas.scale;
+        let (x, y, w, h) = (
+            rect.x as f32 * s,
+            (rect.y as f32 + 12.0) * s,
+            rect.w as f32 * s,
+            rect.h as f32 * s,
+        );
+        let r = (radius * s).min(w.min(h) * 0.5);
+        let spread = 32.0 * s;
+        let left = (x - spread).floor().max(0.0) as u32;
+        let top = (y - spread).floor().max(0.0) as u32;
+        let right = (x + w + spread).ceil().clamp(0.0, canvas.width as f32) as u32;
+        let bottom = (y + h + spread).ceil().clamp(0.0, canvas.height as f32) as u32;
+        for py in top..bottom {
+            for px in left..right {
+                let qx = (px as f32 + 0.5 - (x + w * 0.5)).abs() - (w * 0.5 - r);
+                let qy = (py as f32 + 0.5 - (y + h * 0.5)).abs() - (h * 0.5 - r);
+                let distance = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - r;
+                let t = ((distance + spread * 0.5) / spread).clamp(0.0, 1.0);
+                let amount = (1.0 - t * t * (3.0 - 2.0 * t)) * 0.30;
+                if amount > 0.0 {
+                    canvas.blend(px, py, Color::BLACK, amount);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn remplissage_et_ombre_d_un_bloc_identiques_au_calcul_pixel_par_pixel() {
+        let font = Font::from_bytes(FONT_BOLD, FontSettings::default()).expect("police");
+        let icons = IconCache::default();
+        let mut seed: u32 = 12345;
+        let mut next = move |max: u32| {
+            seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+            (seed >> 8) % max.max(1)
+        };
+        for round in 0..300 {
+            let scale = [1.0_f32, 1.25, 1.5, 2.0][round % 4];
+            let (width, height) = (160 + next(80), 120 + next(80));
+            let background: Vec<u8> = (0..width * height * 4).map(|_| next(256) as u8).collect();
+            let canvas = |pixels: Vec<u8>| Canvas {
+                pixels,
+                width,
+                height,
+                scale,
+                bold: &font,
+                icons: &icons,
+            };
+            let rect = Rect::new(
+                f64::from(next(140)) - 30.0 + f64::from(next(100)) / 37.0,
+                f64::from(next(110)) - 30.0 + f64::from(next(100)) / 41.0,
+                f64::from(next(120)) + f64::from(next(100)) / 13.0,
+                f64::from(next(100)) + f64::from(next(100)) / 17.0,
+            );
+            let radius = [0.1_f32, 0.3, 0.6, 3.0, 8.0, 16.0, 40.0][next(7) as usize];
+            let color = Color::rgb(next(0x0100_0000)).with_alpha(next(256) as u8);
+            let (mut fast, mut reference) = (canvas(background.clone()), canvas(background.clone()));
+            fast.fill(rect, radius, color);
+            fill_reference(&mut reference, rect, radius, color);
+            assert!(
+                fast.pixels == reference.pixels,
+                "remplissage différent : {rect:?} rayon {radius} échelle {scale}"
+            );
+            let (mut fast, mut reference) = (canvas(background.clone()), canvas(background));
+            fast.panel_shadow(rect, radius);
+            shadow_reference(&mut reference, rect, radius);
+            assert!(
+                fast.pixels == reference.pixels,
+                "ombre différente : {rect:?} rayon {radius} échelle {scale}"
+            );
+        }
+    }
+
     use super::*;
 
     #[test]

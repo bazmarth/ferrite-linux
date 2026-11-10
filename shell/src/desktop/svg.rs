@@ -367,6 +367,25 @@ impl IconCache {
         }
     }
 
+    /// Rastérise l'icône `name` à `size` pixels de côté sans la dessiner : la prochaine
+    /// [`IconCache::draw`] à cette taille la trouvera prête.
+    pub fn prepare(&self, name: &'static str, size: f32, style: Style) {
+        let side = size.round().max(1.0) as u32;
+        self.pixmaps
+            .borrow_mut()
+            .entry((name, side, style))
+            .or_insert_with(|| rasterize(name, side, style));
+    }
+
+    /// Comme [`IconCache::prepare`], pour un fichier d'icône du système.
+    pub fn prepare_file(&self, path: &Path, size: f32) {
+        let side = size.round().max(1.0) as u32;
+        self.files
+            .borrow_mut()
+            .entry((path.to_path_buf(), side))
+            .or_insert_with(|| rasterize_file(path, side));
+    }
+
     /// Comme [`IconCache::draw`], pour un fichier d'icône SVG ou PNG du système. Renvoie
     /// faux si le fichier est illisible (l'appelant dessine alors une icône par défaut).
     #[allow(clippy::too_many_arguments)] // Tampon, chemin et géométrie, sans état global.

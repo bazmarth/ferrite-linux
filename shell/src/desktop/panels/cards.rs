@@ -695,9 +695,9 @@ pub(super) fn dashboard_action_at(
 }
 
 impl Canvas<'_> {
-    /// Verre sombre : le fond flouté vu au travers, teinté à 66 % (un fond très coloré
-    /// reste lisible), couleurs à peine ravivées, liseré blanc à 10 %.
-    fn frosted(&mut self, rect: Rect, radius: f32, backdrop: Option<&Image>, placement: Option<Placement>) {
+    /// Fond sombre translucide des widgets (sans flou du fond d'écran : le verre dépoli
+    /// est réservé au Dock), liseré blanc à 10 % sur le bord intérieur.
+    fn frosted(&mut self, rect: Rect, radius: f32) {
         let s = self.scale;
         let (x, y, w, h) = (
             rect.x as f32 * s,
@@ -706,44 +706,38 @@ impl Canvas<'_> {
             rect.h as f32 * s,
         );
         let radius = (radius * s).min(w.min(h) * 0.5);
-        let tone = [GLASS_TONE.r, GLASS_TONE.g, GLASS_TONE.b].map(f32::from);
-        let (screen_w, screen_h) = placement.map_or((self.width as f64, self.height as f64), |at| at.screen);
-        let (shift_x, shift_y) =
-            placement.map_or((0.0, 0.0), |at| (at.x * f64::from(s), at.y * f64::from(s)));
+        // Presque couvrant : sans flou, le détail du fond d'écran gênerait la lecture.
+        let tone = GLASS_TONE.with_alpha(215);
         let left = x.floor().max(0.0) as u32;
         let top = y.floor().max(0.0) as u32;
         let right = ((x + w).ceil() as u32).min(self.width);
         let bottom = ((y + h).ceil() as u32).min(self.height);
+        // Au-delà du liseré (un pixel logique), tout est couvert d'un même ton : posé d'un bloc.
+        let depth = s.max(0.5);
+        let inside = if radius >= depth {
+            radius - depth
+        } else {
+            f32::NEG_INFINITY
+        };
         for py in top..bottom {
-            for px in left..right {
-                let (sx, sy) = (px as f32 + 0.5, py as f32 + 0.5);
-                let (cx, cy) = (sx - (x + w * 0.5), sy - (y + h * 0.5));
-                let qx = cx.abs() - (w * 0.5 - radius);
-                let qy = cy.abs() - (h * 0.5 - radius);
+            let qy = (py as f32 + 0.5 - (y + h * 0.5)).abs() - (h * 0.5 - radius);
+            let (solid_start, solid_end) = if qy <= inside {
+                super::solid_span(x + w * 0.5, w * 0.5 - radius + inside.min(0.0), left, right)
+            } else {
+                (right, right)
+            };
+            for px in (left..solid_start).chain(solid_end..right) {
+                let qx = (px as f32 + 0.5 - (x + w * 0.5)).abs() - (w * 0.5 - radius);
                 let distance = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - radius;
                 let coverage = (0.5 - distance).clamp(0.0, 1.0);
                 if coverage == 0.0 {
                     continue;
                 }
-                match backdrop {
-                    Some(image) => {
-                        let behind = sample(
-                            image,
-                            (f64::from(sx) + shift_x) / screen_w,
-                            (f64::from(sy) + shift_y) / screen_h,
-                        );
-                        let luma = 0.3 * behind[0] + 0.59 * behind[1] + 0.11 * behind[2];
-                        let [r, g, b] = [0, 1, 2].map(|c| {
-                            let vivid = (luma + (behind[c] - luma) * 1.15).clamp(0.0, 255.0);
-                            (vivid + (tone[c] - vivid) * 0.66).round() as u8
-                        });
-                        self.blend(px, py, Color { r, g, b, a: 255 }, coverage);
-                    }
-                    None => self.blend(px, py, GLASS_TONE.with_alpha(140), coverage),
-                }
+                self.blend(px, py, tone, coverage);
                 let edge = (1.0 + distance / s).clamp(0.0, 1.0);
                 self.blend(px, py, Color::WHITE, 0.1 * edge * coverage);
             }
+            self.blend_span(py, solid_start, solid_end, tone);
         }
     }
 }
@@ -832,7 +826,7 @@ impl Panels {
             icons: &self.icons,
         };
         for (notes, card) in &key.cards {
-            card_glass(&mut canvas, *notes, *card, view.backdrop.as_deref(), None);
+            card_glass(&mut canvas, *notes, *card);
         }
         let pixels = canvas.pixels;
         *cache = Some((key, pixels.clone()));
@@ -865,7 +859,7 @@ impl Panels {
         // Du dessous vers le dessus : le verre de chaque carte cache ce qu'elle recouvre.
         for (index, card) in cards.iter().copied().enumerate() {
             if Some(index) != skip {
-                self.draw_card(canvas, state, index, card, !glass_drawn, None);
+                self.draw_card(canvas, state, index, card, !glass_drawn);
             }
         }
         if view.edit {
@@ -882,18 +876,11 @@ impl Panels {
         index: usize,
         card: Rect,
         glass: bool,
-        placement: Option<Placement>,
     ) {
         let view = &state.view.dashboard;
         let kind = view.layout[index].kind;
         if glass {
-            card_glass(
-                canvas,
-                kind == WidgetKind::Notes,
-                card,
-                view.backdrop.as_deref(),
-                placement,
-            );
+            card_glass(canvas, kind == WidgetKind::Notes, card);
         }
         match kind {
             WidgetKind::Clock => self.clock_card(canvas, card, state),
@@ -1754,7 +1741,7 @@ impl Panels {
     /// Barre de l'éditeur : widgets à ajouter, Rétablir et Terminé.
     fn draw_editor_bar(&self, canvas: &mut Canvas, layout: &Layout, view: &DashboardView) {
         let bar = layout.editor_bar();
-        canvas.frosted(bar, 22.0, view.backdrop.as_deref(), None);
+        canvas.frosted(bar, 22.0);
         for (index, kind) in Dashboard::absent_widgets(&view.layout).into_iter().enumerate() {
             let chip = add_chip(bar, index);
             canvas.fill(chip, 16.0, Color::WHITE.with_alpha(26));
@@ -1806,17 +1793,11 @@ enum Glyph {
 }
 
 /// Fond d'une carte : papier pour les notes, verre dépoli pour les autres.
-fn card_glass(
-    canvas: &mut Canvas,
-    notes: bool,
-    card: Rect,
-    backdrop: Option<&Image>,
-    placement: Option<Placement>,
-) {
+fn card_glass(canvas: &mut Canvas, notes: bool, card: Rect) {
     if notes {
         canvas.fill(card, RADIUS, NOTE_FILL);
     } else {
-        canvas.frosted(card, RADIUS, backdrop, placement);
+        canvas.frosted(card, RADIUS);
     }
 }
 
@@ -1824,15 +1805,6 @@ fn card_glass(
 pub(super) fn target_hollow(canvas: &mut Canvas, rect: Rect) {
     canvas.fill(rect, RADIUS, Color::WHITE.with_alpha(38));
     canvas.stroke(rect, RADIUS, Color::WHITE.with_alpha(110), 1.5);
-}
-
-/// Place sur l'écran d'une image qui n'en couvre qu'une partie : origine logique de
-/// l'image et taille de l'écran en pixels.
-#[derive(Debug, Clone, Copy)]
-pub(super) struct Placement {
-    pub x: f64,
-    pub y: f64,
-    pub screen: (f64, f64),
 }
 
 /// Grille du widget Calendrier : bord gauche, largeur d'une colonne, haut (ligne des

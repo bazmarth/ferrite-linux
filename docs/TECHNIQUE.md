@@ -379,8 +379,10 @@ Elle prime sur la charte §3.4 de `PLAN.md` (voir `DECISIONS.md`, 2026-11-02).
 - Mesure : créer `$XDG_RUNTIME_DIR/ferrite-profil` active les relevés
   (`shell/src/render/profile.rs` : images, rastérisations, causes de redessin, gestes) dans le
   journal ; supprimer le fichier pour arrêter.
-- Le « verre liquide » (réfraction) n'existe que sur les widgets de l'espace 0, calculé une
-  fois par fond d'écran ; pas de flou GPU par image.
+- Widgets de l'espace 0 : fond sombre uni à 84 % (`GLASS_TONE`), sans flou ni réfraction
+  du fond d'écran (retirés le 2026-11-10) ; pas de flou GPU par image.
+- Panneaux arrondis et ombres (`Canvas::fill`, `panel_shadow`, `frosted`) : l'intérieur est
+  posé d'un bloc (`blend_span`), seuls bords et coins sont calculés pixel par pixel.
 
 ### 3.4 Comportements UX établis (à conserver)
 

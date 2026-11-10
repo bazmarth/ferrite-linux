@@ -3531,3 +3531,43 @@ Vérifié : CI (sans shellcheck) ; capture de Paramètres > Fenêtres sans le r�
 (bureau imbriqué, `XDG_RUNTIME_DIR` isolé pour ne pas confier la fenêtre aux Paramètres
 déjà ouverts) ; une nouvelle fenêtre s'ouvre centrée.
 Pas vérifié : sur le vrai bureau (nouveau `ferrite-shell` à installer).
+
+## 2026-11-10 — Fluidité des panneaux (curseur du volume)
+
+Demande : vérifier la fluidité de toutes les interfaces ; lenteurs aussi sur le vrai PC.
+- Mesure de 4 min sur le vrai bureau (fichier `ferrite-profil`) : 90 images/s en temps
+  normal ; mais en faisant glisser le curseur du volume du centre de contrôle, chaque pas
+  redessinait le centre de contrôle (« calque », 110–143 ms) et tous les panneaux, soit
+  environ 7 images/s pendant 5 s ; libinput : souris en retard de 113 à 128 ms.
+- Mesure dans un bureau d'essai (release) : ombre 15 ms, fond 12 ms, contenu 9 ms ;
+  l'ombre et le fond étaient recalculés pixel par pixel à chaque pas.
+- `Canvas::fill` (coins arrondis) et `panel_shadow` : l'intérieur couvert entièrement est
+  posé d'un bloc (`blend_span`, `solid_span`), seuls bords et coins sont calculés. Pixels
+  identiques à l'ancien calcul (test sur 300 rectangles, ombres, échelles 1 à 2).
+- Ombre et fond du centre de contrôle gardés d'un dessin à l'autre (`controls_backdrop`,
+  comme le fond du lanceur).
+Mesuré (bureau d'essai) : centre de contrôle 39 → 13 ms par dessin, notifications
+26 → 15 ms. Inchangés : lanceur 26 ms, widgets 100 ms à l'arrivée sur leur page.
+Vérifié : CI (sans shellcheck), 565 tests ; capture du centre de contrôle.
+Pas vérifié : sur le vrai bureau (le vrai PC est environ 3 fois plus lent que le bureau
+d'essai pendant l'usage : Claude, Brave, mode `powersave`) ; le curseur du volume
+n'existe pas dans le bureau d'essai (pas de son).
+
+## 2026-11-10 — Widgets sans verre dépoli, icônes du lanceur préparées
+
+Demande : continuer sur la fluidité (widgets, lanceur), puis retirer le verre dépoli des
+widgets et le garder pour le Dock.
+- Mesures (bureau d'essai, release) : widgets 100 ms à l'arrivée, dont 118 ms pour le verre
+  flouté des cartes ; lanceur 26 ms à l'ouverture, dont 40–46 ms de décodage des icônes à la
+  première ouverture, puis 3 ms (une touche de recherche coûte environ 7 ms).
+- Widgets : `frosted` ne lit plus le fond d'écran, fond `GLASS_TONE` à 84 % posé d'un bloc
+  (liseré calculé seulement au bord) ; `sample`, `Placement` et le paramètre de fond retirés.
+  Widgets 100 → 19 ms.
+- Lanceur : ses icônes sont préparées d'avance, une par image, quand il est fermé
+  (`warm_launcher_icon`, `IconCache::prepare`/`prepare_file`) : 34 icônes dans la première
+  seconde, 0 à 14 ms par image.
+Vérifié : CI (sans shellcheck) ; captures des widgets (fond uni lisible, pastilles des Tâches
+visibles) et du lanceur.
+Pas vérifié : sur le vrai bureau. Vu en passant, déjà là avant : cartes des widgets qui se
+chevauchent dans la disposition enregistrée (météo sur le calendrier) ; icône de la
+Logithèque absente du lanceur (« icône inconnue app-store »).

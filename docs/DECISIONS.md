@@ -424,6 +424,10 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
   (`[initial_session]`). Si l'écran plante : connexion texte `agreety`, jamais d'ordinateur
   fermé. Changer d'utilisateur sans fermer la session d'un autre demanderait un second
   greetd : plus tard.
+- **2026-11-10 — Plus de verre dépoli sur les widgets.** Demande de l'utilisateur : le
+  verre est gardé pour le Dock seulement. Les cartes ont un fond sombre uni à 84 %, net
+  (sans flou du fond d'écran) ; leur dessin passe de 100 à 19 ms. Le verre du lanceur
+  « Applications » reste.
 - **2026-11-10 — Plus de réouverture des fenêtres au démarrage.** À la demande de
   l'utilisateur, les fenêtres ouvertes avant un arrêt, un redémarrage ou une déconnexion
   sont oubliées : le bureau repart vide. Le même jour, sur nouvelle demande, la

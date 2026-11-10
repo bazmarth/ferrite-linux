@@ -3609,3 +3609,26 @@ le bouton du milieu (agrandir/restaurer) ne fait rien.
   (`fills_screen_unmaximized`) : le bouton rapetisse la fenêtre au lieu de ne rien faire.
 Vérifié : CI (sans shellcheck), test de `restored_frame`.
 Pas vérifié : sur le vrai bureau avec Claude (à essayer après `tools/dev-on.sh`).
+
+## 2026-11-10 — Ce qui freine encore le bureau (mesure sur le vrai PC)
+
+Demande : chercher ce qui peut réduire la fluidité.
+- Mesure de 25 s sur le vrai bureau (`ferrite-profil`) : 87–90 images/s, préparation moyenne
+  0,5 ms ; mais des à-coups de 54 à 140 ms sur l'étape « panneaux ».
+- Cause : le nombre d'applications ouvertes (`power_apps`, lu seulement par le dialogue
+  d'arrêt) faisait partie de la clé de l'image des panneaux. Chaque fenêtre ouverte ou
+  fermée redessinait une image de tout l'écran (2880×1800, 20 Mo), transparente, puis
+  l'envoyait à la carte graphique.
+- `without_unseen` : compte à rebours et nombre d'applications retirés hors dialogue
+  d'arrêt ; îlot et widgets retirés (ils ont leurs propres images ; seule la journée
+  chargée reste pour le centre de notifications).
+- `draws_nothing` : rien d'ouvert (ni menu, ni vue d'ensemble, ni sélection, ni dialogue,
+  ni verrouillage) → plus d'image plein écran du tout, ni préparée ni mélangée par-dessus
+  les fenêtres à chaque image.
+Vérifié : CI (sans shellcheck), 566 tests ; captures du bureau vide, du dialogue d'arrêt,
+du centre de contrôle et du centre de notifications.
+Pas vérifié : sur le vrai bureau (nouveau `ferrite-shell` à installer par `tools/dev-on.sh`).
+Vu en passant, hors bureau : Claude envoie 55–66 images/s même quand rien ne bouge, une
+autre appli (`ai.storyteller.artcraft-launcher`) environ 50/s ; processeur en `powersave`
+avec la préférence `balance_power` (profil « Équilibré ») ; premier fond d'écran 82 ms au
+démarrage (une fois).

@@ -817,9 +817,22 @@ struct VisualState {
 /// le ThinkBook, une saccade visible). L'écran verrouillé les montre : il garde tout ; le
 /// centre de contrôle montre la batterie.
 fn without_unseen(mut state: VisualState) -> VisualState {
+    // Compte à rebours et nombre d'applications ouvertes : seulement dans le dialogue
+    // d'arrêt. Sans cela, chaque fenêtre ouverte ou fermée redessinait tout l'écran.
+    if state.view.power.is_none() {
+        state.view.power_left = 0;
+        state.view.power_apps = 0;
+    }
     if state.view.lock.is_some() {
         return state;
     }
+    // L'îlot et les widgets ont leurs propres images ; le centre de notifications ne lit
+    // des widgets que la journée chargée.
+    state.view.island = Default::default();
+    state.view.dashboard = DashboardView {
+        busy_today: state.view.dashboard.busy_today,
+        ..Default::default()
+    };
     // La date reste : le calendrier du centre de notifications marque le jour.
     state.clock.hour = 0;
     state.clock.minute = 0;
@@ -828,6 +841,24 @@ fn without_unseen(mut state: VisualState) -> VisualState {
         state.battery = None;
     }
     state
+}
+
+/// État dessiné, image plein écran des panneaux et panneau animé.
+type PanelsCache = (VisualState, Option<MemoryRenderBuffer>, Option<PopoverLayer>);
+
+/// Vrai quand l'image plein écran des panneaux (`rasterize`) resterait transparente : pas
+/// de verrouillage, de menu, de vue d'ensemble, de sélection ni de dialogue. La barre,
+/// l'îlot, les widgets et le centre de contrôle ont leurs propres images.
+fn draws_nothing(view: &DesktopView) -> bool {
+    view.lock.is_none()
+        && matches!(view.popover, None | Some(Popover::Controls))
+        && view.overview.is_none()
+        && view.switcher.is_none()
+        && view.region.is_none()
+        && view.window_select.is_none()
+        && view.region_adjust.is_none()
+        && view.power.is_none()
+        && view.auth.is_none()
 }
 
 /// Taille en pixels physiques de l'écran décrit par `state`.
@@ -942,7 +973,8 @@ pub struct Panels {
     mono: Font,
     icons: IconCache,
     system: RefCell<SystemMonitor>,
-    cached: RefCell<Option<(VisualState, MemoryRenderBuffer, Option<PopoverLayer>)>>,
+    /// Image plein écran des panneaux (aucune quand rien n'y serait dessiné) et panneau animé.
+    cached: RefCell<Option<PanelsCache>>,
     /// Barre du haut, dessinée à part : elle change (opaque quand une fenêtre est
     /// agrandie, heure) sans qu'il faille redessiner tout l'écran.
     /// Image et sa taille en pixels.
@@ -1173,7 +1205,10 @@ impl Panels {
             if let Some((known, _, _)) = cache.as_ref() {
                 crate::render::profile::changed("panneaux", known, &state);
             }
-            let buffer = crate::render::profile::raster("panneaux", || self.rasterize(&state, scale));
+            // Rien d'ouvert : pas d'image de tout l'écran, transparente, à préparer, envoyer à
+            // la carte graphique puis mélanger par-dessus les fenêtres à chaque image.
+            let buffer = (!draws_nothing(&state.view))
+                .then(|| crate::render::profile::raster("panneaux", || self.rasterize(&state, scale)));
             let layer = crate::render::profile::raster("calque", || self.rasterize_layer(&state, scale));
             *cache = Some((state, buffer, layer));
         }
@@ -1239,7 +1274,7 @@ impl Panels {
             }
         }
 
-        if let Some(lock) = &lock_now {
+        if let (Some(lock), Some(buffer)) = (&lock_now, buffer) {
             for layer in self.lock_elements(state, lock, scale, buffer) {
                 let rect = layer.rect;
                 let source = (f64::from(layer.pixels.0), f64::from(layer.pixels.1));
@@ -1263,7 +1298,7 @@ impl Panels {
                     ),
                 }
             }
-        } else {
+        } else if let Some(buffer) = buffer {
             let physical_size = (output_geo.size.w as f64 * scale, output_geo.size.h as f64 * scale);
             match MemoryRenderBufferRenderElement::from_buffer(
                 renderer,

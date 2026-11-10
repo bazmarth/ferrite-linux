@@ -60,6 +60,8 @@ xwayland
 # Échange compressé en mémoire (zram) : le bureau n'attend plus un SSD lent pour relire
 # sa mémoire (voir etc/systemd/zram-generator.conf)
 systemd-zram-generator
+# Réglages › Date et heure : heure réglée automatiquement par le réseau (NTP)
+systemd-timesyncd
 network-manager
 wpasupplicant
 rfkill

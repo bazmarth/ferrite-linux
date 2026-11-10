@@ -46,7 +46,18 @@ pub fn ntp_enabled() -> Option<bool> {
     Some(output.trim() == "yes")
 }
 
+/// Vrai si un service de synchronisation (systemd-timesyncd) est installé.
+pub fn ntp_available() -> bool {
+    command::run("timedatectl", &["show", "--property=CanNTP", "--value"])
+        .is_ok_and(|output| output.trim() == "yes")
+}
+
 pub fn set_ntp(enabled: bool) -> Result<(), Error> {
+    if enabled && !ntp_available() {
+        return Err("Aucun service de synchronisation de l’heure n’est installé \
+                    (paquet systemd-timesyncd)"
+            .to_owned());
+    }
     let value = if enabled { "true" } else { "false" };
     match command::run("timedatectl", &["set-ntp", value]) {
         Ok(_) => Ok(()),

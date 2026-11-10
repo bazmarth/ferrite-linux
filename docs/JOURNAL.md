@@ -3440,3 +3440,16 @@ centre de contrôle (batterie) et du centre de notifications (calendrier).
 Pas vérifié : sur le vrai bureau (saccades disparues au déplacement d'une fenêtre) ; un
 vrai passage à l'heure d'été ; un changement de fuseau dans Réglages pendant la session.
 Reste : l'appli Horloge garde sa propre lecture par `date` (déjà relue chaque minute).
+
+## 2026-11-10 — Fenêtres oubliées au démarrage
+
+Demande : ne plus rouvrir, au redémarrage ou après un arrêt, les fenêtres qui étaient
+ouvertes.
+- Nouveau réglage « Rouvrir les fenêtres au démarrage » (Paramètres > Fenêtres, clé
+  `rouvrir_fenetres`), **coupé par défaut**.
+- `shell/src/session.rs` : réglage coupé → l'ancien fichier
+  `~/.local/state/ferrite/session` est supprimé au démarrage et rien n'est mémorisé à
+  l'arrêt ; le réglage est relu au moment de l'arrêt.
+Vérifié : CI (sans shellcheck) ; capture de Paramètres > Fenêtres avec l'interrupteur.
+Pas vérifié : un vrai redémarrage sur le bureau installé (il faut d'abord installer le
+nouveau `ferrite-shell`).

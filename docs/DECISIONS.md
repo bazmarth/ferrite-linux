@@ -424,3 +424,8 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
   (`[initial_session]`). Si l'écran plante : connexion texte `agreety`, jamais d'ordinateur
   fermé. Changer d'utilisateur sans fermer la session d'un autre demanderait un second
   greetd : plus tard.
+- **2026-11-10 — Plus de réouverture des fenêtres au démarrage.** À la demande de
+  l'utilisateur, les fenêtres ouvertes avant un arrêt, un redémarrage ou une déconnexion
+  sont oubliées par défaut : le bureau repart vide. Réglage « Rouvrir les fenêtres au
+  démarrage » (Paramètres > Fenêtres, `rouvrir_fenetres`, non par défaut) pour retrouver
+  l'ancien comportement ; relu à l'arrêt, donc le changer prend effet tout de suite.

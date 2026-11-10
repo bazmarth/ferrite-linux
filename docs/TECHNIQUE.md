@@ -235,7 +235,10 @@ But : lancer le bureau sur tty1 et le relancer selon son code de sortie.
   (le précédent en `.precedent`).
 - N'ouvre **aucune application** elle-même : on arrive sur l'espace 0 (widgets). C'est
   `ferrite-shell` (`shell/src/session.rs`) qui relance les applications et replace leurs
-  fenêtres si le dernier arrêt ou redémarrage est passé par le dialogue d'arrêt Ferrite.
+  fenêtres, **seulement si** le réglage « Rouvrir les fenêtres au démarrage »
+  (Paramètres > Fenêtres, clé `rouvrir_fenetres`, coupé par défaut) est activé et que le
+  dernier arrêt est passé par le dialogue d'arrêt Ferrite. Réglage coupé : le fichier
+  `~/.local/state/ferrite/session` est supprimé au démarrage et rien n'est mémorisé.
 - Modifier ce script ne prend effet sur la machine installée qu'après
   `sudo install -m 0755 image/config/includes.chroot/usr/local/bin/ferrite-session /usr/local/bin/`
   (commande tapée par l'utilisateur) puis redémarrage ou déconnexion.

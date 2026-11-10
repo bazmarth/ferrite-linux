@@ -181,10 +181,22 @@ fn decode(value: &str) -> io::Result<String> {
         .map_err(|_| io::Error::new(ErrorKind::InvalidData, "identifiant d’application non UTF-8"))
 }
 
+/// Réglage « Rouvrir les fenêtres au démarrage » (Paramètres > Fenêtres), coupé par défaut.
+fn reopen_windows_wanted() -> bool {
+    ferrite_system::config::Settings::load().flag(ferrite_system::config::REOPEN_WINDOWS, false)
+}
+
 impl crate::state::Ferrite {
     pub fn prepare_session_restore(&mut self, enabled: bool) {
         self.session_restore_enabled = enabled;
         if !enabled {
+            return;
+        }
+        if !reopen_windows_wanted() {
+            // Réglage coupé : oublie les fenêtres mémorisées au dernier arrêt.
+            if let Ok(path) = path() {
+                let _ = fs::remove_file(path);
+            }
             return;
         }
         match take() {
@@ -254,7 +266,8 @@ impl crate::state::Ferrite {
     }
 
     pub fn save_session_before_power(&self) {
-        if !self.session_restore_enabled {
+        // Le réglage est relu ici : il a pu changer pendant la session.
+        if !self.session_restore_enabled || !reopen_windows_wanted() {
             return;
         }
         let Some(screen) = self.screen_area() else {

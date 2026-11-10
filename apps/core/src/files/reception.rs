@@ -154,6 +154,7 @@ pub fn run_service() -> i32 {
     };
     // Agent d'appairage (codes à confirmer), actif même réception coupée.
     crate::pairing::start();
+    repair_obexd();
     let (events, receiver) = mpsc::channel();
     let agent = Agent {
         events: Mutex::new(events.clone()),
@@ -305,6 +306,53 @@ pub fn run_service() -> i32 {
             }
         }
     }
+}
+
+/// Réglage d'`obexd` livré par l'image (`/etc/systemd/user/obex.service.d/`).
+const OBEX_DROP_IN: &str =
+    include_str!("../../../../image/config/includes.chroot/etc/systemd/user/obex.service.d/ferrite.conf");
+const OBEX_DROP_IN_NAME: &str = "obex.service.d/ferrite.conf";
+
+/// Sans ce réglage, `obexd` n'annonce pas la réception de fichiers (voir le fichier).
+/// Un système installé avant qu'il existe le reçoit dans `~/.config/systemd/user/`,
+/// puis `obexd` est relancé ; ensuite, plus rien à faire.
+fn repair_obexd() {
+    let system = Path::new("/etc/systemd/user").join(OBEX_DROP_IN_NAME);
+    let Some(user) = user_units_dir().map(|dir| dir.join(OBEX_DROP_IN_NAME)) else {
+        return;
+    };
+    if !needs_drop_in(&system, &user) {
+        return;
+    }
+    let written = user
+        .parent()
+        .map_or(Ok(()), fs::create_dir_all)
+        .and_then(|()| fs::write(&user, OBEX_DROP_IN));
+    if let Err(error) = written {
+        eprintln!("réception Bluetooth : réglage d'obexd non écrit : {error}");
+        return;
+    }
+    for args in [
+        &["--user", "daemon-reload"][..],
+        &["--user", "try-restart", "obex.service"],
+    ] {
+        if let Err(error) = ferrite_system::command::run("systemctl", args) {
+            eprintln!("réception Bluetooth : {error}");
+        }
+    }
+}
+
+fn user_units_dir() -> Option<PathBuf> {
+    let config = env::var_os("XDG_CONFIG_HOME")
+        .filter(|dir| !dir.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))?;
+    Some(config.join("systemd/user"))
+}
+
+/// Le réglage manque s'il n'est ni dans l'image ni, à jour, chez l'utilisateur.
+fn needs_drop_in(system: &Path, user: &Path) -> bool {
+    !system.exists() && fs::read_to_string(user).ok().as_deref() != Some(OBEX_DROP_IN)
 }
 
 /// Garde le service unique pour la session.
@@ -552,6 +600,24 @@ mod tests {
         fs::create_dir_all(home.join("Images")).unwrap();
         assert_eq!(folder(&home, Some("images")), (home.join("Images"), "Images"));
         fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn reglage_obexd_ecrit_une_seule_fois() {
+        let dir = env::temp_dir().join(format!("ferrite-obexd-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let system = dir.join("systeme.conf");
+        let user = dir.join("utilisateur.conf");
+        assert!(OBEX_DROP_IN.contains("-P pbap,irmc"));
+        assert!(needs_drop_in(&system, &user));
+        fs::write(&user, "ancien").unwrap();
+        assert!(needs_drop_in(&system, &user));
+        fs::write(&user, OBEX_DROP_IN).unwrap();
+        assert!(!needs_drop_in(&system, &user));
+        fs::remove_file(&user).unwrap();
+        fs::write(&system, OBEX_DROP_IN).unwrap();
+        assert!(!needs_drop_in(&system, &user));
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

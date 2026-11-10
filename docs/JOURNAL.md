@@ -3632,3 +3632,18 @@ Vu en passant, hors bureau : Claude envoie 55–66 images/s même quand rien ne 
 autre appli (`ai.storyteller.artcraft-launcher`) environ 50/s ; processeur en `powersave`
 avec la préférence `balance_power` (profil « Équilibré ») ; premier fond d'écran 82 ms au
 démarrage (une fois).
+
+## 2026-11-10 — Bluetooth : la réception de fichiers ne marchait pas
+
+Demande : « réception de fichier par bluetooth ne marche pas ».
+- Cause : `obexd` (BlueZ 5.82 de Debian) n'annonçait aucun de ses services : ni Object
+  Push (recevoir un fichier), ni transfert de fichiers. Les modules carnet d'adresses
+  (`pbap`, `irmc`) cherchent evolution-data-server au démarrage ; cet appel laisse passer
+  l'apparition de BlueZ avant que les services soient prêts, et ils ne sont jamais
+  inscrits. Le téléphone ne voyait donc pas le PC comme destinataire possible.
+- `image/…/etc/systemd/user/obex.service.d/ferrite.conf` : `obexd -P pbap,irmc`.
+- `reception.rs::repair_obexd` : sur un système installé sans ce fichier, le service de
+  réception l'écrit dans `~/.config/systemd/user/` puis relance `obexd` (une seule fois).
+Vérifié : CI (sans shellcheck), test du réglage ; sur le PC, réglage posé à la main et
+`obexd` relancé : `bluetoothctl show` annonce maintenant « OBEX Object Push ».
+Vérifié par l'utilisateur : un vrai envoi depuis son téléphone arrive bien.

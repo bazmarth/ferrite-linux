@@ -37,7 +37,6 @@ const NEW_WINDOW_SIZE: (i32, i32) = (740, 350);
 struct PendingPlacement {
     waiting: Cell<bool>,
     titlebar_height: i32,
-    restore: RefCell<Option<crate::session::SavedWindow>>,
 }
 
 /// La fenêtre attend encore sa première configuration (et sa place).
@@ -80,18 +79,14 @@ impl XdgShellHandler for Ferrite {
             state.bounds = Some(Size::from((area.size.w, (area.size.h - titlebar_height).max(1))));
         });
         let window = Window::new_wayland_window(surface);
-        let restore = self.take_window_placement(&window);
         let frame_size = Size::from((NEW_WINDOW_SIZE.0, NEW_WINDOW_SIZE.1 + titlebar_height));
         let frame = wm::centered_position(area, frame_size);
         window.user_data().insert_if_missing(|| PendingPlacement {
             waiting: Cell::new(true),
             titlebar_height,
-            restore: RefCell::new(restore.clone()),
         });
         let content = frame + Point::from((0, titlebar_height));
-        if restore.is_none() {
-            self.leave_widgets_page();
-        }
+        self.leave_widgets_page();
         self.space.map_element(window.clone(), content, true);
         self.focus_window(Some(window));
     }
@@ -546,84 +541,36 @@ impl Ferrite {
         {
             return;
         }
-        let placement = window.user_data().get::<PendingPlacement>().and_then(|pending| {
-            pending
-                .waiting
-                .replace(false)
-                .then(|| (pending.titlebar_height, pending.restore.borrow_mut().take()))
-        });
-        if let (Some((titlebar_height, restore)), Some(area)) = (placement, self.usable_area()) {
-            if let Some(restore) = restore {
-                self.place_restored_window(&window, surface, area, titlebar_height, restore);
-            } else {
-                // Plus grande que la zone utile (le bas passerait sous le Dock) : elle est
-                // ramenée à une taille qui tient, comme les fenêtres X11.
-                let min = with_states(surface, |states| {
-                    states.cached_state.get::<SurfaceCachedState>().current().min_size
-                });
-                let size = match (
-                    wm::fitted_size(area, size, titlebar_height, min),
-                    window.toplevel(),
-                ) {
-                    (Some(fitted), Some(toplevel)) => {
-                        toplevel.with_pending_state(|state| state.size = Some(fitted));
-                        toplevel.send_pending_configure();
-                        fitted
-                    }
-                    _ => size,
-                };
-                let frame_size = Size::from((size.w, size.h + titlebar_height));
-                let frame = wm::clamp_frame(area, wm::centered_position(area, frame_size), frame_size);
-                let content = frame + Point::from((0, titlebar_height));
-                self.space.map_element(window.clone(), content, true);
-            }
+        let placement = window
+            .user_data()
+            .get::<PendingPlacement>()
+            .and_then(|pending| pending.waiting.replace(false).then_some(pending.titlebar_height));
+        if let (Some(titlebar_height), Some(area)) = (placement, self.usable_area()) {
+            // Plus grande que la zone utile (le bas passerait sous le Dock) : elle est
+            // ramenée à une taille qui tient, comme les fenêtres X11.
+            let min = with_states(surface, |states| {
+                states.cached_state.get::<SurfaceCachedState>().current().min_size
+            });
+            let size = match (
+                wm::fitted_size(area, size, titlebar_height, min),
+                window.toplevel(),
+            ) {
+                (Some(fitted), Some(toplevel)) => {
+                    toplevel.with_pending_state(|state| state.size = Some(fitted));
+                    toplevel.send_pending_configure();
+                    fitted
+                }
+                _ => size,
+            };
+            let frame_size = Size::from((size.w, size.h + titlebar_height));
+            let frame = wm::clamp_frame(area, wm::centered_position(area, frame_size), frame_size);
+            let content = frame + Point::from((0, titlebar_height));
+            self.space.map_element(window.clone(), content, true);
         }
         // En tuilage, elle apparaît directement à sa place dans la grille.
         self.retile();
         if self.space.element_location(&window).is_some() {
             self.animate_opening(&window);
-        }
-    }
-
-    fn place_restored_window(
-        &mut self,
-        window: &Window,
-        surface: &WlSurface,
-        area: Rectangle<i32, Logical>,
-        titlebar_height: i32,
-        saved: crate::session::SavedWindow,
-    ) {
-        self.workspaces.ensure_page(saved.workspace);
-        let content_size = Size::from((saved.width, (saved.height - titlebar_height).max(1)));
-        let min = with_states(surface, |states| {
-            states.cached_state.get::<SurfaceCachedState>().current().min_size
-        });
-        let size = match (
-            wm::fitted_size(area, content_size, titlebar_height, min),
-            window.toplevel(),
-        ) {
-            (Some(fitted), Some(toplevel)) => {
-                toplevel.with_pending_state(|state| state.size = Some(fitted));
-                toplevel.send_pending_configure();
-                fitted
-            }
-            _ => content_size,
-        };
-        let frame_size = Size::from((size.w, size.h + titlebar_height));
-        let origin = self.screen_area().map_or(area.loc, |screen| screen.loc);
-        let requested = Point::from((origin.x + saved.x, origin.y + saved.y));
-        let frame = wm::clamp_frame(area, requested, frame_size);
-        let content = frame + Point::from((0, titlebar_height));
-        self.space.map_element(window.clone(), content, true);
-        if saved.minimized {
-            self.space.unmap_elem(window);
-            self.minimized.push(crate::wm::Minimized {
-                window: window.clone(),
-                location: content,
-                workspace: saved.workspace,
-            });
-        } else if saved.workspace != self.workspaces.current() {
-            self.move_window_to_page(window, saved.workspace);
         }
     }
 }

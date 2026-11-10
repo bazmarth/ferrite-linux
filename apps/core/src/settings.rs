@@ -3551,14 +3551,6 @@ fn window_rows(rows: &mut rows::Group<'_>, settings: &mut Settings) {
         true,
     );
     flag_row(rows, settings, Row::new("Tuilage automatique"), "tuilage", false);
-    flag_row(
-        rows,
-        settings,
-        Row::new("Rouvrir les fenêtres au démarrage")
-            .hint("Après un arrêt ou un redémarrage, les fenêtres reviennent à leur place"),
-        ferrite_system::config::REOPEN_WINDOWS,
-        false,
-    );
     let mut action = settings.double_click();
     let labels: Vec<(DoubleClick, &str)> = DoubleClick::ALL
         .into_iter()

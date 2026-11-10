@@ -426,9 +426,10 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
   greetd : plus tard.
 - **2026-11-10 — Plus de réouverture des fenêtres au démarrage.** À la demande de
   l'utilisateur, les fenêtres ouvertes avant un arrêt, un redémarrage ou une déconnexion
-  sont oubliées par défaut : le bureau repart vide. Réglage « Rouvrir les fenêtres au
-  démarrage » (Paramètres > Fenêtres, `rouvrir_fenetres`, non par défaut) pour retrouver
-  l'ancien comportement ; relu à l'arrêt, donc le changer prend effet tout de suite.
+  sont oubliées : le bureau repart vide. Le même jour, sur nouvelle demande, la
+  mémorisation des fenêtres et le réglage « Rouvrir les fenêtres au démarrage » ont été
+  **retirés entièrement** : plus rien n'est enregistré à l'arrêt ; l'ancien fichier
+  `~/.local/state/ferrite/session` est effacé au démarrage s'il en reste un.
 - **2026-11-10 — Pas de navigateur maison, Logithèque suffisante.** Décision de
   l'utilisateur : la phase 6 (port du navigateur de `D:\Os`) est abandonnée, Brave reste le
   navigateur de Ferrite. La Logithèque actuelle (catalogues Debian et Flathub,

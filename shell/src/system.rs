@@ -610,7 +610,6 @@ impl Ferrite {
             Event::Applications(list) => {
                 info!(nombre = list.len(), "applications installées");
                 self.applications = list;
-                self.restore_session_after_applications();
             }
             Event::Shortcuts(list) => self.desktop_shortcuts = list,
             Event::PowerAccepted => {

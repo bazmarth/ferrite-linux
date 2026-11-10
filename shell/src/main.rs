@@ -60,9 +60,9 @@ fn run(options: Options) -> Result<u8, Box<dyn std::error::Error>> {
     let has_display = std::env::var_os("WAYLAND_DISPLAY").is_some() || std::env::var_os("DISPLAY").is_some();
     let mut state = Ferrite::new(&mut event_loop, display)?;
     state.nested = has_display;
-    state.prepare_session_restore(
-        !has_display && std::env::var_os("FERRITE_SESSION").is_some_and(|value| value == "1"),
-    );
+    if !has_display && std::env::var_os("FERRITE_SESSION").is_some_and(|value| value == "1") {
+        session::forget_old_session();
+    }
     state.popover = options.menu;
     if let Some(position) = options.demo_page {
         state.workspaces.freeze(position);

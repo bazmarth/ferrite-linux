@@ -233,12 +233,10 @@ But : lancer le bureau sur tty1 et le relancer selon son code de sortie.
 - Plantages : relance automatique, au plus 3 en 2 minutes, puis console avec les
   15 dernières lignes du journal. Journal : `$XDG_RUNTIME_DIR/ferrite-shell.log`
   (le précédent en `.precedent`).
-- N'ouvre **aucune application** elle-même : on arrive sur l'espace 0 (widgets). C'est
-  `ferrite-shell` (`shell/src/session.rs`) qui relance les applications et replace leurs
-  fenêtres, **seulement si** le réglage « Rouvrir les fenêtres au démarrage »
-  (Paramètres > Fenêtres, clé `rouvrir_fenetres`, coupé par défaut) est activé et que le
-  dernier arrêt est passé par le dialogue d'arrêt Ferrite. Réglage coupé : le fichier
-  `~/.local/state/ferrite/session` est supprimé au démarrage et rien n'est mémorisé.
+- N'ouvre **aucune application** : on arrive sur l'espace 0 (widgets). Les fenêtres ne
+  sont ni mémorisées à l'arrêt ni rouvertes au démarrage ; `ferrite-shell`
+  (`shell/src/session.rs`) efface seulement l'ancien fichier
+  `~/.local/state/ferrite/session` laissé par les versions précédentes.
 - Modifier ce script ne prend effet sur la machine installée qu'après
   `sudo install -m 0755 image/config/includes.chroot/usr/local/bin/ferrite-session /usr/local/bin/`
   (commande tapée par l'utilisateur) puis redémarrage ou déconnexion.

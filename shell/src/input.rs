@@ -1762,7 +1762,6 @@ impl Ferrite {
                     if power == crate::state::PowerAction::Sleep {
                         self.lock_and_sleep();
                     } else {
-                        self.save_session_before_power();
                         // Le bureau se ferme quand systemd accepte l'arrêt (voir `system.rs`).
                         self.request_system_change(Change::Power(power));
                     }

@@ -25,9 +25,6 @@ pub const KEYBOARD_LAYOUTS: &[(&str, &str)] = &[
 
 /// Clé du réglage « Ne pas déranger » (voir [`Settings::do_not_disturb`]).
 pub const DO_NOT_DISTURB: &str = "ne_pas_deranger";
-/// Rouvrir au démarrage les fenêtres ouvertes avant un arrêt ou un redémarrage
-/// (oui/non, non par défaut).
-pub const REOPEN_WINDOWS: &str = "rouvrir_fenetres";
 /// Accessibilité : contraste élevé (oui/non).
 pub const HIGH_CONTRAST: &str = "contraste_eleve";
 /// Accessibilité : touches rémanentes (oui/non).

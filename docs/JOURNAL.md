@@ -3502,6 +3502,32 @@ seulement si nécessaire.
 - Démonstration : `FERRITE_DEMO_PILOTES=amd,nvidia`, `FERRITE_DEMO_LIVE=1`.
 Vérifié : CI (sans shellcheck), 566 tests dont `detection_des_cartes` ; captures de la
 rubrique dans un bureau imbriqué (deux cartes ; système live, bouton grisé).
-Pas vérifié : ISO non reconstruite (il faut `sudo`), gain de taille réel inconnu ;
-la notification n'a pas été vue ; aucune installation réelle d'un pilote ; aucun PC AMD
+Mesuré après `tools/usb.sh --final` : ISO 1 412 → 1 132 Mo (−280 Mo), initrd 150 → 78 Mo,
+système 1 232 → 1 023 Mo (xz) ; démarrage en QEMU UEFI jusqu'au bureau, console sans erreur.
+Pas vérifié : la notification n'a pas été vue ; aucune installation réelle d'un pilote ; aucun PC AMD
 ou NVIDIA essayé, ni le bureau sans accélération sur ces cartes.
+
+## 2026-11-10 — Fermetures de Claude ; mémorisation des fenêtres retirée
+
+Demande : comprendre les « plantages » de Claude, puis retirer la mémorisation et la
+réouverture automatique des fenêtres.
+- Enquête : 13 arrêts de Claude depuis le 9 novembre, tous propres (« Quitting app on main
+  window close since this desktop shows no tray icon »), presque toujours dans la même
+  seconde que Chromium : c'est le bureau qui ferme toutes les fenêtres en s'arrêtant
+  (Relancer le bureau, Ctrl+Alt+Retour arrière, arrêt), pas un plantage. Sans zone
+  d'icônes, Claude quitte au lieu de rester en arrière-plan. Le journal du bureau
+  (`$XDG_RUNTIME_DIR`) est perdu à chaque redémarrage du PC.
+- Vu en passant : objets git abîmés, seulement sous `refs/agents/…` (sauvegardes internes
+  de Claude) ; l'historique de `main` se relit en entier.
+- `shell/src/session.rs` réduit à l'effacement de l'ancien fichier
+  `~/.local/state/ferrite/session` ; plus rien n'est enregistré à l'arrêt ni relancé au
+  démarrage. Réglage « Rouvrir les fenêtres au démarrage » et clé `rouvrir_fenetres` retirés.
+- Lenteurs et clics perdus signalés : depuis l'ouverture de session, aucun « tour de
+  boucle » lent noté dans le journal du bureau ; profil de 30 s : 90 images/s, préparation
+  < 1,1 ms, Claude redessine 53 fois par seconde. Les lenteurs ne viennent donc pas du
+  bureau pendant cette mesure ; elles sont arrivées pendant les compilations de la CI
+  (processeur saturé, mode `powersave`). Pas reproduit.
+Vérifié : CI (sans shellcheck) ; capture de Paramètres > Fenêtres sans le réglage
+(bureau imbriqué, `XDG_RUNTIME_DIR` isolé pour ne pas confier la fenêtre aux Paramètres
+déjà ouverts) ; une nouvelle fenêtre s'ouvre centrée.
+Pas vérifié : sur le vrai bureau (nouveau `ferrite-shell` à installer).

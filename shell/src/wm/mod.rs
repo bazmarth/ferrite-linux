@@ -422,7 +422,6 @@ pub enum Hit {
 pub struct Minimized {
     pub window: Window,
     pub location: Point<i32, Logical>,
-    pub workspace: usize,
 }
 
 impl Ferrite {
@@ -683,7 +682,6 @@ impl Ferrite {
         self.minimized.push(Minimized {
             window: window.clone(),
             location,
-            workspace: self.workspaces.current(),
         });
         let next = self.top_window();
         self.focus_window(next);

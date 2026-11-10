@@ -83,14 +83,6 @@ pub struct Ferrite {
     pub popover: Option<Popover>,
     /// Applications installées (fichiers `.desktop`), relues par le fil système.
     pub applications: Vec<DesktopEntry>,
-    /// État chargé avant le démarrage du fil qui fournit les applications installées.
-    pub session_to_restore: Option<crate::session::Session>,
-    /// Fenêtres en attente de leur application au démarrage.
-    pub session_restore_queue: Vec<crate::session::SavedWindow>,
-    /// Garde les espaces restaurés en place pendant le lancement des applications.
-    pub session_restore_deadline: Option<Instant>,
-    /// La restauration ne s'applique qu'à la vraie session, pas aux bureaux imbriqués.
-    pub session_restore_enabled: bool,
     /// Bureau imbriqué (lancé dans un autre bureau, pour un essai) : il ne touche pas à
     /// l'environnement D-Bus de la session qui l'héberge.
     pub nested: bool,
@@ -455,10 +447,6 @@ impl Ferrite {
             exit_code: 0,
             popover: None,
             applications: Vec::new(),
-            session_to_restore: None,
-            session_restore_queue: Vec::new(),
-            session_restore_deadline: None,
-            session_restore_enabled: false,
             nested: false,
             launcher_query: String::new(),
             launcher_scroll: 0,

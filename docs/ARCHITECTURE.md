@@ -18,7 +18,7 @@ Debian 13          noyau Linux, Mesa, micrologiciels
 | Composant | État |
 |---|---|
 | `ferrite-ui` | mesures, palettes et rôles de couleur, échelle, durées et courbes d'animation, fonds d'écran, icônes |
-| `ferrite-shell` | écran réel (DRM/KMS, libinput, session logind) et fenêtre de dev (winit). Fenêtres : décorations Ferrite, aimantation, tuilage, vue d'ensemble, espaces de travail, effet génie, XWayland net à l'échelle 2. Bureau : barre du haut, Dock, lanceur, centre de contrôle, îlot, notifications, widgets (espace 0), écran de verrouillage (mot de passe, visage), agent polkit, capture et enregistrement de l'écran, mode nuit, veille, presse-papiers, restauration des fenêtres |
+| `ferrite-shell` | écran réel (DRM/KMS, libinput, session logind) et fenêtre de dev (winit). Fenêtres : décorations Ferrite, aimantation, tuilage, vue d'ensemble, espaces de travail, effet génie, XWayland net à l'échelle 2. Bureau : barre du haut, Dock, lanceur, centre de contrôle, îlot, notifications, widgets (espace 0), écran de verrouillage (mot de passe, visage), agent polkit, capture et enregistrement de l'écran, mode nuit, veille, presse-papiers |
 | `ferrite-apps` | Fichiers, Paramètres, TextEdit, Terminal, Musique, Lecteur vidéo, Lecteur PDF, Visionneuse, Horloge, Calculatrice, Moniteur, sélecteur de fichiers, galerie des pièces |
 | `ferrite-visage` | enregistrement et vérification d'un visage (YuNet + SFace, caméra infrarouge) |
 | `xdg-desktop-portal-ferrite` | `OpenFile`, `SaveFile`, `SaveFiles` |

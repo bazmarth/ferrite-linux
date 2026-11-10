@@ -238,10 +238,18 @@ impl Ferrite {
     }
 
     fn x11_restore_geometry(&mut self, window: &Window) {
-        let previous = window
+        let saved = window
             .user_data()
             .get::<X11Restore>()
             .and_then(|restore| restore.0.borrow_mut().take());
+        let current = self
+            .space
+            .element_location(window)
+            .map(|location| Rectangle::new(location, window.geometry().size));
+        let previous = match (self.usable_area(), current) {
+            (Some(area), Some(current)) => wm::restored_frame(area, saved, current),
+            _ => saved,
+        };
         if let Some(previous) = previous {
             self.place_x11(window, previous);
         }
@@ -518,7 +526,9 @@ impl XwmHandler for Ferrite {
 
     fn maximize_request(&mut self, _xwm: XwmId, surface: X11Surface) {
         if let Some(window) = self.x11_window(&surface) {
-            self.animate_frame_change(&window, |state| state.x11_set_maximized(&window, true));
+            // Voir `fills_screen_unmaximized` : le bouton bascule vers une taille plus petite.
+            let maximize = !self.fills_screen_unmaximized(&window);
+            self.animate_frame_change(&window, |state| state.x11_set_maximized(&window, maximize));
         }
     }
 

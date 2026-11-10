@@ -192,9 +192,12 @@ impl XdgShellHandler for Ferrite {
         let Some(window) = self.window_for_surface(surface.wl_surface()) else {
             return;
         };
+        // Déjà à la taille de l'écran sans être agrandie : agrandir ne changerait rien, le
+        // bouton bascule alors vers une taille plus petite.
+        let maximize = !self.fills_screen_unmaximized(&window);
         let target = window.clone();
         self.animate_frame_change(&window, move |state| {
-            state.set_xdg_maximized(target, surface, true);
+            state.set_xdg_maximized(target, surface, maximize);
         });
     }
 
@@ -345,7 +348,15 @@ impl Ferrite {
             surface.send_pending_configure();
             self.space.map_element(window, area.loc, true);
         } else {
-            let previous = with_restore_geometry(surface.wl_surface(), |saved| saved.take());
+            let saved = with_restore_geometry(surface.wl_surface(), |saved| saved.take());
+            let current = self
+                .space
+                .element_location(&window)
+                .map(|location| Rectangle::new(location, window.geometry().size));
+            let previous = match (self.usable_area(), current) {
+                (Some(area), Some(current)) => wm::restored_frame(area, saved, current),
+                _ => saved,
+            };
             surface.with_pending_state(|state| {
                 state.states.unset(xdg_toplevel::State::Maximized);
                 state.states.unset(xdg_toplevel::State::TiledLeft);
@@ -359,6 +370,26 @@ impl Ferrite {
                 self.space.map_element(window, previous.loc, true);
             }
         }
+    }
+
+    /// Fenêtre qui couvre déjà la zone utile sans être agrandie ni en plein écran (une
+    /// application qui s'ouvre d'elle-même à la taille qu'elle avait la dernière fois).
+    pub fn fills_screen_unmaximized(&self, window: &Window) -> bool {
+        let flagged = match (window.toplevel(), window.x11_surface()) {
+            (Some(toplevel), _) => toplevel.with_pending_state(|state| {
+                state.states.contains(xdg_toplevel::State::Maximized)
+                    || state.states.contains(xdg_toplevel::State::Fullscreen)
+            }),
+            (None, Some(surface)) => surface.is_maximized() || surface.is_fullscreen(),
+            (None, None) => true,
+        };
+        if flagged {
+            return false;
+        }
+        let (Some(area), Some(location)) = (self.usable_area(), self.space.element_location(window)) else {
+            return false;
+        };
+        wm::fills_area(area, Rectangle::new(location, window.geometry().size))
     }
 
     /// Premier écran entier.

@@ -216,6 +216,35 @@ pub fn centered_position(area: Rectangle<i32, Logical>, window: Size<i32, Logica
     area.loc + Point::from((centered(area.size.w, window.w), centered(area.size.h, window.h)))
 }
 
+/// La fenêtre couvre presque toute `area` (au moins 90 % dans chaque sens).
+pub fn fills_area(area: Rectangle<i32, Logical>, rect: Rectangle<i32, Logical>) -> bool {
+    rect.size.w * 10 >= area.size.w * 9 && rect.size.h * 10 >= area.size.h * 9
+}
+
+/// Cadre rendu à une fenêtre qu'on « restaure » (bouton du milieu, ou double-clic sur la
+/// barre de titre) : sa taille d'avant si elle est nettement plus petite que `area`.
+/// Une fenêtre qui s'est ouverte d'elle-même à la taille de l'écran (Claude, qui mémorise
+/// sa taille) n'a pas de taille plus petite à retrouver : sans cela, restaurer la laissait
+/// telle quelle et le bouton semblait ne rien faire. Elle reçoit alors les deux tiers de
+/// la zone, centrés. `None` : rien à changer (fenêtre déjà petite, sans taille d'avant).
+pub fn restored_frame(
+    area: Rectangle<i32, Logical>,
+    previous: Option<Rectangle<i32, Logical>>,
+    current: Rectangle<i32, Logical>,
+) -> Option<Rectangle<i32, Logical>> {
+    let fills = |rect| fills_area(area, rect);
+    let fallback = || {
+        let size = Size::from(((area.size.w * 2 / 3).max(1), (area.size.h * 2 / 3).max(1)));
+        Rectangle::new(centered_position(area, size), size)
+    };
+    match previous {
+        Some(previous) if !fills(previous) => Some(previous),
+        Some(_) => Some(fallback()),
+        None if fills(current) => Some(fallback()),
+        None => None,
+    }
+}
+
 /// Ramène un cadre dans `area` autant que possible (le haut reste toujours visible).
 pub fn clamp_frame(
     area: Rectangle<i32, Logical>,
@@ -768,6 +797,20 @@ mod tests {
 
     fn rect(x: i32, y: i32, w: i32, h: i32) -> Rectangle<i32, Logical> {
         Rectangle::new((x, y).into(), (w, h).into())
+    }
+
+    #[test]
+    fn restaurer_une_fenetre_qui_remplit_l_ecran_la_rapetisse() {
+        let area = rect(0, 0, 1440, 900);
+        // Taille d'avant plus petite : elle revient telle quelle.
+        let small = rect(100, 100, 800, 600);
+        assert_eq!(restored_frame(area, Some(small), area), Some(small));
+        // Taille d'avant (ou actuelle) déjà grande comme l'écran : deux tiers, centrés.
+        let fallback = Some(rect(240, 150, 960, 600));
+        assert_eq!(restored_frame(area, Some(area), area), fallback);
+        assert_eq!(restored_frame(area, None, area), fallback);
+        // Fenêtre déjà petite sans taille d'avant : rien à changer.
+        assert_eq!(restored_frame(area, None, small), None);
     }
 
     #[test]

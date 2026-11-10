@@ -3594,3 +3594,18 @@ Pas vérifié : sur le vrai bureau (environ 3 fois plus lent pendant l'usage) ; 
 elles-mêmes (Claude, Brave, applis Ferrite) ne sont pas concernées par ces changements.
 Reste : premier affichage après le démarrage 100–120 ms (une fois) ; chaque redessin
 d'un panneau copie encore une image de tout l'écran (16 Mo) vers la carte graphique.
+
+## 2026-11-10 — Bouton agrandir/restaurer sans effet sur Claude
+
+Demande (vidéo) : les boutons de la fenêtre de Claude ne marchent pas. Réduire marche ;
+le bouton du milieu (agrandir/restaurer) ne fait rien.
+- Cause : Claude s'ouvre de lui-même à la taille de tout l'écran (taille qu'il mémorise).
+  Agrandir ne changeait rien, et restaurer ramenait à la taille d'avant… qui était déjà
+  l'écran entier (ou à aucune taille enregistrée).
+- `wm::restored_frame` : une fenêtre restaurée dont la taille d'avant remplit l'écran
+  (≥ 90 % dans chaque sens) reçoit les deux tiers de la zone utile, centrés. Utilisé par
+  les fenêtres Wayland et X11.
+- Demande d'agrandir sur une fenêtre qui remplit déjà l'écran sans être agrandie
+  (`fills_screen_unmaximized`) : le bouton rapetisse la fenêtre au lieu de ne rien faire.
+Vérifié : CI (sans shellcheck), test de `restored_frame`.
+Pas vérifié : sur le vrai bureau avec Claude (à essayer après `tools/dev-on.sh`).

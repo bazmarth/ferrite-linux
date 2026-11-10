@@ -520,7 +520,7 @@ impl EditorState {
             .as_deref()
             .and_then(Path::parent)
             .map(Path::to_path_buf);
-        let picker = FilesState::picker(PickerMode::Open, start.as_deref(), "");
+        let picker = FilesState::picker(PickerMode::Open, start.as_deref(), "").only(is_text);
         self.picker = Some((Purpose::Open, picker));
     }
 
@@ -3331,6 +3331,10 @@ fn list_directory(directory: &Path) -> Vec<Entry> {
             }
             let path = entry.path();
             let is_dir = path.is_dir();
+            // L'explorateur ne montre que ce que l'éditeur sait ouvrir.
+            if !is_dir && !is_text(&path) {
+                return None;
+            }
             Some((path, name, is_dir))
         })
         .collect();
@@ -3342,6 +3346,27 @@ fn list_directory(directory: &Path) -> Vec<Entry> {
     });
     entries.truncate(400);
     entries
+}
+
+/// Le fichier est-il du texte que l'éditeur peut ouvrir ? On lit son début : UTF-8
+/// valide (un caractère coupé à la fin de l'extrait est toléré) et sans octet nul.
+/// Un fichier vide compte comme du texte.
+pub fn is_text(path: &Path) -> bool {
+    use std::io::Read;
+    let Ok(file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut head = Vec::with_capacity(4096);
+    if file.take(4096).read_to_end(&mut head).is_err() {
+        return false;
+    }
+    if head.contains(&0) {
+        return false;
+    }
+    match std::str::from_utf8(&head) {
+        Ok(_) => true,
+        Err(error) => error.error_len().is_none(),
+    }
 }
 
 /// Fichiers sous `root` dont le nom contient `query` (sans la casse), dossiers proches
@@ -3511,6 +3536,26 @@ fn plural(count: usize) -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn reconnait_le_texte() {
+        let dir = std::env::temp_dir().join(format!("ferrite-texte-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let write = |name: &str, bytes: &[u8]| {
+            let path = dir.join(name);
+            std::fs::write(&path, bytes).unwrap();
+            path
+        };
+        assert!(super::is_text(&write("notes", "Été à Paris\n".as_bytes())));
+        assert!(super::is_text(&write("vide.txt", b"")));
+        assert!(!super::is_text(&write("image.png", b"\x89PNG\r\n\x1a\n\0\0")));
+        assert!(!super::is_text(&write("latin1.txt", b"caf\xe9 cr\xe8me")));
+        // Un caractère coupé par la limite de lecture ne rend pas le fichier binaire.
+        let mut long = vec![b'a'; 4095];
+        long.extend("é".as_bytes());
+        assert!(super::is_text(&write("long.txt", &long)));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     use std::{env, fs, time::SystemTime};
 
     use super::*;

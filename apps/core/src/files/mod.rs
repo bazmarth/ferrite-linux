@@ -185,6 +185,8 @@ struct Picker {
     name_focused: bool,
     /// Réponse : `Some(Some(chemin))` choisi, `Some(None)` annulé.
     choice: Option<Option<PathBuf>>,
+    /// Fichiers que l'application sait ouvrir ; les autres sont cachés (pas les dossiers).
+    only: Option<fn(&Path) -> bool>,
 }
 
 #[derive(Debug)]
@@ -585,6 +587,7 @@ impl FilesState {
                 name: name.to_owned(),
                 name_focused: false,
                 choice: None,
+                only: None,
             }),
             ..Self::default()
         };
@@ -593,6 +596,22 @@ impl FilesState {
             state.refresh();
         }
         state
+    }
+
+    /// Ne montre que les fichiers acceptés par `accepts` (les dossiers restent).
+    pub fn only(mut self, accepts: fn(&Path) -> bool) -> Self {
+        if let Some(picker) = &mut self.picker {
+            picker.only = Some(accepts);
+        }
+        self.refresh();
+        self
+    }
+
+    /// Garde les dossiers et les fichiers que l'application du sélecteur sait ouvrir.
+    fn keep_openable(&self, entries: &mut Vec<FileEntry>) {
+        if let Some(accepts) = self.picker.as_ref().and_then(|picker| picker.only) {
+            entries.retain(|entry| entry.directory || accepts(&entry.path));
+        }
     }
 
     /// Réponse du sélecteur, une fois donnée : `Some(None)` si l'utilisateur a annulé.
@@ -877,7 +896,11 @@ panneau={}
         });
         if current {
             if let Some(deep) = &mut self.deep {
-                let new = deep.take_new();
+                let mut new = deep.take_new();
+                // Le sélecteur ne montre que ce que son application sait ouvrir.
+                if let Some(accepts) = self.picker.as_ref().and_then(|picker| picker.only) {
+                    new.retain(|entry| entry.directory || accepts(&entry.path));
+                }
                 if !new.is_empty() {
                     self.entries.extend(new);
                 }
@@ -1040,6 +1063,9 @@ panneau={}
         {
             self.entries.extend(deep.found.iter().cloned());
         }
+        let mut entries = std::mem::take(&mut self.entries);
+        self.keep_openable(&mut entries);
+        self.entries = entries;
         self.recent_strip = if self.location == Location::Folder(home()) && self.picker.is_none() {
             places::recent()
                 .into_iter()

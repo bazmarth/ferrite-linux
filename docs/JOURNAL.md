@@ -3886,3 +3886,17 @@ Vérifié : CI (sans shellcheck) ; capture de la fiche Wi-Fi avec le QR code (en
 visibles, corps coupé proprement).
 Non vérifié : ligne « Mot de passe » avant « Afficher », défilement à la molette, fiches
 Bluetooth et propriétés d'un fichier, vrai bureau, thème sombre.
+
+## 2026-11-10 — TextEdit : l'explorateur ne montre que ce qu'il sait ouvrir
+
+Demande : dans TextEdit, ne voir dans l'explorateur que les fichiers ouvrables.
+- `editor::is_text` (nouveau) : lit les 4 premiers Kio ; texte si UTF-8 valide (caractère
+  coupé en fin d'extrait toléré) et sans octet nul ; un fichier vide compte comme texte.
+  Ainsi `Makefile`, `README` ou `.conf` restent, images, PDF, archives et programmes partent.
+- Arborescence (`list_directory`) et recherche par nom filtrées ; les dossiers restent.
+- Sélecteur de Fichiers : `FilesState::only(fn)` cache les fichiers refusés (dossiers
+  gardés, résultats de la recherche profonde compris). TextEdit l'utilise pour « Ouvrir »
+  (pas pour « Enregistrer sous »).
+Vérifié : CI (avec shellcheck) ; capture de TextEdit sur un dossier mêlant textes, image,
+PDF, archive et programme : seuls les textes et le sous-dossier apparaissent.
+Non vérifié : la feuille « Ouvrir » à l'écran, vrai bureau, dossiers très remplis (lenteur).

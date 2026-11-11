@@ -1157,13 +1157,57 @@ impl std::fmt::Debug for PixelBlock {
     }
 }
 
-/// Menus préparés d'avance au repos, dans cet ordre (le lanceur a sa propre préparation).
-const WARMED_POPOVERS: [Popover; 4] = [
-    Popover::Controls,
-    Popover::Notifications,
-    Popover::Clipboard,
-    Popover::Screenshot,
+/// Menus préparés d'avance au repos, dans cet ordre (le lanceur a sa propre préparation),
+/// avec les trois pages du centre de contrôle : une page dessinée pour la première fois
+/// coûtait jusqu'à 28 ms, contre 6 à 8 ensuite.
+/// La page principale en dernier : son fond, le seul gardé, est le premier montré.
+const WARMED_POPOVERS: [(Popover, ControlsPage); 6] = [
+    (Popover::Controls, ControlsPage::Wifi),
+    (Popover::Controls, ControlsPage::Bluetooth),
+    (Popover::Controls, ControlsPage::Main),
+    (Popover::Notifications, ControlsPage::Main),
+    (Popover::Clipboard, ControlsPage::Main),
+    (Popover::Screenshot, ControlsPage::Main),
 ];
+
+/// Icônes possibles d'un appareil Bluetooth (voir `controls::device_glyph`).
+const DEVICE_GLYPHS: [&str; 7] = [
+    "cc-head",
+    "cc-mouse",
+    "cc-keyboard",
+    "cc-phone",
+    "cc-watch",
+    "cc-speaker",
+    "cc-bluetooth",
+];
+
+/// Lignes d'essai des listes Wi-Fi et Bluetooth, ajoutées aux vraies pour la préparation :
+/// toutes les icônes et tous les états d'une ligne y passent une fois.
+fn sample_rows(controls: &mut ControlsView) {
+    let start = controls.networks.len();
+    controls.networks.extend((0..4u8).map(|level| NetworkRow {
+        index: start + usize::from(level),
+        ssid: format!("Réseau {level}"),
+        level,
+        secured: level % 2 == 0,
+        connected: level == 3,
+        known: level >= 2,
+        hint: "Sécurisé".to_owned(),
+        revealed: false,
+    }));
+    let start = controls.devices.len();
+    controls
+        .devices
+        .extend(DEVICE_GLYPHS.iter().enumerate().map(|(slot, glyph)| DeviceRow {
+            index: start + slot,
+            name: format!("Appareil {slot}"),
+            paired: slot % 2 == 0,
+            connected: slot == 0,
+            hint: "Connecté".to_owned(),
+            glyph,
+            busy: false,
+        }));
+}
 
 /// Écran (taille logique, échelle) et thème pour lesquels les menus ont été préparés.
 type WarmKey = (u32, u32, u32, bool, Color);
@@ -1329,10 +1373,14 @@ impl Panels {
         if known != key {
             next = 0;
         }
-        if let Some(&popover) = WARMED_POPOVERS.get(next) {
+        if let Some(&(popover, page)) = WARMED_POPOVERS.get(next) {
             let mut state = self.visual_state(output_geo, scale, view);
             state.view.popover = Some(popover);
-            state.view.controls.page = ControlsPage::Main;
+            state.view.controls.page = page;
+            state.view.controls.password = None;
+            if page != ControlsPage::Main {
+                sample_rows(&mut state.view.controls);
+            }
             crate::render::profile::raster("menu préparé", || {
                 let _ = self.rasterize(&state, scale);
                 let _ = self.rasterize_layer(&state, scale);
@@ -7140,8 +7188,39 @@ fn shadow_mask(
     let mut solid = Vec::with_capacity((bottom - top) as usize);
     // En deçà de cette distance du bord, l'ombre est pleine (voir `elevation::profile`).
     let inside = r - 1.5 * blur;
+    // Loin du haut et du bas, toutes les lignes sont identiques : les pixels calculés sont
+    // hors de la partie pleine, où `qx > inside.min(0)` ; si `qy` est en deçà (d'un pixel,
+    // par prudence), la distance ne dépend plus que de `qx`. La première de ces lignes est
+    // calculée, les suivantes copiées : une ombre de hauteur nouvelle coûtait 18 ms.
+    let half = w * 0.5 - r + inside.min(0.0);
+    let middle_limit = inside.min(0.0) - 1.0;
+    let mut middle: Option<usize> = None;
+    // Une ligne ne dépend que de `qy` : deux lignes de même `qy` (haut et bas d'une ombre
+    // centrée sur un demi-pixel) sont identiques, la seconde est copiée.
+    let mut rows_by_qy: HashMap<u32, usize> = HashMap::new();
+    // Centre horizontal sur un pixel ou un demi-pixel : les deux moitiés de chaque ligne
+    // sont symétriques au bit près (calculs exacts sur des demi-entiers), la droite est
+    // copiée de la gauche.
+    let center2 = 2.0 * (x + w * 0.5);
+    let mirror = (center2 == center2.round() && center2.abs() < 1.0e6).then(|| center2 as i64 - 1);
     for (row, py) in (top..bottom).enumerate() {
         let qy = (py as f32 + 0.5 - (y + h * 0.5)).abs() - (h * 0.5 - r);
+        let is_middle = half >= 0.0 && qy < middle_limit;
+        let same = if is_middle {
+            middle
+        } else {
+            rows_by_qy.get(&qy.to_bits()).copied()
+        };
+        if let Some(first) = same {
+            solid.push(solid[first]);
+            alpha.copy_within(first * span..(first + 1) * span, row * span);
+            continue;
+        }
+        if is_middle {
+            middle = Some(row);
+        } else {
+            rows_by_qy.insert(qy.to_bits(), row);
+        }
         let (solid_start, solid_end) = if qy <= inside {
             solid_span(x + w * 0.5, w * 0.5 - r + inside.min(0.0), left, right)
         } else {
@@ -7149,6 +7228,18 @@ fn shadow_mask(
         };
         solid.push((solid_start, solid_end));
         for px in (left..solid_start).chain(solid_end..right) {
+            // Pixel symétrique déjà calculé (à gauche, hors de la partie pleine) : même valeur.
+            if let Some(sum) = mirror {
+                let partner = sum - i64::from(px);
+                if partner < i64::from(px)
+                    && partner >= i64::from(left)
+                    && !(i64::from(solid_start)..i64::from(solid_end)).contains(&partner)
+                {
+                    let value = alpha[row * span + (partner - i64::from(left)) as usize];
+                    alpha[row * span + (px - left) as usize] = value;
+                    continue;
+                }
+            }
             let qx = (px as f32 + 0.5 - (x + w * 0.5)).abs() - (w * 0.5 - r);
             let distance = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - r;
             let amount = elevation::profile(distance, blur) * opacity;
@@ -7198,6 +7289,76 @@ fn solid_span(center: f32, half: f32, left: u32, right: u32) -> (u32, u32) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ombre_aux_lignes_copiees_identique_au_calcul_ligne_par_ligne() {
+        // Ancien calcul, chaque ligne calculée.
+        fn direct(
+            x: f32,
+            y: f32,
+            w: f32,
+            h: f32,
+            r: f32,
+            (blur, opacity): (f32, f32),
+            bounds: (u32, u32, u32, u32),
+        ) -> super::ShadowMask {
+            let (left, top, right, bottom) = bounds;
+            let span = (right - left) as usize;
+            let mut alpha = vec![0; span * (bottom - top) as usize];
+            let mut solid = Vec::new();
+            let inside = r - 1.5 * blur;
+            for (row, py) in (top..bottom).enumerate() {
+                let qy = (py as f32 + 0.5 - (y + h * 0.5)).abs() - (h * 0.5 - r);
+                let (solid_start, solid_end) = if qy <= inside {
+                    super::solid_span(x + w * 0.5, w * 0.5 - r + inside.min(0.0), left, right)
+                } else {
+                    (right, right)
+                };
+                solid.push((solid_start, solid_end));
+                for px in (left..solid_start).chain(solid_end..right) {
+                    let qx = (px as f32 + 0.5 - (x + w * 0.5)).abs() - (w * 0.5 - r);
+                    let distance = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - r;
+                    let amount = super::elevation::profile(distance, blur) * opacity;
+                    if amount > 0.0 {
+                        alpha[row * span + (px - left) as usize] =
+                            (255.0 * amount).round().clamp(0.0, 255.0) as u8;
+                    }
+                }
+            }
+            super::ShadowMask { alpha, solid }
+        }
+        // Panneaux hauts et bas, flous larges et serrés, rayons nuls à grands, échelles 1 à 2,
+        // positions fractionnaires.
+        for (w, h) in [
+            (720.0, 1100.0),
+            (720.0, 60.0),
+            (40.0, 900.0),
+            (300.0, 301.5),
+            (10.0, 10.0),
+        ] {
+            for (r, blur) in [(40.0f32, 80.0f32), (24.0, 6.0), (0.0, 12.0), (5.0, 60.0)] {
+                for (x, y) in [
+                    (120.0f32, 80.0f32),
+                    (120.25, 80.75),
+                    (120.5, 80.5),
+                    (2120.0, 80.0),
+                ] {
+                    let spread = 1.5 * blur;
+                    let left = (x - spread).floor().max(0.0) as u32;
+                    let top = (y - spread).floor().max(0.0) as u32;
+                    let right = (x + w + spread).ceil() as u32;
+                    let bottom = (y + h + spread).ceil() as u32;
+                    let bounds = (left, top, right, bottom);
+                    let fast = super::shadow_mask(x, y, w, h, r, (blur, 0.3), bounds);
+                    let slow = direct(x, y, w, h, r, (blur, 0.3), bounds);
+                    assert!(
+                        fast.alpha == slow.alpha && fast.solid == slow.solid,
+                        "{w}×{h} rayon {r} flou {blur} en {x},{y}"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn la_decoupe_garde_tout_ce_qui_est_dessine() {
         let (width, height) = (10, 8);

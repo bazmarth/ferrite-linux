@@ -4126,3 +4126,25 @@ et de l'écran verrouillé.
 Non vérifié : vrai bureau. Pistes restantes : écran verrouillé redessiné en entier à
 chaque minute (34 ms, une fois par minute) ; première image encore 42–54 ms (Dock et
 barre) ; image plein écran neuve de 20 Mo à chaque redessin d'un panneau.
+
+## 2026-11-11 — Fluidité : centre de contrôle (relevé du vrai bureau)
+
+Demande : corriger les 5 images hors budget relevées par l'utilisateur sur le vrai
+bureau (`tools/fluidite.sh 30` : 5/3220, toutes « panneaux › calque », 12,9 à 28 ms ;
+ouverture, Bluetooth, mode nuit, page Wi-Fi, liste des réseaux, retour).
+- Mesure (version optimisée) : la grande toile n'y est pour rien (0,5 ms) ; un redessin
+  préparé coûte 4 ms. Le coût venait de l'ombre du panneau, recalculée à chaque nouvelle
+  hauteur (18 ms) : la hauteur dépend de la page et de la longueur des listes, et un seul
+  fond est gardé.
+- `shadow_mask` : lignes du milieu identiques copiées, lignes de même `qy` copiées (haut
+  et bas), moitié droite copiée de la gauche si le centre tombe sur un demi-pixel.
+  18 → 6–8 ms pour une hauteur nouvelle.
+- Préparation au repos : pages Wi-Fi et Bluetooth aussi, avec des lignes d'essai
+  (`sample_rows` : toutes les icônes de réseau et d'appareil), la page principale en
+  dernier (son fond est celui gardé).
+Première ouverture après préparation (fil neuf, comme le bureau) : page principale
+19–24 → 4–5 ms, Wi-Fi 17–50 → 10–12 ms, Bluetooth 10–17 → 6–7 ms ; redessin dans une page
+2–5 ms.
+Vérifié : CI (sans shellcheck) ; test `ombre_aux_lignes_copiees_identique_au_calcul_ligne_par_ligne`
+(80 cas, au pixel près, contre l'ancien calcul) ; captures des pages principale et Wi-Fi.
+Non vérifié : vrai bureau ; liste Wi-Fi réelle dans la capture (fenêtre isolée).

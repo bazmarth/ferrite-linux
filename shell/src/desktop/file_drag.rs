@@ -10,7 +10,8 @@
 //! - une fenêtre de Fichiers survolée apprend où est le pointeur (`Visit`) : elle surligne
 //!   le dossier visé et l'ouvre si le pointeur s'y attarde ;
 //! - lâchés sur une fenêtre de Fichiers, ils y sont déplacés (copiés avec Ctrl ou Alt) ;
-//! - lâchés sur la fenêtre d'une autre application Ferrite, ils s'y ouvrent.
+//! - lâchés sur la fenêtre d'une autre application Ferrite, ils s'y ouvrent ;
+//! - lâchés sur une application Flatpak, ils lui sont d'abord partagés (`portal`).
 
 use std::{
     fs,
@@ -39,6 +40,8 @@ use smithay::{
 };
 use tracing::{info, warn};
 
+mod portal;
+
 use crate::{
     desktop::apps::{App, AppKey},
     state::Ferrite,
@@ -65,6 +68,8 @@ pub struct FileDrag {
     at: Point<f64, Logical>,
     /// Processus de la fenêtre survolée, prévenu de la position du pointeur.
     visiting: Option<u32>,
+    /// Processus de la fenêtre où les fichiers ont été lâchés.
+    target: Option<u32>,
 }
 
 impl FileDrag {
@@ -132,6 +137,7 @@ impl Ferrite {
             hover: None,
             at: pointer.current_location(),
             visiting: None,
+            target: None,
         });
     }
 
@@ -373,9 +379,15 @@ impl ServerDndGrabHandler for Ferrite {
         let Some(file) = &self.file_drag else {
             return;
         };
-        let text = payload(&mime_type, &file.drag.paths);
-        // Écrit à part : l'application lit à son rythme.
+        let paths = file.drag.paths.clone();
+        let target = file.target.or(file.visiting);
+        // Écrit à part : l'application lit à son rythme, et le portail peut tarder.
         thread::spawn(move || {
+            let paths = match target.and_then(portal::flatpak_app) {
+                Some(app) => portal::export(&app, &paths),
+                None => paths,
+            };
+            let text = payload(&mime_type, &paths);
             let _ = fs::File::from(fd).write_all(text.as_bytes());
         });
     }
@@ -383,7 +395,7 @@ impl ServerDndGrabHandler for Ferrite {
     fn dropped(&mut self, _seat: Seat<Self>) {
         if let Some(file) = &mut self.file_drag {
             leave(file);
-            file.visiting = None;
+            file.target = file.visiting.take();
             file.dropped = true;
         }
     }

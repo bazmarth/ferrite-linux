@@ -154,6 +154,8 @@ pub struct DockConfig {
     pub reduce_motion: bool,
     /// Nombre fixe de bureaux ordinaires ; `None` : bureaux dynamiques.
     pub fixed_workspaces: Option<usize>,
+    /// Changer de bureau ne touche que l'écran principal.
+    pub workspaces_primary_only: bool,
     /// Accessibilité : contraste élevé et touches rémanentes.
     pub high_contrast: bool,
     pub sticky_keys: bool,
@@ -184,6 +186,7 @@ impl Default for DockConfig {
             double_click: DoubleClick::Maximize,
             reduce_motion: false,
             fixed_workspaces: None,
+            workspaces_primary_only: true,
             high_contrast: false,
             sticky_keys: false,
         }
@@ -210,6 +213,7 @@ impl DockConfig {
             double_click: settings.double_click(),
             reduce_motion: settings.flag("reduire_animations", false),
             fixed_workspaces: settings.fixed_workspaces(),
+            workspaces_primary_only: settings.flag(ferrite_system::config::WORKSPACES_PRIMARY_ONLY, true),
             high_contrast: settings.flag(ferrite_system::config::HIGH_CONTRAST, false),
             sticky_keys: settings.flag(ferrite_system::config::STICKY_KEYS, false),
         }

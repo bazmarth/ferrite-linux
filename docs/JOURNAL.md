@@ -3900,3 +3900,19 @@ Demande : dans TextEdit, ne voir dans l'explorateur que les fichiers ouvrables.
 Vérifié : CI (avec shellcheck) ; capture de TextEdit sur un dossier mêlant textes, image,
 PDF, archive et programme : seuls les textes et le sous-dossier apparaissent.
 Non vérifié : la feuille « Ouvrir » à l'écran, vrai bureau, dossiers très remplis (lenteur).
+
+## 2026-11-11 — Bureaux : « Écran principal uniquement » devient réel
+
+Chantier suivant du plan (phase 5, réglages grisés). La position du Dock est abandonnée à
+la demande de l'utilisateur : il reste en bas.
+- Réglage `espaces_ecran_principal` (oui par défaut), Paramètres › Bureau et dock ›
+  Espaces de travail : la bascule n'est plus grisée.
+- Compositeur (`wm/workspaces.rs`) : `stays_on_other_screen` / `on_other_screen` ; une
+  fenêtre dont le centre est sur un second écran (mode « étendre ») n'est plus rangée en
+  changeant de bureau, ne rend pas un bureau « occupé » et n'est pas chassée du bureau des
+  widgets. Le clavier va d'abord à une fenêtre du bureau d'arrivée.
+- Le dessin du second écran ne change pas (il montrait déjà les fenêtres sans glissement).
+Vérifié : CI (sans shellcheck) ; test `seule_une_fenetre_centree_sur_le_second_ecran_reste` ;
+capture de la ligne dans Paramètres.
+Non vérifié : changement de bureau avec un vrai second écran (aucun écran HDMI essayé),
+réglage désactivé, thème sombre.

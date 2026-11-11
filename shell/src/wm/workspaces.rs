@@ -131,6 +131,16 @@ pub fn overview_hit_index(
         })
 }
 
+/// Le centre de `frame` est-il sur l'un des écrans `others`, hors de l'écran `primary` ?
+pub fn on_other_screen(
+    primary: Rectangle<i32, Logical>,
+    others: &[Rectangle<i32, Logical>],
+    frame: Rectangle<i32, Logical>,
+) -> bool {
+    let center = (frame.loc + Point::from((frame.size.w / 2, frame.size.h / 2))).to_f64();
+    !primary.to_f64().contains(center) && others.iter().any(|screen| screen.to_f64().contains(center))
+}
+
 /// Fenêtre d'un bureau qui n'est pas affiché.
 #[derive(Debug, Clone)]
 pub struct Parked {
@@ -738,7 +748,12 @@ impl Ferrite {
 
     /// Range les fenêtres de la page affichée, sort celles de `page` et leur rend le clavier.
     fn swap_windows(&mut self, page: usize) {
-        let windows: Vec<Window> = self.space.elements().cloned().collect();
+        let windows: Vec<Window> = self
+            .space
+            .elements()
+            .filter(|window| !self.stays_on_other_screen(window))
+            .cloned()
+            .collect();
         let mut outgoing = Vec::with_capacity(windows.len());
         for window in windows {
             let location = self.space.element_location(&window);
@@ -767,14 +782,40 @@ impl Ferrite {
         self.window_menu = None;
         self.dashboard_editing = None;
         self.pressed_light = None;
-        let next = self
+        // Le clavier va d'abord à une fenêtre du bureau d'arrivée, sinon à celle d'un second
+        // écran restée en place.
+        let candidates: Vec<Window> = self
             .space
             .elements()
             .rev()
-            .find(|window| !window.x11_surface().is_some_and(|x11| x11.is_override_redirect()))
+            .filter(|window| !window.x11_surface().is_some_and(|x11| x11.is_override_redirect()))
+            .cloned()
+            .collect();
+        let next = candidates
+            .iter()
+            .find(|window| !self.stays_on_other_screen(window))
+            .or(candidates.first())
             .cloned();
         self.focus_window(next);
         self.refresh_pointer_focus();
+    }
+
+    /// Réglage « écran principal uniquement » : une fenêtre dont le centre est sur un
+    /// second écran (mode « étendre ») ne change pas de bureau, elle reste affichée.
+    pub fn stays_on_other_screen(&self, window: &Window) -> bool {
+        if !self.dock_config.workspaces_primary_only {
+            return false;
+        }
+        let (Some(primary), Some(frame)) = (self.screen_area(), self.window_frame(window)) else {
+            return false;
+        };
+        let others: Vec<_> = self
+            .space
+            .outputs()
+            .skip(1)
+            .filter_map(|output| self.space.output_geometry(output))
+            .collect();
+        on_other_screen(primary, &others, frame)
     }
 
     /// La fenêtre sous le pointeur a changé sans qu'il bouge.
@@ -813,10 +854,11 @@ impl Ferrite {
     pub fn sync_desktops(&mut self) {
         self.keep_widgets_page_free();
         self.workspaces.set_fixed(self.dock_config.fixed_workspaces);
-        let occupied = self
-            .space
-            .elements()
-            .any(|window| !window.x11_surface().is_some_and(|x11| x11.is_override_redirect()));
+        // Les fenêtres restées sur un second écran n'occupent aucun bureau.
+        let occupied = self.space.elements().any(|window| {
+            !window.x11_surface().is_some_and(|x11| x11.is_override_redirect())
+                && !self.stays_on_other_screen(window)
+        });
         self.workspaces.sync(occupied, Instant::now());
     }
 
@@ -845,6 +887,7 @@ impl Ferrite {
             .filter(|window| !window.x11_surface().is_some_and(|x11| x11.is_override_redirect()))
             // Une fenêtre pas encore configurée ne se montrerait jamais : elle attend son tour.
             .filter(|window| !crate::protocols::xdg_shell::awaiting_placement(window))
+            .filter(|window| !self.stays_on_other_screen(window))
             .cloned()
             .collect();
         if windows.is_empty() || grabbed {
@@ -1134,6 +1177,23 @@ mod tests {
         assert!(!swipe.is_horizontal());
         assert!(swipe.is_vertical());
         assert_eq!(swipe.vertical_distance(), 30.0);
+    }
+
+    #[test]
+    fn seule_une_fenetre_centree_sur_le_second_ecran_reste() {
+        let primary = Rectangle::new((0, 0).into(), (1440, 900).into());
+        let second = [Rectangle::new((1440, 0).into(), (1920, 1080).into())];
+        let frame = |x: i32| Rectangle::new((x, 100).into(), (800, 600).into());
+        // Entièrement sur le second écran, ou à cheval avec le centre dessus : elle reste.
+        assert!(on_other_screen(primary, &second, frame(1600)));
+        assert!(on_other_screen(primary, &second, frame(1100)));
+        // Centre sur l'écran principal, même en débordant : elle suit le bureau.
+        assert!(!on_other_screen(primary, &second, frame(900)));
+        // Un seul écran, ou centre hors de tout écran : elle suit le bureau.
+        assert!(!on_other_screen(primary, &[], frame(1600)));
+        assert!(!on_other_screen(primary, &second, frame(4000)));
+        // Écrans en miroir à la même place : l'écran principal l'emporte.
+        assert!(!on_other_screen(primary, &[primary], frame(100)));
     }
 
     #[test]

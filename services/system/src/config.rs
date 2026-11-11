@@ -29,6 +29,9 @@ pub const DO_NOT_DISTURB: &str = "ne_pas_deranger";
 pub const HIGH_CONTRAST: &str = "contraste_eleve";
 /// Accessibilité : touches rémanentes (oui/non).
 pub const STICKY_KEYS: &str = "touches_remanentes";
+/// Plusieurs écrans en « étendre » : changer de bureau ne touche que l'écran principal ;
+/// les fenêtres du second écran restent affichées (oui/non, oui par défaut).
+pub const WORKSPACES_PRIMARY_ONLY: &str = "espaces_ecran_principal";
 /// « Ne pas déranger » programmé chaque jour entre deux heures (oui/non).
 pub const DO_NOT_DISTURB_SCHEDULED: &str = "ne_pas_deranger_programme";
 /// Applications dont les notifications arrivent sans bannière ni son (liste d'identifiants).

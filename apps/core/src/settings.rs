@@ -2176,10 +2176,14 @@ impl SettingsState {
                     settings.set("espaces_nombre", &count.to_string());
                 }
             }
-            rows.row(Row::new("Écran principal uniquement").unavailable(), |ui| {
-                let mut on = true;
-                rows::switch(ui, &mut on);
-            });
+            flag_row(
+                rows,
+                &mut settings,
+                Row::new("Écran principal uniquement")
+                    .hint("Les fenêtres d’un second écran restent quand on change de bureau"),
+                ferrite_system::config::WORKSPACES_PRIMARY_ONLY,
+                true,
+            );
         });
         if settings != before {
             self.save(&settings);

@@ -1167,24 +1167,33 @@ impl Panels {
         self.icon_warmup.get() != (tiles, tiles)
     }
 
-    /// Prépare une icône du lanceur par appel (une par image) : décodées d'avance, elles
-    /// ne font plus attendre la première ouverture (40 ms et plus pour toutes à la fois).
-    pub fn warm_launcher_icon(&self, tiles: &[Tile], scale: f64) {
-        let (known, mut next) = self.icon_warmup.get();
+    /// Prépare d'avance les icônes du lanceur, pour que la première ouverture ne les attende
+    /// pas (40 ms et plus pour toutes à la fois). Lecture du disque et dessin se font dans
+    /// le fil « icônes » : l'image en cours n'en paie rien. Appelée à chaque image tant que
+    /// [`Panels::launcher_icons_pending`] : la première fois, toutes les icônes sont
+    /// demandées ; ensuite, celles qui sont prêtes sont comptées.
+    pub fn warm_launcher_icons(&self, tiles: &[Tile], scale: f64) {
+        // Même taille que dans `draw_tile`.
+        let side = 72.0 * scale as f32;
+        let (known, _) = self.icon_warmup.get();
         if known != tiles.len() {
-            next = 0;
-        }
-        if let Some(tile) = tiles.get(next) {
-            // Même taille que dans `draw_tile`.
-            let side = 72.0 * scale as f32;
-            match &tile.icon {
-                TileIcon::Builtin(name) => self.icons.prepare(name, side, Style::Color),
-                TileIcon::File(path) => self.icons.prepare_file(path, side),
-                TileIcon::Missing => {}
+            for tile in tiles {
+                match &tile.icon {
+                    TileIcon::Builtin(name) => self.icons.prepare_in_background(name, side, Style::Color),
+                    TileIcon::File(path) => self.icons.prepare_file_in_background(path, side),
+                    TileIcon::Missing => {}
+                }
             }
-            next += 1;
         }
-        self.icon_warmup.set((tiles.len(), next.min(tiles.len())));
+        let ready = tiles
+            .iter()
+            .filter(|tile| match &tile.icon {
+                TileIcon::Builtin(name) => self.icons.is_ready(name, side, Style::Color),
+                TileIcon::File(path) => self.icons.is_file_ready(path, side),
+                TileIcon::Missing => true,
+            })
+            .count();
+        self.icon_warmup.set((tiles.len(), ready));
     }
 
     pub fn push_element(

@@ -10,6 +10,7 @@ use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
+    sync::mpsc,
 };
 
 use ferrite_ui::theme::Color;
@@ -339,15 +340,139 @@ pub enum Style {
 /// Clé du cache : nom, côté en pixels et style.
 type CacheKey = (&'static str, u32, Style);
 
+/// Clé du cache des fichiers : chemin et côté en pixels.
+type FileKey = (PathBuf, u32);
+
 /// Icônes déjà rasterisées.
 #[derive(Debug, Default)]
 pub struct IconCache {
     pixmaps: RefCell<HashMap<CacheKey, Option<Pixmap>>>,
     /// Icônes des applications installées, lues sur le disque.
-    files: RefCell<HashMap<(PathBuf, u32), Option<Pixmap>>>,
+    files: RefCell<HashMap<FileKey, Option<Pixmap>>>,
+    /// Fil « icônes », démarré à la première demande en arrière-plan.
+    background: RefCell<Option<Background>>,
+}
+
+/// Icône à préparer hors du fil du compositeur.
+#[derive(Debug)]
+enum Job {
+    Builtin(CacheKey),
+    File(FileKey),
+}
+
+/// Icône préparée par le fil « icônes », pas encore rangée dans le cache.
+#[derive(Debug)]
+enum Done {
+    Builtin(CacheKey, Option<Pixmap>),
+    File(FileKey, Option<Pixmap>),
+}
+
+/// Liaison avec le fil « icônes » : lecture du disque et dessin du SVG s'y font sans
+/// retarder l'image en cours.
+#[derive(Debug)]
+struct Background {
+    jobs: mpsc::Sender<Job>,
+    done: mpsc::Receiver<Done>,
+}
+
+impl Background {
+    fn start() -> Option<Self> {
+        let (jobs, job_receiver) = mpsc::channel::<Job>();
+        let (done_sender, done) = mpsc::channel();
+        std::thread::Builder::new()
+            .name("icônes".to_owned())
+            .spawn(move || {
+                // S'arrête quand le cache disparaît (canal des demandes fermé).
+                for job in job_receiver {
+                    let done = match job {
+                        Job::Builtin(key @ (name, side, style)) => {
+                            Done::Builtin(key, rasterize(name, side, style))
+                        }
+                        Job::File(key) => {
+                            let pixmap = rasterize_file(&key.0, key.1);
+                            Done::File(key, pixmap)
+                        }
+                    };
+                    if done_sender.send(done).is_err() {
+                        break;
+                    }
+                }
+            })
+            .inspect_err(|err| tracing::warn!(%err, "fil des icônes non démarré"))
+            .ok()?;
+        Some(Self { jobs, done })
+    }
 }
 
 impl IconCache {
+    /// Demande l'icône `name` à `size` pixels au fil « icônes ». Rien n'est dessiné ici :
+    /// [`IconCache::is_ready`] dit quand elle est prête. Sans fil, elle est préparée sur
+    /// place.
+    pub fn prepare_in_background(&self, name: &'static str, size: f32, style: Style) {
+        let key = (name, side_of(size), style);
+        if self.pixmaps.borrow().contains_key(&key) {
+            return;
+        }
+        if !self.send(Job::Builtin(key)) {
+            self.prepare(name, size, style);
+        }
+    }
+
+    /// Comme [`IconCache::prepare_in_background`], pour un fichier d'icône du système.
+    pub fn prepare_file_in_background(&self, path: &Path, size: f32) {
+        let key = (path.to_path_buf(), side_of(size));
+        if self.files.borrow().contains_key(&key) {
+            return;
+        }
+        if !self.send(Job::File(key)) {
+            self.prepare_file(path, size);
+        }
+    }
+
+    /// Vrai si l'icône `name` est prête à `size` pixels (lisible ou non).
+    pub fn is_ready(&self, name: &'static str, size: f32, style: Style) -> bool {
+        self.collect();
+        self.pixmaps.borrow().contains_key(&(name, side_of(size), style))
+    }
+
+    /// Comme [`IconCache::is_ready`], pour un fichier d'icône du système.
+    pub fn is_file_ready(&self, path: &Path, size: f32) -> bool {
+        self.collect();
+        self.files
+            .borrow()
+            .contains_key(&(path.to_path_buf(), side_of(size)))
+    }
+
+    /// Envoie une demande au fil « icônes » (démarré au besoin). Faux s'il est indisponible.
+    fn send(&self, job: Job) -> bool {
+        let mut background = self.background.borrow_mut();
+        if background.is_none() {
+            *background = Background::start();
+        }
+        background
+            .as_ref()
+            .is_some_and(|background| background.jobs.send(job).is_ok())
+    }
+
+    /// Range dans le cache les icônes que le fil « icônes » a terminées. Une icône déjà
+    /// dessinée sur place entre-temps garde sa version.
+    fn collect(&self) {
+        let background = self.background.borrow();
+        let Some(background) = background.as_ref() else {
+            return;
+        };
+        for done in background.done.try_iter() {
+            match done {
+                Done::Builtin(key, pixmap) => {
+                    self.pixmaps.borrow_mut().entry(key).or_insert(pixmap);
+                }
+                Done::File(key, pixmap) => {
+                    self.files.borrow_mut().entry(key).or_insert(pixmap);
+                }
+            }
+        }
+    }
+
     /// Dessine l'icône `name` dans un tampon BGRA prémultiplié (`Argb8888`), son coin
     /// haut-gauche en (`x`, `y`) et de côté `size`, en pixels physiques.
     #[allow(clippy::too_many_arguments)] // Tampon, nom, géométrie et style, sans état global.
@@ -362,7 +487,8 @@ impl IconCache {
         size: f32,
         style: Style,
     ) {
-        let side = size.round().max(1.0) as u32;
+        self.collect();
+        let side = side_of(size);
         let mut pixmaps = self.pixmaps.borrow_mut();
         let pixmap = pixmaps
             .entry((name, side, style))
@@ -375,7 +501,8 @@ impl IconCache {
     /// Rastérise l'icône `name` à `size` pixels de côté sans la dessiner : la prochaine
     /// [`IconCache::draw`] à cette taille la trouvera prête.
     pub fn prepare(&self, name: &'static str, size: f32, style: Style) {
-        let side = size.round().max(1.0) as u32;
+        self.collect();
+        let side = side_of(size);
         self.pixmaps
             .borrow_mut()
             .entry((name, side, style))
@@ -384,7 +511,8 @@ impl IconCache {
 
     /// Comme [`IconCache::prepare`], pour un fichier d'icône du système.
     pub fn prepare_file(&self, path: &Path, size: f32) {
-        let side = size.round().max(1.0) as u32;
+        self.collect();
+        let side = side_of(size);
         self.files
             .borrow_mut()
             .entry((path.to_path_buf(), side))
@@ -404,7 +532,8 @@ impl IconCache {
         y: f32,
         size: f32,
     ) -> bool {
-        let side = size.round().max(1.0) as u32;
+        self.collect();
+        let side = side_of(size);
         let mut files = self.files.borrow_mut();
         let pixmap = files
             .entry((path.to_path_buf(), side))
@@ -417,6 +546,11 @@ impl IconCache {
             None => false,
         }
     }
+}
+
+/// Côté en pixels entiers d'une icône de `size` pixels.
+fn side_of(size: f32) -> u32 {
+    size.round().max(1.0) as u32
 }
 
 /// Lit une icône du système (SVG ou PNG) et la met à `side` pixels de côté.
@@ -607,6 +741,25 @@ mod tests {
         let mut pixels = vec![0u8; 48 * 48 * 4];
         IconCache::default().draw(&mut pixels, 48, 48, name, 0.0, 0.0, 48.0, style);
         pixels
+    }
+
+    #[test]
+    fn une_icone_preparee_en_arriere_plan_est_identique() {
+        let icons = IconCache::default();
+        assert!(!icons.is_ready("app-files", 48.0, Style::Color));
+        icons.prepare_in_background("app-files", 48.0, Style::Color);
+        let start = std::time::Instant::now();
+        while !icons.is_ready("app-files", 48.0, Style::Color) {
+            assert!(
+                start.elapsed() < std::time::Duration::from_secs(10),
+                "icône jamais prête"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let mut pixels = vec![0u8; 48 * 48 * 4];
+        icons.draw(&mut pixels, 48, 48, "app-files", 0.0, 0.0, 48.0, Style::Color);
+        assert!(pixels.iter().any(|&value| value != 0));
+        assert_eq!(pixels, render("app-files", Style::Color));
     }
 
     #[test]

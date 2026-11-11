@@ -3986,3 +3986,22 @@ de TextEdit (barre et Dock cachés) ; Dock rappelé par une descente rapide ; ba
 par une montée rapide, pas par une montée lente (essai à part).
 Non vérifié : la capture de la barre dans `dock.txt` est parfois prise trop tôt (minutage
 de QEMU) ; connexion, presse-papiers, espaces et autres scénarios non rejoués ; vrai PC.
+
+## 2026-11-11 — Icônes du lanceur préparées dans un fil à part
+
+Demande : fluidité maximale, étape 1 (icônes préparées d'avance, hors de l'affichage).
+- Avant : les icônes du lanceur étaient déjà préparées d'avance, mais une par image dans
+  le fil du compositeur (lecture du disque et dessin du SVG pris sur l'image en cours).
+- `IconCache` : fil « icônes » démarré à la première demande (`prepare_in_background`,
+  `prepare_file_in_background`, `is_ready`) ; les icônes terminées sont rangées dans le
+  cache au dessin suivant. Une icône demandée avant d'être prête est dessinée sur place,
+  comme avant. Sans fil (échec du démarrage), préparation sur place.
+- `warm_launcher_icons` : toutes les icônes demandées d'un coup, puis comptées.
+- `render/mod.rs` : la liste des applications n'est plus triée deux fois par image.
+Vérifié : CI (sans shellcheck) ; test `une_icone_preparee_en_arriere_plan_est_identique` ;
+capture du lanceur (icônes correctes). Mesuré en fenêtre (debug, 3 démarrages chacun) :
+préparation moyenne des 5 premières secondes 2,2 → 1,8 ms, au repos ensuite 0,52 → 0,41 ms ;
+fond du lanceur prêt dans les 5 premières secondes dans les deux cas.
+Non vérifié : vrai bureau (DRM). Reste, vu dans les mesures : première image 150–210 ms
+(fond d'écran 84–201 ms), fond du lanceur 44–54 ms en une image, toujours dans le fil du
+compositeur (étape 2) ; icône d'une appli non épinglée lue sur place à l'ouverture (Dock).

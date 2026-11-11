@@ -248,26 +248,25 @@ fn build_output_elements(
     let overview_target = if state.overview { 1.0 } else { 0.0 };
     let overview_shown =
         crate::desktop::dock::DockMotion::step(&state.overview_shown, overview_target, OVERVIEW_TRANSITION);
-    // Lanceur fermé : ses icônes sont préparées d'avance, une par image.
-    if state.popover != Some(crate::desktop::panels::Popover::Launcher)
+    // Lanceur fermé : ses icônes sont préparées d'avance, dans le fil « icônes ». La liste
+    // des applications n'est triée qu'une fois par image.
+    let closed_launcher = (state.popover != Some(crate::desktop::panels::Popover::Launcher))
+        .then(|| state.launcher_entries().len());
+    if let Some(entries) = closed_launcher
         && state.launcher_query.is_empty()
-        && assets
-            .panels
-            .launcher_icons_pending(state.launcher_entries().len())
+        && assets.panels.launcher_icons_pending(entries)
     {
         let launcher = launcher_view(state);
         let tiles = launcher
             .sections
             .first()
             .map_or(&[][..], |section| &section.tiles[..]);
-        assets.panels.warm_launcher_icon(tiles, scale);
+        assets.panels.warm_launcher_icons(tiles, scale);
     }
     let view = profile::timed("vue du bureau", || desktop_view(state));
     // Puis, les icônes prêtes, son ombre et son verre (une fois, ~45 ms).
-    if state.popover != Some(crate::desktop::panels::Popover::Launcher)
-        && !assets
-            .panels
-            .launcher_icons_pending(state.launcher_entries().len())
+    if let Some(entries) = closed_launcher
+        && !assets.panels.launcher_icons_pending(entries)
     {
         assets.panels.warm_launcher_backdrop(output_geo, scale, &view);
     }

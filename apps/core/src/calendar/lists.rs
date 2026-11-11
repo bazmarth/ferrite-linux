@@ -440,7 +440,7 @@ pub fn tasks(
                         style::text_secondary()
                     };
                     ui.label(
-                        RichText::new(name.to_uppercase())
+                        RichText::new(name)
                             .font(FontId::new(11.0, style::strong_family()))
                             .color(ink),
                     );

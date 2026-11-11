@@ -92,19 +92,14 @@ pub fn note(ui: &mut egui::Ui, text: &str) {
     );
 }
 
-/// Petit titre de section : capitales espacées, gris (« HEURE LOCALE »).
+/// Petit titre de section : 11 semi-gras gris, sans capitales forcées (charte).
 pub fn caption(painter: &egui::Painter, at: egui::Pos2, text: &str) {
-    let mut x = at.x;
-    for character in text.to_uppercase().chars() {
-        let galley = painter.layout_no_wrap(
-            character.to_string(),
-            FontId::new(11.0, style::strong_family()),
-            style::text_secondary(),
-        );
-        let width = galley.size().x;
-        painter.galley(egui::pos2(x, at.y), galley, style::text_secondary());
-        x += width + 0.9;
-    }
+    let galley = painter.layout_no_wrap(
+        text.to_owned(),
+        FontId::new(11.0, style::strong_family()),
+        style::text_secondary(),
+    );
+    painter.galley(at, galley, style::text_secondary());
 }
 
 /// Trait fin sur toute la largeur, entre deux lignes d'une carte.

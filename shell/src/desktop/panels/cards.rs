@@ -939,9 +939,9 @@ impl Panels {
         canvas.text(&self.regular, &name, center.0 - width / 2.0, top, 12.0, ink);
     }
 
-    /// Libellé en capitales espacées, comme les titres de toutes les cartes.
+    /// Titre de carte : petit, semi-gras, sans capitales forcées (charte).
     fn caption(&self, canvas: &mut Canvas, text: &str, x: f64, y: f64, color: Color) {
-        canvas.tracked(&self.bold, &text.to_uppercase(), x, y, 11.0, 0.08, color);
+        canvas.tracked(&self.bold, text, x, y, 11.0, 0.0, color);
     }
 
     fn round_button(&self, canvas: &mut Canvas, rect: Rect, fill: Color, ink: Color, glyph: Glyph) {

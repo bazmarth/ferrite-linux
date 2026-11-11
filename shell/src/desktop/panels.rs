@@ -3390,11 +3390,11 @@ impl Panels {
         for (title, y) in &view.sections {
             canvas.tracked(
                 &self.bold,
-                &title.to_uppercase(),
+                title,
                 list.x + 8.0,
                 list.y + y + 12.0,
                 11.0,
-                0.06,
+                0.0,
                 t.fg3,
             );
         }
@@ -3971,10 +3971,8 @@ impl Panels {
             palette().separator,
             palette().control_hover,
         );
-        let (tile, dot) = (
-            palette().header_background,
-            themed(Color::WHITE, palette().separator),
-        );
+        // Cartes de choix sans bordure (charte) : teinte de surface, disque posé dessus.
+        let (tile, dot) = (palette().surface, raised_fill());
         let tile_on = if dark {
             Color::rgb(0x6CB8FF).with_alpha(31)
         } else {
@@ -3986,7 +3984,6 @@ impl Panels {
         } else {
             Color::rgb(0xFDE7E5)
         };
-        let red_icon = pick(0xD92D20, 0xFF8A80);
         let blue = accent();
         let scrim = if dark {
             Color::BLACK.with_alpha(128)
@@ -4028,7 +4025,8 @@ impl Panels {
             );
         }
 
-        // Tuiles : l'action choisie est entourée (rouge pour Éteindre, bleu sinon).
+        // Tuiles : seule l'action choisie est entourée (rouge pour Éteindre, accent sinon) ;
+        // les autres restent neutres.
         let tiles = [
             (PowerAction::PowerOff, "Éteindre", "cc-power"),
             (PowerAction::Restart, "Redémarrer", "cc-restart"),
@@ -4041,18 +4039,13 @@ impl Panels {
             let (fill, ring, disc, ink) = match (on, danger) {
                 (true, true) => (red_soft, red, red, Color::WHITE),
                 (true, false) => (tile_on, blue, blue, Color::WHITE),
-                (false, true) => (tile, line, dot, red_icon),
-                (false, false) => (tile, line, dot, fg2),
+                (false, _) => (tile, line, dot, fg2),
             };
             canvas.fill(rect, 14.0, fill);
-            let inset = if on { 1.0 } else { 0.5 };
-            let edge = Rect::new(
-                rect.x + inset,
-                rect.y + inset,
-                rect.w - 2.0 * inset,
-                rect.h - 2.0 * inset,
-            );
-            canvas.stroke(edge, 13.0, ring, if on { 2.0 } else { 1.0 });
+            if on {
+                let edge = Rect::new(rect.x + 1.0, rect.y + 1.0, rect.w - 2.0, rect.h - 2.0);
+                canvas.stroke(edge, 13.0, ring, 2.0);
+            }
             let center = (rect.x + rect.w / 2.0, rect.y + 32.0);
             canvas.fill(
                 Rect::new(center.0 - 20.0, center.1 - 20.0, 40.0, 40.0),

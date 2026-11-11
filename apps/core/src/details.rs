@@ -88,15 +88,14 @@ pub fn text(
     rect
 }
 
-/// Titre de section : capitales espacées.
+/// Titre de section : petit, semi-gras, sans capitales forcées (charte).
 fn caption(ui: &Ui, pos: Pos2, title: &str, color: Color32) {
     let mut job = egui::text::LayoutJob::default();
     job.append(
-        &title.to_uppercase(),
+        title,
         0.0,
         egui::TextFormat {
             font_id: font(12.0, true),
-            extra_letter_spacing: 0.72,
             color,
             ..Default::default()
         },

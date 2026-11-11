@@ -545,7 +545,7 @@ impl FilesState {
         ui.painter().text(
             egui::pos2(rect.left() + 10.0, rect.bottom() - 5.0),
             egui::Align2::LEFT_BOTTOM,
-            title.to_uppercase(),
+            title,
             font(11.0, true),
             look.head,
         );
@@ -574,7 +574,7 @@ impl FilesState {
         ui.painter().text(
             egui::pos2(rect.left() + 10.0, rect.bottom() - 5.0),
             egui::Align2::LEFT_BOTTOM,
-            title.to_uppercase(),
+            title,
             font(11.0, true),
             look.head,
         );
@@ -593,9 +593,12 @@ impl FilesState {
         let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 34.0), Sense::click());
         let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
         if selected {
-            ui.painter().rect_filled(rect, 9.0, look.sel_bg);
+            // Pastille claire de la charte, comme toutes les colonnes.
+            ui.painter()
+                .add(style::elevation(ferrite_ui::tokens::elevation::CONTACT).as_shape(rect, 8));
+            ui.painter().rect_filled(rect, 8.0, style::sidebar_pill());
         } else if response.hovered() {
-            ui.painter().rect_filled(rect, 9.0, style::tint(8));
+            ui.painter().rect_filled(rect, 8.0, style::tint(8));
         }
         let icon_rect = egui::Rect::from_center_size(
             egui::pos2(rect.left() + 21.0, rect.center().y),
@@ -624,7 +627,7 @@ impl FilesState {
             egui::pos2(icon_rect.right() + 10.0, rect.center().y),
             egui::Align2::LEFT_CENTER,
             font(14.0, selected),
-            if selected { look.sel_fg } else { look.fg },
+            look.fg,
             right - icon_rect.right() - 10.0,
         );
         response
@@ -647,9 +650,12 @@ impl FilesState {
             ui.allocate_exact_size(egui::vec2(ui.available_width(), height), Sense::click());
         let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
         if selected {
-            ui.painter().rect_filled(rect, 9.0, look.sel_bg);
+            // Pastille claire de la charte, comme toutes les colonnes.
+            ui.painter()
+                .add(style::elevation(ferrite_ui::tokens::elevation::CONTACT).as_shape(rect, 8));
+            ui.painter().rect_filled(rect, 8.0, style::sidebar_pill());
         } else if response.hovered() {
-            ui.painter().rect_filled(rect, 9.0, style::tint(8));
+            ui.painter().rect_filled(rect, 8.0, style::tint(8));
         }
         let line = rect.top() + 17.0;
         let icon = if removable {
@@ -666,7 +672,7 @@ impl FilesState {
             egui::pos2(icon_rect.right() + 10.0, line),
             egui::Align2::LEFT_CENTER,
             font(14.0, selected),
-            if selected { look.sel_fg } else { look.fg },
+            look.fg,
             rect.right() - icon_rect.right() - 44.0,
         );
         if let Some((eject, _)) = button {
@@ -703,9 +709,12 @@ impl FilesState {
         let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 30.0), Sense::click());
         let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
         if selected {
-            ui.painter().rect_filled(rect, 9.0, look.sel_bg);
+            // Pastille claire de la charte, comme toutes les colonnes.
+            ui.painter()
+                .add(style::elevation(ferrite_ui::tokens::elevation::CONTACT).as_shape(rect, 8));
+            ui.painter().rect_filled(rect, 8.0, style::sidebar_pill());
         } else if response.hovered() {
-            ui.painter().rect_filled(rect, 9.0, style::tint(8));
+            ui.painter().rect_filled(rect, 8.0, style::tint(8));
         }
         let dot = egui::pos2(rect.left() + 17.0, rect.center().y);
         ui.painter().circle_filled(dot, 5.0, tag_color(&self.tags, tag));
@@ -714,7 +723,7 @@ impl FilesState {
             egui::Align2::LEFT_CENTER,
             tag,
             font(14.0, selected),
-            if selected { look.sel_fg } else { look.fg },
+            look.fg,
         );
         response
     }

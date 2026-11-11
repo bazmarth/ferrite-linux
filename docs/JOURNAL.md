@@ -3916,3 +3916,13 @@ Vérifié : CI (sans shellcheck) ; test `seule_une_fenetre_centree_sur_le_second
 capture de la ligne dans Paramètres.
 Non vérifié : changement de bureau avec un vrai second écran (aucun écran HDMI essayé),
 réglage désactivé, thème sombre.
+
+## 2026-11-11 — Fenêtres : plus de double barre sur le lanceur ArtCraft
+
+Demande (capture) : le lanceur ArtCraft montrait deux barres, celle de Ferrite au-dessus de
+la sienne. Le lanceur dessine désormais une barre complète (logo, réglages, réduire,
+agrandir, fermer).
+- `ai.storyteller.artcraft-launcher` ajouté à la liste par défaut `cadre_propre` : il garde
+  sa barre, Ferrite n'ajoute plus la sienne. ArtCraft lui-même n'est pas concerné.
+Vérifié : CI (sans shellcheck) ; tests des décorations.
+Non vérifié : à l'écran (le compositeur doit être relancé), autres fenêtres d'ArtCraft.

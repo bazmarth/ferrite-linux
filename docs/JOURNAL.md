@@ -3938,3 +3938,18 @@ et que sa position sort des objectifs.
 Vérifié : CI ; capture de Bureau et dock (plus de « Position ») ; capture de Mises à jour
 (« Le système est à jour », listes relues, recoupé avec `apt list --upgradable` : 0).
 Non vérifié : « Tout installer » (aucun paquet en attente), thème sombre, vrai bureau.
+
+## 2026-11-11 — Fenêtres : boutons de Brave morts après une réduction
+
+Demande : boutons fermer, réduire et agrandir sans effet, surtout dans Brave.
+Diagnostic (trace temporaire de chaque clic, retirée depuis) : les clics arrivent bien à
+Brave ; c'est lui qui les ignore après avoir été réduit par son bouton « − ».
+- Cause : une fenêtre réduite (ou rangée sur un autre bureau) gardait l'état « active »,
+  car `Space::raise_element` ne désactive que les fenêtres affichées. En revenant, rien ne
+  changeait pour elle, aucune configuration n'était envoyée, et Chromium se croyait
+  toujours réduit.
+- `wm::deactivate` (nouveau) : retire « active » et l'envoie aussitôt ; appelé à la
+  réduction et quand une fenêtre quitte le bureau affiché.
+Vérifié : CI (sans shellcheck) ; la trace montrait les clics remis à Brave ; sur le vrai
+bureau, l'utilisateur confirme que les boutons de Brave répondent après une réduction.
+Non vérifié : VS Code et Claude (Electron, même moteur), retour d'un autre bureau.

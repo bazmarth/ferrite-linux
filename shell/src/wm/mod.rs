@@ -442,6 +442,17 @@ pub fn animation_frame(window: &Window, content: Rectangle<i32, Logical>) -> Rec
     frame.to_f64()
 }
 
+/// Retire l'état « active » d'une fenêtre qu'on cache (réduite, rangée sur un autre
+/// bureau) et le lui dit aussitôt : `Space::raise_element` ne désactive que les fenêtres
+/// encore affichées.
+pub fn deactivate(window: &Window) {
+    if window.set_activated(false)
+        && let Some(toplevel) = window.toplevel()
+    {
+        toplevel.send_pending_configure();
+    }
+}
+
 /// Demande à une fenêtre de se fermer (Wayland ou X11).
 pub fn close_window(window: &Window) {
     if let Some(toplevel) = window.toplevel() {
@@ -739,6 +750,11 @@ impl Ferrite {
                     ));
             }
         }
+        // Réduite, elle n'est plus active, et elle le sait : en revenant, elle reçoit
+        // « active » comme un changement. Sans cela, Chromium (Brave, Electron), qui se
+        // croit réduit jusqu'à un nouvel état de sa fenêtre, ignorait ensuite ses boutons
+        // réduire, agrandir et fermer.
+        deactivate(window);
         self.space.unmap_elem(window);
         self.minimized.push(Minimized {
             window: window.clone(),

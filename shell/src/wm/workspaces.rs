@@ -568,6 +568,7 @@ impl Ferrite {
         let Some(location) = self.space.element_location(window) else {
             return;
         };
+        super::deactivate(window);
         self.space.unmap_elem(window);
         window.set_activated(false);
         if let Some(toplevel) = window.toplevel() {
@@ -757,6 +758,7 @@ impl Ferrite {
         let mut outgoing = Vec::with_capacity(windows.len());
         for window in windows {
             let location = self.space.element_location(&window);
+            super::deactivate(&window);
             self.space.unmap_elem(&window);
             window.set_activated(false);
             if let Some(toplevel) = window.toplevel() {

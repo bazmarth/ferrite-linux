@@ -18,6 +18,7 @@ use resvg::{
     tiny_skia::{Pixmap, Transform},
     usvg::{Options, Tree},
 };
+use smithay::reexports::calloop::ping::Ping;
 
 macro_rules! icons {
     ($($name:literal),* $(,)?; $($theme_name:literal => $theme_path:literal),* $(,)?) => {
@@ -351,6 +352,8 @@ pub struct IconCache {
     files: RefCell<HashMap<FileKey, Option<Pixmap>>>,
     /// Fil « icônes », démarré à la première demande en arrière-plan.
     background: RefCell<Option<Background>>,
+    /// Relance le rendu quand une icône demandée en arrière-plan est prête.
+    waker: RefCell<Option<Ping>>,
 }
 
 /// Icône à préparer hors du fil du compositeur.
@@ -371,19 +374,19 @@ enum Done {
 /// retarder l'image en cours.
 #[derive(Debug)]
 struct Background {
-    jobs: mpsc::Sender<Job>,
+    jobs: mpsc::Sender<(Job, Option<Ping>)>,
     done: mpsc::Receiver<Done>,
 }
 
 impl Background {
     fn start() -> Option<Self> {
-        let (jobs, job_receiver) = mpsc::channel::<Job>();
+        let (jobs, job_receiver) = mpsc::channel::<(Job, Option<Ping>)>();
         let (done_sender, done) = mpsc::channel();
         std::thread::Builder::new()
             .name("icônes".to_owned())
             .spawn(move || {
                 // S'arrête quand le cache disparaît (canal des demandes fermé).
-                for job in job_receiver {
+                for (job, waker) in job_receiver {
                     let done = match job {
                         Job::Builtin(key @ (name, side, style)) => {
                             Done::Builtin(key, rasterize(name, side, style))
@@ -396,6 +399,9 @@ impl Background {
                     if done_sender.send(done).is_err() {
                         break;
                     }
+                    if let Some(waker) = waker {
+                        waker.ping();
+                    }
                 }
             })
             .inspect_err(|err| tracing::warn!(%err, "fil des icônes non démarré"))
@@ -405,6 +411,14 @@ impl Background {
 }
 
 impl IconCache {
+    /// Donne de quoi relancer le rendu quand une icône préparée en arrière-plan est prête.
+    pub fn set_waker(&self, waker: Option<&Ping>) {
+        let mut known = self.waker.borrow_mut();
+        if known.is_none() {
+            *known = waker.cloned();
+        }
+    }
+
     /// Demande l'icône `name` à `size` pixels au fil « icônes ». Rien n'est dessiné ici :
     /// [`IconCache::is_ready`] dit quand elle est prête. Sans fil, elle est préparée sur
     /// place.
@@ -449,9 +463,10 @@ impl IconCache {
         if background.is_none() {
             *background = Background::start();
         }
+        let waker = self.waker.borrow().clone();
         background
             .as_ref()
-            .is_some_and(|background| background.jobs.send(job).is_ok())
+            .is_some_and(|background| background.jobs.send((job, waker)).is_ok())
     }
 
     /// Range dans le cache les icônes que le fil « icônes » a terminées. Une icône déjà

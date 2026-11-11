@@ -850,6 +850,15 @@ fn without_unseen(mut state: VisualState) -> VisualState {
         state.view.power_apps = 0;
     }
     if state.view.lock.is_some() {
+        // L'écran verrouillé ne montre du signal Wi-Fi que son icône (1 à 3 ondes) : une
+        // variation d'un point redessinait tout l'écran (36 ms). Le signal est ramené au
+        // plus petit qui donne la même icône.
+        state.view.wifi_signal = state.view.wifi_signal.map(|signal| {
+            let level = ferrite_system::network::signal_level(signal);
+            (0..=signal)
+                .find(|&lower| ferrite_system::network::signal_level(lower) == level)
+                .unwrap_or(signal)
+        });
         return state;
     }
     // L'îlot et les widgets ont leurs propres images ; le centre de notifications ne lit
@@ -1642,6 +1651,47 @@ impl Panels {
         }
     }
 
+    /// Donne de quoi relancer le rendu quand une icône préparée à part est prête.
+    pub fn set_waker(&self, waker: Option<&smithay::reexports::calloop::ping::Ping>) {
+        self.icons.set_waker(waker);
+    }
+
+    /// Vrai si les icônes de `shortcuts` sont prêtes à `size` pixels logiques ; sinon, les
+    /// demande au fil « icônes » (avec l'icône neutre, dessinée si l'une est illisible).
+    fn shortcut_icons_ready<'a>(
+        &self,
+        shortcuts: impl Iterator<Item = &'a crate::desktop::shortcuts::ShortcutView>,
+        size: f64,
+        scale: f64,
+    ) -> bool {
+        use crate::desktop::apps::AppIcon;
+        // Même taille que dans `Canvas::icon` et `Canvas::icon_file`.
+        let side = size as f32 * scale as f32;
+        // Demande l'icône si elle manque ; vrai si elle est prête.
+        let builtin = |name: &'static str| {
+            let ready = self.icons.is_ready(name, side, Style::Color);
+            if !ready {
+                self.icons.prepare_in_background(name, side, Style::Color);
+            }
+            ready
+        };
+        let mut ready = builtin("app-search");
+        for shortcut in shortcuts {
+            ready &= match &shortcut.icon {
+                AppIcon::Builtin(name) => builtin(name),
+                AppIcon::File(path) => {
+                    let file_ready = self.icons.is_file_ready(path, side);
+                    if !file_ready {
+                        self.icons.prepare_file_in_background(path, side);
+                    }
+                    file_ready
+                }
+                AppIcon::Missing => true,
+            };
+        }
+        ready
+    }
+
     /// Raccourcis du bureau, sous les fenêtres, sur tous les bureaux sauf celui des
     /// widgets ; `alpha` : ils s'effacent à mesure qu'on approche de ce dernier. L'image est
     /// gardée tant que la liste, l'écran et la taille ne changent pas. Pendant un glisser,
@@ -1698,7 +1748,15 @@ impl Panels {
                 .unwrap_or_default(),
         };
         let mut layers = self.shortcuts.borrow_mut();
-        if layers.rest.as_ref().is_none_or(|(known, _)| *known != key) {
+        // Icônes lues sur le disque et dessinées dans le fil « icônes » (60 à 75 ms au
+        // démarrage sinon) : en attendant, l'ancien calque reste affiché (rien au démarrage).
+        let shown = cells
+            .iter()
+            .filter(|(index, _)| !key.skip.contains(index))
+            .filter_map(|(index, _)| dashboard.shortcuts.get(*index));
+        if layers.rest.as_ref().is_none_or(|(known, _)| *known != key)
+            && self.shortcut_icons_ready(shown, f64::from(dashboard.icon_size), scale)
+        {
             let width = (f64::from(w) * scale).round().max(1.0) as u32;
             let height = (f64::from(h) * scale).round().max(1.0) as u32;
             let mut canvas = Canvas {
@@ -7673,6 +7731,62 @@ mod tests {
                 assert!(drawn.pixels == reference.pixels, "{scale} {position:?}");
             }
         }
+    }
+
+    #[test]
+    fn les_icones_du_bureau_sont_preparees_a_part() {
+        use crate::desktop::{apps::AppIcon, shortcuts::ShortcutView};
+        let panels = Panels::new().expect("polices embarquées");
+        let shortcut = |icon| ShortcutView {
+            icon,
+            name: "Essai".to_owned(),
+            missing: false,
+            cell: None,
+            selected: false,
+        };
+        let shortcuts = [
+            shortcut(AppIcon::Builtin("app-files")),
+            shortcut(AppIcon::File("/nulle/part.svg".into())),
+            shortcut(AppIcon::Missing),
+        ];
+        // Rien de prêt : tout est demandé au fil « icônes ».
+        assert!(!panels.shortcut_icons_ready(shortcuts.iter(), 64.0, 2.0));
+        let start = Instant::now();
+        while !panels.shortcut_icons_ready(shortcuts.iter(), 64.0, 2.0) {
+            assert!(start.elapsed() < Duration::from_secs(10), "icônes jamais prêtes");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        // Prêtes, y compris le fichier illisible (icône neutre à sa place) et l'icône neutre.
+        assert!(panels.icons.is_ready("app-search", 128.0, Style::Color));
+        assert!(
+            panels
+                .icons
+                .is_file_ready(std::path::Path::new("/nulle/part.svg"), 128.0)
+        );
+    }
+
+    #[test]
+    fn l_ecran_verrouille_ne_suit_que_l_icone_du_wifi() {
+        let locked = lock_view();
+        let state = |signal| VisualState {
+            width: 1280,
+            height: 720,
+            scale_milli: 1000,
+            accent: Color::WHITE,
+            view: DesktopView {
+                wifi_signal: Some(signal),
+                ..locked.clone()
+            },
+            battery: None,
+            clock: ClockSnapshot::default(),
+            system: SystemMetrics::default(),
+        };
+        // Même icône (3 ondes) : rien à redessiner.
+        assert_eq!(without_unseen(state(80)), without_unseen(state(81)));
+        assert_eq!(without_unseen(state(70)), without_unseen(state(100)));
+        // Autre icône : redessin.
+        assert_ne!(without_unseen(state(69)), without_unseen(state(70)));
+        assert_ne!(without_unseen(state(20)), without_unseen(state(50)));
     }
 
     #[test]

@@ -4102,3 +4102,27 @@ et après en alternance, 5 tours) : vide 37–39 → 5,3–5,8 ms (pire 8,3) ; 9
 40–41 → 7,7–8,1 ms (pire 9,2). Première ouverture sans préparation ~45 ms (faite au repos
 par la préparation des menus).
 Non vérifié : vrai bureau ; vraie ouverture par Super+V chronométrée (seulement le dessin).
+
+## 2026-11-11 — Fluidité : bilan global et trois ralentissements examinés
+
+Demande : bilan des étapes 1 à 5, chercher d'autres ralentissements, puis les corriger.
+Mesure en version optimisée (`tools/fluidite.sh` et `--demo-*`) : bureau seul, écran
+verrouillé, vue d'ensemble, Fichiers, Paramètres, Terminal, Horloge, Moniteur. Après le
+démarrage, aucune image hors budget sauf sur l'écran verrouillé ; applis au repos à 1–2
+images/s.
+- Écran verrouillé : tout l'écran (36 ms) redessiné à chaque point de signal Wi-Fi, alors
+  qu'il n'en montre que l'icône. `without_unseen` ramène le signal au plus petit de même
+  icône. Sur 35 s : 6 images hors budget → 1 (changement de minute de l'horloge).
+- Icônes du bureau (« raccourcis », 60–75 ms à la première image) : préparées dans le fil
+  « icônes » (`shortcut_icons_ready`), l'ancien calque reste affiché en attendant (rien au
+  démarrage) ; `IconCache::set_waker` relance le rendu quand une icône est prête.
+  Pire image du démarrage (3 essais) : 77–121 → 42–54 ms.
+- Vue d'ensemble (64 ms vus à l'ouverture au démarrage) : mesurée à 3,5–4 ms (7–12 ms la
+  première fois) ; les 64 ms venaient de l'ouverture dans la toute première image.
+  Rien changé.
+Vérifié : CI (sans shellcheck) ; tests `l_ecran_verrouille_ne_suit_que_l_icone_du_wifi`,
+`les_icones_du_bureau_sont_preparees_a_part` ; captures du bureau (icônes présentes à 3 s)
+et de l'écran verrouillé.
+Non vérifié : vrai bureau. Pistes restantes : écran verrouillé redessiné en entier à
+chaque minute (34 ms, une fois par minute) ; première image encore 42–54 ms (Dock et
+barre) ; image plein écran neuve de 20 Mo à chaque redessin d'un panneau.

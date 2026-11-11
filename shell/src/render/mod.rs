@@ -270,6 +270,7 @@ fn build_output_elements(
             assets.panels.warm_launcher_icons(tiles, scale)
         });
     }
+    assets.panels.set_waker(state.redraw.as_ref());
     let view = profile::timed("vue du bureau", || desktop_view(state));
     // Puis, les icônes prêtes, son ombre et son verre (une fois, ~45 ms).
     if let Some(entries) = closed_launcher

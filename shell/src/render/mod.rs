@@ -506,6 +506,7 @@ fn build_output_elements(
             &state.wallpaper,
             physical.w.round() as i32,
             physical.h.round() as i32,
+            state.redraw.as_ref(),
         )
     });
     match MemoryRenderBufferRenderElement::from_buffer(
@@ -598,6 +599,7 @@ pub fn extended_elements(
         &state.wallpaper,
         physical.w.round() as i32,
         physical.h.round() as i32,
+        state.redraw.as_ref(),
     );
     match MemoryRenderBufferRenderElement::from_buffer(
         renderer,

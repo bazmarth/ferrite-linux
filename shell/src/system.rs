@@ -115,7 +115,8 @@ pub enum Event {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WallpaperChoice {
     pub source: Source,
-    pub image: Option<Image>,
+    /// Photo choisie, décodée ; partagée avec le fil qui prépare le fond.
+    pub image: Option<Arc<Image>>,
     pub generation: u64,
     pub bar_dark: bool,
     pub backdrop: Option<Arc<Image>>,
@@ -129,7 +130,7 @@ impl WallpaperChoice {
         let image = match &source {
             Source::Builtin(_) => None,
             Source::File(path) => match wallpaper::decode(path) {
-                Ok(image) => Some(image),
+                Ok(image) => Some(Arc::new(image)),
                 Err(error) => {
                     warn!(%error, "fond d'écran illisible ; fond Ferrite utilisé");
                     None
@@ -139,7 +140,7 @@ impl WallpaperChoice {
         Self::from_parts(source, image, generation)
     }
 
-    fn from_parts(source: Source, image: Option<Image>, generation: u64) -> Self {
+    fn from_parts(source: Source, image: Option<Arc<Image>>, generation: u64) -> Self {
         let preview = match (&source, &image) {
             (Source::Builtin(builtin), _) => wallpaper::paint(*builtin, 320, 200),
             (Source::File(_), Some(image)) => wallpaper::cover(image, 320, 200),

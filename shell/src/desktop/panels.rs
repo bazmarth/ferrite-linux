@@ -13,6 +13,7 @@ use std::{
     sync::{
         Arc, Mutex, OnceLock,
         atomic::{AtomicBool, AtomicU32, Ordering},
+        mpsc,
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -1074,7 +1075,9 @@ pub struct Panels {
     frost: RefCell<Option<(FrostKey, Arc<Frost>)>>,
     /// Fond du menu Applications (voile, ombre et verre), gardé d'un dessin à l'autre.
     launcher_backdrop: RefCell<Option<(LauncherBackdropKey, Vec<u8>)>>,
-    /// Préparation des icônes du lanceur : nombre de tuiles vues et prochaine à préparer.
+    /// Fond du lanceur en préparation dans un fil à part : ses clés et le résultat attendu.
+    launcher_job: RefCell<Option<LauncherJob>>,
+    /// Préparation des icônes du lanceur : nombre de tuiles vues, et combien sont prêtes.
     icon_warmup: Cell<(usize, usize)>,
     /// Ombre et fond du centre de contrôle, gardés d'un dessin à l'autre (lignes de pixels).
     controls_backdrop: RefCell<Option<(LauncherBackdropKey, SavedRows)>>,
@@ -1113,6 +1116,14 @@ fn animated(popover: Option<Popover>) -> bool {
 type LockWallKey = (u32, u32, bool, usize, Option<usize>, u8);
 /// Place (pixels physiques), échelle et fond d'écran d'un verre calculé.
 type FrostKey = ([u32; 4], u32, Option<usize>);
+
+/// Fond du lanceur préparé dans un fil à part : clés du fond et du verre, et canal qui
+/// rapporte le verre et les pixels du fond.
+type LauncherJob = (
+    LauncherBackdropKey,
+    FrostKey,
+    mpsc::Receiver<(Arc<Frost>, Vec<u8>)>,
+);
 
 /// Verre dépoli prêt à poser : pixels BGRA prémultipliés du rectangle `left`, `top`,
 /// `width` × `height` (pixels physiques de l'écran).
@@ -1155,6 +1166,7 @@ impl Panels {
             island: RefCell::new(island::IslandMotion::default()),
             frost: RefCell::new(None),
             launcher_backdrop: RefCell::new(None),
+            launcher_job: RefCell::new(None),
             controls_backdrop: RefCell::new(None),
             icon_warmup: Cell::new((0, 0)),
             lock_wall: RefCell::new(None),
@@ -2606,7 +2618,9 @@ impl Panels {
 
     /// Lanceur fermé : prépare son ombre et son verre s'ils ne sont pas prêts (au
     /// démarrage, après un changement d'écran ou de thème), pour que la première
-    /// ouverture n'attende pas (environ 45 ms sinon).
+    /// ouverture n'attende pas. Le dessin (45 ms environ) se fait dans un fil à part ;
+    /// appelée à chaque image, elle range le résultat dès qu'il est prêt. Si le lanceur
+    /// s'ouvre avant, il dessine son fond sur place, comme avant.
     pub fn warm_launcher_backdrop(
         &self,
         output_geo: Rectangle<i32, Logical>,
@@ -2618,7 +2632,8 @@ impl Panels {
         let height = (h * scale).round().max(1.0) as u32;
         let layout = Layout::new(w, h, view);
         let card = layout.launcher();
-        let key = (width, height, (scale as f32).to_bits(), card, panel_fill());
+        let fill = panel_fill();
+        let key = (width, height, (scale as f32).to_bits(), card, fill);
         if self
             .launcher_backdrop
             .borrow()
@@ -2627,77 +2642,76 @@ impl Panels {
         {
             return;
         }
-        let mut canvas = Canvas {
-            pixels: vec![0; width as usize * height as usize * 4],
-            width,
-            height,
-            scale: scale as f32,
-            bold: &self.bold,
-            icons: &self.icons,
-        };
-        let frost = self.frost(&canvas, card);
-        crate::render::profile::raster("fond du lanceur", || {
-            self.launcher_backdrop(&mut canvas, card, &frost);
-        });
+        let mut job = self.launcher_job.borrow_mut();
+        if let Some((job_key, frost_key, receiver)) = job.take() {
+            match receiver.try_recv() {
+                Ok((frost, pixels)) if job_key == key => {
+                    *self.frost.borrow_mut() = Some((frost_key, frost));
+                    *self.launcher_backdrop.borrow_mut() = Some((key, pixels));
+                    return;
+                }
+                Err(mpsc::TryRecvError::Empty) if job_key == key => {
+                    *job = Some((job_key, frost_key, receiver));
+                    return;
+                }
+                // Prêt ou en cours pour un ancien écran ou thème, ou fil arrêté : à refaire.
+                _ => {}
+            }
+        }
+        let (bounds, frost_key) = frost_area(width, height, scale as f32, card);
+        let (sender, receiver) = mpsc::channel();
+        let bold = self.bold.clone();
+        let started = std::thread::Builder::new()
+            .name("fond du lanceur".to_owned())
+            .spawn(move || {
+                let start = Instant::now();
+                let icons = IconCache::default();
+                let mut canvas = Canvas {
+                    pixels: vec![0; width as usize * height as usize * 4],
+                    width,
+                    height,
+                    scale: scale as f32,
+                    bold: &bold,
+                    icons: &icons,
+                };
+                let frost = Arc::new(paint_frost(bounds, scale as f32, card, fill));
+                canvas.panel_shadow(card, LAUNCHER_RADIUS);
+                canvas.blit_frost(&frost, None);
+                tracing::debug!(ms = start.elapsed().as_millis(), "fond du lanceur dessiné à part");
+                let _ = sender.send((frost, canvas.pixels));
+            });
+        match started {
+            Ok(_) => *job = Some((key, frost_key, receiver)),
+            Err(err) => {
+                tracing::warn!(%err, "fil du fond du lanceur non démarré ; dessin sur place");
+                drop(job);
+                let mut canvas = Canvas {
+                    pixels: vec![0; width as usize * height as usize * 4],
+                    width,
+                    height,
+                    scale: scale as f32,
+                    bold: &self.bold,
+                    icons: &self.icons,
+                };
+                let frost = self.frost(&canvas, card);
+                crate::render::profile::raster("fond du lanceur", || {
+                    self.launcher_backdrop(&mut canvas, card, &frost);
+                });
+            }
+        }
     }
 
     /// Fond du lanceur dans le rectangle arrondi `card`, gardé pour recouvrir ce qui déborde
     /// au défilement, tant que la place, l'échelle et le thème ne changent pas.
     fn frost(&self, canvas: &Canvas, card: Rect) -> Arc<Frost> {
-        let s = canvas.scale as f64;
-        let left = (card.x * s).floor().max(0.0) as u32;
-        let top = (card.y * s).floor().max(0.0) as u32;
-        let right = ((card.right() * s).ceil() as u32).min(canvas.width);
-        let bottom = ((card.bottom() * s).ceil() as u32).min(canvas.height);
-        let fill = panel_fill();
-        let key = (
-            [left, top, right, bottom],
-            canvas.scale.to_bits(),
-            Some(u32::from(fill.r) as usize),
-        );
+        let (bounds, key) = frost_area(canvas.width, canvas.height, canvas.scale, card);
         let mut cache = self.frost.borrow_mut();
         if let Some((known, frost)) = cache.as_ref()
             && *known == key
         {
             return frost.clone();
         }
-        let (width, height) = (right.saturating_sub(left), bottom.saturating_sub(top));
-        let mut pixels = vec![0u8; width as usize * height as usize * 4];
-        let radius = LAUNCHER_RADIUS * canvas.scale;
-        let (x, y, w, h) = (
-            card.x as f32 * canvas.scale,
-            card.y as f32 * canvas.scale,
-            card.w as f32 * canvas.scale,
-            card.h as f32 * canvas.scale,
-        );
-        let alpha = f32::from(fill.a) / 255.0;
-        for py in 0..height {
-            for px in 0..width {
-                let (sx, sy) = ((left + px) as f32 + 0.5, (top + py) as f32 + 0.5);
-                let qx = (sx - (x + w * 0.5)).abs() - (w * 0.5 - radius);
-                let qy = (sy - (y + h * 0.5)).abs() - (h * 0.5 - radius);
-                let distance = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - radius;
-                let coverage = (0.5 - distance).clamp(0.0, 1.0) * alpha;
-                if coverage == 0.0 {
-                    continue;
-                }
-                let offset = (py as usize * width as usize + px as usize) * 4;
-                let channel = |value: u8| (f32::from(value) * coverage).round() as u8;
-                pixels[offset..offset + 4].copy_from_slice(&[
-                    channel(fill.b),
-                    channel(fill.g),
-                    channel(fill.r),
-                    (255.0 * coverage).round() as u8,
-                ]);
-            }
-        }
-        let frost = Arc::new(Frost {
-            left,
-            top,
-            width,
-            height,
-            pixels,
-        });
+        let frost = Arc::new(paint_frost(bounds, canvas.scale, card, panel_fill()));
         *cache = Some((key, frost.clone()));
         frost
     }
@@ -5712,6 +5726,64 @@ impl Rect {
     }
 }
 
+/// Zone du verre du lanceur (en pixels physiques : gauche, haut, droite, bas) sur une toile
+/// de `width` × `height`, et sa clé de cache.
+fn frost_area(width: u32, height: u32, scale: f32, card: Rect) -> ([u32; 4], FrostKey) {
+    let s = scale as f64;
+    let left = (card.x * s).floor().max(0.0) as u32;
+    let top = (card.y * s).floor().max(0.0) as u32;
+    let right = ((card.right() * s).ceil() as u32).min(width);
+    let bottom = ((card.bottom() * s).ceil() as u32).min(height);
+    let bounds = [left, top, right, bottom];
+    let fill = panel_fill();
+    (
+        bounds,
+        (bounds, scale.to_bits(), Some(u32::from(fill.r) as usize)),
+    )
+}
+
+/// Verre du lanceur : rectangle arrondi `card` de couleur `fill`, sur la zone `bounds`.
+fn paint_frost(bounds: [u32; 4], scale: f32, card: Rect, fill: Color) -> Frost {
+    let [left, top, right, bottom] = bounds;
+    let (width, height) = (right.saturating_sub(left), bottom.saturating_sub(top));
+    let mut pixels = vec![0u8; width as usize * height as usize * 4];
+    let radius = LAUNCHER_RADIUS * scale;
+    let (x, y, w, h) = (
+        card.x as f32 * scale,
+        card.y as f32 * scale,
+        card.w as f32 * scale,
+        card.h as f32 * scale,
+    );
+    let alpha = f32::from(fill.a) / 255.0;
+    for py in 0..height {
+        for px in 0..width {
+            let (sx, sy) = ((left + px) as f32 + 0.5, (top + py) as f32 + 0.5);
+            let qx = (sx - (x + w * 0.5)).abs() - (w * 0.5 - radius);
+            let qy = (sy - (y + h * 0.5)).abs() - (h * 0.5 - radius);
+            let distance = qx.max(0.0).hypot(qy.max(0.0)) + qx.max(qy).min(0.0) - radius;
+            let coverage = (0.5 - distance).clamp(0.0, 1.0) * alpha;
+            if coverage == 0.0 {
+                continue;
+            }
+            let offset = (py as usize * width as usize + px as usize) * 4;
+            let channel = |value: u8| (f32::from(value) * coverage).round() as u8;
+            pixels[offset..offset + 4].copy_from_slice(&[
+                channel(fill.b),
+                channel(fill.g),
+                channel(fill.r),
+                (255.0 * coverage).round() as u8,
+            ]);
+        }
+    }
+    Frost {
+        left,
+        top,
+        width,
+        height,
+        pixels,
+    }
+}
+
 /// Tampon de dessin BGRA prémultiplié ; les coordonnées des méthodes sont logiques.
 struct Canvas<'a> {
     pixels: Vec<u8>,
@@ -6983,6 +7055,35 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn fond_du_lanceur_prepare_a_part_identique_au_dessin_sur_place() {
+        let panels = Panels::new().expect("polices embarquées");
+        let output = Rectangle::from_size((1440, 900).into());
+        let view = DesktopView::default();
+        let start = Instant::now();
+        while panels.launcher_job.borrow().is_some() || panels.launcher_backdrop.borrow().is_none() {
+            panels.warm_launcher_backdrop(output, 2.0, &view);
+            assert!(start.elapsed() < Duration::from_secs(20), "fond jamais prêt");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let (_, prepared) = panels.launcher_backdrop.borrow_mut().take().expect("fond prêt");
+        // Même dessin sur place, verre recalculé.
+        *panels.frost.borrow_mut() = None;
+        let card = Layout::new(1440.0, 900.0, &view).launcher();
+        let mut canvas = Canvas {
+            pixels: vec![0; 2880 * 1800 * 4],
+            width: 2880,
+            height: 1800,
+            scale: 2.0,
+            bold: &panels.bold,
+            icons: &panels.icons,
+        };
+        let frost = panels.frost(&canvas, card);
+        panels.launcher_backdrop(&mut canvas, card, &frost);
+        assert!(prepared.iter().any(|&value| value != 0));
+        assert!(prepared == canvas.pixels, "fond préparé à part différent");
     }
 
     #[test]

@@ -4005,3 +4005,25 @@ fond du lanceur prêt dans les 5 premières secondes dans les deux cas.
 Non vérifié : vrai bureau (DRM). Reste, vu dans les mesures : première image 150–210 ms
 (fond d'écran 84–201 ms), fond du lanceur 44–54 ms en une image, toujours dans le fil du
 compositeur (étape 2) ; icône d'une appli non épinglée lue sur place à l'ouverture (Dock).
+
+## 2026-11-11 — Fluidité, étape 2 : fond d'écran et fond du lanceur hors du compositeur
+
+Demande : fluidité maximale, étape 2 (dessins lourds hors du fil de l'affichage). Ciblé
+sur ce que les mesures de l'étape 1 montraient, pas sur tous les panneaux.
+- `render/wallpaper.rs` : premier fond sur place ; les suivants dans le fil
+  « fond d'écran », l'ancien restant affiché (étiré) jusqu'au nouveau ; le rendu est
+  relancé par `state.redraw` quand il est prêt. `WallpaperChoice::image` passe en `Arc`
+  (partagée sans copie avec le fil).
+- `panels.rs` : `warm_launcher_backdrop` dessine ombre et verre dans le fil « fond du
+  lanceur » et range le résultat à une image suivante ; verre sorti en fonctions libres
+  (`frost_area`, `paint_frost`). Repli sur place si le fil ne démarre pas.
+Vérifié : CI (sans shellcheck) ; tests `fond_du_lanceur_prepare_a_part_identique_au_dessin_sur_place`
+(pixels identiques) et `nouvelle_taille_dessinee_a_part_l_ancien_fond_reste` ; captures du
+bureau et du lanceur. Mesuré en fenêtre (debug, 3 démarrages chacun), 5 premières
+secondes : pire image 199–219 → 123–133 ms (la toute première seule), images lentes de
+plus de 50 ms 4 → 1, 82 → 89 images/s, préparation moyenne 1,8 → 0,85 ms. Hors du fil :
+fond d'écran 87–96 ms et 198–215 ms, fond du lanceur 70–76 ms.
+Non vérifié : vrai bureau (DRM, où la taille ne change pas au démarrage : gain surtout au
+changement de fond, d'écran HDMI et de thème) ; changement de fond dans Paramètres.
+Reste : la première image (fond d'écran sur place) ; autres panneaux toujours redessinés
+dans le fil du compositeur quand leur état change (centre de contrôle, widgets).

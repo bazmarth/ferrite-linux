@@ -495,3 +495,8 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
   bureau (un bureau qui n'a qu'elle est vide). Désactivé, toutes les fenêtres suivent le
   bureau, comme avant. Oui par défaut, comme GNOME : le second écran sert souvent à garder
   une fenêtre sous les yeux (vidéo, documentation).
+- **2026-11-11 — Fond d'écran et fond du lanceur dessinés dans un fil à part.** Seul le
+  tout premier fond d'écran est dessiné sur place (rien n'anime encore l'écran). Ensuite
+  (autre taille d'écran, autre fond), l'ancien fond reste affiché, étiré au besoin, pendant
+  les 80 à 200 ms du dessin : un fond juste avec une image de retard vaut mieux qu'une
+  saccade. Le fond du lanceur ouvert avant d'être prêt est dessiné sur place, comme avant.

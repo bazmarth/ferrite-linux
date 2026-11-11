@@ -4148,3 +4148,25 @@ Première ouverture après préparation (fil neuf, comme le bureau) : page princ
 Vérifié : CI (sans shellcheck) ; test `ombre_aux_lignes_copiees_identique_au_calcul_ligne_par_ligne`
 (80 cas, au pixel près, contre l'ancien calcul) ; captures des pages principale et Wi-Fi.
 Non vérifié : vrai bureau ; liste Wi-Fi réelle dans la capture (fenêtre isolée).
+
+## 2026-11-11 — Fluidité : fond du centre de contrôle par la carte graphique
+
+Demande : après un relevé sur le vrai bureau à 16 images hors budget (sur batterie, où le
+processeur reste vers 1,2 GHz en mode équilibré : même code 3 fois plus lent que sur
+secteur, mesuré), faire dessiner le fond des panneaux par la carte graphique.
+- `render/shaders.rs` : shader `PANEL` (ombre contact + `PANEL` de la charte, verre de
+  couleur `fill`, `grow` et `fade` de l'animation) ; module `shaders` visible dans le crate.
+- `panels.rs` : `draw_controls` ne dessine plus le fond (cache `controls_backdrop`
+  retiré) ; `PopoverLayer::card` ; `push_controls_plate` pose l'élément sous le contenu,
+  zone et uniformes modifiés seulement s'ils changent ; `push_element` reçoit le shader.
+Vérifié : CI (sans shellcheck) ; captures avant/après des pages principale, Wi-Fi,
+Bluetooth et du thème sombre comparées au pixel : Wi-Fi et Bluetooth à 2/255 près ; page
+principale et sombre identiques sauf le bouton du rétroéclairage et la batterie, qui
+avaient changé entre les deux captures.
+Mesuré sur batterie (version optimisée, après préparation au repos) : Wi-Fi 28 → 7–11 ms,
+Bluetooth 17–21 → 7–8 ms, principale 13–17 → 9–13 ms. Principale décomposée : toile
+plein écran 3–4 ms, contenu 7–12 ms (boutons ronds, icônes, textes, curseurs).
+Non vérifié : vrai bureau (DRM) ; animation d'ouverture regardée image par image.
+Reste : contenu de la page principale (redessiné à chaque pas d'un curseur) ; toile plein
+écran devenue inutile (le contenu tient dans le panneau) ; vue d'ensemble 13 ms sur
+batterie.

@@ -34,7 +34,7 @@ use smithay::{
                 Kind,
                 memory::{MemoryBuffer, MemoryRenderBuffer, MemoryRenderBufferRenderElement},
             },
-            gles::GlesRenderer,
+            gles::{GlesPixelProgram, GlesRenderer, Uniform, element::PixelShaderElement},
         },
     },
     output::Output,
@@ -1045,8 +1045,6 @@ struct Battery {
 type PixelSize = (u32, u32);
 /// Toile (largeur, hauteur, échelle), panneau et teinte du verre du menu Applications.
 type LauncherBackdropKey = (u32, u32, u32, Rect, Color);
-/// Lignes de pixels gardées : position du premier octet et contenu.
-type SavedRows = (usize, Vec<u8>);
 /// Invitation de l'écran de verrouillage : écran (largeur, hauteur, échelle, thème
 /// sombre), image, et place en logique (haut, hauteur).
 type InvitationImage = ((u32, u32, u32, bool), MemoryRenderBuffer, (f64, f64));
@@ -1094,8 +1092,9 @@ pub struct Panels {
     popover_warmup: Cell<(WarmKey, usize)>,
     /// Préparation des icônes du lanceur : nombre de tuiles vues, et combien sont prêtes.
     icon_warmup: Cell<(usize, usize)>,
-    /// Ombre et fond du centre de contrôle, gardés d'un dessin à l'autre (lignes de pixels).
-    controls_backdrop: RefCell<Option<(LauncherBackdropKey, SavedRows)>>,
+    /// Ombre et verre du centre de contrôle, dessinés par la carte graphique : zone,
+    /// uniformes (bits) et élément, refait seulement quand l'un d'eux change.
+    controls_plate: RefCell<Option<ControlsPlate>>,
     /// Fond de l'écran de verrouillage.
     lock_wall: RefCell<Option<(LockWallKey, MemoryRenderBuffer)>>,
     /// Autres couches de l'écran de verrouillage (voir `lock_elements`).
@@ -1117,8 +1116,16 @@ const LAYER_SCALE: f64 = 0.94;
 #[derive(Debug, Clone)]
 struct PopoverLayer {
     rect: Rect,
+    /// Le panneau lui-même (sans son ombre), dont la carte graphique dessine le fond.
+    card: Rect,
     buffer: MemoryRenderBuffer,
 }
+
+/// Fond du centre de contrôle dessiné par la carte graphique : zone, uniformes et élément.
+type ControlsPlate = (Rectangle<i32, Logical>, [u32; 12], PixelShaderElement);
+
+/// Rayon du centre de contrôle.
+const CONTROLS_RADIUS: f64 = 20.0;
 
 /// Panneaux qui apparaissent et disparaissent en fondu, grandissant depuis leur coin
 /// haut droit (sous leur bouton de la barre), comme sur macOS.
@@ -1160,7 +1167,6 @@ impl std::fmt::Debug for PixelBlock {
 /// Menus préparés d'avance au repos, dans cet ordre (le lanceur a sa propre préparation),
 /// avec les trois pages du centre de contrôle : une page dessinée pour la première fois
 /// coûtait jusqu'à 28 ms, contre 6 à 8 ensuite.
-/// La page principale en dernier : son fond, le seul gardé, est le premier montré.
 const WARMED_POPOVERS: [(Popover, ControlsPage); 6] = [
     (Popover::Controls, ControlsPage::Wifi),
     (Popover::Controls, ControlsPage::Bluetooth),
@@ -1274,7 +1280,7 @@ impl Panels {
             launcher_job: RefCell::new(None),
             popover_warmup: Cell::new(((0, 0, 0, false, Color::WHITE), 0)),
             clipboard_chrome: RefCell::new(None),
-            controls_backdrop: RefCell::new(None),
+            controls_plate: RefCell::new(None),
             icon_warmup: Cell::new((0, 0)),
             lock_wall: RefCell::new(None),
             lock_layers: RefCell::new(lock_screen::LockLayers::default()),
@@ -1352,6 +1358,79 @@ impl Panels {
         }
     }
 
+    /// Ombre et verre du centre de contrôle (`placed`, en pixels logiques de l'écran),
+    /// dessinés par la carte graphique dans la zone `area` ; `grow` et `shown` suivent
+    /// l'animation d'ouverture. L'élément n'est modifié que si sa zone ou ses uniformes
+    /// changent : sinon, l'image ne serait jamais tenue pour inchangée.
+    #[allow(clippy::too_many_arguments)] // Programme, géométrie, animation et sortie.
+    fn push_controls_plate(
+        &self,
+        program: &GlesPixelProgram,
+        area: Rect,
+        placed: Rect,
+        grow: f64,
+        shown: f64,
+        scale: f64,
+        out: &mut Vec<super::super::render::OutputElement>,
+    ) {
+        let (left, top) = (area.x.floor(), area.y.floor());
+        let zone = Rectangle::<i32, Logical>::new(
+            Point::from((left as i32, top as i32)),
+            Size::from((
+                ((area.right()).ceil() - left).max(1.0) as i32,
+                ((area.bottom()).ceil() - top).max(1.0) as i32,
+            )),
+        );
+        let fill = super::super::render::shaders::premultiplied(panel_fill());
+        let values = [
+            scale as f32,
+            (placed.x - left) as f32,
+            (placed.y - top) as f32,
+            placed.w as f32,
+            placed.h as f32,
+            (CONTROLS_RADIUS * grow) as f32,
+            grow as f32,
+            shown as f32,
+            // Couleur du verre : change avec le thème.
+            fill[0],
+            fill[1],
+            fill[2],
+            fill[3],
+        ];
+        let bits = values.map(f32::to_bits);
+        let uniforms = || {
+            vec![
+                Uniform::new("scale", values[0]),
+                Uniform::new("rect", [values[1], values[2], values[3], values[4]]),
+                Uniform::new("radius", values[5]),
+                Uniform::new("grow", values[6]),
+                Uniform::new("fill", fill),
+                Uniform::new("fade", values[7]),
+            ]
+        };
+        let mut plate = self.controls_plate.borrow_mut();
+        match plate.as_mut() {
+            Some((known_zone, known_bits, element)) => {
+                if *known_zone != zone {
+                    element.resize(zone, None);
+                    *known_zone = zone;
+                }
+                if *known_bits != bits {
+                    element.update_uniforms(uniforms());
+                    *known_bits = bits;
+                }
+            }
+            None => {
+                let element =
+                    PixelShaderElement::new(program.clone(), zone, None, 1.0, uniforms(), Kind::Unspecified);
+                *plate = Some((zone, bits, element));
+            }
+        }
+        if let Some((_, _, element)) = plate.as_ref() {
+            out.push(super::super::render::OutputElement::Shader(element.clone()));
+        }
+    }
+
     /// Vrai tant que des menus restent à préparer pour cet écran et ce thème
     /// ([`Panels::warm_popover`]).
     pub fn popovers_pending(
@@ -1390,6 +1469,7 @@ impl Panels {
         self.popover_warmup.set((key, next));
     }
 
+    #[allow(clippy::too_many_arguments)] // Rendu, écran, vue, shader du fond et sortie.
     pub fn push_element(
         &self,
         renderer: &mut GlesRenderer,
@@ -1397,6 +1477,7 @@ impl Panels {
         output_geo: Rectangle<i32, Logical>,
         scale: f64,
         view: &DesktopView,
+        panel_shader: &GlesPixelProgram,
         out: &mut Vec<super::super::render::OutputElement>,
     ) {
         let state = self.visual_state(output_geo, scale, view);
@@ -1497,6 +1578,16 @@ impl Panels {
                 Ok(element) => out.push(super::super::render::OutputElement::Memory(element)),
                 Err(err) => tracing::warn!(?err, output = output.name(), "panneau animé non importé"),
             }
+            // Son ombre et son verre, dessous, avec le même agrandissement.
+            let card = layer.card;
+            let placed = Rect::new(
+                origin.x + (card.x - rect.x) * grow,
+                origin.y + (card.y - rect.y) * grow,
+                card.w * grow,
+                card.h * grow,
+            );
+            let area = Rect::new(origin.x, origin.y, w, h);
+            self.push_controls_plate(panel_shader, area, placed, grow, shown, scale, out);
         }
 
         // Îlot, devant le bureau et la barre.
@@ -2418,6 +2509,7 @@ impl Panels {
                 w as f64 / scale,
                 h as f64 / scale,
             ),
+            card,
             buffer: MemoryRenderBuffer::from_slice(
                 &pixels,
                 Fourcc::Argb8888,
@@ -2922,29 +3014,8 @@ impl Panels {
     /// batterie et boutons de session.
     fn draw_controls(&self, canvas: &mut Canvas, layout: &Layout, state: &VisualState) {
         let view = &state.view;
-        // Ombre et fond ne changent qu'avec l'écran, alors que le reste est redessiné à
-        // chaque pas d'un curseur (volume, luminosité). Le panneau est dessiné le premier,
-        // sur une toile vide : les lignes gardées remplacent exactement ce dessin.
-        let card = layout.controls();
-        let key = (
-            canvas.width,
-            canvas.height,
-            canvas.scale.to_bits(),
-            card,
-            panel_fill(),
-        );
-        let rows = (card.y - 40.0, card.bottom() + 50.0);
-        let mut backdrop = self.controls_backdrop.borrow_mut();
-        match backdrop.as_ref() {
-            Some((known, (offset, saved))) if *known == key => {
-                canvas.pixels[*offset..*offset + saved.len()].copy_from_slice(saved);
-            }
-            _ => {
-                canvas.glass(card, 20.0);
-                *backdrop = Some((key, canvas.save_rows(rows.0, rows.1)));
-            }
-        }
-        drop(backdrop);
+        // Ombre et verre du panneau : dessinés par la carte graphique, sous ce contenu
+        // (`render::shaders::PANEL`, voir `Panels::push_controls_plate`).
         match view.controls.page {
             ControlsPage::Main => self.draw_controls_main(canvas, layout, state),
             ControlsPage::Wifi => self.draw_controls_wifi(canvas, layout, view),
@@ -7824,8 +7895,7 @@ mod tests {
             panels.warm_popover(output, 2.0, &desktop);
         }
         assert!(!panels.popovers_pending(output, 2.0, &desktop));
-        // Le fond du centre de contrôle est prêt ; rien n'est affiché pour autant.
-        assert!(panels.controls_backdrop.borrow().is_some());
+        // Rien n'est affiché pour autant.
         assert!(panels.cached.borrow().is_none());
         assert!(panels.layer.borrow().is_none());
         // Autre thème : tout est à refaire.

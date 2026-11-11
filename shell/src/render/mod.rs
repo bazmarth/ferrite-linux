@@ -8,7 +8,7 @@ mod genie;
 mod ghost;
 pub mod profile;
 mod rounded;
-mod shaders;
+pub(crate) mod shaders;
 mod title;
 mod wallpaper;
 
@@ -297,9 +297,15 @@ fn build_output_elements(
         });
     }
     profile::timed("panneaux", || {
-        assets
-            .panels
-            .push_element(renderer, output, output_geo, scale, &view, &mut elements)
+        assets.panels.push_element(
+            renderer,
+            output,
+            output_geo,
+            scale,
+            &view,
+            &assets.decorations.shaders.panel,
+            &mut elements,
+        )
     });
     let now = std::time::Instant::now();
     let visible_pages = state.workspaces.visible_pages(now);

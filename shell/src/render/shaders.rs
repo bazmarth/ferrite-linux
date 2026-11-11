@@ -199,6 +199,40 @@ void main() {
 }
 "#;
 
+/// Fond d'un panneau du bureau (centre de contrôle) : ombre de la charte (contact puis
+/// `elevation::PANEL`) puis verre de la couleur `fill`, comme `Canvas::glass` le dessinait
+/// au processeur (18 ms par hauteur nouvelle, bien plus sur batterie). `rect` : le
+/// panneau, en pixels logiques dans la zone dessinée ; `grow` : agrandissement de
+/// l'animation d'ouverture (ombre comprise) ; `fade` : opacité.
+const PANEL: &str = r#"
+uniform float scale;
+uniform vec4 rect;
+uniform float radius;
+uniform float grow;
+uniform vec4 fill;
+uniform float fade;
+
+float rounded_box(vec2 p, vec2 half_size, float r) {
+    vec2 q = abs(p) - half_size + r;
+    return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+}
+
+void main() {
+    vec2 p = v_coords * size;
+    vec2 half_card = rect.zw * 0.5;
+    vec2 center = rect.xy + half_card;
+    float r = min(radius, min(half_card.x, half_card.y));
+    float near = rounded_box(p - center - vec2(0.0, CONTACT.x * grow), half_card, r);
+    float far = rounded_box(p - center - vec2(0.0, LEVEL.x * grow), half_card, r);
+    float a = CONTACT.z * shadow_profile(near, CONTACT.y * grow);
+    a = a + LEVEL.z * shadow_profile(far, LEVEL.y * grow) * (1.0 - a);
+    vec4 color = vec4(0.0, 0.0, 0.0, a);
+    float cover = coverage(rounded_box(p - center, half_card, r), scale);
+    color = color * (1.0 - fill.a * cover) + fill * cover;
+    gl_FragColor = finish(color * fade);
+}
+"#;
+
 /// Shader de texture : arrondit les coins du bas du contenu d'une fenêtre (ceux du haut
 /// sont sous la barre de titre). Coordonnées en pixels physiques, repère de l'écran.
 const ROUNDED_TEXTURE: &str = r#"#version 100
@@ -336,6 +370,7 @@ pub struct Shaders {
     pub shadow: GlesPixelProgram,
     pub snap: GlesPixelProgram,
     pub dock: GlesPixelProgram,
+    pub panel: GlesPixelProgram,
     pub rounded: GlesTexProgram,
     pub genie: GlesTexProgram,
 }
@@ -371,6 +406,17 @@ impl Shaders {
         )?;
         let snap = renderer.compile_custom_pixel_shader(format!("{COMMON}{SNAP}"), &[float("scale")])?;
         let dock = renderer.compile_custom_pixel_shader(dock_source(), &[float("scale")])?;
+        let panel = renderer.compile_custom_pixel_shader(
+            panel_source(),
+            &[
+                float("scale"),
+                vec4("rect"),
+                float("radius"),
+                float("grow"),
+                vec4("fill"),
+                float("fade"),
+            ],
+        )?;
         let rounded = renderer.compile_custom_texture_shader(
             ROUNDED_TEXTURE,
             &[vec4("geo"), vec4("clip"), float("radius"), float("top")],
@@ -392,6 +438,7 @@ impl Shaders {
             shadow,
             snap,
             dock,
+            panel,
             rounded,
             genie,
         })
@@ -421,6 +468,23 @@ fn dock_source() -> String {
     format!(
         "#define MARGIN {}\n#define CONTACT {}\n#define LEVEL {}\n{COMMON}{DOCK}",
         float(crate::desktop::dock::PLATE_SHADOW_MARGIN as f32),
+        layer(elevation::CONTACT),
+        layer(elevation::PANEL),
+    )
+}
+
+/// Source du shader des panneaux : couches d'ombre de la charte.
+fn panel_source() -> String {
+    let layer = |shadow: elevation::Shadow| {
+        format!(
+            "vec3({}, {}, {})",
+            float(shadow.offset_y),
+            float(shadow.blur),
+            float(shadow.alpha)
+        )
+    };
+    format!(
+        "#define CONTACT {}\n#define LEVEL {}\n{COMMON}{PANEL}",
         layer(elevation::CONTACT),
         layer(elevation::PANEL),
     )

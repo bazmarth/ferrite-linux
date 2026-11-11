@@ -506,3 +506,9 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
   20–41 ms à 5–14 ms. Fait dans le fil du compositeur (les panneaux ne se partagent pas
   entre fils) : une image de retard au repos ne se voit pas, sauf pendant une vidéo,
   une seule fois par écran et par thème.
+- **2026-11-11 — Fond du centre de contrôle dessiné par la carte graphique.** Ombre et
+  verre du panneau passent du processeur (`Canvas::glass`, 18 ms par hauteur nouvelle,
+  3 fois plus sur batterie) au shader `PANEL` (formule d'ombre identique à
+  `elevation::profile`) ; le processeur ne dessine plus que le contenu, posé par-dessus
+  avec le même agrandissement. Revers accepté : pendant le fondu d'ouverture (160 ms),
+  fond et contenu s'estompent chacun de leur côté, au lieu d'une seule image.

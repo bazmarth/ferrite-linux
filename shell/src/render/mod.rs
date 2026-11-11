@@ -68,6 +68,9 @@ render_elements! {
     Memory = MemoryRenderBufferRenderElement<GlesRenderer>,
 }
 
+/// Durée sans entrée avant de préparer les menus d'avance.
+const WARM_QUIET: std::time::Duration = std::time::Duration::from_millis(1500);
+
 /// Durée de l'ouverture et de la fermeture de la vue d'ensemble.
 const OVERVIEW_TRANSITION: std::time::Duration = ferrite_ui::tokens::motion::NORMAL;
 /// Estompe des widgets recouverts par une fenêtre.
@@ -157,19 +160,21 @@ fn build_output_elements(
     };
     let scale = output.current_scale().fractional_scale();
 
-    if draw_cursor && !matches!(state.cursor_status, CursorImageStatus::Hidden) {
-        if let Some(pointer) = state.seat.get_pointer() {
-            let location = pointer.current_location() - output_geo.loc.to_f64();
-            if Rectangle::from_size(output_geo.size).to_f64().contains(location) {
-                let shape = state.cursor_shape();
-                let image =
-                    assets
-                        .cursor
-                        .image(shape, scale, state.cursor_size, state.cursor_theme.as_deref());
-                push_cursor(renderer, &image, location, scale, &mut elements);
+    profile::timed("curseur", || {
+        if draw_cursor && !matches!(state.cursor_status, CursorImageStatus::Hidden) {
+            if let Some(pointer) = state.seat.get_pointer() {
+                let location = pointer.current_location() - output_geo.loc.to_f64();
+                if Rectangle::from_size(output_geo.size).to_f64().contains(location) {
+                    let shape = state.cursor_shape();
+                    let image =
+                        assets
+                            .cursor
+                            .image(shape, scale, state.cursor_size, state.cursor_theme.as_deref());
+                    push_cursor(renderer, &image, location, scale, &mut elements);
+                }
             }
         }
-    }
+    });
 
     // Fichiers glissés, sous le curseur et au-dessus de tout le reste.
     if let Some(file) = state.file_drag.as_ref().filter(|file| file.shown())
@@ -261,14 +266,34 @@ fn build_output_elements(
             .sections
             .first()
             .map_or(&[][..], |section| &section.tiles[..]);
-        assets.panels.warm_launcher_icons(tiles, scale);
+        profile::timed("préparation d'avance", || {
+            assets.panels.warm_launcher_icons(tiles, scale)
+        });
     }
     let view = profile::timed("vue du bureau", || desktop_view(state));
     // Puis, les icônes prêtes, son ombre et son verre (une fois, ~45 ms).
     if let Some(entries) = closed_launcher
         && !assets.panels.launcher_icons_pending(entries)
     {
-        assets.panels.warm_launcher_backdrop(output_geo, scale, &view);
+        profile::timed("préparation d'avance", || {
+            assets.panels.warm_launcher_backdrop(output_geo, scale, &view)
+        });
+    }
+    // Au repos (rien d'ouvert, aucune entrée depuis un moment), les autres menus sont
+    // préparés d'avance, un par image : leur première ouverture coûtait jusqu'à 30 ms.
+    // Une image de retard au repos ne se voit pas ; à l'ouverture, si.
+    if closed_launcher.is_some()
+        && state.popover.is_none()
+        && state.lock.is_none()
+        && state.idle.quiet_for() >= WARM_QUIET
+        && !assets
+            .panels
+            .launcher_icons_pending(closed_launcher.unwrap_or_default())
+        && assets.panels.popovers_pending(output_geo, scale, &view)
+    {
+        profile::timed("préparation d'avance", || {
+            assets.panels.warm_popover(output_geo, scale, &view)
+        });
     }
     profile::timed("panneaux", || {
         assets
@@ -287,15 +312,17 @@ fn build_output_elements(
     let widgets_visible = !locked && overview_shown == 0.0 && widgets_page.is_some();
     let widgets_page = widgets_page.unwrap_or(0.0);
     if widgets_visible && widgets_ahead {
-        assets.panels.push_dashboard(
-            renderer,
-            output,
-            output_geo,
-            scale,
-            &view,
-            widgets_page,
-            &mut elements,
-        );
+        profile::timed("widgets", || {
+            assets.panels.push_dashboard(
+                renderer,
+                output,
+                output_geo,
+                scale,
+                &view,
+                widgets_page,
+                &mut elements,
+            )
+        });
     }
 
     // Le survol des feux n'est montré que si aucun déplacement n'est en cours.
@@ -321,140 +348,143 @@ fn build_output_elements(
         push_layers(renderer, output, Layer::Top, scale, &mut elements);
     }
 
-    if locked {
-        // Aucune fenêtre sous l'écran de verrouillage.
-    } else if overview_shown > 0.0 {
-        push_overview(
-            renderer,
-            state,
-            assets,
-            output_geo,
-            crate::desktop::dock::ease(overview_shown),
-            dark_theme,
-            scale,
-            &mut elements,
-        );
-    } else {
-        // Fenêtres qui filent vers le Dock ou en reviennent, au-dessus des autres.
-        let mut animations = state.window_animations.borrow_mut();
-        // « Réduire les animations » : les fenêtres changent de place sans transition.
-        animations.retain(|animation| {
-            animation.advance(now);
-            !animation.finished() && !state.dock_config.reduce_motion
-        });
-        for animation in animations.iter() {
-            let frame = Rectangle::new(
-                animation.window_rect.loc - output_geo.loc.to_f64(),
-                animation.window_rect.size,
+    profile::timed("fenêtres", || {
+        if locked {
+            // Aucune fenêtre sous l'écran de verrouillage.
+        } else if overview_shown > 0.0 {
+            push_overview(
+                renderer,
+                state,
+                assets,
+                output_geo,
+                crate::desktop::dock::ease(overview_shown),
+                dark_theme,
+                scale,
+                &mut elements,
             );
-            // Vers le Dock ou depuis lui : l'icône est suivie à chaque image, car le Dock
-            // glisse et ses icônes changent de taille sous la souris.
-            let dock_rect = match animation.motion {
-                wm::animation::Motion::Minimize | wm::animation::Motion::Restore => state
-                    .dock_icon_rect(state.window_app(&animation.window).as_ref())
-                    .unwrap_or(animation.dock_rect),
-                _ => animation.dock_rect,
-            };
-            let target = Rectangle::new(dock_rect.loc - output_geo.loc.to_f64(), dock_rect.size);
-            let shape = animation.genie(frame, target);
-            let cached = animation.snapshot.borrow().clone();
-            let texture = cached.or_else(|| {
-                let texture = window_texture(renderer, assets, &animation.window, dark_theme, scale)?;
-                *animation.snapshot.borrow_mut() = Some(texture.clone());
-                Some(texture)
+        } else {
+            // Fenêtres qui filent vers le Dock ou en reviennent, au-dessus des autres.
+            let mut animations = state.window_animations.borrow_mut();
+            // « Réduire les animations » : les fenêtres changent de place sans transition.
+            animations.retain(|animation| {
+                animation.advance(now);
+                !animation.finished() && !state.dock_config.reduce_motion
             });
-            // Changement de cadre : l'image suit le cadre qui glisse et s'étire, coins arrondis
-            // redessinés à sa taille ; l'ancien et le nouveau contenu y sont posés tous deux,
-            // d'où un fondu enchaîné sans trou ni recadrage.
-            let radius =
-                if animation.motion == wm::animation::Motion::Zoom && !wm::is_maximized(&animation.window) {
+            for animation in animations.iter() {
+                let frame = Rectangle::new(
+                    animation.window_rect.loc - output_geo.loc.to_f64(),
+                    animation.window_rect.size,
+                );
+                // Vers le Dock ou depuis lui : l'icône est suivie à chaque image, car le Dock
+                // glisse et ses icônes changent de taille sous la souris.
+                let dock_rect = match animation.motion {
+                    wm::animation::Motion::Minimize | wm::animation::Motion::Restore => state
+                        .dock_icon_rect(state.window_app(&animation.window).as_ref())
+                        .unwrap_or(animation.dock_rect),
+                    _ => animation.dock_rect,
+                };
+                let target = Rectangle::new(dock_rect.loc - output_geo.loc.to_f64(), dock_rect.size);
+                let shape = animation.genie(frame, target);
+                let cached = animation.snapshot.borrow().clone();
+                let texture = cached.or_else(|| {
+                    let texture = window_texture(renderer, assets, &animation.window, dark_theme, scale)?;
+                    *animation.snapshot.borrow_mut() = Some(texture.clone());
+                    Some(texture)
+                });
+                // Changement de cadre : l'image suit le cadre qui glisse et s'étire, coins arrondis
+                // redessinés à sa taille ; l'ancien et le nouveau contenu y sont posés tous deux,
+                // d'où un fondu enchaîné sans trou ni recadrage.
+                let radius = if animation.motion == wm::animation::Motion::Zoom
+                    && !wm::is_maximized(&animation.window)
+                {
                     f64::from(ferrite_ui::theme::WINDOW_RADIUS)
                 } else {
                     0.0
                 };
-            // Changement de taille : le nouveau contenu, dès qu'il existe, en fondu au-dessus.
-            if animation.wants_next()
-                && let Some(next) = window_texture(renderer, assets, &animation.window, dark_theme, scale)
-            {
-                animation.set_next(next);
+                // Changement de taille : le nouveau contenu, dès qu'il existe, en fondu au-dessus.
+                if animation.wants_next()
+                    && let Some(next) = window_texture(renderer, assets, &animation.window, dark_theme, scale)
+                {
+                    animation.set_next(next);
+                }
+                let next = animation.next.borrow().clone();
+                if let Some(next) = next {
+                    let faded = wm::animation::Genie {
+                        alpha: shape.alpha * animation.next_alpha(),
+                        ..shape
+                    };
+                    elements.push(OutputElement::Genie(genie::GenieElement::new(
+                        next,
+                        assets.decorations.shaders.genie.clone(),
+                        &faded,
+                        scale,
+                        radius,
+                    )));
+                }
+                if let Some(texture) = texture {
+                    elements.push(OutputElement::Genie(genie::GenieElement::new(
+                        texture,
+                        assets.decorations.shaders.genie.clone(),
+                        &shape,
+                        scale,
+                        radius,
+                    )));
+                } else {
+                    push_animation_fallback(renderer, animation, &shape, scale, &mut elements);
+                }
             }
-            let next = animation.next.borrow().clone();
-            if let Some(next) = next {
-                let faded = wm::animation::Genie {
-                    alpha: shape.alpha * animation.next_alpha(),
-                    ..shape
-                };
-                elements.push(OutputElement::Genie(genie::GenieElement::new(
-                    next,
-                    assets.decorations.shaders.genie.clone(),
-                    &faded,
-                    scale,
-                    radius,
-                )));
-            }
-            if let Some(texture) = texture {
-                elements.push(OutputElement::Genie(genie::GenieElement::new(
-                    texture,
-                    assets.decorations.shaders.genie.clone(),
-                    &shape,
-                    scale,
-                    radius,
-                )));
-            } else {
-                push_animation_fallback(renderer, animation, &shape, scale, &mut elements);
-            }
-        }
-        let animated: Vec<Window> = animations
-            .iter()
-            .map(|animation| animation.window.clone())
-            .collect();
-        drop(animations);
+            let animated: Vec<Window> = animations
+                .iter()
+                .map(|animation| animation.window.clone())
+                .collect();
+            drop(animations);
 
-        // Fenêtres du bureau courant et du bureau voisin visibles pendant le glissement.
-        for (page, offset) in &visible_pages {
-            let shift = (*offset * output_geo.size.w as f64).round() as i32;
-            if *page == state.workspaces.current() {
-                for (index, window) in state.space.elements().rev().enumerate() {
-                    if index == 1 {
-                        elements.extend(snap_preview.take());
+            // Fenêtres du bureau courant et du bureau voisin visibles pendant le glissement.
+            for (page, offset) in &visible_pages {
+                let shift = (*offset * output_geo.size.w as f64).round() as i32;
+                if *page == state.workspaces.current() {
+                    for (index, window) in state.space.elements().rev().enumerate() {
+                        if index == 1 {
+                            elements.extend(snap_preview.take());
+                        }
+                        if animated.contains(window) {
+                            continue;
+                        }
+                        if let Some(content) = state.space.element_geometry(window) {
+                            push_window(
+                                renderer,
+                                assets,
+                                window,
+                                content,
+                                output_geo,
+                                shift,
+                                pointer,
+                                dark_theme,
+                                scale,
+                                &mut elements,
+                            );
+                        }
                     }
-                    if animated.contains(window) {
-                        continue;
-                    }
-                    if let Some(content) = state.space.element_geometry(window) {
+                } else {
+                    for parked in state.workspaces.parked(*page).iter().rev() {
                         push_window(
                             renderer,
                             assets,
-                            window,
-                            content,
+                            &parked.window,
+                            parked.content(),
                             output_geo,
                             shift,
-                            pointer,
+                            None,
                             dark_theme,
                             scale,
                             &mut elements,
                         );
                     }
                 }
-            } else {
-                for parked in state.workspaces.parked(*page).iter().rev() {
-                    push_window(
-                        renderer,
-                        assets,
-                        &parked.window,
-                        parked.content(),
-                        output_geo,
-                        shift,
-                        None,
-                        dark_theme,
-                        scale,
-                        &mut elements,
-                    );
-                }
             }
+            elements.extend(snap_preview);
         }
-        elements.extend(snap_preview);
-    }
+    });
 
     // Sous les fenêtres, les widgets s'estompent dès que l'une d'elles les recouvre.
     if widgets_visible && !widgets_ahead {

@@ -4027,3 +4027,78 @@ Non vérifié : vrai bureau (DRM, où la taille ne change pas au démarrage : ga
 changement de fond, d'écran HDMI et de thème) ; changement de fond dans Paramètres.
 Reste : la première image (fond d'écran sur place) ; autres panneaux toujours redessinés
 dans le fil du compositeur quand leur état change (centre de contrôle, widgets).
+
+## 2026-11-11 — Fluidité, étape 3 : fond d'écran dessiné par bandes sur plusieurs cœurs
+
+Demande : fluidité maximale, étape 3 (gros dessins découpés en bandes).
+- `ferrite_ui::wallpaper` : `cover` (photo recadrée) et `paint` (fonds Ferrite) partagent
+  l'image en bandes de lignes dessinées en même temps (`in_bands`, `std::thread::scope`,
+  au plus 8 fils ; i5-12500H : 16). Les traits des fonds Ferrite sont limités aux lignes de
+  leur bande. Une bande dont le fil ne démarre pas est faite par l'appelant.
+Vérifié : CI (sans shellcheck) ; tests `fond_dessine_par_bandes_identique_a_une_seule_bande`
+et `image_recadree_par_bandes_identique_a_une_seule_bande` ; captures avant/après
+identiques au pixel près sous la barre (seul l'îlot diffère, pris à un autre instant).
+Mesuré en fenêtre (debug, photo de l'utilisateur, 3 démarrages chacun) : fond d'écran sur
+place 77–90 ms → sous 50 ms (plus signalé) ; première image 128–148 → 79–85 ms ; fonds
+dessinés à part 95–130 → 19–27 ms et 200–235 → 57–63 ms.
+Non vérifié : vrai bureau ; fonds Ferrite mesurés (seulement testés) ; Paramètres
+(vignettes, même code). Reste : première image à ~80 ms (autres premiers dessins).
+
+## 2026-11-11 — Fluidité, étape 4 : menus préparés d'avance au repos
+
+Demande : fluidité maximale, étape 4 (anticiper les ouvertures).
+- Mesure (test temporaire, version optimisée, 1440×900 à l'échelle 2, fil neuf à chaque
+  essai) : première ouverture 2 à 4 fois plus lente que les suivantes (ombres, icônes,
+  fond du centre de contrôle dessinés la première fois).
+- `Panels::warm_popover` / `popovers_pending` : centre de contrôle, notifications,
+  presse-papiers, capture dessinés sans être affichés, un par image, une fois par écran
+  et par thème ; `visual_state` sorti de `push_element`. Appelé par `render/mod.rs` quand
+  rien n'est ouvert, sans verrouillage, après 1,5 s sans entrée (`Idle::quiet_for`).
+Vérifié : CI (sans shellcheck) ; test `les_menus_se_preparent_un_par_appel_sans_rien_afficher` ;
+bureau en fenêtre : 4 menus préparés entre 1,5 et 2,3 s (35 ms chacun en debug), capture
+sans menu visible. Première ouverture, avant → après : centre de contrôle 30–35 → 9–10 ms,
+notifications 27–28 → 7–8, presse-papiers 40–41 → 13,6, capture 20–21 → 5–6.
+Non vérifié : vrai bureau ; ouverture réelle d'un menu après préparation (pas d'ouverture
+pilotable en fenêtre ; même fonction de dessin). Reste : presse-papiers à 13,6 ms à chaque
+ouverture (au-dessus des 11 ms d'une image), à regarder à part.
+
+## 2026-11-11 — Fluidité, étape 5 : images hors budget comptées, `tools/fluidite.sh`
+
+Demande : fluidité maximale, étape 5 (mesurer en continu).
+- `render/profile.rs` : chaque image préparée en plus de 11 ms (`BUDGET`) est comptée
+  avec sa cause (`cause` : étape la plus longue › panneau rastérisé le plus long) ; le
+  relevé de 5 s ajoute `images`, `hors_budget`, `pire_image`, `causes`,
+  `gpu_hors_budget`, `gpu_max_ms`. Le fichier de mesure est relu à chaque étape (la
+  première image mesurée l'était sans ses étapes : cause « inconnue »).
+- `render/mod.rs` : étapes nommées « curseur », « fenêtres », « widgets » (devant les
+  fenêtres) et « préparation d'avance » (lanceur, menus).
+- `tools/fluidite.sh` : bilan sur le bureau en cours (`[SECONDES]`) ou en fenêtre
+  (`--fenetre`, trois démarrages). Documenté dans `docs/TECHNIQUE.md` §3.3.
+Vérifié : tests (590, dont `la_cause_d_une_image_lente_est_son_etape_la_plus_longue`) ;
+formatage de mes fichiers ; `tools/fluidite.sh --fenetre` (3 essais, 7 à 8 images hors
+budget sur ~880 : 4 « préparation d'avance » voulues, première image 75–85 ms causée par
+« raccourcis », fond d'écran).
+Non vérifié : `tools/ci.sh` ne passe pas, à cause d'un cache de glyphes en cours dans
+`panels.rs` par une autre session (clippy `type_complexity`, ligne `GLYPHS`) ; mode
+`tools/fluidite.sh SECONDES` sur le vrai bureau ; shellcheck (absent).
+Trouvé : la première image du bureau est surtout le dessin des icônes du bureau
+(« raccourcis »), pas le fond d'écran.
+
+## 2026-11-11 — Fluidité : presse-papiers sous le budget d'une image à chaque ouverture
+
+Demande : le presse-papiers coûtait 13,6 ms à chaque ouverture (au-dessus des 11 ms).
+- Cause : le panneau s'ouvre près du pointeur, donc ailleurs à chaque fois ; l'ombre
+  (gardée par position absolue) était recalculée à chaque ouverture, et l'ombre, la carte,
+  les lettres et une copie de trop étaient refaites à chaque dessin.
+- `panels.rs` : ombre + carte vide gardées indépendamment de la place
+  (`clipboard_chrome`, `Canvas::put_block`), qui remplacent aussi la sauvegarde des bandes
+  au-dessus et au-dessous de la liste ; lettres dessinées gardées (`glyph`, 4096 au plus) ;
+  découpe de `rasterize` copiée directement dans l'image envoyée.
+Vérifié : CI (sans shellcheck) ; test `carte_du_presse_papiers_gardee_identique_au_dessin_direct`
+(pixels identiques à l'échelle 1, 2 et 1,25, collé aux bords compris) ; dessin à 9 lignes
+identique au pixel à l'ancien ; capture en fenêtre du panneau avec 4 éléments.
+Mesuré (version optimisée, 1440×900 à l'échelle 2, place changée à chaque ouverture, avant
+et après en alternance, 5 tours) : vide 37–39 → 5,3–5,8 ms (pire 8,3) ; 9 lignes
+40–41 → 7,7–8,1 ms (pire 9,2). Première ouverture sans préparation ~45 ms (faite au repos
+par la préparation des menus).
+Non vérifié : vrai bureau ; vraie ouverture par Super+V chronométrée (seulement le dessin).

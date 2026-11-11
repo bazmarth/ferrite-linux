@@ -2,6 +2,11 @@
 //! `$XDG_RUNTIME_DIR/ferrite-profil` existe, le journal reçoit toutes les 5 secondes le
 //! nombre d'images, le temps passé à les préparer et les panneaux redessinés au processeur.
 //! Sans ce fichier, la mesure ne coûte qu'une lecture de l'horloge par image.
+//!
+//! Chaque image préparée en plus de [`BUDGET`] (une image à 90 Hz) est comptée « hors
+//! budget », avec sa cause : l'étape la plus longue de l'image et, s'il y en a eu, le
+//! panneau rastérisé le plus long (« panneaux › calque »). `tools/fluidite.sh` en fait un
+//! bilan.
 
 use std::{
     cell::RefCell,
@@ -17,6 +22,11 @@ const REPORT: Duration = Duration::from_secs(5);
 /// 90 images par seconde, une image dure 11 ms ; 50 ms se voient déjà comme une saccade.
 const SLOW: Duration = Duration::from_millis(50);
 const CHECK: Duration = Duration::from_secs(1);
+/// Temps d'une image sur l'écran du ThinkBook (90 Hz) : au-delà, l'image risque de manquer
+/// son rendez-vous avec l'écran (saccade).
+pub const BUDGET: Duration = Duration::from_micros(11_111);
+/// Étapes qui englobent les autres : jamais retenues comme cause.
+const OUTER: [&str; 2] = ["image", "tour de boucle"];
 
 struct Stats {
     enabled: bool,
@@ -30,6 +40,67 @@ struct Stats {
     /// Images vraiment envoyées à l'écran, et nouvelles images soumises par application.
     sent: u32,
     commits: BTreeMap<String, u32>,
+    /// Images préparées en plus de [`BUDGET`], la pire et leurs causes.
+    over: u32,
+    worst: Option<(Duration, String)>,
+    causes: BTreeMap<String, u32>,
+    /// Rendus à la carte graphique de plus de [`BUDGET`], et le plus long.
+    gpu_over: u32,
+    gpu_max: Duration,
+    /// Étapes et rastérisations de l'image en cours.
+    steps: Vec<(&'static str, Duration)>,
+    rasters: Vec<(&'static str, Duration)>,
+}
+
+impl Stats {
+    /// Relit le fichier de mesure au plus une fois par [`CHECK`] ; à l'activation, le
+    /// bilan repart de zéro. Appelé à chaque étape, pour que la première image mesurée le
+    /// soit en entier.
+    fn refresh(&mut self, now: Instant) {
+        if now.duration_since(self.checked) < CHECK {
+            return;
+        }
+        self.checked = now;
+        let enabled = flag().is_some_and(|flag| flag.exists());
+        if enabled && !self.enabled {
+            self.reset(now);
+        }
+        self.enabled = enabled;
+    }
+
+    /// Remet les compteurs du bilan à zéro.
+    fn reset(&mut self, now: Instant) {
+        self.since = now;
+        self.frames = 0;
+        self.frame_total = Duration::ZERO;
+        self.frame_max = Duration::ZERO;
+        self.raster.clear();
+        self.sent = 0;
+        self.commits.clear();
+        self.over = 0;
+        self.worst = None;
+        self.causes.clear();
+        self.gpu_over = 0;
+        self.gpu_max = Duration::ZERO;
+        self.steps.clear();
+        self.rasters.clear();
+    }
+}
+
+/// Cause d'une image lente : l'étape la plus longue (hors étapes englobantes) et le
+/// panneau rastérisé le plus long, s'il y en a un.
+fn cause(steps: &[(&'static str, Duration)], rasters: &[(&'static str, Duration)]) -> String {
+    let longest = |list: &[(&'static str, Duration)]| {
+        list.iter()
+            .filter(|(name, _)| !OUTER.contains(name))
+            .max_by_key(|(_, spent)| *spent)
+            .map(|(name, _)| *name)
+    };
+    match (longest(steps), longest(rasters)) {
+        (Some(step), Some(raster)) if step != raster => format!("{step} › {raster}"),
+        (Some(name), _) | (None, Some(name)) => name.to_owned(),
+        (None, None) => "inconnue".to_owned(),
+    }
 }
 
 thread_local! {
@@ -43,6 +114,13 @@ thread_local! {
         raster: BTreeMap::new(),
         sent: 0,
         commits: BTreeMap::new(),
+        over: 0,
+        worst: None,
+        causes: BTreeMap::new(),
+        gpu_over: 0,
+        gpu_max: Duration::ZERO,
+        steps: Vec::new(),
+        rasters: Vec::new(),
     });
 }
 
@@ -56,6 +134,20 @@ pub fn timed<T>(name: &'static str, step: impl FnOnce() -> T) -> T {
     let start = Instant::now();
     let result = step();
     let spent = start.elapsed();
+    STATS.with_borrow_mut(|stats| {
+        stats.refresh(Instant::now());
+        if !stats.enabled {
+            return;
+        }
+        if name == "rendu GPU" {
+            stats.gpu_max = stats.gpu_max.max(spent);
+            if spent > BUDGET {
+                stats.gpu_over += 1;
+            }
+        } else {
+            stats.steps.push((name, spent));
+        }
+    });
     if spent >= SLOW {
         tracing::warn!(
             etape = name,
@@ -70,26 +162,23 @@ pub fn timed<T>(name: &'static str, step: impl FnOnce() -> T) -> T {
 pub fn frame(spent: Duration) {
     STATS.with_borrow_mut(|stats| {
         let now = Instant::now();
-        if now.duration_since(stats.checked) >= CHECK {
-            stats.checked = now;
-            let enabled = flag().is_some_and(|flag| flag.exists());
-            if enabled && !stats.enabled {
-                stats.since = now;
-                stats.frames = 0;
-                stats.frame_total = Duration::ZERO;
-                stats.frame_max = Duration::ZERO;
-                stats.raster.clear();
-                stats.sent = 0;
-                stats.commits.clear();
-            }
-            stats.enabled = enabled;
-        }
+        stats.refresh(now);
         if !stats.enabled {
             return;
         }
         stats.frames += 1;
         stats.frame_total += spent;
         stats.frame_max = stats.frame_max.max(spent);
+        if spent > BUDGET {
+            let cause = cause(&stats.steps, &stats.rasters);
+            stats.over += 1;
+            *stats.causes.entry(cause.clone()).or_default() += 1;
+            if stats.worst.as_ref().is_none_or(|(worst, _)| spent > *worst) {
+                stats.worst = Some((spent, cause));
+            }
+        }
+        stats.steps.clear();
+        stats.rasters.clear();
         let elapsed = now.duration_since(stats.since);
         if elapsed < REPORT {
             return;
@@ -114,22 +203,32 @@ pub fn frame(spent: Duration) {
             .take(6)
             .map(|(app, count)| format!("{app} {:.0}/s", f64::from(**count) / seconds))
             .collect();
+        let mut causes: Vec<(&String, &u32)> = stats.causes.iter().collect();
+        causes.sort_by_key(|(_, count)| std::cmp::Reverse(**count));
+        let causes: Vec<String> = causes
+            .iter()
+            .take(4)
+            .map(|(cause, count)| format!("{cause} {count}×"))
+            .collect();
+        let worst = stats.worst.as_ref().map_or_else(String::new, |(spent, cause)| {
+            format!("{:.1} ms ({cause})", spent.as_secs_f64() * 1000.0)
+        });
         info!(
             envoyees_par_seconde = format!("{:.1}", f64::from(stats.sent) / seconds),
             soumises = commits.join(", "),
+            images = stats.frames,
             images_par_seconde = format!("{per_second:.1}"),
             preparation_moyenne_ms = format!("{average:.2}"),
             preparation_max_ms = format!("{:.2}", stats.frame_max.as_secs_f64() * 1000.0),
             rasterisations = raster.join(", "),
+            hors_budget = stats.over,
+            pire_image = worst,
+            causes = causes.join(", "),
+            gpu_hors_budget = stats.gpu_over,
+            gpu_max_ms = format!("{:.2}", stats.gpu_max.as_secs_f64() * 1000.0),
             "profil du rendu"
         );
-        stats.since = now;
-        stats.frames = 0;
-        stats.frame_total = Duration::ZERO;
-        stats.frame_max = Duration::ZERO;
-        stats.raster.clear();
-        stats.sent = 0;
-        stats.commits.clear();
+        stats.reset(now);
     });
 }
 
@@ -157,9 +256,11 @@ pub fn raster<T>(name: &'static str, work: impl FnOnce() -> T) -> T {
     let result = work();
     STATS.with_borrow_mut(|stats| {
         if stats.enabled {
+            let spent = start.elapsed();
             let entry = stats.raster.entry(name).or_default();
             entry.0 += 1;
-            entry.1 += start.elapsed();
+            entry.1 += spent;
+            stats.rasters.push((name, spent));
         }
     });
     result
@@ -224,4 +325,24 @@ pub fn gesture(
         bureau,
         "geste"
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn la_cause_d_une_image_lente_est_son_etape_la_plus_longue() {
+        let ms = Duration::from_millis;
+        let steps = [("image", ms(30)), ("vue du bureau", ms(2)), ("panneaux", ms(25))];
+        assert_eq!(
+            cause(&steps, &[("barre", ms(1)), ("calque", ms(22))]),
+            "panneaux › calque"
+        );
+        assert_eq!(cause(&steps, &[]), "panneaux");
+        assert_eq!(cause(&[("image", ms(30))], &[("calque", ms(22))]), "calque");
+        assert_eq!(cause(&[("image", ms(30))], &[]), "inconnue");
+        // Même nom des deux côtés : écrit une fois.
+        assert_eq!(cause(&[("widgets", ms(20))], &[("widgets", ms(18))]), "widgets");
+    }
 }

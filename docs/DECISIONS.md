@@ -500,3 +500,9 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
   (autre taille d'écran, autre fond), l'ancien fond reste affiché, étiré au besoin, pendant
   les 80 à 200 ms du dessin : un fond juste avec une image de retard vaut mieux qu'une
   saccade. Le fond du lanceur ouvert avant d'être prêt est dessiné sur place, comme avant.
+- **2026-11-11 — Menus préparés d'avance au repos, sur place.** Centre de contrôle,
+  notifications, presse-papiers et capture sont dessinés une fois, sans être affichés,
+  1,5 s après la dernière entrée (un par image) : leur première ouverture passait de
+  20–41 ms à 5–14 ms. Fait dans le fil du compositeur (les panneaux ne se partagent pas
+  entre fils) : une image de retard au repos ne se voit pas, sauf pendant une vidéo,
+  une seule fois par écran et par thème.

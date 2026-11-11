@@ -7,6 +7,7 @@
 
 use std::{
     cell::{Cell, RefCell},
+    collections::HashMap,
     fs,
     path::PathBuf,
     rc::Rc,
@@ -31,7 +32,7 @@ use smithay::{
         renderer::{
             element::{
                 Kind,
-                memory::{MemoryRenderBuffer, MemoryRenderBufferRenderElement},
+                memory::{MemoryBuffer, MemoryRenderBuffer, MemoryRenderBufferRenderElement},
             },
             gles::GlesRenderer,
         },
@@ -1077,6 +1078,11 @@ pub struct Panels {
     launcher_backdrop: RefCell<Option<(LauncherBackdropKey, Vec<u8>)>>,
     /// Fond du lanceur en préparation dans un fil à part : ses clés et le résultat attendu.
     launcher_job: RefCell<Option<LauncherJob>>,
+    /// Ombre et carte vide du presse-papiers, gardées d'une ouverture à l'autre : elles
+    /// coûtaient 9 ms à chaque ouverture (version optimisée, écran 1440×900 à l'échelle 2).
+    clipboard_chrome: RefCell<Option<(ClipChromeKey, Rc<PixelBlock>)>>,
+    /// Menus préparés d'avance : écran et thème vus, et prochain menu à préparer.
+    popover_warmup: Cell<(WarmKey, usize)>,
     /// Préparation des icônes du lanceur : nombre de tuiles vues, et combien sont prêtes.
     icon_warmup: Cell<(usize, usize)>,
     /// Ombre et fond du centre de contrôle, gardés d'un dessin à l'autre (lignes de pixels).
@@ -1116,6 +1122,52 @@ fn animated(popover: Option<Popover>) -> bool {
 type LockWallKey = (u32, u32, bool, usize, Option<usize>, u8);
 /// Place (pixels physiques), échelle et fond d'écran d'un verre calculé.
 type FrostKey = ([u32; 4], u32, Option<usize>);
+
+/// Échelle, taille de la carte vide du presse-papiers et part fractionnaire de sa place en
+/// pixels physiques (bits exacts), puis ses couleurs. Sa place elle-même n'y est pas : le
+/// panneau s'ouvre près du pointeur, ailleurs à chaque fois.
+type ClipChromeKey = (u32, [u64; 2], [u32; 2], Color, Color);
+
+/// Morceau d'image BGRA prémultipliée ; (`left`, `top`) : son coin en pixels physiques,
+/// depuis le coin de ce qu'il représente (arrondi au pixel inférieur).
+struct PixelBlock {
+    left: i64,
+    top: i64,
+    width: u32,
+    height: u32,
+    pixels: Vec<u8>,
+}
+
+impl std::fmt::Debug for PixelBlock {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "PixelBlock({}×{} en {}, {})",
+            self.width, self.height, self.left, self.top
+        )
+    }
+}
+
+/// Menus préparés d'avance au repos, dans cet ordre (le lanceur a sa propre préparation).
+const WARMED_POPOVERS: [Popover; 4] = [
+    Popover::Controls,
+    Popover::Notifications,
+    Popover::Clipboard,
+    Popover::Screenshot,
+];
+
+/// Écran (taille logique, échelle) et thème pour lesquels les menus ont été préparés.
+type WarmKey = (u32, u32, u32, bool, Color);
+
+fn warm_key(output_geo: Rectangle<i32, Logical>, scale: f64, view: &DesktopView) -> WarmKey {
+    (
+        output_geo.size.w.max(1) as u32,
+        output_geo.size.h.max(1) as u32,
+        (scale * 1000.0).round() as u32,
+        view.dark_theme,
+        accent(),
+    )
+}
 
 /// Fond du lanceur préparé dans un fil à part : clés du fond et du verre, et canal qui
 /// rapporte le verre et les pixels du fond.
@@ -1167,6 +1219,8 @@ impl Panels {
             frost: RefCell::new(None),
             launcher_backdrop: RefCell::new(None),
             launcher_job: RefCell::new(None),
+            popover_warmup: Cell::new(((0, 0, 0, false, Color::WHITE), 0)),
+            clipboard_chrome: RefCell::new(None),
             controls_backdrop: RefCell::new(None),
             icon_warmup: Cell::new((0, 0)),
             lock_wall: RefCell::new(None),
@@ -1208,19 +1262,17 @@ impl Panels {
         self.icon_warmup.set((tiles.len(), ready));
     }
 
-    pub fn push_element(
+    /// État des panneaux pour l'écran `output_geo` et la vue `view`.
+    fn visual_state(
         &self,
-        renderer: &mut GlesRenderer,
-        output: &Output,
         output_geo: Rectangle<i32, Logical>,
         scale: f64,
         view: &DesktopView,
-        out: &mut Vec<super::super::render::OutputElement>,
-    ) {
+    ) -> VisualState {
         // Les widgets et l'îlot ont leurs propres images : les retirer évite de tout
         // redessiner pour eux. L'îlot montre aussi les bulles de notification, le son et
         // l'enregistrement ; seul l'écran verrouillé dessine encore la bulle du son.
-        let state = VisualState {
+        VisualState {
             width: output_geo.size.w.max(1) as u32,
             height: output_geo.size.h.max(1) as u32,
             scale_milli: (scale * 1000.0).round() as u32,
@@ -1244,7 +1296,53 @@ impl Panels {
             battery: self.battery(),
             clock: clock_snapshot(SystemTime::now()),
             system: SystemMetrics::default(),
-        };
+        }
+    }
+
+    /// Vrai tant que des menus restent à préparer pour cet écran et ce thème
+    /// ([`Panels::warm_popover`]).
+    pub fn popovers_pending(
+        &self,
+        output_geo: Rectangle<i32, Logical>,
+        scale: f64,
+        view: &DesktopView,
+    ) -> bool {
+        let (known, next) = self.popover_warmup.get();
+        known != warm_key(output_geo, scale, view) || next < WARMED_POPOVERS.len()
+    }
+
+    /// Prépare un menu par appel, sans l'afficher : sa première ouverture coûtait 2 à 4 fois
+    /// plus que les suivantes (ombres, icônes et fonds dessinés pour la première fois,
+    /// jusqu'à 30 ms). À n'appeler qu'au repos : le dessin se fait sur place.
+    pub fn warm_popover(&self, output_geo: Rectangle<i32, Logical>, scale: f64, view: &DesktopView) {
+        let key = warm_key(output_geo, scale, view);
+        let (known, mut next) = self.popover_warmup.get();
+        if known != key {
+            next = 0;
+        }
+        if let Some(&popover) = WARMED_POPOVERS.get(next) {
+            let mut state = self.visual_state(output_geo, scale, view);
+            state.view.popover = Some(popover);
+            state.view.controls.page = ControlsPage::Main;
+            crate::render::profile::raster("menu préparé", || {
+                let _ = self.rasterize(&state, scale);
+                let _ = self.rasterize_layer(&state, scale);
+            });
+            next += 1;
+        }
+        self.popover_warmup.set((key, next));
+    }
+
+    pub fn push_element(
+        &self,
+        renderer: &mut GlesRenderer,
+        output: &Output,
+        output_geo: Rectangle<i32, Logical>,
+        scale: f64,
+        view: &DesktopView,
+        out: &mut Vec<super::super::render::OutputElement>,
+    ) {
+        let state = self.visual_state(output_geo, scale, view);
         // La barre a sa propre image ; le reste ne dépend ni de son opacité ni de sa
         // présence, qui changent quand une fenêtre est agrandie.
         let bar_visible = state.view.bar_visible;
@@ -2156,21 +2254,17 @@ impl Panels {
         } else {
             whole
         };
-        let pixels = if bounds == whole {
-            canvas.pixels
-        } else {
-            crop_pixels(&canvas.pixels, width, bounds)
-        };
         let (x, y, w, h) = bounds;
+        // Découpe recopiée directement dans l'image envoyée, sans copie intermédiaire (une
+        // copie de moins, 1 à 2 ms pour un menu à l'échelle 2).
+        let mut memory = MemoryBuffer::new(Fourcc::Argb8888, (w as i32, h as i32));
+        let row = w as usize * 4;
+        for (line, target) in memory.chunks_exact_mut(row).enumerate() {
+            let start = ((y as usize + line) * width as usize + x as usize) * 4;
+            target.copy_from_slice(&canvas.pixels[start..start + row]);
+        }
         Raster {
-            buffer: MemoryRenderBuffer::from_slice(
-                &pixels,
-                Fourcc::Argb8888,
-                (w as i32, h as i32),
-                1,
-                smithay::utils::Transform::Normal,
-                None,
-            ),
+            buffer: MemoryRenderBuffer::from_memory(memory, 1, smithay::utils::Transform::Normal, None),
             origin: (x, y),
             size: (w, h),
         }
@@ -3326,9 +3420,35 @@ impl Panels {
     fn draw_clipboard(&self, canvas: &mut Canvas, layout: &Layout, view: &ClipboardView) {
         let t = clip_tokens();
         let card = layout.clipboard();
-        canvas.panel_shadow(card, 18.0);
-        canvas.fill(card, 18.0, t.panel);
-        canvas.stroke(card, 18.0, t.ring, 1.0);
+        // Ombre et carte vide : la carte est le premier dessin de sa toile, encore vide
+        // (`rasterize`), elle y est recopiée telle quelle.
+        let (chrome, at) = self.clipboard_chrome(canvas.scale, card, &t);
+        canvas.put_block(&chrome, at, None);
+
+        // Liste, coupée entre le filet de l'en-tête et le pied : ce qui déborde est effacé
+        // en reposant la carte vide, avant d'y dessiner l'en-tête et le pied.
+        let clip = layout.clipboard_clip();
+        let list = layout.clipboard_list();
+        for (title, y) in &view.sections {
+            canvas.tracked(
+                &self.bold,
+                title,
+                list.x + 8.0,
+                list.y + y + 12.0,
+                11.0,
+                0.0,
+                t.fg3,
+            );
+        }
+        for row in &view.rows {
+            self.clipboard_row(canvas, layout.clipboard_row(row), row, &t);
+        }
+        canvas.put_block(&chrome, at, Some((card.y - 30.0, clip.y)));
+        canvas.put_block(
+            &chrome,
+            at,
+            Some((clip.bottom(), card.bottom() + clipboard::ROW_TALL + 30.0)),
+        );
 
         // En-tête : titre et nombre, thème et « Tout effacer ».
         canvas.text(
@@ -3405,27 +3525,6 @@ impl Panels {
             t.line,
         );
 
-        // Liste, coupée entre le filet de l'en-tête et le pied.
-        let clip = layout.clipboard_clip();
-        let above = canvas.save_rows(card.y - 30.0, clip.y);
-        let below = canvas.save_rows(clip.bottom(), card.bottom() + clipboard::ROW_TALL + 30.0);
-        let list = layout.clipboard_list();
-        for (title, y) in &view.sections {
-            canvas.tracked(
-                &self.bold,
-                title,
-                list.x + 8.0,
-                list.y + y + 12.0,
-                11.0,
-                0.0,
-                t.fg3,
-            );
-        }
-        for row in &view.rows {
-            self.clipboard_row(canvas, layout.clipboard_row(row), row, &t);
-        }
-        canvas.restore_rows(above);
-        canvas.restore_rows(below);
         if let Some((title, hint)) = view.empty {
             let (cx, cy) = clip.center();
             let tile = Rect::new(cx - 28.0, cy - 64.0, 56.0, 56.0);
@@ -3471,6 +3570,63 @@ impl Panels {
             canvas.fill(undo, 8.0, Color::WHITE.with_alpha(36));
             centered_text(canvas, &self.bold, "Annuler", undo, 13.0, t.toast_action);
         }
+    }
+
+    /// Ombre et fond de la carte `card` du presse-papiers à l'échelle `scale`, et le coin où
+    /// les poser sur la toile (pixels physiques). Dessinés une fois par taille, échelle et
+    /// thème, sur une petite toile à part qui contient toute l'ombre : posés ensuite tels
+    /// quels où que s'ouvre le panneau (9 ms épargnées à chaque ouverture).
+    fn clipboard_chrome(&self, scale: f32, card: Rect, t: &ClipTokens) -> (Rc<PixelBlock>, (i64, i64)) {
+        // Mêmes calculs que `Canvas::fill` : la part fractionnaire du coin compte pour
+        // l'anticrénelage, le reste n'est qu'un décalage entier.
+        let (x, y) = (card.x as f32 * scale, card.y as f32 * scale);
+        let (fraction_x, fraction_y) = (x - x.floor(), y - y.floor());
+        let anchor = (x.floor() as i64, y.floor() as i64);
+        let key = (
+            scale.to_bits(),
+            [card.w, card.h].map(f64::to_bits),
+            [fraction_x, fraction_y].map(f32::to_bits),
+            t.panel,
+            t.ring,
+        );
+        let at = |block: &PixelBlock| (anchor.0 + block.left, anchor.1 + block.top);
+        if let Some((known, block)) = &*self.clipboard_chrome.borrow()
+            && *known == key
+        {
+            return (block.clone(), at(block));
+        }
+        let (side, above, below) = shadow_margins(elevation::PANEL);
+        let pad = ((side.max(above).max(below) + 2.0) * f64::from(scale)).ceil();
+        let local = Rect::new(
+            (pad + f64::from(fraction_x)) / f64::from(scale),
+            (pad + f64::from(fraction_y)) / f64::from(scale),
+            card.w,
+            card.h,
+        );
+        let width = (card.w * f64::from(scale) + 2.0 * pad + 2.0).ceil() as u32;
+        let height = (card.h * f64::from(scale) + 2.0 * pad + 2.0).ceil() as u32;
+        let mut blank = Canvas {
+            pixels: vec![0; width as usize * height as usize * 4],
+            width,
+            height,
+            scale,
+            bold: &self.bold,
+            icons: &self.icons,
+        };
+        blank.panel_shadow(local, 18.0);
+        blank.fill(local, 18.0, t.panel);
+        blank.stroke(local, 18.0, t.ring, 1.0);
+        let (left, top, w, h) = opaque_bounds(&blank.pixels, width, height, 1).unwrap_or((0, 0, 0, 0));
+        let block = Rc::new(PixelBlock {
+            left: i64::from(left) - pad as i64,
+            top: i64::from(top) - pad as i64,
+            width: w,
+            height: h,
+            pixels: crop_pixels(&blank.pixels, width, (left, top, w, h)),
+        });
+        *self.clipboard_chrome.borrow_mut() = Some((key, block.clone()));
+        let position = at(&block);
+        (block, position)
     }
 
     /// Une ligne : tuile du type, texte et origine, chiffre, épingle et croix.
@@ -6096,6 +6252,34 @@ impl Canvas<'_> {
         self.pixels[offset..offset + saved.len()].copy_from_slice(&saved);
     }
 
+    /// Recopie `block` en `at` (pixels physiques), en remplaçant ce qui y était : en entier
+    /// (`rows` vide), ou seulement entre les ordonnées logiques `rows`, où les lignes hors du
+    /// bloc sont remises à vide sur sa largeur. Ce qui sort de la toile est laissé.
+    fn put_block(&mut self, block: &PixelBlock, at: (i64, i64), rows: Option<(f64, f64)>) {
+        let s = self.scale as f64;
+        let (width, height) = (i64::from(self.width), i64::from(self.height));
+        let (from, to) = match rows {
+            Some((top, bottom)) => ((top * s).floor() as i64, (bottom * s).ceil() as i64),
+            None => (at.1, at.1 + i64::from(block.height)),
+        };
+        let (from, to) = (from.clamp(0, height), to.clamp(0, height));
+        let left = at.0.clamp(0, width);
+        let right = (at.0 + i64::from(block.width)).clamp(left, width);
+        let skip = ((left - at.0) * 4) as usize;
+        let span = ((right - left) * 4) as usize;
+        for y in from..to {
+            let start = ((y * width + left) * 4) as usize;
+            let target = &mut self.pixels[start..start + span];
+            let line = y - at.1;
+            if (0..i64::from(block.height)).contains(&line) {
+                let source = (line * i64::from(block.width) * 4) as usize + skip;
+                target.copy_from_slice(&block.pixels[source..source + span]);
+            } else {
+                target.fill(0);
+            }
+        }
+    }
+
     /// Pose le verre `frost` : en entier par-dessus ce qui est dessous (`rows` vide), ou
     /// seulement entre les ordonnées logiques `rows`, en remplaçant ce qui y était dessiné
     /// (sauf sur le bord arrondi, mélangé).
@@ -6374,7 +6558,8 @@ impl Canvas<'_> {
         let font_size = size * s * 1.22;
         let baseline = ((y as f32 + size * 1.22) * s).round() as i32;
         for character in text.chars() {
-            let (metrics, coverage) = font.rasterize(character, font_size);
+            let glyph = glyph(font, character, font_size);
+            let (metrics, coverage) = (&glyph.0, &glyph.1);
             for cy in 0..metrics.height {
                 for cx in 0..metrics.width {
                     let px = cursor.round() as i32 + metrics.xmin + cx as i32;
@@ -6850,6 +7035,33 @@ struct ShadowMask {
 
 thread_local! {
     static SHADOWS: RefCell<Vec<(ShadowKey, Rc<ShadowMask>)>> = const { RefCell::new(Vec::new()) };
+    static GLYPHS: RefCell<HashMap<GlyphKey, Rc<Glyph>>> =
+        RefCell::new(HashMap::new());
+}
+
+/// Lettres gardées au plus (quelques mégaoctets) ; au-delà, le cache repart de zéro.
+const GLYPH_CACHE: usize = 4096;
+
+/// Police (empreinte du fichier), caractère et taille en pixels (bits exacts).
+type GlyphKey = (usize, char, u32);
+/// Mesures et couverture d'une lettre dessinée.
+type Glyph = (fontdue::Metrics, Vec<u8>);
+
+/// Lettre `character` de `font` à `size` pixels, dessinée une seule fois : le même texte
+/// revient à chaque dessin d'un panneau (3 ms pour les lignes du presse-papiers).
+fn glyph(font: &Font, character: char, size: f32) -> Rc<Glyph> {
+    let key = (font.file_hash(), character, size.to_bits());
+    GLYPHS.with_borrow_mut(|cache| {
+        if let Some(glyph) = cache.get(&key) {
+            return glyph.clone();
+        }
+        if cache.len() >= GLYPH_CACHE {
+            cache.clear();
+        }
+        let glyph = Rc::new(font.rasterize(character, size));
+        cache.insert(key, glyph.clone());
+        glyph
+    })
 }
 
 /// Calcule l'ombre d'un rectangle arrondi (`x`, `y`, `w`, `h`, rayon `r`) floutée sur
@@ -7381,6 +7593,86 @@ mod tests {
         let tall = Rect::new(0.0, 0.0, 356.0, 360.0);
         assert_eq!(cards::shown_tasks(&desktop.dashboard, short).len(), 2);
         assert_eq!(cards::shown_tasks(&desktop.dashboard, tall).len(), 7);
+    }
+
+    #[test]
+    fn les_menus_se_preparent_un_par_appel_sans_rien_afficher() {
+        let panels = Panels::new().expect("polices embarquées");
+        let output = Rectangle::from_size((1440, 900).into());
+        let desktop = view(None);
+        assert!(panels.popovers_pending(output, 2.0, &desktop));
+        for _ in WARMED_POPOVERS {
+            panels.warm_popover(output, 2.0, &desktop);
+        }
+        assert!(!panels.popovers_pending(output, 2.0, &desktop));
+        // Le fond du centre de contrôle est prêt ; rien n'est affiché pour autant.
+        assert!(panels.controls_backdrop.borrow().is_some());
+        assert!(panels.cached.borrow().is_none());
+        assert!(panels.layer.borrow().is_none());
+        // Autre thème : tout est à refaire.
+        let dark = DesktopView {
+            dark_theme: true,
+            ..desktop
+        };
+        assert!(panels.popovers_pending(output, 2.0, &dark));
+    }
+
+    #[test]
+    fn carte_du_presse_papiers_gardee_identique_au_dessin_direct() {
+        fn blank(panels: &Panels, scale: f32) -> Canvas<'_> {
+            let (width, height) = ((1280.0 * scale) as u32, (720.0 * scale) as u32);
+            Canvas {
+                pixels: vec![0; width as usize * height as usize * 4],
+                width,
+                height,
+                scale,
+                bold: &panels.bold,
+                icons: &panels.icons,
+            }
+        }
+        let t = clip_tokens();
+        // Près du pointeur, collée aux bords (ombre coupée par l'écran), à l'échelle 1, 2 et
+        // fractionnaire.
+        let height = clipboard_height(720.0);
+        let places = [
+            None,
+            Some((8, 40)),
+            Some((1280 - 440 - 8, 720 - height as i32 - 8)),
+        ];
+        for scale in [1.0, 2.0, 1.25] {
+            let panels = Panels::new().expect("polices embarquées");
+            let mut known = None;
+            for position in places {
+                let mut desktop = view(Some(Popover::Clipboard));
+                desktop.clipboard.empty = Some(("Rien de copié", "Ce que vous copiez apparaîtra ici."));
+                desktop.clipboard.position = position;
+                let layout = Layout::new(1280.0, 720.0, &desktop);
+                let card = layout.clipboard();
+                // Ombre et carte vide recopiées : les mêmes pixels que dessinées sur place.
+                let mut direct = blank(&panels, scale);
+                direct.panel_shadow(card, 18.0);
+                direct.fill(card, 18.0, t.panel);
+                direct.stroke(card, 18.0, t.ring, 1.0);
+                let mut copied = blank(&panels, scale);
+                let (chrome, at) = panels.clipboard_chrome(scale, card, &t);
+                copied.put_block(&chrome, at, None);
+                assert!(direct.pixels == copied.pixels, "{scale} {position:?}");
+                // Ailleurs sur l'écran, la carte gardée resert (à une échelle entière ; sinon
+                // seulement au même quart de pixel près).
+                if let Some(first) = known.replace(chrome.clone())
+                    && scale.fract() == 0.0
+                {
+                    assert!(Rc::ptr_eq(&first, &chrome));
+                }
+                // Panneau entier : comme dessiné par des panneaux neufs.
+                let mut drawn = blank(&panels, scale);
+                panels.draw_clipboard(&mut drawn, &layout, &desktop.clipboard);
+                let fresh = Panels::new().expect("polices embarquées");
+                let mut reference = blank(&fresh, scale);
+                fresh.draw_clipboard(&mut reference, &layout, &desktop.clipboard);
+                assert!(drawn.pixels == reference.pixels, "{scale} {position:?}");
+            }
+        }
     }
 
     #[test]

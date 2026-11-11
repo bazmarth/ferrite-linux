@@ -49,6 +49,11 @@ impl Default for Idle {
 }
 
 impl Idle {
+    /// Temps écoulé depuis la dernière entrée (clavier, souris, pavé tactile).
+    pub fn quiet_for(&self) -> Duration {
+        self.last_input.elapsed()
+    }
+
     pub fn activity(&mut self) {
         let now = Instant::now();
         self.last_input = now;

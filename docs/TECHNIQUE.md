@@ -393,6 +393,13 @@ Elle prime sur la charte §3.4 de `PLAN.md` (voir `DECISIONS.md`, 2026-11-02).
 - Budget : 11 ms par image (90 images/s). Mesure : fichier `ferrite-profil` (§ ci-dessus),
   et `--winit --capture … --demo-*` dans un `XDG_RUNTIME_DIR` à part (sinon les applis
   Ferrite se confient à celles déjà ouvertes).
+- Bilan : `tools/fluidite.sh [SECONDES]` sur le bureau en cours (mesure pendant qu'on
+  s'en sert), `tools/fluidite.sh --fenetre [BINAIRE]` pour comparer deux versions (trois
+  démarrages en fenêtre). Il compte les images préparées en plus de 11 ms
+  (`profile::BUDGET`), donne la pire et leurs causes : étape la plus longue (`timed`) et
+  panneau rastérisé le plus long (`raster`), « inconnue » si aucune étape ne l'explique
+  (nommer alors l'étape avec `profile::timed`). Les préparations d'avance au repos sont
+  notées « préparation d'avance » : hors budget voulu, invisible.
 
 ### 3.4 Comportements UX établis (à conserver)
 

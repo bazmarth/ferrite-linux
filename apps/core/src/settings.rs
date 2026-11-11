@@ -2052,9 +2052,6 @@ impl SettingsState {
                 "dock_agrandissement",
                 true,
             );
-            rows.row(Row::new("Position").unavailable(), |ui| {
-                rows::segments(ui, &["Bas", "Gauche", "Droite"], 0);
-            });
             let mut hiding = settings.dock_hiding();
             let labels = hiding_labels();
             let row = Row::new("Masquage").hint("Se cache si une fenêtre le recouvre");

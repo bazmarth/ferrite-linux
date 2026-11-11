@@ -487,8 +487,8 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
   Barre du haut : symbole seul à la place du mot « Applications ». Bouton d'arrêt neutre :
   il demande déjà confirmation. Icônes d'applications inchangées.
 - **2026-11-11 — Le Dock reste toujours en bas.** Demande de l'utilisateur : pas de Dock à
-  gauche ou à droite. La ligne grisée « Position » de Paramètres › Bureau reste pour
-  l'instant (à retirer si l'utilisateur le souhaite).
+  gauche ou à droite. La ligne grisée « Position » de Paramètres › Bureau est retirée le
+  même jour (demande de l'utilisateur) : ce n'est plus un objectif.
 - **2026-11-11 — Bureaux : écran principal uniquement (oui par défaut).** Réglage
   `espaces_ecran_principal`. En mode « étendre », une fenêtre dont le centre est sur le
   second écran ne change pas de bureau : elle reste affichée, et ne compte pour aucun

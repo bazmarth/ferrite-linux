@@ -468,9 +468,9 @@ Reste :
 
 1. Reconstruire l'ISO (liste des paquets changée, dont `poppler-utils` ajouté le
    2026-11-07), l'essayer en VM, et publier une release depuis un arbre commité.
-2. Finir la phase 5 : réglages encore grisés dans Paramètres (position du Dock : abandonnée
-   le 2026-11-11, le Dock reste en bas ; mode des espaces de travail : fait le 2026-11-09 ;
-   « Écran principal uniquement » : fait le 2026-11-11) et rubriques en maquette (Notifications, Accessibilité et Imprimantes complétées le 2026-11-09 ; Mises à jour à vérifier).
+2. Phase 5 : plus aucun réglage grisé sans raison dans Paramètres (2026-11-11). Reste à
+   essayer « Tout installer » dans Mises à jour le jour où des paquets attendent (mot de passe
+   administrateur). Le Dock reste fixé en bas : sa position n'est plus un objectif.
 3. Batterie et fiabilité (phase 10) : moins d'images au repos (l'appli Claude soumet ~50
    images/s), démarrage < 20 s, tests automatiques des écrans par captures de référence.
 4. Phases 8–9 : changement d'utilisateur sans fermer la session (second greetd), paquets `.deb`, dépôt apt signé, installateur

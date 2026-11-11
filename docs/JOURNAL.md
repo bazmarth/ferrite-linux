@@ -3926,3 +3926,15 @@ agrandir, fermer).
   sa barre, Ferrite n'ajoute plus la sienne. ArtCraft lui-même n'est pas concerné.
 Vérifié : CI (sans shellcheck) ; tests des décorations.
 Non vérifié : à l'écran (le compositeur doit être relancé), autres fenêtres d'ArtCraft.
+
+## 2026-11-11 — Paramètres : fin des réglages grisés (phase 5)
+
+Demande : point suivant du chantier ; l'utilisateur confirme que le Dock reste fixé en bas
+et que sa position sort des objectifs.
+- Paramètres › Bureau et dock : ligne grisée « Position » retirée (dernière ligne grisée
+  sans condition ; les autres ne le sont que si le matériel ou le service manque).
+- Mises à jour : page vérifiée telle quelle (PackageKit) ; aucun changement de code.
+- `docs/TECHNIQUE.md` §5.3 et `docs/DECISIONS.md` mis à jour.
+Vérifié : CI ; capture de Bureau et dock (plus de « Position ») ; capture de Mises à jour
+(« Le système est à jour », listes relues, recoupé avec `apt list --upgradable` : 0).
+Non vérifié : « Tout installer » (aucun paquet en attente), thème sombre, vrai bureau.

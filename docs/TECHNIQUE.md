@@ -387,6 +387,9 @@ Elle prime sur la charte §3.4 de `PLAN.md` (voir `DECISIONS.md`, 2026-11-02).
   (`stroke`) : l'intérieur loin du trait est sauté. Ombres : les 6 dernières gardées
   (`SHADOWS`, opacité par pixel). Pixels identiques à l'ancien calcul : test
   `remplissage_et_ombre_d_un_bloc_identiques_au_calcul_pixel_par_pixel`.
+- Repos (DRM) : sans changement, un essai de rendu toutes les 16 ms pendant 0,5 s, puis
+  100 ms pendant 2 s, puis 500 ms (100 ms si une musique joue). Ces essais rythment aussi
+  `lock_tick`, `expire_notifications`, etc. (boucle principale) : délai d'une demi-seconde au plus.
 - Budget : 11 ms par image (90 images/s). Mesure : fichier `ferrite-profil` (§ ci-dessus),
   et `--winit --capture … --demo-*` dans un `XDG_RUNTIME_DIR` à part (sinon les applis
   Ferrite se confient à celles déjà ouvertes).

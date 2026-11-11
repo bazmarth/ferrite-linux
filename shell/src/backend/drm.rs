@@ -74,6 +74,12 @@ const IDLE_REDRAW: Duration = Duration::from_millis(16);
 /// clients, entrées et événements du bureau déclenchent de toute façon un rendu immédiat.
 const IDLE_STREAK: u32 = 30;
 const IDLE_SLOW: Duration = Duration::from_millis(100);
+/// Après encore deux secondes sans changement (20 essais à [`IDLE_SLOW`]), deux essais par
+/// seconde seulement : le processeur dort plus longtemps. Ces essais servent aussi de
+/// battement aux délais du bureau (verrouillage, notifications, horloge), en retard d'une
+/// demi-seconde au plus. Une musique en lecture garde [`IDLE_SLOW`] (temps écoulé régulier).
+const IDLE_DEEP_STREAK: u32 = IDLE_STREAK + 20;
+const IDLE_DEEP: Duration = Duration::from_millis(500);
 /// Formats des tampons d'affichage, par ordre de préférence.
 const COLOR_FORMATS: [Fourcc; 2] = [Fourcc::Argb8888, Fourcc::Abgr8888];
 
@@ -464,18 +470,25 @@ fn schedule_render(drm: &Rc<RefCell<Drm>>, handle: &LoopHandle<'static, Ferrite>
         // Rien n'a changé : on réessaie un peu plus tard (de moins en moins souvent). Sinon
         // le VBlank relancera.
         if let Some(streak) = idle {
-            let delay = if streak > IDLE_STREAK {
-                IDLE_SLOW
-            } else {
-                IDLE_REDRAW
-            };
-            schedule_render(drm, &loop_handle, delay);
+            let playing = state.media.list.iter().any(|media| media.playing);
+            schedule_render(drm, &loop_handle, idle_delay(streak, playing));
         }
         TimeoutAction::Drop
     });
     match inserted {
         Ok(token) => guard.render_scheduled = Some((token, !delay.is_zero())),
         Err(err) => error!("programmation du rendu impossible : {err}"),
+    }
+}
+
+/// Délai avant le prochain essai de rendu, après `streak` essais de suite sans rien de neuf.
+fn idle_delay(streak: u32, playing: bool) -> Duration {
+    if streak > IDLE_DEEP_STREAK && !playing {
+        IDLE_DEEP
+    } else if streak > IDLE_STREAK {
+        IDLE_SLOW
+    } else {
+        IDLE_REDRAW
     }
 }
 
@@ -1083,6 +1096,16 @@ mod tests {
         // PC fixe : le premier branché.
         assert_eq!(preferred_screen(&[DisplayPort, HDMIA], false), Some(0));
         assert_eq!(preferred_screen(&[], false), None);
+    }
+
+    #[test]
+    fn les_essais_au_repos_s_espacent() {
+        assert_eq!(idle_delay(1, false), IDLE_REDRAW);
+        assert_eq!(idle_delay(IDLE_STREAK + 1, false), IDLE_SLOW);
+        assert_eq!(idle_delay(IDLE_DEEP_STREAK + 1, false), IDLE_DEEP);
+        // Musique en lecture : pas de palier profond.
+        assert_eq!(idle_delay(IDLE_DEEP_STREAK + 1, true), IDLE_SLOW);
+        assert_eq!(idle_delay(u32::MAX, false), IDLE_DEEP);
     }
 
     #[test]

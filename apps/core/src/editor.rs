@@ -3360,7 +3360,10 @@ pub fn is_text(path: &Path) -> bool {
     if file.take(4096).read_to_end(&mut head).is_err() {
         return false;
     }
-    if head.contains(&0) {
+    // Un octet nul signale d'ordinaire un fichier binaire. Mais un `.md` ou un `.txt`
+    // peut en contenir un égaré (conversion depuis un PDF, par exemple) : son extension
+    // fait foi, il reste visible et s'ouvre.
+    if head.contains(&0) && !crate::files::is_text_file(path) {
         return false;
     }
     match std::str::from_utf8(&head) {
@@ -3549,6 +3552,9 @@ mod tests {
         assert!(super::is_text(&write("vide.txt", b"")));
         assert!(!super::is_text(&write("image.png", b"\x89PNG\r\n\x1a\n\0\0")));
         assert!(!super::is_text(&write("latin1.txt", b"caf\xe9 cr\xe8me")));
+        // Octet nul égaré dans un fichier à extension texte : toujours du texte.
+        assert!(super::is_text(&write("facture.md", b"Facture FZT9\x000001\n")));
+        assert!(!super::is_text(&write("donnees", b"abc\x00def")));
         // Un caractère coupé par la limite de lecture ne rend pas le fichier binaire.
         let mut long = vec![b'a'; 4095];
         long.extend("é".as_bytes());

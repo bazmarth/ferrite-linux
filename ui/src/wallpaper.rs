@@ -6,6 +6,7 @@ use std::{
     fs,
     io::Cursor,
     path::{Path, PathBuf},
+    sync::{Mutex, PoisonError},
 };
 
 use crate::theme::Color;
@@ -169,18 +170,14 @@ impl Image {
 }
 
 /// Fond dessiné à `width` × `height` pixels : les hexagones gardent leurs proportions et
-/// couvrent l'écran, comme une image recadrée.
+/// couvrent l'écran, comme une image recadrée. Dessiné par bandes, sur plusieurs cœurs.
 pub fn paint(builtin: Builtin, width: u32, height: u32) -> Image {
+    paint_with(builtin, width, height, threads())
+}
+
+fn paint_with(builtin: Builtin, width: u32, height: u32, threads: usize) -> Image {
     let (width, height) = (width.max(1), height.max(1));
     let (background, stroke) = builtin.colors();
-    let mut pixels = vec![
-        [
-            f32::from(background.r),
-            f32::from(background.g),
-            f32::from(background.b)
-        ];
-        (width * height) as usize
-    ];
     let scale = (width as f32 / 1600.0).max(height as f32 / 1000.0);
     let origin = (
         (width as f32 - 1600.0 * scale) / 2.0,
@@ -194,52 +191,109 @@ pub fn paint(builtin: Builtin, width: u32, height: u32) -> Image {
         Color::WHITE
     };
     let half_width = scale.max(0.5);
+    let mut strokes = Vec::new();
     for (opacity, segments) in white_outlines() {
         for (start, end) in segments {
-            stroke_segment(
-                &mut pixels,
-                width,
-                height,
-                place(start),
-                place(end),
-                half_width,
-                white,
-                opacity,
-            );
+            strokes.push((place(start), place(end), white, opacity));
         }
     }
     for (start, end) in CUBE_EDGES {
-        stroke_segment(
-            &mut pixels,
+        strokes.push((place(start), place(end), stroke, CUBE_OPACITY));
+    }
+    let mut rgba = vec![0; (width * height * 4) as usize];
+    in_bands(&mut rgba, width, threads, |first, rows, band| {
+        let mut pixels = vec![
+            [
+                f32::from(background.r),
+                f32::from(background.g),
+                f32::from(background.b)
+            ];
+            (width * rows) as usize
+        ];
+        let mut lines = Lines {
             width,
-            height,
-            place(start),
-            place(end),
-            half_width,
-            stroke,
-            CUBE_OPACITY,
-        );
-    }
-    let mut rgba = Vec::with_capacity(pixels.len() * 4);
-    for pixel in pixels {
-        let [r, g, b] = pixel.map(|channel| channel.round().clamp(0.0, 255.0) as u8);
-        rgba.extend([r, g, b, 255]);
-    }
+            first,
+            rows,
+            pixels: &mut pixels,
+        };
+        for &(start, end, color, opacity) in &strokes {
+            stroke_segment(&mut lines, start, end, half_width, color, opacity);
+        }
+        for (pixel, out) in pixels.iter().zip(band.chunks_exact_mut(4)) {
+            let [r, g, b] = pixel.map(|channel| channel.round().clamp(0.0, 255.0) as u8);
+            out.copy_from_slice(&[r, g, b, 255]);
+        }
+    });
     Image { width, height, rgba }
 }
 
-/// Trait anticrénelé : seuls les pixels autour du segment sont parcourus.
-#[allow(clippy::too_many_arguments)] // Image, segment et apparence.
-fn stroke_segment(
-    pixels: &mut [[f32; 3]],
+/// Lignes `first` à `first + rows` d'une image de `width` pixels de large.
+struct Lines<'a> {
     width: u32,
-    height: u32,
+    first: u32,
+    rows: u32,
+    pixels: &'a mut [[f32; 3]],
+}
+
+/// Nombre de cœurs utilisés pour dessiner un fond (au plus 8).
+fn threads() -> usize {
+    std::thread::available_parallelism().map_or(1, |count| count.get().min(8))
+}
+
+/// Bande de lignes à dessiner (première ligne et pixels), prise une seule fois.
+type Band<'a> = Mutex<Option<(u32, &'a mut [u8])>>;
+
+/// Partage `rgba` (lignes de `width` pixels RVBA) en bandes de lignes et appelle
+/// `work(première ligne, nombre de lignes, bande)` sur chacune, en même temps, sur
+/// `threads` fils. Une bande dont le fil ne démarre pas est faite sur place.
+fn in_bands(rgba: &mut [u8], width: u32, threads: usize, work: impl Fn(u32, u32, &mut [u8]) + Sync) {
+    let stride = width as usize * 4;
+    let height = rgba.len() / stride.max(1);
+    let per_band = height.div_ceil(threads.clamp(1, height.max(1))).max(1);
+    // Chaque bande est prise une seule fois, par son fil ou, à défaut, par l'appelant.
+    let bands: Vec<Band> = rgba
+        .chunks_mut(per_band * stride)
+        .enumerate()
+        .map(|(index, band)| Mutex::new(Some(((index * per_band) as u32, band))))
+        .collect();
+    let run = |slot: &Band| {
+        let taken = slot.lock().unwrap_or_else(PoisonError::into_inner).take();
+        if let Some((first, band)) = taken {
+            work(first, (band.len() / stride) as u32, band);
+        }
+    };
+    std::thread::scope(|scope| {
+        for slot in bands.iter().skip(1) {
+            let run = &run;
+            if let Err(error) = std::thread::Builder::new()
+                .name("fond d'écran".to_owned())
+                .spawn_scoped(scope, move || run(slot))
+            {
+                eprintln!("fil de dessin du fond non démarré : {error}");
+            }
+        }
+        // La première bande, puis celles dont le fil n'a pas démarré.
+        for slot in &bands {
+            run(slot);
+        }
+    });
+}
+
+/// Trait anticrénelé : seuls les pixels autour du segment sont parcourus, et seulement
+/// ceux des lignes de `lines`.
+fn stroke_segment(
+    lines: &mut Lines,
     a: (f32, f32),
     b: (f32, f32),
     half_width: f32,
     color: Color,
     opacity: f32,
 ) {
+    let (width, first, last_row) = (
+        lines.width as i32,
+        lines.first as i32,
+        (lines.first + lines.rows) as i32,
+    );
     let (dx, dy) = (b.0 - a.0, b.1 - a.1);
     let length_squared = (dx * dx + dy * dy).max(f32::EPSILON);
     let steps = dx.abs().max(dy.abs()).ceil() as i32;
@@ -249,12 +303,12 @@ fn stroke_segment(
     for step in 0..=steps {
         let t = step as f32 / steps.max(1) as f32;
         let (cx, cy) = ((a.0 + dx * t).floor() as i32, (a.1 + dy * t).floor() as i32);
-        for y in (cy - reach)..=(cy + reach) {
+        for y in (cy - reach).max(first)..=(cy + reach).min(last_row - 1) {
             for x in (cx - reach)..=(cx + reach) {
-                if x < 0 || y < 0 || x >= width as i32 || y >= height as i32 {
+                if x < 0 || x >= width {
                     continue;
                 }
-                let index = y as usize * width as usize + x as usize;
+                let index = (y - first) as usize * width as usize + x as usize;
                 let visited = last
                     .is_some_and(|(px, py): (i32, i32)| (x - px).abs() <= reach && (y - py).abs() <= reach);
                 if visited {
@@ -265,7 +319,7 @@ fn stroke_segment(
                 let distance = (qx - dx * along).hypot(qy - dy * along);
                 let coverage = (half_width + 0.5 - distance).clamp(0.0, 1.0);
                 if coverage > 0.0 {
-                    blend(&mut pixels[index], color, opacity * coverage);
+                    blend(&mut lines.pixels[index], color, opacity * coverage);
                 }
             }
         }
@@ -357,6 +411,10 @@ fn decode_jpeg(data: Vec<u8>) -> Result<Image, String> {
 /// l'image qu'il recouvre (net en réduction comme en agrandissement), et l'image finale
 /// est opaque.
 pub fn cover(image: &Image, width: u32, height: u32) -> Image {
+    cover_with(image, width, height, threads())
+}
+
+fn cover_with(image: &Image, width: u32, height: u32, threads: usize) -> Image {
     let (width, height) = (width.max(1), height.max(1));
     let ratio = (width as f64 / image.width as f64).max(height as f64 / image.height as f64);
     // Zone de l'image retenue, en pixels de l'image.
@@ -372,29 +430,33 @@ pub fn cover(image: &Image, width: u32, height: u32) -> Image {
         (start, end)
     };
     let columns: Vec<(u32, u32)> = (0..width).map(column).collect();
-    let mut rgba = Vec::with_capacity((width * height * 4) as usize);
-    for y in 0..height {
-        let from = top + y as f64 / ratio;
-        let start = (from.floor() as u32).min(image.height - 1);
-        let end = ((from + 1.0 / ratio).ceil() as u32).clamp(start + 1, image.height);
-        for &(x0, x1) in &columns {
-            let mut sum = [0u32; 3];
-            for sy in start..end {
-                let row = (sy * image.width) as usize * 4;
-                for sx in x0..x1 {
-                    let p = &image.rgba[row + sx as usize * 4..][..4];
-                    // Transparence de l'image : posée sur du noir.
-                    let alpha = p[3] as u32;
-                    for (total, channel) in sum.iter_mut().zip(p) {
-                        *total += *channel as u32 * alpha / 255;
+    let mut rgba = vec![0; (width * height * 4) as usize];
+    // Chaque ligne ne dépend que de l'image source : bandes dessinées en même temps.
+    in_bands(&mut rgba, width, threads, |first, _, band| {
+        for (offset, line) in band.chunks_exact_mut(width as usize * 4).enumerate() {
+            let y = first + offset as u32;
+            let from = top + y as f64 / ratio;
+            let start = (from.floor() as u32).min(image.height - 1);
+            let end = ((from + 1.0 / ratio).ceil() as u32).clamp(start + 1, image.height);
+            for (&(x0, x1), out) in columns.iter().zip(line.chunks_exact_mut(4)) {
+                let mut sum = [0u32; 3];
+                for sy in start..end {
+                    let row = (sy * image.width) as usize * 4;
+                    for sx in x0..x1 {
+                        let p = &image.rgba[row + sx as usize * 4..][..4];
+                        // Transparence de l'image : posée sur du noir.
+                        let alpha = p[3] as u32;
+                        for (total, channel) in sum.iter_mut().zip(p) {
+                            *total += *channel as u32 * alpha / 255;
+                        }
                     }
                 }
+                let count = (end - start) * (x1 - x0);
+                let [r, g, b] = sum.map(|total| (total / count) as u8);
+                out.copy_from_slice(&[r, g, b, 255]);
             }
-            let count = (end - start) * (x1 - x0);
-            rgba.extend(sum.map(|total| (total / count) as u8));
-            rgba.push(255);
         }
-    }
+    });
     Image { width, height, rgba }
 }
 
@@ -471,6 +533,38 @@ pub fn render(source: &Source, width: u32, height: u32) -> (Image, Option<String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fond_dessine_par_bandes_identique_a_une_seule_bande() {
+        for builtin in [Builtin::Ferrite, Builtin::Light] {
+            // Hauteur qui ne tombe pas juste : la dernière bande est plus courte.
+            let alone = paint_with(builtin, 401, 253, 1);
+            for threads in [2, 7, 64] {
+                assert!(
+                    paint_with(builtin, 401, 253, threads) == alone,
+                    "{builtin:?} en {threads} bandes"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn image_recadree_par_bandes_identique_a_une_seule_bande() {
+        let (width, height) = (97u32, 61u32);
+        let rgba = (0..width * height)
+            .flat_map(|i| [(i * 7) as u8, (i * 13) as u8, (i / 3) as u8, (i * 5 % 256) as u8])
+            .collect();
+        let image = Image { width, height, rgba };
+        for (w, h) in [(50, 31), (300, 157), (1, 1)] {
+            let alone = cover_with(&image, w, h, 1);
+            for threads in [3, 8] {
+                assert!(
+                    cover_with(&image, w, h, threads) == alone,
+                    "{w}×{h} en {threads} bandes"
+                );
+            }
+        }
+    }
 
     #[test]
     fn choix_du_fond_dans_les_reglages() {

@@ -203,6 +203,16 @@ fonts-noto-mono
 fonts-firacode
 fonts-courier-prime
 fonts-stix
+fonts-cascadia-code
+fonts-hack
+# Polices de création graphique (affiches, logos, maquettes) et écritures asiatiques
+fonts-inter
+fonts-montserrat
+fonts-league-spartan
+fonts-ibm-plex
+fonts-cardo
+fonts-lobster
+fonts-noto-cjk
 
 # Outils de diagnostic (critères de la phase 1)
 libinput-tools

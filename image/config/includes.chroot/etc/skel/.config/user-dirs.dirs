@@ -1,0 +1,10 @@
+# Dossiers personnels de Ferrite OS (format xdg-user-dirs).
+# Les applications Flatpak s'en servent pour savoir quels dossiers elles peuvent ouvrir.
+XDG_DESKTOP_DIR="$HOME"
+XDG_DOCUMENTS_DIR="$HOME/Documents"
+XDG_DOWNLOAD_DIR="$HOME/Téléchargements"
+XDG_MUSIC_DIR="$HOME/Musique"
+XDG_PICTURES_DIR="$HOME/Images"
+XDG_VIDEOS_DIR="$HOME/Vidéos"
+XDG_TEMPLATES_DIR="$HOME"
+XDG_PUBLICSHARE_DIR="$HOME"

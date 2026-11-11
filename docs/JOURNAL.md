@@ -3939,6 +3939,22 @@ Vérifié : CI ; capture de Bureau et dock (plus de « Position ») ; capture de
 (« Le système est à jour », listes relues, recoupé avec `apt list --upgradable` : 0).
 Non vérifié : « Tout installer » (aucun paquet en attente), thème sombre, vrai bureau.
 
+## 2026-11-11 — Batterie : le bureau se réveille moins souvent au repos (phase 10)
+
+Demande : passer à la batterie.
+- Mesure sur le vrai bureau (`ferrite-profil`) : Claude ne soumet plus que 1 à 8 images/s
+  au repos (55–66 le 10/11). Mais le bureau préparait encore ~10 images/s sans rien envoyer :
+  essais de rendu toutes les 100 ms (`IDLE_SLOW`) quand rien ne bouge.
+- `backend/drm.rs` : `idle_delay` ajoute un palier : après 2,5 s sans changement, un essai
+  toutes les 500 ms (`IDLE_DEEP`). Une musique en lecture garde 100 ms. Tout événement
+  (entrée, image d'une appli, demande du bureau) relance le rendu aussitôt, comme avant.
+- Revers accepté : délais du bureau (verrouillage, fin d'une notification, minute de
+  l'horloge) en retard d'une demi-seconde au plus après un long repos.
+Vérifié : CI (sans shellcheck) ; test `les_essais_au_repos_s_espacent`.
+Non vérifié : sur le vrai bureau (à installer par `tools/dev-on.sh`) ; mesure du vrai repos
+impossible pendant la session (l'appli Claude redessine en affichant la réponse) ;
+consommation en watts.
+
 ## 2026-11-11 — Fenêtres : boutons de Brave morts après une réduction
 
 Demande : boutons fermer, réduire et agrandir sans effet, surtout dans Brave.
@@ -3953,3 +3969,20 @@ Brave ; c'est lui qui les ignore après avoir été réduit par son bouton « �
 Vérifié : CI (sans shellcheck) ; la trace montrait les clics remis à Brave ; sur le vrai
 bureau, l'utilisateur confirme que les boutons de Brave répondent après une réduction.
 Non vérifié : VS Code et Claude (Electron, même moteur), retour d'un autre bureau.
+
+## 2026-11-11 — ISO reconstruite et essayée en VM ; scénarios remis à jour
+
+ISO construite par l'utilisateur (`tools/usb.sh`, 15:25, 1,3 Gio), avec l'arbre de travail
+du moment : elle contient l'espacement des essais au repos, pas encore commité. Ne pas la
+publier ; refaire l'ISO après le commit.
+- Scénarios : les clics visaient l'ancien Dock (Fichiers 470, TextEdit 537, Terminal 603,
+  Calculatrice 668, Paramètres 735 en 1280×800) ; Paramètres s'ouvre agrandi
+  (« Bureau et dock » en 94 393) ; `dock.txt` ouvre TextEdit par le menu Applications et
+  imite l'approche rapide des bords par des `move` enchaînés.
+- `stabilite.txt` : plus de clic sur « À propos » (hors de vue dans la fenêtre agrandie).
+Vérifié en VM (captures) : bureau, Terminal, centre de contrôle sans Wi-Fi ni Bluetooth,
+Paramètres ; Fichiers (nouveau dossier, copie, Corbeille) ; Bureau et dock ; plein écran
+de TextEdit (barre et Dock cachés) ; Dock rappelé par une descente rapide ; barre rappelée
+par une montée rapide, pas par une montée lente (essai à part).
+Non vérifié : la capture de la barre dans `dock.txt` est parfois prise trop tôt (minutage
+de QEMU) ; connexion, presse-papiers, espaces et autres scénarios non rejoués ; vrai PC.

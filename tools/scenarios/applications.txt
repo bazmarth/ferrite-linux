@@ -7,7 +7,7 @@
 serve tools/scenarios/installer-vlc-brave.sh
 sleep 75
 # Terminal depuis le Dock.
-click 640 756
+click 603 756
 sleep 6
 type bash -c "$(cat </dev/tcp/10.0.2.2/8765)"
 key ret

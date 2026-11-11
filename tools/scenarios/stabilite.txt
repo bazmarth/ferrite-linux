@@ -2,7 +2,7 @@
 sleep 75
 shot test-1-bureau
 # Terminal depuis le Dock.
-click 640 756
+click 603 756
 sleep 6
 shot test-2-terminal
 # Réglages rapides (indicateur réseau), puis Bluetooth (sans adaptateur dans QEMU).
@@ -15,9 +15,8 @@ shot test-3-bluetooth
 click 640 420
 sleep 2
 shot test-4-reactif
-# Paramètres depuis le Dock, page À propos.
-click 755 756
+# Paramètres depuis le Dock (agrandi, page Apparence).
+click 735 756
 sleep 8
-click 290 335
 sleep 4
 shot test-5-parametres

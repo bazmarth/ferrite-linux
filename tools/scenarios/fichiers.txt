@@ -1,7 +1,7 @@
 # Fichiers : ouverture depuis le Dock, nouveau dossier renommé, copier-coller,
 # Corbeille, vue en grille.
 sleep 75
-click 523 756
+click 470 756
 sleep 6
 shot fichiers-1-accueil
 # Nouveau dossier (Ctrl+Maj+N) : le nom est déjà sélectionné pour la saisie.

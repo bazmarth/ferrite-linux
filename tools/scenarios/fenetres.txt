@@ -24,7 +24,7 @@ drag 1100 700 640 760
 sleep 2
 shot fen-3-bords
 # Terminal, déplacé vite dans tous les sens.
-click 640 756
+click 603 756
 sleep 5
 drag 670 161 100 600
 drag 100 600 1200 100

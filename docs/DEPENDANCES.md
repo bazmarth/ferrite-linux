@@ -20,12 +20,13 @@ Chaque dépendance avec sa licence et la raison de sa présence. Les versions ex
 | `alacritty_terminal` 0.26 | ferrite-apps | Apache-2.0 | émulation du Terminal ; imposé par le plan |
 | `eframe` 0.37 | ferrite-apps | MIT/Apache-2.0 | fenêtres natives Wayland de toutes les applications Ferrite ; rendu GLES et prise en charge clavier/souris |
 | `epaint` 0.37 (déjà tiré par eframe) | ferrite-apps | MIT/Apache-2.0 | seulement pour activer `color_fonts` : emoji en couleur (police Noto Color Emoji du système) ; aucune bibliothèque nouvelle |
-| `winit` 0.30.13 (copie dans `third_party/winit`) | ferrite-apps (par eframe) | Apache-2.0 | remplace la version de crates.io (`[patch.crates-io]`) pour transmettre le pincement du pavé tactile sous Wayland ; détails dans `third_party/winit/FERRITE.md` |
+| `winit` 0.30.13 (copie dans `third_party/winit`) | ferrite-apps (par eframe) | Apache-2.0 | remplace la version de crates.io (`[patch.crates-io]`) pour transmettre le pincement du pavé tactile et la demande de premier plan sous Wayland ; détails dans `third_party/winit/FERRITE.md` |
 | `qrcode` 0.14 (sans fonctions par défaut, aucune dépendance) | ferrite-apps | MIT/Apache-2.0 | Paramètres › Wi-Fi › Détails : QR code pour partager le réseau |
 | `quick-xml` 0.41 (déjà tirée par zbus) | ferrite-apps | MIT | Logithèque : lecture en flux du catalogue de Flathub (`appstream.xml`, 50 Mo) |
 | `yaml-rust2` 0.13 | ferrite-apps | MIT/Apache-2.0 | Logithèque : lecture du catalogue des applications de Debian (DEP-11, en YAML) |
 | `flate2` 1 (déjà dans `Cargo.lock`) | ferrite-apps | MIT/Apache-2.0 | Logithèque : catalogues compressés (`.yml.gz`, `appstream.xml.gz`) |
 | `miniz_oxide` 0.8 (déjà tirée par `png`) | ferrite-apps | MIT/Zlib/Apache-2.0 | Fichiers › Créer un PDF : images PNG compressées sans perte (zlib) |
+| `lopdf` 0.47 (sans fonctions par défaut) | ferrite-apps | MIT | Lecteur PDF : liens et renvois (rectangle exact, page et hauteur visées, adresse web), que Poppler en ligne de commande ne donne pas |
 | `async-channel` 2 | ferrite-shell | MIT/Apache-2.0 | réponses de l'agent polkit attendues sans bloquer la boucle |
 | `libc` 0.2 | ferrite-shell, ferrite-system | MIT/Apache-2.0 | `statvfs` : espace disque libre affiché par le bureau ; `localtime_r` : décalage horaire (heure d'été comprise) sans lancer `date` |
 | `gstreamer`, `gstreamer-app`, `gstreamer-video` 0.25 | ferrite-apps, ferrite-visage | MIT/Apache-2.0 (GStreamer : LGPL, liaison dynamique) | Lecteur vidéo, vignettes des vidéos dans Fichiers, lecture de la caméra infrarouge |

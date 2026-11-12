@@ -4170,3 +4170,23 @@ Non vérifié : vrai bureau (DRM) ; animation d'ouverture regardée image par im
 Reste : contenu de la page principale (redessiné à chaque pas d'un curseur) ; toile plein
 écran devenue inutile (le contenu tient dans le panneau) ; vue d'ensemble 13 ms sur
 batterie.
+
+## 2026-11-12 — Lecteur PDF : liens, onglets, premier plan
+
+Demande : suivre les liens et références (articles), mettre au premier plan l'application
+qui reçoit un fichier, plusieurs PDF ouverts en même temps.
+- `pdf_viewer/links.rs` (nouveau, `lopdf`) : liens de chaque page (`/Dest`, `GoTo`, noms
+  dans `/Dests` ou l'arbre `/Names`, `URI`, `GoToR`), rotation et cadre de page suivis ;
+  aperçu du texte visé (entrée de bibliographie) pour l'info-bulle.
+- `pdf_viewer/follow.rs` (nouveau) : main au survol, info-bulle, clic, `Jump::Top`
+  (cible près du haut), bouton « Revenir à la page N » et Alt+←.
+- `pdf_viewer/tabs.rs` (nouveau) + `ViewerApp` : `Kind::Pdf(Vec<PdfViewerState>, actif)`,
+  onglets sous la barre d'outils dès deux documents, Ctrl+W, Ctrl+Tab, Ctrl+Pg. ;
+  identifiant par onglet pour l'état egui (défilement).
+- `third_party/winit` : `focus_window` demande l'activation (`xdg_activation`).
+Vérifié : CI (sans shellcheck) ; tests des liens (document construit, rotation, nom,
+URI écartée `file:`) et lecture d'un vrai PDF LaTeX (hyperref) ; capture du bureau
+imbriqué : deuxième lancement reçu en onglet, renvoi [1] suivi jusqu'à la bibliographie,
+bouton « Revenir ».
+Non vérifié : retour au premier plan (une seule fenêtre dans la capture) ; info-bulle au
+survol (pas de pointeur dans la capture) ; vrai bureau ; articles d'éditeurs réels.

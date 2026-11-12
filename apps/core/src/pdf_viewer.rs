@@ -8,10 +8,13 @@
 
 mod annotate;
 mod annotations;
+mod follow;
+mod links;
 mod poppler;
 mod recents;
 mod search;
 mod selection;
+mod tabs;
 
 use std::{
     collections::{HashMap, HashSet},
@@ -92,6 +95,7 @@ enum Loaded {
         notes: Notes,
     },
     Outline(Vec<OutlineItem>),
+    Links(Vec<Vec<links::Link>>),
 }
 
 /// Ce que fait un clic sur la page.
@@ -136,6 +140,8 @@ enum Jump {
     Point(usize, f32),
     /// Décalage brut, en points d'écran.
     Offset(f32),
+    /// Cible d'un renvoi : page et hauteur en points PDF, placée près du haut de la vue.
+    Top(usize, f32),
 }
 
 #[derive(Default)]
@@ -204,6 +210,8 @@ fn render_width(width: f32, page: egui::Vec2) -> u32 {
 }
 
 pub struct PdfViewerState {
+    /// Numéro unique de l'onglet (identifiants egui propres à chaque document).
+    id: u64,
     path: PathBuf,
     /// Numéro du document ouvert : les réponses pour un document précédent sont ignorées.
     generation: u64,
@@ -252,6 +260,10 @@ pub struct PdfViewerState {
     editing: Option<Editing>,
     side: Side,
     outline: Vec<OutlineItem>,
+    /// Liens de chaque page (renvois, adresses web).
+    links: Vec<Vec<links::Link>>,
+    /// Positions (décalage de la vue) quittées en suivant un renvoi, pour y revenir.
+    back: Vec<(f32, usize)>,
     /// Message bref et l'heure de son apparition.
     message: Option<(String, f64)>,
     /// Page et point (en points de PDF) du dernier clic droit.
@@ -262,12 +274,17 @@ pub struct PdfViewerState {
     pub request_open: bool,
     pub request_recent: Option<PathBuf>,
     pub request_clear_recents: bool,
+    /// Lien vers un autre document PDF, ouvert par `ViewerApp` dans un nouvel onglet.
+    pub request_file: Option<follow::FileRequest>,
+    pub request_tab: Option<tabs::TabAction>,
 }
 
 impl PdfViewerState {
     pub fn new(path: PathBuf, start_page: usize) -> Self {
+        static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let (sender, receiver) = mpsc::channel();
         Self {
+            id: NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             path,
             generation: 0,
             sender,
@@ -306,12 +323,16 @@ impl PdfViewerState {
             editing: None,
             side: Side::Pages,
             outline: Vec::new(),
+            links: Vec::new(),
+            back: Vec::new(),
             message: None,
             menu_at: None,
             page_rects: Vec::new(),
             request_open: false,
             request_recent: None,
             request_clear_recents: false,
+            request_file: None,
+            request_tab: None,
         }
     }
 
@@ -320,25 +341,22 @@ impl PdfViewerState {
         if self.info.is_some() { self.current + 1 } else { 0 }
     }
 
-    /// Autre document : tout ce qui concernait le précédent est oublié ; la colonne et le
-    /// mode de zoom restent ceux choisis.
-    pub fn open(&mut self, path: PathBuf, start_page: usize) {
-        if path == self.path {
-            return;
-        }
-        self.close_editor();
-        let (zoom, sidebar) = (self.zoom, self.sidebar);
-        let (side, ink, mark) = (self.side, self.ink, self.mark);
-        let generation = self.generation.wrapping_add(1);
-        let keyboard_zoom_off = self.keyboard_zoom_off;
-        *self = Self::new(path, start_page);
-        self.generation = generation;
-        self.zoom = zoom;
-        self.sidebar = sidebar;
-        self.side = side;
-        self.ink = ink;
-        self.mark = mark;
-        self.keyboard_zoom_off = keyboard_zoom_off;
+    /// Autre document, dans un nouvel onglet : la colonne, le mode de zoom et l'encre du
+    /// surligneur sont ceux choisis dans `other`.
+    pub fn new_like(path: PathBuf, start_page: usize, other: &Self) -> Self {
+        let mut state = Self::new(path, start_page);
+        state.zoom = other.zoom;
+        state.sidebar = other.sidebar;
+        state.side = other.side;
+        state.ink = other.ink;
+        state.mark = other.mark;
+        state.keyboard_zoom_off = other.keyboard_zoom_off;
+        state
+    }
+
+    /// L'onglet redevient visible : le titre de la fenêtre doit suivre.
+    pub fn shown_again(&mut self) {
+        self.title.clear();
     }
 
     fn spawn(&self, ctx: &egui::Context, job: impl FnOnce(&Path) -> Loaded + Send + 'static) {
@@ -368,6 +386,7 @@ impl PdfViewerState {
             Loaded::Notes { key, notes }
         });
         self.spawn(ctx, |path| Loaded::Outline(poppler::load_outline(path)));
+        self.spawn(ctx, |path| Loaded::Links(links::load(path)));
         self.search.loading = true;
         self.spawn(ctx, |path| Loaded::Words(poppler::load_words(path)));
     }
@@ -434,6 +453,10 @@ impl PdfViewerState {
                     }
                 }
                 Loaded::Outline(outline) => self.outline = outline,
+                Loaded::Links(links) => {
+                    self.links = links;
+                    self.demo_link(ctx);
+                }
             }
         }
     }
@@ -599,7 +622,10 @@ impl PdfViewerState {
         if pressed(Key::ArrowRight) {
             self.go_to(self.current + 1);
         }
-        if pressed(Key::ArrowLeft) {
+        let alt = ctx.input(|input| input.modifiers.alt);
+        if alt && pressed(Key::ArrowLeft) {
+            self.go_back();
+        } else if pressed(Key::ArrowLeft) {
             self.go_to(self.current.saturating_sub(1));
         }
         if pressed(Key::Home) {
@@ -671,7 +697,7 @@ impl PdfViewerState {
         }
     }
 
-    pub fn update(&mut self, ui: &mut egui::Ui, recents: &[Recent]) {
+    pub fn update(&mut self, ui: &mut egui::Ui, recents: &[Recent], tabs: Option<&tabs::Strip>) {
         let ctx = ui.ctx().clone();
         if !self.keyboard_zoom_off {
             // + et − zooment la page, pas toute l'interface.
@@ -691,6 +717,9 @@ impl PdfViewerState {
         style::toolbar_with(ui, true, style::background(), style::line(), |ui| {
             self.toolbar(ui, &ctx, recents)
         });
+        if let Some(strip) = tabs {
+            self.request_tab = tabs::strip(ui, strip, self.id);
+        }
         if self.search.open {
             self.search_bar(ui, &ctx);
         }
@@ -756,6 +785,7 @@ impl PdfViewerState {
                 offset = layout.tops.get(page).map(|top| top + y * scale - view.y / 2.0)
             }
             Some(Jump::Offset(y)) => offset = Some(y),
+            Some(Jump::Top(page, y)) => offset = layout.tops.get(page).map(|top| top + y * scale - GAP),
             None => {
                 if (scale - self.scale).abs() > 0.0001
                     && self.scale > 0.0
@@ -774,7 +804,7 @@ impl PdfViewerState {
 
         let mut area = egui::ScrollArea::both()
             .auto_shrink([false, false])
-            .id_salt("pages-pdf");
+            .id_salt(("pages-pdf", self.id));
         if let Some(y) = offset {
             area = area.vertical_scroll_offset(y);
         }
@@ -853,6 +883,7 @@ impl PdfViewerState {
         self.track_selection(ctx, view_rect);
         self.selection_bar(ctx, view_rect);
         self.editor(ctx, view_rect);
+        self.back_button(ctx, view_rect);
         self.paint_message(ui, view_rect);
     }
 
@@ -1603,7 +1634,8 @@ pub struct ViewerApp {
 
 enum Kind {
     Images(Box<crate::viewer::ViewerState>),
-    Pdf(Option<Box<PdfViewerState>>),
+    /// Documents ouverts (un par onglet ; aucun : l'écran d'accueil) et celui affiché.
+    Pdf(Vec<PdfViewerState>, usize),
 }
 
 impl ViewerApp {
@@ -1629,7 +1661,7 @@ impl ViewerApp {
     }
 
     pub fn new_pdf(path: Option<PathBuf>) -> Self {
-        let mut app = Self::with_kind(Kind::Pdf(None));
+        let mut app = Self::with_kind(Kind::Pdf(Vec::new(), 0));
         if let Some(path) = path {
             app.open_pdf(path);
         }
@@ -1642,43 +1674,129 @@ impl ViewerApp {
         } else {
             match &mut self.kind {
                 Kind::Images(viewer) => viewer.open(path),
-                Kind::Pdf(_) => *self = Self::new(Some(path)),
+                Kind::Pdf(..) => *self = Self::new(Some(path)),
             }
         }
     }
 
-    /// Ouvre un document à la page où on l'avait laissé, et le met en tête des récents.
+    /// Ouvre un document à la page où on l'avait laissé, dans un nouvel onglet (ou revient
+    /// à son onglet s'il est déjà ouvert), et le met en tête des récents.
     pub fn open_pdf(&mut self, path: PathBuf) {
         let path = recents::absolute(&path);
         let start = recents::load()
             .iter()
             .find(|recent| recent.path == path)
             .map_or(1, |recent| recent.page);
-        let reopened = matches!(&self.kind, Kind::Pdf(Some(viewer)) if viewer.path == path);
-        if !reopened {
-            match &mut self.kind {
-                Kind::Pdf(Some(viewer)) => viewer.open(path.clone(), start),
-                _ => self.kind = Kind::Pdf(Some(Box::new(PdfViewerState::new(path.clone(), start)))),
-            }
+        self.open_pdf_at(path, start, false);
+    }
+
+    /// `forced` : aller à `start` même si le document est déjà ouvert (lien vers une page).
+    fn open_pdf_at(&mut self, path: PathBuf, start: usize, forced: bool) {
+        if !matches!(self.kind, Kind::Pdf(..)) {
+            self.kind = Kind::Pdf(Vec::new(), 0);
         }
-        // Même document ouvert à nouveau : la page et le zoom sont conservés.
-        let page = match &self.kind {
-            Kind::Pdf(Some(viewer)) if reopened => viewer.page().max(1),
-            _ => start,
+        let Kind::Pdf(documents, active) = &mut self.kind else {
+            return;
+        };
+        let page = match documents.iter().position(|viewer| viewer.path == path) {
+            // Même document ouvert à nouveau : la page et le zoom sont conservés.
+            Some(index) => {
+                *active = index;
+                let viewer = &mut documents[index];
+                viewer.shown_again();
+                if forced {
+                    viewer.go_to(start.saturating_sub(1));
+                    start
+                } else {
+                    viewer.page().max(1)
+                }
+            }
+            None => {
+                let viewer = match documents.get(*active) {
+                    Some(other) => PdfViewerState::new_like(path.clone(), start, other),
+                    None => PdfViewerState::new(path.clone(), start),
+                };
+                documents.push(viewer);
+                *active = documents.len() - 1;
+                start
+            }
         };
         self.saved_page = page;
         self.recents = recents::update(|list| recents::touch(list, &path, page));
     }
 
+    fn active_pdf(&self) -> Option<&PdfViewerState> {
+        match &self.kind {
+            Kind::Pdf(documents, active) => documents.get(*active),
+            Kind::Images(_) => None,
+        }
+    }
+
+    /// Onglets : choisir, fermer, passer au suivant.
+    fn tab_action(&mut self, action: tabs::TabAction) {
+        let Kind::Pdf(documents, active) = &mut self.kind else {
+            return;
+        };
+        match action {
+            tabs::TabAction::Select(index) if index < documents.len() => *active = index,
+            tabs::TabAction::Close(index) if index < documents.len() => {
+                documents[index].close_editor();
+                documents.remove(index);
+                if *active > index || *active >= documents.len() {
+                    *active = active.saturating_sub(1);
+                }
+            }
+            tabs::TabAction::Open => {
+                self.open_picker();
+                return;
+            }
+            _ => return,
+        }
+        if let Some(viewer) = documents.get_mut(*active) {
+            viewer.shown_again();
+            self.saved_page = viewer.page();
+        } else {
+            self.saved_page = 0;
+        }
+    }
+
+    /// Ctrl+W ferme l'onglet ; Ctrl+Tab et Ctrl+Pg. suiv. passent au suivant (avec Maj, ou
+    /// Pg. préc., au précédent).
+    fn tab_keys(&mut self, ctx: &egui::Context) {
+        let Kind::Pdf(documents, active) = &self.kind else {
+            return;
+        };
+        let (count, active) = (documents.len(), *active);
+        if count == 0 || ctx.egui_wants_keyboard_input() {
+            return;
+        }
+        let (command, shift) = ctx.input(|input| (input.modifiers.command, input.modifiers.shift));
+        if !command {
+            return;
+        }
+        let pressed = |key: Key| ctx.input_mut(|input| input.consume_key(input.modifiers, key));
+        if pressed(Key::W) {
+            self.tab_action(tabs::TabAction::Close(active));
+        } else if count > 1 {
+            let next = pressed(Key::PageDown) || (!shift && pressed(Key::Tab));
+            let previous = pressed(Key::PageUp) || (shift && pressed(Key::Tab));
+            if next {
+                self.tab_action(tabs::TabAction::Select((active + 1) % count));
+            } else if previous {
+                self.tab_action(tabs::TabAction::Select((active + count - 1) % count));
+            }
+        }
+    }
+
     fn open_picker(&mut self) {
         // Le sélecteur s'ouvre sur le dossier du document en cours, s'il y en a un.
-        let start = match &self.kind {
-            Kind::Pdf(Some(viewer)) => viewer
+        let start = match self.active_pdf() {
+            Some(viewer) => viewer
                 .path
                 .parent()
                 .filter(|path| path.is_dir())
                 .map(Path::to_path_buf),
-            _ => self
+            None => self
                 .recents
                 .first()
                 .and_then(|recent| recent.path.parent())
@@ -1696,15 +1814,33 @@ impl ViewerApp {
         {
             self.open_picker();
         }
+        if self.picker.is_none() {
+            self.tab_keys(&ctx);
+        }
         let mut wants_open = false;
         let mut wanted_recent = None;
+        let mut wanted_file = None;
+        let mut tab_action = None;
         let mut clear = false;
         match &mut self.kind {
             Kind::Images(viewer) => viewer.update(ui),
-            Kind::Pdf(Some(viewer)) => {
-                viewer.update(ui, &self.recents);
+            Kind::Pdf(documents, active) if *active < documents.len() => {
+                let strip = (documents.len() > 1).then(|| tabs::Strip {
+                    tabs: documents
+                        .iter()
+                        .map(|viewer| tabs::Tab {
+                            name: file_name(&viewer.path),
+                            path: viewer.path.display().to_string(),
+                        })
+                        .collect(),
+                    active: *active,
+                });
+                let viewer = &mut documents[*active];
+                viewer.update(ui, &self.recents, strip.as_ref());
                 wants_open = std::mem::take(&mut viewer.request_open);
                 wanted_recent = viewer.request_recent.take();
+                wanted_file = viewer.request_file.take();
+                tab_action = viewer.request_tab.take();
                 clear = std::mem::take(&mut viewer.request_clear_recents);
                 // La page lue est retenue dès qu'elle change.
                 let page = viewer.page();
@@ -1720,7 +1856,7 @@ impl ViewerApp {
                     });
                 }
             }
-            Kind::Pdf(None) => match self.empty_state(ui) {
+            Kind::Pdf(..) => match self.empty_state(ui) {
                 Some(EmptyAction::Open) => wants_open = true,
                 Some(EmptyAction::Recent(path)) => wanted_recent = Some(path),
                 Some(EmptyAction::Forget(path)) => {
@@ -1731,14 +1867,22 @@ impl ViewerApp {
             },
         }
         if clear {
-            let keep = match &self.kind {
-                Kind::Pdf(Some(viewer)) => Some(viewer.path.clone()),
-                _ => None,
+            // Les documents ouverts restent dans la liste.
+            let keep: Vec<PathBuf> = match &self.kind {
+                Kind::Pdf(documents, _) => documents.iter().map(|viewer| viewer.path.clone()).collect(),
+                Kind::Images(_) => Vec::new(),
             };
-            self.recents = recents::update(|list| list.retain(|recent| Some(&recent.path) == keep.as_ref()));
+            self.recents = recents::update(|list| list.retain(|recent| keep.contains(&recent.path)));
         }
         if let Some(path) = wanted_recent {
             self.open_pdf(path);
+        }
+        if let Some((path, page)) = wanted_file {
+            let path = recents::absolute(&path);
+            self.open_pdf_at(path, page, true);
+        }
+        if let Some(action) = tab_action {
+            self.tab_action(action);
         }
         if wants_open {
             self.open_picker();
@@ -2091,7 +2235,7 @@ mod tests {
 
     #[test]
     fn le_lancement_pdf_reste_distinct_sans_document() {
-        assert!(matches!(ViewerApp::new_pdf(None).kind, Kind::Pdf(None)));
+        assert!(matches!(ViewerApp::new_pdf(None).kind, Kind::Pdf(ref documents, 0) if documents.is_empty()));
         assert!(matches!(
             ViewerApp::new(Some(PathBuf::from("Images/photo.png"))).kind,
             Kind::Images(_)

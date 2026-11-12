@@ -512,3 +512,17 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
   `elevation::profile`) ; le processeur ne dessine plus que le contenu, posé par-dessus
   avec le même agrandissement. Revers accepté : pendant le fondu d'ouverture (160 ms),
   fond et contenu s'estompent chacun de leur côté, au lieu d'une seule image.
+- **2026-11-12 — Lecteur PDF : liens lus avec `lopdf`, pas avec Poppler.** `pdftohtml -xml`
+  donne bien les liens, mais seulement par morceau de ligne et sans la hauteur visée :
+  un clic sur [12] serait tombé en haut de la page de la bibliographie. `lopdf` (Rust pur,
+  sans compilation de bibliothèque C) lit les vrais rectangles et destinations, dans un
+  fil. Le rendu reste à Poppler. Seules les adresses `http`, `https` et `mailto` s'ouvrent
+  (jamais `file:` ni lancement de programme) ; un lien vers un autre PDF l'ouvre en onglet.
+- **2026-11-12 — Lecteur PDF : onglets plutôt que fenêtres.** Ouvrir un autre document
+  ajoute un onglet (ou revient au sien) au lieu de remplacer le document lu ; la barre
+  n'apparaît qu'à partir de deux. Les fenêtres séparées restent possibles par le réglage
+  existant « plusieurs fenêtres » de Paramètres.
+- **2026-11-12 — Premier plan : `focus_window` de winit branché sur `xdg_activation`.**
+  winit 0.30 ne faisait rien sous Wayland ; une application à fenêtre unique qui recevait
+  un fichier restait derrière. Retouche dans `third_party/winit` ; le compositeur gérait
+  déjà la demande (sortie du Dock, changement de bureau).

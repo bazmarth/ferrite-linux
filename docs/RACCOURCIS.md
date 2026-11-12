@@ -100,5 +100,7 @@ dialogue.
 | Lecteur PDF | Surligneur (marque chaque sélection), note à poser | H, N |
 | Lecteur PDF | Signet sur la page lue | Ctrl + D |
 | Lecteur PDF | Annuler / rétablir une annotation | Ctrl + Z, Ctrl + Maj + Z |
+| Lecteur PDF | Suivre un lien ou un renvoi / revenir où l'on était | clic / Alt + ← |
+| Lecteur PDF | Onglets : fermer, suivant, précédent | Ctrl + W, Ctrl + Tab (ou Ctrl + Pg. suiv.), Ctrl + Maj + Tab (ou Ctrl + Pg. préc.) |
 | Lecteur PDF | Fermer la bulle, lâcher la sélection ou l'outil | Échap |
 | Sélecteur de fichiers | Valider / annuler | Entrée / Échap (Ctrl pour choisir plusieurs fichiers) |

@@ -242,11 +242,14 @@ impl PdfViewerState {
 
         if let Some(point) = response.hover_pos().map(to_page) {
             let over = self.notes.at(page, point);
+            let link = (self.tool != Tool::Note && !self.selecting)
+                .then(|| self.link_at(page, point))
+                .flatten();
             let icon = if self.tool == Tool::Note {
                 egui::CursorIcon::Crosshair
             } else if self.selecting {
                 egui::CursorIcon::Text
-            } else if over.is_some() {
+            } else if over.is_some() || link.is_some() {
                 egui::CursorIcon::PointingHand
             } else if selection::word_at(self.words(page), point).is_some() {
                 egui::CursorIcon::Text
@@ -254,7 +257,10 @@ impl PdfViewerState {
                 egui::CursorIcon::Default
             };
             ctx.set_cursor_icon(icon);
-            if !self.selecting
+            if let Some(link) = link {
+                let hint = self.link_hint(&link.target);
+                response.clone().on_hover_text_at_pointer(hint);
+            } else if !self.selecting
                 && let Some(item) = over.and_then(|id| self.notes.get(id))
                 && !item.comment.trim().is_empty()
                 && self.editing.as_ref().is_none_or(|editing| editing.id != item.id)
@@ -286,7 +292,14 @@ impl PdfViewerState {
         if response.clicked()
             && let Some(point) = point
         {
-            self.page_click(page, point, shift);
+            // Un lien se suit d'un clic (Maj+clic étend la sélection, comme ailleurs).
+            let link = (self.tool != Tool::Note && !shift)
+                .then(|| self.link_at(page, point).map(|link| link.target.clone()))
+                .flatten();
+            match link {
+                Some(target) => self.follow(ctx, target),
+                None => self.page_click(page, point, shift),
+            }
         }
         if (response.double_clicked() || response.triple_clicked())
             && self.tool != Tool::Note
@@ -1064,7 +1077,7 @@ impl PdfViewerState {
 }
 
 /// Fond d'une bulle flottante posée sur la page.
-fn bubble() -> egui::Frame {
+pub(super) fn bubble() -> egui::Frame {
     egui::Frame::new()
         .fill(style::background())
         .stroke(Stroke::new(1.0, style::border()))

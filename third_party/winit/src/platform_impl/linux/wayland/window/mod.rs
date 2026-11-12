@@ -625,8 +625,20 @@ impl Window {
         self.window_state.lock().unwrap().set_ime_purpose(purpose);
     }
 
+    /// Ferrite OS : demande au compositeur de passer la fenêtre au premier plan par
+    /// `xdg_activation` (winit 0.30 ne faisait rien sous Wayland).
     #[inline]
-    pub fn focus_window(&self) {}
+    pub fn focus_window(&self) {
+        let Some(xdg_activation) = self.xdg_activation.as_ref() else {
+            return;
+        };
+        let surface = self.surface().clone();
+        let fence = Arc::new(AtomicBool::new(true));
+        let data = XdgActivationTokenData::Attention((surface.clone(), Arc::downgrade(&fence)));
+        let xdg_activation_token = xdg_activation.get_activation_token(&self.queue_handle, data);
+        xdg_activation_token.set_surface(&surface);
+        xdg_activation_token.commit();
+    }
 
     #[inline]
     pub fn surface(&self) -> &WlSurface {

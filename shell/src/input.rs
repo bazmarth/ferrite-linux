@@ -1819,9 +1819,10 @@ impl Ferrite {
                 crate::desktop::notifications::store_do_not_disturb(on);
             }
             DesktopAction::ToggleDarkMode => self.toggle_dark_mode(),
-            DesktopAction::TogglePowerSaver => {
-                if let Some(on) = self.system.power_saver {
-                    self.request_system_change(Change::PowerSaver(!on));
+            DesktopAction::NextPowerProfile => {
+                if let Some(state) = self.system.power_profile {
+                    let next = state.current.next(state.performance);
+                    self.request_system_change(Change::PowerProfile(next));
                 }
             }
             DesktopAction::OpenSettings => {

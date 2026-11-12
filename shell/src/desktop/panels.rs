@@ -246,7 +246,8 @@ pub enum DesktopAction {
     NotificationsClear,
     ToggleDoNotDisturb,
     ToggleDarkMode,
-    TogglePowerSaver,
+    /// Mode d'énergie suivant (Normal → Performance → Économie).
+    NextPowerProfile,
     ToggleAirplane,
     /// Rétroéclairage du clavier : niveau suivant, puis éteint.
     CycleKeyboardLight,
@@ -743,8 +744,8 @@ pub struct DesktopView {
     pub airplane: Option<bool>,
     /// Rétroéclairage du clavier : niveau et maximum.
     pub keyboard_light: Option<(u8, u8)>,
-    /// Économie d'énergie active (`None` : power-profiles-daemon absent).
-    pub power_saver: Option<bool>,
+    /// Mode d'énergie (`None` : power-profiles-daemon absent).
+    pub power_profile: Option<ferrite_system::power::State>,
     /// Mode nuit : teinte active, et l'état écrit sur sa tuile.
     pub night: (bool, String),
     /// Second écran branché : son mode (sinon pas de tuile « Second écran »).
@@ -3119,13 +3120,24 @@ impl Panels {
                 view.airplane == Some(true),
                 view.airplane.is_some(),
             ),
-            (
-                Control::Saver,
-                "cc-saver",
-                "Économie",
-                view.power_saver == Some(true),
-                view.power_saver.is_some(),
-            ),
+            {
+                // Une seule bascule pour les trois modes : chaque clic passe au suivant ;
+                // colorée hors du mode normal.
+                use ferrite_system::power::Profile;
+                let profile = view.power_profile.map(|state| state.current);
+                let glyph = match profile {
+                    Some(Profile::Performance) => "cc-performance",
+                    Some(Profile::Balanced) => "cc-balanced",
+                    _ => "cc-saver",
+                };
+                (
+                    Control::Saver,
+                    glyph,
+                    profile.map_or("Énergie", Profile::label),
+                    profile.is_some_and(|profile| profile != Profile::Balanced),
+                    profile.is_some(),
+                )
+            },
             (
                 Control::KeyboardLight,
                 "cc-keyboard-light",
@@ -4831,8 +4843,8 @@ pub fn action_at(
                     DesktopAction::ToggleDarkMode
                 } else if on(Control::DoNotDisturb) {
                     DesktopAction::ToggleDoNotDisturb
-                } else if on(Control::Saver) && view.power_saver.is_some() {
-                    DesktopAction::TogglePowerSaver
+                } else if on(Control::Saver) && view.power_profile.is_some() {
+                    DesktopAction::NextPowerProfile
                 } else if on(Control::Keyboard) {
                     DesktopAction::ToggleKeyboardLayout
                 } else if on(Control::Airplane) && view.airplane.is_some() {
@@ -8162,7 +8174,10 @@ mod tests {
             brightness: Some(70),
             airplane: Some(false),
             keyboard_light: Some((1, 2)),
-            power_saver: Some(false),
+            power_profile: Some(ferrite_system::power::State {
+                current: ferrite_system::power::Profile::Balanced,
+                performance: true,
+            }),
             bar_visible: true,
             bar_height: 34,
             ..DesktopView::default()
@@ -8572,7 +8587,7 @@ mod tests {
         assert_eq!(at(Control::Bluetooth), Some(DesktopAction::ToggleBluetooth));
         assert_eq!(at(Control::Dark), Some(DesktopAction::ToggleDarkMode));
         assert_eq!(at(Control::DoNotDisturb), Some(DesktopAction::ToggleDoNotDisturb));
-        assert_eq!(at(Control::Saver), Some(DesktopAction::TogglePowerSaver));
+        assert_eq!(at(Control::Saver), Some(DesktopAction::NextPowerProfile));
         assert_eq!(at(Control::Keyboard), Some(DesktopAction::ToggleKeyboardLayout));
         assert_eq!(at(Control::Airplane), Some(DesktopAction::ToggleAirplane));
         assert_eq!(

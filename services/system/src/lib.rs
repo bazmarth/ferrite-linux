@@ -48,8 +48,8 @@ pub struct Snapshot {
     pub airplane: Option<bool>,
     /// Rétroéclairage du clavier : niveau et maximum.
     pub keyboard_light: Option<(u8, u8)>,
-    /// Profil « économie d'énergie » actif (`power-profiles-daemon`).
-    pub power_saver: Option<bool>,
+    /// Mode d'énergie (`power-profiles-daemon`) : actif et modes offerts.
+    pub power_profile: Option<power::State>,
 }
 
 impl Snapshot {
@@ -69,7 +69,7 @@ impl Snapshot {
             mic_muted: audio::input_muted(),
             airplane: rfkill::airplane(),
             keyboard_light: display::keyboard_light(),
-            power_saver: power::power_saver(),
+            power_profile: power::state(),
         }
     }
 }

@@ -52,8 +52,8 @@ pub enum Change {
     Airplane(bool),
     /// Niveau du rétroéclairage du clavier.
     KeyboardLight(u8),
-    /// Profil d'énergie du système.
-    PowerSaver(bool),
+    /// Mode d'énergie du système.
+    PowerProfile(power::Profile),
     Power(PowerAction),
 }
 
@@ -512,7 +512,7 @@ fn apply(change: Change) -> Result<(), String> {
         Change::Brightness(level) => display::set_brightness(level),
         Change::Airplane(on) => rfkill::set_airplane(on),
         Change::KeyboardLight(level) => display::set_keyboard_light(level),
-        Change::PowerSaver(enabled) => power::set_power_saver(enabled),
+        Change::PowerProfile(profile) => power::set_profile(profile),
         Change::Power(power) => command::run(
             "systemctl",
             &[match power {
@@ -658,7 +658,11 @@ impl Ferrite {
             Change::KeyboardLight(level) => {
                 self.system.keyboard_light = self.system.keyboard_light.map(|(_, max)| (level, max));
             }
-            Change::PowerSaver(enabled) => self.system.power_saver = self.system.power_saver.map(|_| enabled),
+            Change::PowerProfile(profile) => {
+                if let Some(state) = self.system.power_profile.as_mut() {
+                    state.current = profile;
+                }
+            }
             Change::Brightness(level) => {
                 self.brightness_held_until = Some(Instant::now() + HOLD);
                 self.system.brightness = self.system.brightness.map(|_| level);

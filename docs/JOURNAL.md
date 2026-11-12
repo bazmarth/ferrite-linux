@@ -4190,3 +4190,20 @@ imbriqué : deuxième lancement reçu en onglet, renvoi [1] suivi jusqu'à la bi
 bouton « Revenir ».
 Non vérifié : retour au premier plan (une seule fenêtre dans la capture) ; info-bulle au
 survol (pas de pointeur dans la capture) ; vrai bureau ; articles d'éditeurs réels.
+
+## 2026-11-12 — Centre de contrôle : trois modes d'énergie
+
+Demande : gérer les modes d'énergie Performance, Normal et Économie dans le centre de
+contrôle (la bascule « Économie » ne faisait qu'aller et venir entre Économie et Normal).
+- `power.rs` : `State` lu par `powerprofilesctl list` (mode actif et présence de
+  « performance ») ; `Profile::next` (Normal → Performance → Économie → Normal,
+  Performance sautée si absente) et `Profile::label` ; `power_saver` /
+  `set_power_saver` retirés.
+- `Snapshot::power_profile`, `Change::PowerProfile`, `DesktopAction::NextPowerProfile`.
+- Bascule ronde : nom et icône du mode actif (`cc-balanced`, `cc-performance`,
+  `cc-saver`), colorée hors du mode Normal, grisée sans power-profiles-daemon.
+Vérifié : CI (sans shellcheck) ; tests de lecture de la liste et du tour des modes ;
+captures du bureau imbriqué des trois modes (Performance et Économie avec un faux
+`powerprofilesctl`) ; vrai bureau (DRM, `tools/dev-on.sh`) : un clic depuis Normal donne
+`powerprofilesctl get` = `performance`, le suivant `power-saver`, sans mot de passe.
+Non vérifié : retour d'Économie à Normal depuis le bouton (essayé en ligne de commande).

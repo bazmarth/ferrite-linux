@@ -1485,7 +1485,7 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
         brightness: system.brightness,
         airplane: system.airplane,
         keyboard_light: system.keyboard_light,
-        power_saver: system.power_saver,
+        power_profile: system.power_profile,
         night: night_view(state),
         second_screen: (state.screen_count > 1).then_some(state.screen_mode),
         power: state.pending_power,

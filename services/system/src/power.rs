@@ -38,6 +38,63 @@ impl Profile {
             _ => None,
         }
     }
+
+    /// Profil suivant d'un clic sur la bascule du centre de contrôle :
+    /// Normal → Performance → Économie → Normal. Performance est sautée si la machine ne
+    /// l'offre pas.
+    pub fn next(self, performance: bool) -> Profile {
+        match self {
+            Profile::Balanced if performance => Profile::Performance,
+            Profile::Balanced | Profile::Performance => Profile::PowerSaver,
+            Profile::PowerSaver => Profile::Balanced,
+        }
+    }
+
+    /// Nom montré à l'utilisateur.
+    pub fn label(self) -> &'static str {
+        match self {
+            Profile::PowerSaver => "Économie",
+            Profile::Balanced => "Normal",
+            Profile::Performance => "Performance",
+        }
+    }
+}
+
+/// Profil actif et profils offerts par la machine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct State {
+    pub current: Profile,
+    /// Profil « performance » offert (absent sans pilote de plateforme adapté).
+    pub performance: bool,
+}
+
+impl State {
+    /// Lit la sortie de `powerprofilesctl list` : un titre par profil (« * » devant
+    /// l'actif), suivi de lignes de détail en retrait.
+    pub fn parse(text: &str) -> Option<State> {
+        let mut current = None;
+        let mut performance = false;
+        for line in text.lines() {
+            // Les lignes de détail (« CpuDriver: … ») ne sont pas des noms de profil.
+            let active = line.starts_with('*');
+            let name = line.trim_start_matches('*').trim();
+            let Some(profile) = name.strip_suffix(':').and_then(Profile::parse) else {
+                continue;
+            };
+            performance |= profile == Profile::Performance;
+            if active {
+                current = Some(profile);
+            }
+        }
+        current.map(|current| State { current, performance })
+    }
+}
+
+/// Profil actuel et profils offerts. `None` : démon absent ou arrêté.
+pub fn state() -> Option<State> {
+    command::run_with_timeout("powerprofilesctl", &["list"], TIMEOUT)
+        .ok()
+        .and_then(|text| State::parse(&text))
 }
 
 /// Profil actuel. `None` : démon absent ou arrêté.
@@ -47,25 +104,11 @@ pub fn profile() -> Option<Profile> {
         .and_then(|text| Profile::parse(&text))
 }
 
-/// Économie d'énergie active. `None` : démon absent ou arrêté.
-pub fn power_saver() -> Option<bool> {
-    profile().map(|profile| profile == Profile::PowerSaver)
-}
-
 /// Change de profil.
 pub fn set_profile(profile: Profile) -> Result<(), Error> {
     command::run("powerprofilesctl", &["set", profile.id()])
         .map(drop)
-        .map_err(|_| "Profil d’énergie non modifiable (power-profiles-daemon absent ?)".to_owned())
-}
-
-/// Active l'économie d'énergie, ou revient au profil équilibré.
-pub fn set_power_saver(enabled: bool) -> Result<(), Error> {
-    set_profile(if enabled {
-        Profile::PowerSaver
-    } else {
-        Profile::Balanced
-    })
+        .map_err(|_| "Mode d’énergie non modifiable (power-profiles-daemon absent ?)".to_owned())
 }
 
 #[cfg(test)]
@@ -86,5 +129,36 @@ mod tests {
         for profile in [Profile::PowerSaver, Profile::Balanced, Profile::Performance] {
             assert_eq!(Profile::parse(profile.id()), Some(profile));
         }
+    }
+
+    const LISTE: &str = "  performance:\n    CpuDriver:\tintel_pstate\n    PlatformDriver:\tplatform_profile\n    Degraded:   no\n\n* balanced:\n    CpuDriver:\tintel_pstate\n    PlatformDriver:\tplatform_profile\n\n  power-saver:\n    CpuDriver:\tintel_pstate\n    PlatformDriver:\tplatform_profile\n";
+
+    #[test]
+    fn lit_la_liste_des_profils() {
+        let state = State::parse(LISTE).unwrap();
+        assert_eq!(state.current, Profile::Balanced);
+        assert!(state.performance);
+        let saver = LISTE
+            .replace("* balanced", "  balanced")
+            .replace("  power-saver", "* power-saver");
+        assert_eq!(State::parse(&saver).unwrap().current, Profile::PowerSaver);
+        let sans =
+            "* balanced:\n    CpuDriver:\tintel_pstate\n\n  power-saver:\n    CpuDriver:\tintel_pstate\n";
+        assert_eq!(
+            State::parse(sans),
+            Some(State {
+                current: Profile::Balanced,
+                performance: false
+            })
+        );
+        assert_eq!(State::parse(""), None);
+    }
+
+    #[test]
+    fn le_clic_fait_le_tour_des_profils() {
+        assert_eq!(Profile::Balanced.next(true), Profile::Performance);
+        assert_eq!(Profile::Performance.next(true), Profile::PowerSaver);
+        assert_eq!(Profile::PowerSaver.next(true), Profile::Balanced);
+        assert_eq!(Profile::Balanced.next(false), Profile::PowerSaver);
     }
 }

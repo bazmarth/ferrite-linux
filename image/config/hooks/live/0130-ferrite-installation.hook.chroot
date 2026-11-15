@@ -1,0 +1,21 @@
+#!/bin/sh
+# Installer Ferrite : met de côté les paquets de GRUB (UEFI avec démarrage sécurisé, et
+# BIOS) dans /usr/share/ferrite/paquets, sans les installer sur la clé. ferrite-installation
+# installe le bon jeu sur le disque, sans réseau ; il les retire ensuite du système installé.
+# grub-efi-amd64 et grub-pc ne peuvent pas être installés ensemble : deux dossiers.
+set -eu
+dest=/usr/share/ferrite/paquets
+for kind in efi bios; do
+    rm -rf "${dest:?}/$kind"
+    mkdir -p "$dest/$kind/partial"
+done
+apt-get install --download-only --yes --no-install-recommends \
+    -o Dir::Cache::archives="$dest/efi" \
+    grub-efi-amd64 grub-efi-amd64-signed shim-signed efibootmgr
+apt-get install --download-only --yes --no-install-recommends \
+    -o Dir::Cache::archives="$dest/bios" \
+    grub-pc
+for kind in efi bios; do
+    rm -rf "$dest/$kind/partial" "$dest/$kind/lock"
+    ls "$dest/$kind"/*.deb >/dev/null
+done

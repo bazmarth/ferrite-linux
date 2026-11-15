@@ -221,3 +221,12 @@ usbutils
 alsa-utils
 less
 nano
+
+# Installer Ferrite (ferrite-installation) : systèmes déjà installés, partitions, copie du
+# système de la clé. Les paquets de GRUB pour le disque sont mis de côté par
+# hooks/live/0130 et installés seulement sur le système installé.
+os-prober
+fdisk
+dosfstools
+e2fsprogs
+squashfs-tools

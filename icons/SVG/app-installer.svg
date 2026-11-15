@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 100 100" role="img" aria-label="Installer Ferrite">
+<defs>
+ <linearGradient id="disque" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#F4F7FA"/><stop offset="1" stop-color="#C9D2DC"/></linearGradient>
+ <linearGradient id="fleche" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8BD0FF"/><stop offset="1" stop-color="#3687DB"/></linearGradient>
+ <filter id="ombre" x="-10%" y="-10%" width="120%" height="140%"><feGaussianBlur stdDeviation="1.4"/></filter>
+</defs>
+<!-- Disque dur vu de face -->
+<rect x="17" y="51" width="66" height="30" rx="7" fill="#000" opacity="0.2" filter="url(#ombre)"/>
+<rect x="17" y="48" width="66" height="30" rx="7" fill="url(#disque)" stroke="#8C99A8" stroke-width="1.5"/>
+<rect x="24" y="60" width="30" height="6" rx="3" fill="#8C99A8" opacity="0.45"/>
+<circle cx="72" cy="63" r="3.4" fill="#34C759"/>
+<!-- Flèche qui descend vers le disque -->
+<path d="M43 14h14v20h11L50 54 32 34h11z" fill="url(#fleche)" stroke="#2F6FB7" stroke-width="2" stroke-linejoin="round"/>
+</svg>

@@ -22,6 +22,8 @@ pub struct AppInfo {
     pub dock: bool,
     /// Proposée dans le menu Applications (la galerie des développeurs ne l'est pas).
     pub menu: bool,
+    /// Seulement sur la clé live (Installer Ferrite) : absente d'un Ferrite installé.
+    pub live: bool,
 }
 
 const fn app(
@@ -42,11 +44,37 @@ const fn app(
         min_size,
         dock,
         menu: true,
+        live: false,
+    }
+}
+
+/// Le système tourne-t-il depuis la clé live ?
+pub fn is_live() -> bool {
+    std::path::Path::new("/run/live/medium").exists()
+}
+
+impl AppInfo {
+    /// L'application est-elle proposée sur ce système (menu, Dock) ?
+    pub fn available(&self) -> bool {
+        !self.live || is_live()
     }
 }
 
 /// Applications Ferrite, dans l'ordre du menu Applications et du Dock.
 pub const APPS: &[AppInfo] = &[
+    // Sur la clé live seulement, en tête du Dock : c'est ce qu'on y vient faire.
+    AppInfo {
+        live: true,
+        ..app(
+            "installer",
+            "ferrite-installer",
+            "Installer Ferrite",
+            "app-installer",
+            (880, 760),
+            (640, 520),
+            true,
+        )
+    },
     app(
         "files",
         "ferrite-files",

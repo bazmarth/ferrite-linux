@@ -10,6 +10,7 @@ mod details;
 mod editor;
 mod files;
 mod gallery;
+mod installer;
 mod island;
 mod kit;
 mod markdown;
@@ -87,6 +88,7 @@ fn create(
         "video" => Box::new(video::VideoState::new(target, context.clone())),
         "logitheque" => opened(Box::new(store::StoreState::new(context))),
         "galerie" => Box::new(gallery::GalleryState::default()),
+        "installer" => Box::new(installer::InstallerState::new(context)),
         // Arguments de la demande du portail, après `choisir`.
         "choisir" => {
             let args: Vec<String> = env::args().skip(2).collect();
@@ -108,6 +110,12 @@ impl AppView for store::StoreState {
     }
     fn open(&mut self, target: PathBuf) {
         store::StoreState::open(self, target);
+    }
+}
+
+impl AppView for installer::InstallerState {
+    fn update(&mut self, ui: &mut egui::Ui) {
+        installer::InstallerState::update(self, ui);
     }
 }
 

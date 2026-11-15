@@ -1,0 +1,55 @@
+# Installer Ferrite dans QEMU, avec un disque d'essai qui joue Windows :
+#   tools/disque-essai.sh
+#   FERRITE_VM_DISQUE=~/.cache/ferrite-vm/disque-essai.img tools/vm-test.sh tools/scenarios/installation.txt
+# Première partie : bureau live, sonde des disques (console série → build/vm-serie.log),
+# assistant ouvert sur son premier écran. Les clics dans l'assistant s'ajoutent quand ses
+# positions dans la machine virtuelle sont connues (voir la capture inst-2).
+sleep 80
+shot inst-1-bureau-live
+serial ferrite
+serial live
+# Script du dépôt à la place de celui de l'ISO (le même si l'ISO est à jour).
+serve image/config/includes.chroot/usr/local/bin/ferrite-installation
+serial bash -c 'cat </dev/tcp/10.0.2.2/8765' | sudo tee /usr/local/bin/ferrite-installation >/dev/null; sudo chmod 755 /usr/local/bin/ferrite-installation
+sleep 3
+serial sudo ferrite-installation sonder; lsblk -o NAME,SIZE,FSTYPE,LABEL,PARTTYPENAME
+sleep 15
+serial export XDG_RUNTIME_DIR=/run/user/$(id -u); export WAYLAND_DISPLAY=$(basename $(ls -d $XDG_RUNTIME_DIR/wayland-[0-9] | head -n 1))
+serial a=/run/ferrite-dev/ferrite-apps; [ -x $a ] || a=ferrite-apps; $a installer >/dev/null 2>&1 &
+sleep 8
+shot inst-2-accueil
+# Commencer, puis Clavier et heure (rien à changer).
+click 985 765
+sleep 3
+shot inst-3-clavier
+click 985 765
+sleep 15
+shot inst-4-disque
+# À côté de Windows, place proposée.
+click 985 765
+sleep 3
+shot inst-5-compte
+# Compte « Test Ferrite », mot de passe « ferrite » (lettres identiques en AZERTY et QWERTY).
+click 798 243
+type Test Ferrite
+click 798 345
+type ferrite
+click 798 396
+type ferrite
+sleep 1
+shot inst-6-compte-rempli
+click 985 765
+sleep 3
+shot inst-7-verification
+# Case de confirmation, puis Installer.
+click 343 391
+sleep 1
+click 985 765
+sleep 20
+shot inst-8-avancee
+# Dans QEMU (KVM), la copie prend environ une minute ; sur un vrai PC, 10 à 20.
+sleep 160
+shot inst-9-fin
+serial sudo tail -n 60 /var/log/ferrite-installation.log
+serial sudo sfdisk -l /dev/vda; sudo blkid
+sleep 5

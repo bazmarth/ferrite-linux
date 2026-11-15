@@ -287,7 +287,7 @@ impl App {
     pub fn all() -> impl Iterator<Item = App> {
         ferrite_system::catalog::APPS
             .iter()
-            .filter(|info| info.menu)
+            .filter(|info| info.menu && info.available())
             .map(|info| App(info.command))
     }
 
@@ -295,7 +295,7 @@ impl App {
     pub fn dock() -> Vec<App> {
         ferrite_system::catalog::APPS
             .iter()
-            .filter(|info| info.dock)
+            .filter(|info| info.dock && info.available())
             .map(|info| App(info.command))
             .collect()
     }

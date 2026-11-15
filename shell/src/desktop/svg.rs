@@ -37,6 +37,7 @@ macro_rules! icons {
 icons![
     "app-code",
     "app-files",
+    "app-installer",
     "ferrite-logo",
     "ferrite-symbol",
     "ferrite-symbol-white",

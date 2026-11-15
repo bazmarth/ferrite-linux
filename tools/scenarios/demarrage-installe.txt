@@ -1,0 +1,10 @@
+# Ferrite installé par tools/scenarios/installation.txt, démarré sans la clé :
+#   FERRITE_VM_SANS_CD=1 FERRITE_VM_DISQUE=~/.cache/ferrite-vm/disque-essai.img tools/vm-test.sh tools/scenarios/demarrage-installe.txt
+# Écran de connexion (compte « Test Ferrite », mot de passe « ferrite »), puis le bureau.
+sleep 50
+shot boot-1-connexion
+type ferrite
+key ret
+sleep 25
+shot boot-2-bureau
+# Le Dock ne doit plus proposer « Installer Ferrite ».

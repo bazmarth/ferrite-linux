@@ -3,6 +3,10 @@
 #
 #   tools/vm-test.sh tools/scenarios/stabilite.txt [ISO]
 #   FERRITE_VM_DEV=1 tools/vm-test.sh …   avec les binaires de target/release
+#   FERRITE_VM_DISQUE=~/.cache/ferrite-vm/disque-essai.img tools/vm-test.sh …   avec un disque dur
+#       (tools/disque-essai.sh), gardé d'un essai à l'autre comme la mémoire UEFI
+#       (vm-ovmf-vars-disque.fd à côté du disque : l'entrée de démarrage créée par l'installation)
+#   FERRITE_VM_SANS_CD=1 (avec FERRITE_VM_DISQUE) : démarre sur le disque, sans la clé
 #
 # Une ligne par étape : « sleep SECONDES », « click X Y » et « rclick X Y » (pixels de l'écran 1280×800),
 # « move X Y » (déplacer le pointeur), « serial LIGNE » (tapée sur la console série, sortie dans build/vm-serie.log),
@@ -16,13 +20,20 @@ set -eu
 scenario=${1:?scénario attendu (voir tools/scenarios)}
 iso=${2:-$BUILD/ferrite-live.iso}
 [ -f "$scenario" ] || die "scénario introuvable : $scenario"
-[ -f "$iso" ] || die "ISO introuvable : $iso (construis-la avec tools/usb.sh)"
+[ -f "$iso" ] || [ "${FERRITE_VM_SANS_CD:-0}" = 1 ] || die "ISO introuvable : $iso (construis-la avec tools/usb.sh)"
 command -v socat >/dev/null 2>&1 || die "socat absent (sudo apt install socat)"
 
 set_ovmf_files
 code=$OVMF_CODE
 vars="$BUILD/vm-ovmf-vars.fd"
-cp "$OVMF_VARS_TEMPLATE" "$vars"
+disk=${FERRITE_VM_DISQUE:-}
+if [ -n "$disk" ]; then
+    [ -f "$disk" ] || die "disque introuvable : $disk (tools/disque-essai.sh)"
+    vars="$(dirname -- "$disk")/vm-ovmf-vars-disque.fd"
+    [ -f "$vars" ] || cp "$OVMF_VARS_TEMPLATE" "$vars"
+else
+    cp "$OVMF_VARS_TEMPLATE" "$vars"
+fi
 if [ -w /dev/kvm ]; then
     accel="-accel kvm -cpu host"
 else
@@ -34,17 +45,22 @@ serial="${TMPDIR:-/tmp}/ferrite-test-$$.serie"
 rm -f "$monitor" "$qmp" "$serial" "$BUILD/vm-serie.log"
 
 set --
+if [ -n "$disk" ]; then
+    set -- -drive "id=hd,if=none,format=raw,file=$disk" -device virtio-blk-pci,drive=hd,bootindex=1
+fi
+cd_drive="-drive id=cd,if=none,media=cdrom,readonly=on,file=$iso -device ide-cd,drive=cd,bootindex=0"
+[ "${FERRITE_VM_SANS_CD:-0}" = 1 ] && cd_drive=""
 # Mode développement : les binaires compilés (cargo build --release) sont partagés avec
 # la machine virtuelle, qui les utilise à la place de ceux de l'ISO.
 if [ "${FERRITE_VM_DEV:-0}" = 1 ]; then
     release="${CARGO_TARGET_DIR:-$REPO/target}/release"
     [ -x "$release/ferrite-shell" ] || die "binaires absents : cargo build --release -p ferrite-shell -p ferrite-apps"
-    set -- -virtfs "local,path=$release,mount_tag=ferrite-dev,security_model=none,readonly=on"
+    set -- "$@" -virtfs "local,path=$release,mount_tag=ferrite-dev,security_model=none,readonly=on"
 fi
-# shellcheck disable=SC2086 # $accel contient plusieurs options volontairement.
+# shellcheck disable=SC2086 # $accel et $cd_drive contiennent plusieurs options volontairement.
 qemu-system-x86_64 "$@" -machine q35 $accel -m 4G -smp 4 \
     -drive "if=pflash,format=raw,readonly=on,file=$code" -drive "if=pflash,format=raw,file=$vars" \
-    -drive "id=cd,if=none,media=cdrom,readonly=on,file=$iso" -device ide-cd,drive=cd,bootindex=0 \
+    $cd_drive \
     -device virtio-vga -device qemu-xhci -device usb-tablet -nic user,model=virtio-net-pci \
     -display none \
     -chardev "socket,id=serie,path=$serial,server=on,wait=off,logfile=$BUILD/vm-serie.log" \

@@ -77,6 +77,8 @@ Liste : `image/config/package-lists/ferrite.list.chroot`. Points notables :
 | `plymouth-label` | écran de démarrage Ferrite (thème `ferrite`) |
 | `poppler-utils` | Lecteur PDF : `pdfinfo` (pages), `pdftoppm` (rendu), `pdftotext` (recherche, sélection du texte), `pdftohtml` (plan du document) |
 | `fonts-jetbrains-mono` | police du terminal `foot` (`/etc/xdg/foot/foot.ini`) |
+| `os-prober`, `fdisk`, `dosfstools`, `e2fsprogs`, `squashfs-tools` | Installer Ferrite : systèmes déjà installés, partitions (`sfdisk`), formatage, copie du système de la clé (`unsquashfs`) |
+| `grub-efi-amd64`, `grub-efi-amd64-signed`, `shim-signed`, `efibootmgr`, `grub-pc` | téléchargés seulement (hook `0130`), dans `/usr/share/ferrite/paquets` : installés par Installer Ferrite sur le disque, jamais sur la clé |
 
 ## Ressources
 

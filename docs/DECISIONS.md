@@ -526,3 +526,19 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
   winit 0.30 ne faisait rien sous Wayland ; une application à fenêtre unique qui recevait
   un fichier restait derrière. Retouche dans `third_party/winit` ; le compositeur gérait
   déjà la demande (sortie du Dock, changement de bureau).
+- **2026-11-13 — Installateur maison (application Ferrite), pas Calamares.** Le plan
+  (phase 9) le demande en application Ferrite : même charte, français simple, trois
+  choix et un mode manuel au lieu d'un éditeur de partitions. Toute la décision
+  (secteurs, alignement 1 Mio, bornes de Windows) est en Rust et testée
+  (`installer/plan.rs`) ; le script `ferrite-installation` (root, par `sudo -n`, le compte
+  live étant administrateur sans mot de passe) ne fait qu'exécuter le plan.
+- **2026-11-13 — Copie du système de la clé (`unsquashfs`), pas `debootstrap`.**
+  L'installation marche sans réseau et donne exactement le système essayé sur la clé ;
+  les paquets du système live sont ensuite purgés. GRUB (UEFI signé ou BIOS) vient de
+  paquets mis de côté dans l'image (hook `0130`), car `grub-efi-amd64` et `grub-pc` ne
+  peuvent pas être installés ensemble.
+- **2026-11-13 — À côté de Windows : seulement en réduisant NTFS, avec marge.** Windows
+  garde ce qu'il occupe (mesuré par `ntfsresize`) plus 10 Go. Windows en veille
+  prolongée (démarrage rapide) ou chiffré par BitLocker n'est pas touché : l'assistant
+  explique quoi faire dans Windows. La partition EFI existante est gardée telle quelle.
+  Pas de partition d'échange : zram suffit (déjà en place).

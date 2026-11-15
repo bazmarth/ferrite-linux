@@ -4228,3 +4228,39 @@ Wi-Fi 1,7 → 1,0 ms ; Bluetooth 3,5 → 2,5 ms. Sur batterie, environ 3 fois pl
 Non vérifié : vrai bureau (DRM) ; mesure sur batterie. Reste : vue d'ensemble 13 ms sur
 batterie.
 
+## 2026-11-13 — Installer Ferrite : ISO installable
+
+Demande : une ISO installable, avec choix des partitions à côté de Windows ou d'autres
+systèmes, ou manuel, facile pour un non-informaticien.
+- `apps/core/src/installer.rs` (+ `installer/disks.rs`, `plan.rs`, `job.rs`) : application
+  « Installer Ferrite » (`ferrite-apps installer`), six écrans : accueil, clavier et heure,
+  « Où installer Ferrite ? » (à côté de Windows avec barre à séparation déplaçable, espace
+  libre, effacer le disque, choisir la partition), compte, vérification (case à cocher
+  obligatoire avant tout effacement ou réduction), avancée, fin.
+- `catalog.rs` : champ `live` ; l'application n'existe que sur la clé, en tête du Dock.
+  Icône `icons/SVG/app-installer.svg`.
+- `image/.../ferrite-installation` (script root) : `sonder` (os-prober, ntfsresize) et
+  `installer PLAN` (réduction NTFS, sfdisk, ext4, unsquashfs, purge du live, compte,
+  langue, GRUB UEFI/BIOS avec os-prober). Paquets ajoutés, hook `0130`.
+- `tools/disque-essai.sh`, `tools/vm-test.sh` (`FERRITE_VM_DISQUE`, `FERRITE_VM_SANS_CD`),
+  scénario `installation.txt`.
+Vérifié : CI (sans shellcheck) ; 15 tests du plan (disques réels du ThinkBook relus en
+lsblk : Windows reconnu par son entrée EFI, réduction alignée sans déborder, effacement,
+remplacement, refus des partitions EFI/réservées/récupération et du disque en marche) ;
+captures du bureau imbriqué en mode démo (`FERRITE_INSTALLATION_DEMO`) ; lecture de la
+sortie de ntfsresize sur une vraie partition NTFS (fichier).
+Vérifié ensuite dans QEMU (ISO construite, UEFI, disque d'essai de 48 Go avec une
+partition NTFS « Windows » de 40 Go) : sonde (ntfsresize lit 69 Mo occupés) ; assistant
+parcouru par clics jusqu'au bout ; partitions obtenues : NTFS réduite à 11 Go (même
+début), EFI 512 Mo créée, Ferrite 36,5 Go ; démarrage sans la clé par l'entrée UEFI créée,
+écran de connexion du compte créé (clavier FR), mot de passe accepté, bureau ouvert, Dock
+sans « Installer Ferrite ».
+Corrigé en essai : boucle de démontage qui arrêtait le script sous `set -e` quand rien
+n'était monté (avant toute écriture sur le disque) ; clavier choisi écrit dans les
+réglages du compte (`/etc/skel`) et de `_greetd` (le bureau ne lit pas
+`/etc/default/keyboard`) ; case de confirmation remontée sous le résumé (hors de la vue
+sinon).
+Non vérifié : vrai Windows (os-prober, menu GRUB à deux systèmes, Windows qui redémarre
+après réduction) ; démarrage sécurisé ; mode BIOS ; effacement du disque et mode manuel
+en VM ; ThinkBook. L'ISO construite contient l'ancien script : la reconstruire.
+

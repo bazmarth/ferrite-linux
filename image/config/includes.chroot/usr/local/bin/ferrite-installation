@@ -1,0 +1,419 @@
+#!/bin/sh
+# Installation de Ferrite sur le disque, en administrateur ; appelé par l'application
+# « Installer Ferrite » (ferrite-apps installer, apps/core/src/installer) par sudo -n.
+#
+#   ferrite-installation sonder             systèmes installés et partitions Windows
+#   ferrite-installation installer PLAN     installe selon PLAN (mot de passe sur l'entrée)
+#
+# Le plan (clé=valeur) est calculé et vérifié par l'application (installer/plan.rs) : ce
+# script ne choisit rien, il exécute. Sortie lue par l'application, une ligne à la fois :
+#   etape TEXTE · progres N · erreur TEXTE · fini
+# Le détail de chaque commande va dans /var/log/ferrite-installation.log.
+set -eu
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export LC_ALL=C.UTF-8
+
+log=/var/log/ferrite-installation.log
+target=/mnt/ferrite-cible
+packages=/usr/share/ferrite/paquets
+
+# Messages pour l'application : descripteur 3, la sortie d'origine, même depuis une
+# sous-commande « $(…) ». Une erreur déjà annoncée est notée dans $failed_mark.
+exec 3>&1
+failed_mark=/run/ferrite-installation.echec
+step="Préparation"
+say() {
+    step=$1
+    printf 'etape %s\n' "$1" >&3
+    printf '\n== %s (%s)\n' "$1" "$(date +%T)" >&2
+}
+progress() { printf 'progres %s\n' "$1" >&3; }
+fail() {
+    printf 'erreur %s\n' "$1" >&3
+    printf 'ERREUR : %s\n' "$1" >&2
+    : >"$failed_mark"
+    exit 1
+}
+
+[ "$(id -u)" = 0 ] || {
+    echo "erreur Il faut les droits d'administrateur."
+    exit 1
+}
+
+# --- Sonde ---------------------------------------------------------------------------------
+# « systeme LIGNE_OS_PROBER » et « ntfs CHEMIN OCTETS_MIN ok|hiberne|bitlocker|erreur ».
+probe() {
+    os-prober 2>>"$log" | while IFS= read -r line; do
+        printf 'systeme %s\n' "$line"
+    done
+    lsblk -nrpo PATH,TYPE,FSTYPE,MOUNTPOINT | while read -r path kind fstype mountpoint; do
+        [ "$kind" = part ] || continue
+        case "$fstype" in
+            ntfs)
+                [ -z "${mountpoint:-}" ] || continue
+                out=$(ntfsresize --info --force --no-action "$path" 2>&1 || true)
+                printf '%s\n' "$out" >>"$log"
+                min=$(printf '%s\n' "$out" | sed -n 's/.*might resize at \([0-9][0-9]*\) bytes.*/\1/p' | head -n 1)
+                if printf '%s' "$out" | grep -qi hibernat; then
+                    state=hiberne
+                elif [ -n "$min" ]; then
+                    state=ok
+                else
+                    state=erreur
+                fi
+                printf 'ntfs %s %s %s\n' "$path" "${min:-0}" "$state"
+                ;;
+            BitLocker) printf 'ntfs %s 0 bitlocker\n' "$path" ;;
+        esac
+    done
+}
+
+if [ "${1:-}" = sonder ]; then
+    probe 2>>"$log"
+    exit 0
+fi
+[ "${1:-}" = installer ] && [ -f "${2:-}" ] || {
+    echo "erreur usage : ferrite-installation installer PLAN"
+    exit 2
+}
+
+# --- Installation --------------------------------------------------------------------------
+plan=$2
+exec 2>>"$log"
+printf '\n######## Installation du %s\n' "$(date)" >&2
+cat "$plan" >&2
+set -x
+
+rm -f "$failed_mark"
+cleanup() {
+    status=$?
+    set +e
+    for dir in boot/efi run sys dev proc; do
+        umount -R "$target/$dir" 2>/dev/null
+    done
+    umount -R "$target" 2>/dev/null
+    if [ "$status" != 0 ] && [ ! -e "$failed_mark" ]; then
+        printf 'erreur Échec pendant « %s » (détail dans %s).\n' "$step" "$log" >&3
+    fi
+    rm -f "$failed_mark"
+}
+trap cleanup EXIT
+
+# Mot de passe : première ligne de l'entrée, jamais dans un fichier ni dans le journal.
+set +x
+IFS= read -r password || fail "Mot de passe absent."
+set -x
+
+value() { sed -n "s/^$1=//p" "$plan" | head -n 1; }
+# Champ N (à partir de 1) d'une valeur « a:b:c ».
+field() { printf '%s\n' "$1" | cut -d: -f"$2"; }
+
+disk=$(value disque)
+firmware=$(value micrologiciel)
+table=$(value table)
+shrink=$(value reduire)
+efi=$(value efi)
+biosboot=$(value biosboot)
+root_spec=$(value racine)
+full_name=$(value nom | tr -d ':,')
+user=$(value utilisateur)
+host=$(value machine)
+autologin=$(value connexion_auto)
+layout=$(value clavier)
+variant=$(value variante)
+zone=$(value fuseau)
+
+[ -b "$disk" ] || fail "Disque introuvable : $disk."
+printf '%s' "$user" | grep -Eq '^[a-z][a-z0-9_-]{0,31}$' || fail "Nom de compte refusé."
+printf '%s' "$host" | grep -Eq '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$' || fail "Nom de l'ordinateur refusé."
+[ -f "/usr/share/zoneinfo/$zone" ] || zone=Etc/UTC
+if lsblk -nrpo MOUNTPOINT "$disk" | grep -q '^/run/live'; then
+    fail "C'est la clé de Ferrite elle-même."
+fi
+
+# Le système à copier : celui de la clé.
+squash=""
+for candidate in /run/live/medium/live/filesystem.squashfs /run/live/rootfs/filesystem.squashfs; do
+    if [ -f "$candidate" ]; then
+        squash=$candidate
+        break
+    fi
+done
+[ -n "$squash" ] || fail "Système de la clé introuvable (filesystem.squashfs)."
+
+say "Préparation du disque"
+progress 1
+# Rien du disque ne doit rester utilisé (échange, montages automatiques).
+for part in $(lsblk -nrpo PATH "$disk"); do
+    swapoff "$part" 2>/dev/null || true
+done
+# (Un « [ … ] && … » en fin de boucle la ferait échouer sous set -e quand rien n'est monté.)
+lsblk -nrpo MOUNTPOINT "$disk" | sort -r | while read -r mountpoint; do
+    if [ -n "$mountpoint" ]; then
+        umount "$mountpoint"
+    fi
+done
+
+refresh() {
+    partx -u "$disk" 2>/dev/null || true
+    partx -a "$disk" 2>/dev/null || true
+    udevadm settle
+}
+
+# Partition commençant au secteur $1 (attendue jusqu'à 10 s après sa création).
+part_at() {
+    tries=0
+    while [ "$tries" -lt 20 ]; do
+        found=$(lsblk -nrpo PATH,START "$disk" | awk -v start="$1" '$2 == start { print $1 }' | head -n 1)
+        if [ -n "$found" ] && [ -b "$found" ]; then
+            printf '%s\n' "$found"
+            return 0
+        fi
+        refresh
+        sleep 0.5
+        tries=$((tries + 1))
+    done
+    return 1
+}
+
+# Nouvelle partition « nouvelle:DÉBUT:SECTEURS:TYPE » ; affiche son chemin.
+create() {
+    start=$(field "$1" 2)
+    printf 'start=%s, size=%s, type=%s\n' "$start" "$(field "$1" 3)" "$(field "$1" 4)" |
+        sfdisk --append --no-reread --force "$disk" >&2
+    refresh
+    part_at "$start" || fail "La nouvelle partition n'apparaît pas."
+}
+
+case "$table" in
+    gpt | dos)
+        say "Effacement du disque"
+        wipefs -a "$disk" >&2
+        printf 'label: %s\n' "$table" | sfdisk --wipe always --force "$disk" >&2
+        refresh
+        ;;
+esac
+
+if [ -n "$shrink" ]; then
+    say "Réduction de Windows (quelques minutes)"
+    progress 2
+    shrink_part=$(field "$shrink" 1)
+    shrink_number=$(field "$shrink" 2)
+    shrink_sectors=$(field "$shrink" 3)
+    shrink_bytes=$(field "$shrink" 4)
+    # Essai à blanc d'abord : ntfsresize vérifie que Windows tient dans la nouvelle taille.
+    ntfsresize --force --no-action --size "$shrink_bytes" "$shrink_part" >&2 ||
+        fail "Windows ne peut pas être réduit à cette taille. Démarrez Windows, puis réessayez."
+    printf 'y\n' | ntfsresize --force --size "$shrink_bytes" "$shrink_part" >&2 ||
+        fail "La réduction de Windows a échoué : rien d'autre n'a été modifié."
+    # Puis la partition elle-même (même début, taille réduite).
+    printf ',%s\n' "$shrink_sectors" | sfdisk --no-reread --force -N "$shrink_number" "$disk" >&2 ||
+        fail "La table des partitions n'a pas pu être modifiée."
+    refresh
+fi
+
+case "$biosboot" in
+    nouvelle:*) create "$biosboot" >/dev/null ;;
+esac
+
+esp=""
+case "$efi" in
+    existante:*) esp=$(field "$efi" 2) ;;
+    nouvelle:*)
+        esp=$(create "$efi")
+        mkfs.vfat -F 32 -n EFI "$esp" >&2
+        ;;
+esac
+
+case "$root_spec" in
+    nouvelle:*) root=$(create "$root_spec") ;;
+    existante:*)
+        root=$(field "$root_spec" 2)
+        number=$(field "$root_spec" 3)
+        [ -b "$root" ] || fail "Partition introuvable : $root."
+        wipefs -a "$root" >&2
+        sfdisk --part-type "$disk" "$number" "$(field "$root_spec" 4)" --force >&2 || true
+        refresh
+        ;;
+    *) fail "Plan sans partition pour Ferrite." ;;
+esac
+
+say "Formatage de la partition de Ferrite"
+progress 4
+mkfs.ext4 -F -q -L Ferrite "$root" >&2
+mkdir -p "$target"
+mount "$root" "$target"
+
+say "Copie de Ferrite sur le disque"
+progress 5
+status_file=$(mktemp)
+# -percentage (squashfs-tools ≥ 4.6) : un pourcentage par ligne, pour la barre d'avancée.
+show=-no-progress
+unsquashfs -help 2>&1 | grep -q -- -percentage && show=-percentage
+{
+    unsquashfs -f "$show" -d "$target" "$squash" 2>>"$log"
+    echo $? >"$status_file"
+} | tr '\r' '\n' | while read -r percent; do
+    case "$percent" in
+        '' | *[!0-9]*) ;;
+        *) progress $((5 + percent * 80 / 100)) ;;
+    esac
+done
+[ "$(cat "$status_file")" = 0 ] || fail "La copie a échoué : clé USB abîmée, ou disque plein ?"
+rm -f "$status_file"
+
+say "Réglage du système"
+progress 86
+mount --rbind /dev "$target/dev"
+mount --make-rslave "$target/dev"
+mount -t proc proc "$target/proc"
+mount --rbind /sys "$target/sys"
+mount --make-rslave "$target/sys"
+mount -t tmpfs tmpfs "$target/run"
+# Base udev : os-prober et grub-install y lisent les disques.
+mkdir -p "$target/run/udev"
+mount --bind /run/udev "$target/run/udev"
+if [ -n "$esp" ]; then
+    mkdir -p "$target/boot/efi"
+    mount "$esp" "$target/boot/efi"
+fi
+in_target() { chroot "$target" /usr/bin/env DEBIAN_FRONTEND=noninteractive LC_ALL=C.UTF-8 "$@"; }
+
+# Montages.
+root_uuid=$(blkid -s UUID -o value "$root")
+{
+    echo "# Créé par l'installation de Ferrite."
+    echo "UUID=$root_uuid / ext4 errors=remount-ro 0 1"
+    if [ -n "$esp" ]; then
+        echo "UUID=$(blkid -s UUID -o value "$esp") /boot/efi vfat umask=0077 0 1"
+    fi
+} >"$target/etc/fstab"
+
+# Le noyau : celui de la clé, si le système copié ne l'a pas dans /boot.
+version=$(uname -r)
+if ! ls "$target"/boot/vmlinuz-* >/dev/null 2>&1; then
+    cp /run/live/medium/live/vmlinuz "$target/boot/vmlinuz-$version"
+fi
+version=$(find "$target/boot" -name 'vmlinuz-*' -printf '%f\n' | sed 's/^vmlinuz-//' | sort -V | tail -n 1)
+
+# Plus de système live : il démarrerait comme une clé.
+live=""
+for name in live-boot live-boot-initramfs-tools live-config live-config-systemd live-tools user-setup; do
+    if in_target dpkg-query -W -f '${Status}' "$name" 2>/dev/null | grep -q installed; then
+        live="$live $name"
+    fi
+done
+# shellcheck disable=SC2086 # liste de paquets à découper
+[ -z "$live" ] || in_target dpkg --purge $live >&2
+# L'installateur n'a plus rien à faire sur le disque.
+rm -f "$target/usr/local/bin/ferrite-installation"
+rm -rf "$target$packages"
+
+# Écran de connexion : plus de session live ; session ouverte seule si demandé.
+sed -i '/^# Système live/,$d' "$target/etc/greetd/config.toml"
+if [ "$autologin" = 1 ]; then
+    cat >>"$target/etc/greetd/config.toml" <<EOF
+# Session ouverte sans mot de passe au démarrage (choisi à l'installation).
+[initial_session]
+command = "/usr/local/bin/ferrite-session --greetd"
+user = "$user"
+EOF
+fi
+
+# Langue, clavier, heure, nom.
+echo 'fr_FR.UTF-8 UTF-8' >"$target/etc/locale.gen"
+in_target locale-gen >&2
+echo 'LANG=fr_FR.UTF-8' >"$target/etc/default/locale"
+cat >"$target/etc/default/keyboard" <<EOF
+XKBMODEL="pc105"
+XKBLAYOUT="$layout"
+XKBVARIANT="$variant"
+XKBOPTIONS=""
+BACKSPACE="guess"
+EOF
+ln -sf "/usr/share/zoneinfo/$zone" "$target/etc/localtime"
+echo "$zone" >"$target/etc/timezone"
+echo "$host" >"$target/etc/hostname"
+cat >"$target/etc/hosts" <<EOF
+127.0.0.1	localhost
+127.0.1.1	$host
+::1	localhost ip6-localhost ip6-loopback
+EOF
+# Identifiant de machine propre à cet ordinateur (créé au premier démarrage).
+: >"$target/etc/machine-id"
+rm -f "$target/var/lib/dbus/machine-id"
+# Réseaux Wi-Fi enregistrés pendant la session live : déjà connus au premier démarrage.
+if [ -d /etc/NetworkManager/system-connections ]; then
+    cp -a /etc/NetworkManager/system-connections/. "$target/etc/NetworkManager/system-connections/" 2>/dev/null || true
+fi
+
+# Le bureau lit le clavier dans les réglages de chaque compte (QWERTY américain sinon) :
+# celui du nouveau compte (par /etc/skel) et celui de l'écran de connexion (_greetd).
+keyboard=$layout
+[ -z "$variant" ] || keyboard="$layout($variant)"
+mkdir -p "$target/etc/skel/.config/ferrite"
+echo "clavier = $keyboard" >"$target/etc/skel/.config/ferrite/reglages"
+greeter_home=$(in_target getent passwd _greetd | cut -d: -f6)
+if [ -n "$greeter_home" ] && [ "$greeter_home" != / ]; then
+    mkdir -p "$target$greeter_home/.config/ferrite"
+    echo "clavier = $keyboard" >"$target$greeter_home/.config/ferrite/reglages"
+    in_target chown -R _greetd: "$greeter_home/.config"
+fi
+
+say "Création de votre compte"
+progress 88
+in_target useradd --create-home --shell /bin/bash --comment "$full_name" "$user" >&2
+for group in sudo audio video render input netdev plugdev bluetooth lpadmin; do
+    if in_target getent group "$group" >/dev/null; then
+        in_target usermod -aG "$group" "$user"
+    fi
+done
+set +x
+printf '%s:%s\n' "$user" "$password" | in_target chpasswd || fail "Mot de passe non enregistré."
+set -x
+in_target passwd -l root >&2 || true
+
+say "Préparation du démarrage"
+progress 90
+in_target update-initramfs -c -k "$version" >&2 || in_target update-initramfs -u -k "$version" >&2
+progress 94
+# Debconf : GRUB ne pose aucune question.
+cat >>"$target/etc/default/grub" <<'EOF'
+
+# Ferrite : les autres systèmes (Windows…) apparaissent dans le menu de démarrage.
+GRUB_DISABLE_OS_PROBER=false
+EOF
+sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=.*/GRUB_CMDLINE_LINUX_DEFAULT="quiet splash"/' "$target/etc/default/grub"
+mkdir -p "$target/tmp/paquets"
+if [ "$firmware" = efi ]; then
+    cp "$packages"/efi/*.deb "$target/tmp/paquets/" 2>/dev/null || true
+else
+    cp "$packages"/bios/*.deb "$target/tmp/paquets/" 2>/dev/null || true
+    echo "grub-pc grub-pc/install_devices multiselect $disk" | in_target debconf-set-selections
+fi
+if ls "$target"/tmp/paquets/*.deb >/dev/null 2>&1; then
+    in_target sh -c 'dpkg -i /tmp/paquets/*.deb' >&2 || fail "Les paquets de démarrage (GRUB) ne s'installent pas."
+fi
+rm -rf "$target/tmp/paquets"
+if [ "$firmware" = efi ]; then
+    # « debian » : le GRUB signé (démarrage sécurisé) cherche sa configuration dans
+    # EFI/debian. Disque entier : aussi le chemin de secours EFI/BOOT, que lisent les
+    # micrologiciels qui oublient leurs entrées.
+    extra=""
+    [ "$table" = garder ] || extra=--force-extra-removable
+    # shellcheck disable=SC2086 # option vide ou unique
+    in_target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=debian \
+        --recheck $extra >&2 || fail "Le démarrage (GRUB) n'a pas pu être installé."
+else
+    in_target grub-install --target=i386-pc --recheck "$disk" >&2 ||
+        fail "Le démarrage (GRUB) n'a pas pu être installé."
+fi
+progress 97
+in_target update-grub >&2 || fail "Le menu de démarrage n'a pas pu être créé."
+
+say "Finitions"
+progress 99
+sync
+progress 100
+say "Terminé"
+echo fini >&3

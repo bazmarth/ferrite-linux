@@ -4264,3 +4264,13 @@ Non vérifié : vrai Windows (os-prober, menu GRUB à deux systèmes, Windows qu
 après réduction) ; démarrage sécurisé ; mode BIOS ; effacement du disque et mode manuel
 en VM ; ThinkBook. L'ISO construite contient l'ancien script : la reconstruire.
 
+## 2026-11-14 — Rétroéclairage du clavier allumé pendant la veille
+
+Cause : le délai de veille demandé à logind (`acquire_sleep_delay_inhibitor`, `lock.rs`)
+n'était pris que si le clavier était allumé au lancement du bureau ou au réveil. Allumé
+ensuite, l'ordinateur s'endormait sans attendre son extinction, et en veille s2idle le
+contrôleur le laisse allumé. Le délai est maintenant pris dès qu'un clavier rétroéclairé
+existe.
+Vérifié : CI (sans shellcheck) ; avant correction, `systemd-inhibit --list` ne montrait
+aucun délai « sleep » de Ferrite. Non vérifié : vraie mise en veille du ThinkBook avec le
+bureau relancé.

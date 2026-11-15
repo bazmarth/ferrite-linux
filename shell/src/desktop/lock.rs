@@ -427,9 +427,9 @@ pub fn take_power_key() -> Option<zbus::zvariant::OwnedFd> {
 }
 
 fn acquire_sleep_delay_inhibitor(manager: &zbus::blocking::Proxy<'_>) -> Option<zbus::zvariant::OwnedFd> {
-    if !ferrite_system::display::keyboard_light().is_some_and(|(level, _)| level > 0) {
-        return None;
-    }
+    // Pris dès qu'un clavier rétroéclairé existe, même éteint : il peut être rallumé avant la
+    // veille, et sans ce délai il resterait allumé pendant la veille (s2idle).
+    ferrite_system::display::keyboard_light()?;
     match manager.call(
         "Inhibit",
         &(

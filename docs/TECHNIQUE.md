@@ -492,9 +492,10 @@ reste le navigateur. La Logithèque (phase 7) est considérée comme suffisante.
 ### 5.4 Défauts connus
 
 - Le widget Musique peut chevaucher le widget Système dans la disposition de l'utilisateur.
-- Ouverture du centre de contrôle ~31 ms (une rastérisation complète).
+- Vue d'ensemble : ~13 ms par image sur batterie (centre de contrôle : 1 à 3 ms sur
+  secteur depuis le 2026-11-13).
 - `--demo-auth` : le voile sombre du fond ne couvre pas les widgets de l'espace 0.
-- Lecteur PDF : pas de liens cliquables ; les annotations restent à côté du PDF
+- Lecteur PDF : les annotations restent à côté du PDF
   (`~/.local/share/ferrite/lecteur-pdf-annotations/`), elles ne sont pas écrites dedans. Aperçu Markdown : aucun indice
   qu'un tableau trop large défile de côté.
 - Le portail ne gère pas `Request.Close` (une demande fermée par l'application).

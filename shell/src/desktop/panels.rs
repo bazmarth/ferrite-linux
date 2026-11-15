@@ -1100,6 +1100,8 @@ pub struct Panels {
     lock_wall: RefCell<Option<(LockWallKey, MemoryRenderBuffer)>>,
     /// Autres couches de l'écran de verrouillage (voir `lock_elements`).
     lock_layers: RefCell<lock_screen::LockLayers>,
+    /// Page principale du centre de contrôle sans ses curseurs (`controls_pixels`).
+    controls_main: RefCell<Option<ControlsMain>>,
 }
 
 /// Durées de l'apparition et de la disparition d'un panneau, et sa taille de départ.
@@ -1124,6 +1126,10 @@ struct PopoverLayer {
 
 /// Fond du centre de contrôle dessiné par la carte graphique : zone, uniformes et élément.
 type ControlsPlate = (Rectangle<i32, Logical>, [u32; 12], PixelShaderElement);
+
+/// État (curseurs mis à zéro), échelle (bits) et place en pixels physiques de la page
+/// principale du centre de contrôle gardée sans ses curseurs, puis ses pixels.
+type ControlsMain = ((VisualState, u64, [u32; 4]), Vec<u8>);
 
 /// Rayon du centre de contrôle.
 const CONTROLS_RADIUS: f64 = 20.0;
@@ -1285,6 +1291,7 @@ impl Panels {
             icon_warmup: Cell::new((0, 0)),
             lock_wall: RefCell::new(None),
             lock_layers: RefCell::new(lock_screen::LockLayers::default()),
+            controls_main: RefCell::new(None),
         })
     }
 
@@ -2470,22 +2477,34 @@ impl Panels {
 
     /// Panneau animé ouvert, seul, découpé à sa place (ombre comprise).
     fn rasterize_layer(&self, state: &VisualState, scale: f64) -> Option<PopoverLayer> {
+        let (rect, card, (w, h), pixels) = self.controls_pixels(state, scale)?;
+        Some(PopoverLayer {
+            rect,
+            card,
+            buffer: MemoryRenderBuffer::from_slice(
+                &pixels,
+                Fourcc::Argb8888,
+                (w as i32, h as i32),
+                1,
+                smithay::utils::Transform::Normal,
+                None,
+            ),
+        })
+    }
+
+    /// Pixels du centre de contrôle ouvert, sur une toile de sa taille (ombre comprise) :
+    /// sa place à l'écran, le panneau lui-même, la taille de l'image et ses pixels. Une
+    /// toile de tout l'écran coûtait 3 à 4 ms de plus par dessin (20 Mo mis à zéro puis
+    /// recopiés à l'échelle 2).
+    #[allow(clippy::type_complexity)] // Quatre résultats nommés dans la documentation.
+    fn controls_pixels(&self, state: &VisualState, scale: f64) -> Option<(Rect, Rect, (u32, u32), Vec<u8>)> {
         let view = &state.view;
         if !animated(view.popover) {
             return None;
         }
         let width = (state.width as f64 * scale).round().max(1.0) as u32;
         let height = (state.height as f64 * scale).round().max(1.0) as u32;
-        let mut canvas = Canvas {
-            pixels: vec![0; width as usize * height as usize * 4],
-            width,
-            height,
-            scale: scale as f32,
-            bold: &self.bold,
-            icons: &self.icons,
-        };
-        let layout = Layout::new(state.width as f64, state.height as f64, view);
-        self.draw_controls(&mut canvas, &layout, state);
+        let mut layout = Layout::new(state.width as f64, state.height as f64, view);
         let card = layout.controls();
         // Ombre entière (`Canvas::panel_shadow`), en pixels physiques entiers : la couper
         // laisserait un bord net sur un fond clair.
@@ -2498,28 +2517,46 @@ impl Panels {
             return None;
         }
         let (w, h) = (right - left, bottom - top);
-        let mut pixels = Vec::with_capacity(w as usize * h as usize * 4);
-        for row in top..bottom {
-            let start = (row as usize * width as usize + left as usize) * 4;
-            pixels.extend_from_slice(&canvas.pixels[start..start + w as usize * 4]);
+        // Décalage d'un nombre entier de pixels physiques : chaque pixel tombe exactement
+        // là où il tombait sur la toile de tout l'écran.
+        layout.controls_shift = (f64::from(left) / scale, f64::from(top) / scale);
+        let mut canvas = Canvas {
+            pixels: Vec::new(),
+            width: w,
+            height: h,
+            scale: scale as f32,
+            bold: &self.bold,
+            icons: &self.icons,
+        };
+        if view.controls.page == ControlsPage::Main {
+            // Page principale sans ses curseurs, gardée : un pas de curseur ne redessine
+            // que les curseurs (la page entière coûtait 7 à 12 ms sur batterie).
+            let mut without = state.clone();
+            without.view.volume = without.view.volume.map(|_| 0);
+            without.view.brightness = without.view.brightness.map(|_| 0);
+            let key = (without, scale.to_bits(), [left, top, w, h]);
+            let mut kept = self.controls_main.borrow_mut();
+            match kept.as_ref() {
+                Some((known, pixels)) if *known == key => canvas.pixels = pixels.clone(),
+                _ => {
+                    canvas.pixels = vec![0; w as usize * h as usize * 4];
+                    self.draw_controls_main(&mut canvas, &layout, state);
+                    *kept = Some((key, canvas.pixels.clone()));
+                }
+            }
+            drop(kept);
+            self.draw_controls_sliders(&mut canvas, &layout, view);
+        } else {
+            canvas.pixels = vec![0; w as usize * h as usize * 4];
+            self.draw_controls(&mut canvas, &layout, state);
         }
-        Some(PopoverLayer {
-            rect: Rect::new(
-                left as f64 / scale,
-                top as f64 / scale,
-                w as f64 / scale,
-                h as f64 / scale,
-            ),
-            card,
-            buffer: MemoryRenderBuffer::from_slice(
-                &pixels,
-                Fourcc::Argb8888,
-                (w as i32, h as i32),
-                1,
-                smithay::utils::Transform::Normal,
-                None,
-            ),
-        })
+        let rect = Rect::new(
+            f64::from(left) / scale,
+            f64::from(top) / scale,
+            f64::from(w) / scale,
+            f64::from(h) / scale,
+        );
+        Some((rect, card, (w, h), canvas.pixels))
     }
 
     /// Soleil : rayons proportionnels au disque, comme sur la maquette.
@@ -3018,7 +3055,10 @@ impl Panels {
         // Ombre et verre du panneau : dessinés par la carte graphique, sous ce contenu
         // (`render::shaders::PANEL`, voir `Panels::push_controls_plate`).
         match view.controls.page {
-            ControlsPage::Main => self.draw_controls_main(canvas, layout, state),
+            ControlsPage::Main => {
+                self.draw_controls_main(canvas, layout, state);
+                self.draw_controls_sliders(canvas, layout, view);
+            }
             ControlsPage::Wifi => self.draw_controls_wifi(canvas, layout, view),
             ControlsPage::Bluetooth => self.draw_controls_bluetooth(canvas, layout, view),
         }
@@ -3183,23 +3223,7 @@ impl Panels {
             );
         }
 
-        let sliders = [
-            (Control::Volume, "cc-volume", view.volume),
-            (Control::Brightness, "cc-brightness", view.brightness),
-        ];
-        for (control, glyph, value) in sliders {
-            // Pas de curseur pour un réglage que la machine n'offre pas.
-            let Some(value) = value else { continue };
-            let track = layout.slider_track(control);
-            canvas.slider(track, value);
-            let ink = themed(palette().heading, palette().inverse_text);
-            canvas.icon(
-                glyph,
-                (track.x + track.h / 2.0, track.y + track.h / 2.0),
-                18.0,
-                Style::Symbolic(ink),
-            );
-        }
+        // Curseurs : à part (`draw_controls_sliders`), redessinés seuls à chaque pas.
 
         let footer = layout.controls_footer();
         let battery = state.battery.map_or(String::new(), |battery| {
@@ -3237,6 +3261,28 @@ impl Panels {
                 line.y,
                 px(12.0),
                 destructive(),
+            );
+        }
+    }
+
+    /// Curseurs du son et de la luminosité, sur leurs propres rangées : rien d'autre n'y
+    /// est dessiné, ils peuvent donc l'être seuls par-dessus le reste de la page.
+    fn draw_controls_sliders(&self, canvas: &mut Canvas, layout: &Layout, view: &DesktopView) {
+        let sliders = [
+            (Control::Volume, "cc-volume", view.volume),
+            (Control::Brightness, "cc-brightness", view.brightness),
+        ];
+        for (control, glyph, value) in sliders {
+            // Pas de curseur pour un réglage que la machine n'offre pas.
+            let Some(value) = value else { continue };
+            let track = layout.slider_track(control);
+            canvas.slider(track, value);
+            let ink = themed(palette().heading, palette().inverse_text);
+            canvas.icon(
+                glyph,
+                (track.x + track.h / 2.0, track.y + track.h / 2.0),
+                18.0,
+                Style::Symbolic(ink),
             );
         }
     }
@@ -5240,6 +5286,9 @@ struct Layout {
     error: bool,
     /// Un second écran est branché : une rangée de tuiles en plus.
     second_screen: bool,
+    /// Décalage retiré de la place du centre de contrôle (et donc de tout ce qui en
+    /// dépend) : il est dessiné sur une toile de sa taille, pas de celle de l'écran.
+    controls_shift: (f64, f64),
 }
 
 impl Layout {
@@ -5440,8 +5489,8 @@ impl Layout {
             }
         };
         Rect::new(
-            (self.w - 16.0 - CONTROLS_WIDTH).max(POPOVER_MARGIN),
-            self.bar + POPOVER_MARGIN,
+            (self.w - 16.0 - CONTROLS_WIDTH).max(POPOVER_MARGIN) - self.controls_shift.0,
+            self.bar + POPOVER_MARGIN - self.controls_shift.1,
             CONTROLS_WIDTH,
             h,
         )
@@ -5771,6 +5820,7 @@ impl Layout {
             brightness: view.brightness.is_some(),
             error: view.error.is_some(),
             second_screen: view.second_screen.is_some(),
+            controls_shift: (0.0, 0.0),
         }
     }
 
@@ -7916,6 +7966,122 @@ mod tests {
             ..desktop
         };
         assert!(panels.popovers_pending(output, 2.0, &dark));
+    }
+
+    /// Ancien dessin du centre de contrôle : toile de tout l'écran, découpée ensuite.
+    fn controls_on_whole_screen(
+        panels: &Panels,
+        state: &VisualState,
+        scale: f64,
+        crop: (Rect, u32, u32),
+    ) -> Vec<u8> {
+        let width = (state.width as f64 * scale).round() as u32;
+        let height = (state.height as f64 * scale).round() as u32;
+        let mut canvas = Canvas {
+            pixels: vec![0; width as usize * height as usize * 4],
+            width,
+            height,
+            scale: scale as f32,
+            bold: &panels.bold,
+            icons: &panels.icons,
+        };
+        let layout = Layout::new(state.width as f64, state.height as f64, &state.view);
+        panels.draw_controls(&mut canvas, &layout, state);
+        let (rect, w, h) = crop;
+        let (left, top) = (
+            (rect.x * scale).round() as usize,
+            (rect.y * scale).round() as usize,
+        );
+        let mut pixels = Vec::new();
+        for row in top..top + h as usize {
+            let start = (row * width as usize + left) * 4;
+            pixels.extend_from_slice(&canvas.pixels[start..start + w as usize * 4]);
+        }
+        pixels
+    }
+
+    fn controls_state(panels: &Panels, scale: f64, page: ControlsPage, dark: bool) -> VisualState {
+        let mut desktop = view(Some(Popover::Controls));
+        desktop.dark_theme = dark;
+        desktop.controls.page = page;
+        sample_rows(&mut desktop.controls);
+        panels.visual_state(Rectangle::from_size((1440, 900).into()), scale, &desktop)
+    }
+
+    #[test]
+    fn centre_de_controle_sur_sa_toile_identique_a_la_toile_de_l_ecran() {
+        let panels = Panels::new().expect("polices embarquées");
+        for scale in [1.0, 2.0, 1.25, 1.5] {
+            for page in [ControlsPage::Main, ControlsPage::Wifi, ControlsPage::Bluetooth] {
+                for dark in [false, true] {
+                    let mut state = controls_state(&panels, scale, page, dark);
+                    // Deuxième tour : curseurs déplacés, seuls redessinés sur la page gardée.
+                    for (volume, brightness) in [(60, 70), (13, 91), (100, 0)] {
+                        state.view.volume = Some(volume);
+                        state.view.brightness = Some(brightness);
+                        let (rect, _, (w, h), pixels) =
+                            panels.controls_pixels(&state, scale).expect("centre ouvert");
+                        let reference = controls_on_whole_screen(&panels, &state, scale, (rect, w, h));
+                        assert_eq!(pixels.len(), reference.len());
+                        let worst = pixels
+                            .iter()
+                            .zip(&reference)
+                            .map(|(a, b)| a.abs_diff(*b))
+                            .max()
+                            .unwrap_or(0);
+                        assert!(
+                            worst <= 1,
+                            "{scale} {page:?} sombre={dark} curseurs={volume}/{brightness} : écart {worst}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Temps de dessin du centre de contrôle (version optimisée :
+    /// `cargo test --release -p ferrite-shell -- --ignored temps_du_centre --nocapture`).
+    #[test]
+    #[ignore = "mesure, pas un test"]
+    fn temps_du_centre_de_controle() {
+        let panels = Panels::new().expect("polices embarquées");
+        for page in [ControlsPage::Main, ControlsPage::Wifi, ControlsPage::Bluetooth] {
+            let mut state = controls_state(&panels, 2.0, page, false);
+            let _ = panels.rasterize_layer(&state, 2.0);
+            let mut times = Vec::new();
+            for step in 0..40u8 {
+                state.view.volume = Some(20 + step);
+                let start = std::time::Instant::now();
+                let _ = panels.rasterize_layer(&state, 2.0);
+                times.push(start.elapsed().as_secs_f64() * 1000.0);
+            }
+            let (rect, _, (w, h), _) = panels.controls_pixels(&state, 2.0).expect("centre ouvert");
+            let mut whole = Vec::new();
+            for step in 0..40u8 {
+                state.view.volume = Some(20 + step);
+                let start = std::time::Instant::now();
+                let pixels = controls_on_whole_screen(&panels, &state, 2.0, (rect, w, h));
+                let _ = MemoryRenderBuffer::from_slice(
+                    &pixels,
+                    Fourcc::Argb8888,
+                    (1, (pixels.len() / 4) as i32),
+                    1,
+                    smithay::utils::Transform::Normal,
+                    None,
+                );
+                whole.push(start.elapsed().as_secs_f64() * 1000.0);
+            }
+            for list in [&mut times, &mut whole] {
+                list.sort_by(f64::total_cmp);
+            }
+            eprintln!(
+                "{page:?} : sa toile médiane {:.2} ms (pire {:.2}) ; toile de l'écran {:.2} ms (pire {:.2})",
+                times[times.len() / 2],
+                times[times.len() - 1],
+                whole[whole.len() / 2],
+                whole[whole.len() - 1]
+            );
+        }
     }
 
     #[test]

@@ -4207,3 +4207,24 @@ captures du bureau imbriqué des trois modes (Performance et Économie avec un f
 `powerprofilesctl`) ; vrai bureau (DRM, `tools/dev-on.sh`) : un clic depuis Normal donne
 `powerprofilesctl get` = `performance`, le suivant `power-saver`, sans mot de passe.
 Non vérifié : retour d'Économie à Normal depuis le bouton (essayé en ligne de commande).
+
+## 2026-11-13 — Fluidité : centre de contrôle sur sa propre toile, curseurs seuls
+
+Demande : suite du chantier fluidité du centre de contrôle (restes du 2026-11-11 : toile
+plein écran inutile, page principale redessinée à chaque pas d'un curseur).
+- `panels.rs` : `controls_pixels` dessine le centre sur une toile de sa taille (ombre
+  comprise) au lieu d'une toile de tout l'écran découpée ensuite ; `Layout::controls_shift`
+  décale sa place d'un nombre entier de pixels physiques (tout le reste en dépend).
+- Page principale : curseurs à part (`draw_controls_sliders`, sur leurs propres rangées) ;
+  la page sans ses curseurs est gardée (`controls_main`, clé : état aux curseurs mis à zéro,
+  échelle, place) ; un pas de curseur ne redessine que les deux curseurs.
+Vérifié : CI (sans shellcheck) ; test
+`centre_de_controle_sur_sa_toile_identique_a_la_toile_de_l_ecran` (échelles 1, 2, 1,25,
+1,5 ; trois pages ; clair et sombre ; curseurs déplacés trois fois) : écart ≤ 1/255 avec
+l'ancien dessin ; captures du bureau imbriqué (principale claire, Wi-Fi sombre).
+Mesuré sur secteur (version optimisée, 1440×900 à l'échelle 2,
+`temps_du_centre_de_controle`, ignoré par défaut) : pas de curseur 3,3–3,5 → 0,8 ms ;
+Wi-Fi 1,7 → 1,0 ms ; Bluetooth 3,5 → 2,5 ms. Sur batterie, environ 3 fois plus.
+Non vérifié : vrai bureau (DRM) ; mesure sur batterie. Reste : vue d'ensemble 13 ms sur
+batterie.
+

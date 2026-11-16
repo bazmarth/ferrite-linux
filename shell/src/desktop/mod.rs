@@ -12,6 +12,7 @@ pub mod idle;
 pub mod island;
 pub mod launch;
 pub mod lock;
+pub mod magnifier;
 pub mod media;
 pub mod night;
 pub mod notifications;

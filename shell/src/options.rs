@@ -22,6 +22,8 @@ Options :
                         « génie » à cette fraction (0 à 1), pour les captures
   --demo-swap FRACTION  en tuilage, échange les deux premières fenêtres et fige le
                         glissement à cette fraction (0 à 1), pour les captures
+  --demo-pointer X,Y    pointeur figé à cette place (pixels logiques) pour le zoom de
+                        l'écran (réglage « loupe »), pour les captures
   --demo-overview       ouvre la vue d'ensemble au démarrage (pour les captures)
   --demo-switcher       ouvre le sélecteur Alt+Tab dès qu'une fenêtre existe (pour les captures)
   --demo-keep-above     garde la première fenêtre ouverte au-dessus des autres (pour les captures)
@@ -86,6 +88,8 @@ pub struct Options {
     pub demo_page: Option<f64>,
     /// Ouvre la vue d'ensemble au démarrage (pour les captures).
     pub demo_overview: bool,
+    /// `--demo-pointer` : place du pointeur que suit le zoom de l'écran.
+    pub demo_pointer: Option<(f64, f64)>,
     /// Sélecteur Alt+Tab, sélection d'une zone et capture demandés d'avance.
     pub demo_switcher: bool,
     /// Première fenêtre gardée au-dessus des autres (`--demo-keep-above`).
@@ -131,6 +135,7 @@ impl Default for Options {
             swap_demo: None,
             demo_page: None,
             demo_overview: false,
+            demo_pointer: None,
             demo_switcher: false,
             demo_keep_above: false,
             demo_region: false,
@@ -153,8 +158,9 @@ impl Default for Options {
     }
 }
 
-/// Résultat de l'analyse : options à utiliser ou demande d'aide.
+/// Résultat de l'analyse : options à utiliser ou demande d'aide (lu une seule fois).
 #[derive(Debug, PartialEq)]
+#[allow(clippy::large_enum_variant)]
 pub enum Parsed {
     Run(Options),
     Help,
@@ -210,6 +216,14 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
                         .ok()
                         .filter(|fraction| (0.0..=1.0).contains(fraction))
                         .ok_or_else(|| format!("fraction invalide : {text} (entre 0 et 1)"))?,
+                );
+            }
+            "--demo-pointer" => {
+                let text = value("--demo-pointer")?;
+                options.demo_pointer = Some(
+                    text.split_once(',')
+                        .and_then(|(x, y)| Some((x.trim().parse().ok()?, y.trim().parse().ok()?)))
+                        .ok_or_else(|| format!("place invalide : {text} (X,Y)"))?,
                 );
             }
             "--demo-overview" => options.demo_overview = true,

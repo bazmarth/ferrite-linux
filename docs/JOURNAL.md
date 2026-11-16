@@ -4274,3 +4274,28 @@ existe.
 Vérifié : CI (sans shellcheck) ; avant correction, `systemd-inhibit --list` ne montrait
 aucun délai « sleep » de Ferrite. Non vérifié : vraie mise en veille du ThinkBook avec le
 bureau relancé.
+
+## 2026-11-16 — Accessibilité : zoom de l'écran (loupe)
+
+Demande : suite de la phase 8. État des lieux : trousseau (gnome-keyring), applications par
+défaut, impression et accessibilité déjà faits, sauf le zoom de l'écran.
+- `shell/src/desktop/magnifier.rs` : réglages `loupe` et `loupe_grossissement` (110 à
+  1000 %, 200 par défaut) ; Super+Alt+8 (marche/arrêt), Super+Alt+= et Super+Alt+)
+  (crans 150…800 %, sous 150 % elle s'arrête), Super+Alt+molette (×1,15 par cran) ; le
+  bureau enregistre le réglage, Paramètres le relit. Raccourcis modifiables (Clavier),
+  valables aussi écran verrouillé.
+- `shell/src/render/magnifier.rs` : la scène (tout sauf le pointeur) est dessinée dans une
+  image de l'écran gardée d'une image à l'autre, avec son propre suivi des dégâts (seuls
+  les changements y sont redessinés) ; on en montre une partie, agrandie par le GPU. Le
+  point sous le pointeur reste sous le pointeur : aucune conversion des clics. Passage
+  animé (SHORT par doublement), immédiat avec « réduire les animations ».
+- Paramètres → Accessibilité : groupe « Zoom de l'écran » (Loupe, Grossissement).
+- `--demo-pointer X,Y` pour les captures.
+Vérifié : CI (sans shellcheck) ; tests (point sous le pointeur fixe, partie montrée dans
+l'écran, crans) ; captures du bureau imbriqué : 200 % pointeur en haut à gauche et au
+milieu (sommet d'un hexagone du fond retrouvé à la place calculée), fenêtre Paramètres
+grossie et mise à jour après son ouverture ; page Accessibilité.
+Non vérifié : vrai bureau (DRM) : raccourcis, molette, fluidité et consommation au repos
+avec la loupe. Limites : le pointeur garde sa taille ; captures d'écran et partage d'écran
+montrent l'écran sans zoom ; second écran en « étendre » sans loupe.
+

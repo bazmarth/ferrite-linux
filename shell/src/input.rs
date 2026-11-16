@@ -177,6 +177,10 @@ pub(crate) enum Action {
     PowerButton,
     PowerConfirm,
     PowerStep(i32),
+    /// Super+Alt+8 : zoom de l'écran en marche ou arrêté ; Super+Alt+= et Super+Alt+) :
+    /// grossissement suivant (`true`) ou précédent.
+    MagnifierToggle,
+    MagnifierStep(bool),
     /// Touche de fonction : son, micro, luminosité, mode avion, calculatrice…
     Function(crate::desktop::function_keys::FunctionKey),
 }
@@ -200,6 +204,7 @@ impl Action {
                 | Action::LockMove(_)
                 | Action::ClipboardType(_)
                 | Action::ClipboardMove(_)
+                | Action::MagnifierStep(_)
         ) || matches!(self, Action::Function(key) if key.repeats())
     }
 }
@@ -242,6 +247,9 @@ fn shortcut_action(id: &str) -> Option<Action> {
         "restore_minimized" => Action::RestoreMinimized,
         "screenshot" => Action::ScreenshotFull,
         "screenshot_region" => Action::ScreenshotRegion,
+        "magnifier_toggle" => Action::MagnifierToggle,
+        "magnifier_in" => Action::MagnifierStep(true),
+        "magnifier_out" => Action::MagnifierStep(false),
         id if id.starts_with("send_space_") => {
             let space = id.strip_prefix("send_space_")?.parse::<usize>().ok()?;
             Action::SendToSpace(space.saturating_sub(1))
@@ -293,7 +301,13 @@ fn modifiers_to_announce(
 }
 
 fn works_while_locked(action: Action) -> bool {
-    matches!(action, Action::SwitchVt(_) | Action::ToggleKeyboardLayout)
+    matches!(
+        action,
+        Action::SwitchVt(_)
+            | Action::ToggleKeyboardLayout
+            | Action::MagnifierToggle
+            | Action::MagnifierStep(_)
+    )
 }
 
 /// Facteur de vitesse du défilement selon sa source : la molette (crans) ou le pavé
@@ -942,6 +956,8 @@ impl Ferrite {
             Some(Action::ScreenshotFull) => self.open_capture(self.screenshot_mode),
             Some(Action::ScreenshotRegion) => self.open_capture(crate::render::capture::Mode::Area),
             Some(Action::CaptureShoot) => self.capture_shoot(),
+            Some(Action::MagnifierToggle) => self.toggle_magnifier(),
+            Some(Action::MagnifierStep(up)) => self.step_magnifier(up),
             Some(Action::Function(key)) => self.on_function_key(key),
             Some(Action::PowerDialog) => self.open_power_dialog(crate::state::PowerAction::Sleep),
             Some(Action::PowerButton) => {
@@ -2493,6 +2509,18 @@ impl Ferrite {
             .or_else(|| event.amount_v120(Axis::Vertical).map(|value| value / 8.0))
             .unwrap_or(0.0)
             * direction;
+        // Super+Alt+molette, partout : grossissement de la loupe.
+        let magnifier_keys = self.seat.get_keyboard().is_some_and(|keyboard| {
+            let modifiers = keyboard.modifier_state();
+            modifiers.logo && modifiers.alt && !modifiers.ctrl && !modifiers.shift
+        });
+        if magnifier_keys {
+            if amount != 0.0 {
+                self.super_used = true;
+                self.scroll_magnifier(amount);
+            }
+            return;
+        }
         // Ctrl+molette sur le bureau : taille des icônes, un pas par cran (vers le haut :
         // plus grandes).
         let ctrl = self

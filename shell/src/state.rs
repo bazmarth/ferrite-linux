@@ -286,6 +286,13 @@ pub struct Ferrite {
     pub overview_order: Vec<Window>,
     /// Part affichée de la vue d'ensemble, de 0 à 1, et dernier pas de son animation.
     pub overview_shown: std::cell::Cell<(f64, Option<std::time::Instant>)>,
+    /// Grossissement affiché par la loupe (en log2 : 0 sans zoom), et dernier pas de son
+    /// animation vers celui des réglages.
+    pub magnifier_shown: std::cell::Cell<(f64, Option<std::time::Instant>)>,
+    /// Molette tenue avec Super+Alt, pas encore appliquée au grossissement.
+    pub magnifier_scroll: f64,
+    /// `--demo-pointer` : place figée du pointeur pour le zoom de l'écran (captures).
+    pub demo_pointer: Option<smithay::utils::Point<f64, smithay::utils::Logical>>,
     pub popups: PopupManager,
     /// Fenêtres réduites (la plus récente en dernier).
     pub minimized: Vec<Minimized>,
@@ -570,6 +577,9 @@ impl Ferrite {
             window_select_hover: None,
             overview_order: Vec::new(),
             overview_shown: std::cell::Cell::new((0.0, None)),
+            magnifier_shown: std::cell::Cell::new((0.0, None)),
+            magnifier_scroll: 0.0,
+            demo_pointer: None,
             popups: PopupManager::default(),
             minimized: Vec::new(),
             dashboard: Dashboard::load(),

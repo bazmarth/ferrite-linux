@@ -61,6 +61,8 @@ sans redémarrer. L'écran s'assombrit progressivement avant le verrouillage et 
 | Capture : prendre l'image / fermer | Entrée ou Espace / Échap |
 | Capture : copier le texte d'une zone | Impr. écran → « Texte », tracer la zone, Entrée |
 | Changer de disposition clavier (aussi sur l'écran verrouillé, avec indication à l'écran) | Super + Espace |
+| Zoom de l'écran (loupe) : en marche ou arrêté (aussi sur l'écran verrouillé) | Super + Alt + 8 |
+| Zoom de l'écran : plus gros / moins gros | Super + Alt + = / Super + Alt + ) (les deux touches à gauche de Retour arrière), ou Super + Alt + molette |
 | Écran de connexion : compte précédent / suivant | ↑ / ↓ ou Tab |
 | Quitter le bureau | Ctrl + Alt + Retour arrière |
 | Terminal virtuel | Ctrl + Alt + F1…F12 |

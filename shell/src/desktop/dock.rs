@@ -159,6 +159,9 @@ pub struct DockConfig {
     /// Accessibilité : contraste élevé et touches rémanentes.
     pub high_contrast: bool,
     pub sticky_keys: bool,
+    /// Zoom de l'écran en marche, et son grossissement en pour cent.
+    pub magnifier: bool,
+    pub magnifier_zoom: u32,
 }
 
 impl Default for DockConfig {
@@ -189,6 +192,8 @@ impl Default for DockConfig {
             workspaces_primary_only: true,
             high_contrast: false,
             sticky_keys: false,
+            magnifier: false,
+            magnifier_zoom: 200,
         }
     }
 }
@@ -216,6 +221,8 @@ impl DockConfig {
             workspaces_primary_only: settings.flag(ferrite_system::config::WORKSPACES_PRIMARY_ONLY, true),
             high_contrast: settings.flag(ferrite_system::config::HIGH_CONTRAST, false),
             sticky_keys: settings.flag(ferrite_system::config::STICKY_KEYS, false),
+            magnifier: settings.flag(ferrite_system::config::MAGNIFIER, false),
+            magnifier_zoom: settings.magnifier_zoom(),
         }
     }
 

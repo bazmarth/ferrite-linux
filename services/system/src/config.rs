@@ -29,6 +29,15 @@ pub const DO_NOT_DISTURB: &str = "ne_pas_deranger";
 pub const HIGH_CONTRAST: &str = "contraste_eleve";
 /// Accessibilité : touches rémanentes (oui/non).
 pub const STICKY_KEYS: &str = "touches_remanentes";
+/// Accessibilité : zoom de l'écran (loupe) en marche (oui/non).
+pub const MAGNIFIER: &str = "loupe";
+/// Accessibilité : grossissement de la loupe, en pour cent (voir [`Settings::magnifier_zoom`]).
+pub const MAGNIFIER_ZOOM: &str = "loupe_grossissement";
+/// Grossissements proposés par Paramètres et parcourus par Super+Alt+= et Super+Alt+).
+pub const MAGNIFIER_STEPS: [u32; 7] = [150, 200, 250, 300, 400, 600, 800];
+/// Grossissement le plus faible et le plus fort (la molette va de l'un à l'autre).
+pub const MAGNIFIER_MIN: u32 = 110;
+pub const MAGNIFIER_MAX: u32 = 1000;
 /// Plusieurs écrans en « étendre » : changer de bureau ne touche que l'écran principal ;
 /// les fenêtres du second écran restent affichées (oui/non, oui par défaut).
 pub const WORKSPACES_PRIMARY_ONLY: &str = "espaces_ecran_principal";
@@ -319,6 +328,24 @@ pub const KEYBOARD_SHORTCUTS: &[KeyboardShortcutDefinition] = &[
         group: "Espaces de travail",
         label: "Envoyer la fenêtre sur l’espace 9",
         defaults: &[KeyboardShortcutBinding::new(18, SUPER_SHIFT)],
+    },
+    KeyboardShortcutDefinition {
+        id: "magnifier_toggle",
+        group: "Bureau",
+        label: "Zoom de l’écran : activer ou arrêter",
+        defaults: &[KeyboardShortcutBinding::new(17, SUPER_ALT)],
+    },
+    KeyboardShortcutDefinition {
+        id: "magnifier_in",
+        group: "Bureau",
+        label: "Zoom de l’écran : grossir",
+        defaults: &[KeyboardShortcutBinding::new(21, SUPER_ALT)],
+    },
+    KeyboardShortcutDefinition {
+        id: "magnifier_out",
+        group: "Bureau",
+        label: "Zoom de l’écran : réduire",
+        defaults: &[KeyboardShortcutBinding::new(20, SUPER_ALT)],
     },
     KeyboardShortcutDefinition {
         id: "snap_third_1",
@@ -958,6 +985,15 @@ impl Settings {
     /// Taille du curseur en pixels logiques (24, 32 ou 48).
     pub fn cursor_size(&self) -> u32 {
         crate::cursors::parse_size(self.get("curseur_taille"))
+    }
+
+    /// Grossissement de la loupe, en pour cent (200 par défaut), borné à
+    /// [`MAGNIFIER_MIN`]…[`MAGNIFIER_MAX`].
+    pub fn magnifier_zoom(&self) -> u32 {
+        self.get(MAGNIFIER_ZOOM)
+            .and_then(|value| value.trim().parse::<u32>().ok())
+            .unwrap_or(200)
+            .clamp(MAGNIFIER_MIN, MAGNIFIER_MAX)
     }
 
     /// Taille du texte des applications, en pour cent (100 : celle d'origine).

@@ -2799,7 +2799,7 @@ impl SettingsState {
         }
     }
 
-    /// Accessibilité : contraste, transparence, animations, touches rémanentes.
+    /// Accessibilité : contraste, transparence, animations, zoom de l'écran, touches rémanentes.
     fn accessibility_page(&mut self, ui: &mut egui::Ui) {
         let mut settings = Settings::load();
         let before = settings.clone();
@@ -2825,6 +2825,44 @@ impl SettingsState {
                 false,
             );
         });
+        group(ui, icons, "Zoom de l’écran", |rows| {
+            flag_row(
+                rows,
+                &mut settings,
+                Row::new("Loupe").hint("Grossit tout l’écran autour du pointeur"),
+                ferrite_system::config::MAGNIFIER,
+                false,
+            );
+            let mut zoom = settings.magnifier_zoom();
+            let labels: Vec<String> = ferrite_system::config::MAGNIFIER_STEPS
+                .iter()
+                .map(|step| format!("{} %", step))
+                .collect();
+            let mut options: Vec<(u32, &str)> = ferrite_system::config::MAGNIFIER_STEPS
+                .iter()
+                .zip(&labels)
+                .map(|(step, label)| (*step, label.as_str()))
+                .collect();
+            // Grossissement choisi à la molette, hors des crans : affiché tel quel.
+            let custom = format!("{zoom} %");
+            if !options.iter().any(|(step, _)| *step == zoom) {
+                options.push((zoom, custom.as_str()));
+                options.sort_by_key(|(step, _)| *step);
+            }
+            if rows
+                .row(Row::new("Grossissement"), |ui| {
+                    rows::pick(ui, "loupe-grossissement", &mut zoom, &options)
+                })
+                .0
+            {
+                settings.set(ferrite_system::config::MAGNIFIER_ZOOM, &zoom.to_string());
+            }
+        });
+        rows::group_note(
+            ui,
+            "Super+Alt+8 : loupe en marche ou arrêtée. Super+Alt+= et Super+Alt+) : plus ou moins \
+             gros (les deux touches à gauche de Retour arrière). Super+Alt+molette : réglage fin.",
+        );
         group(ui, icons, "Clavier", |rows| {
             flag_row(
                 rows,

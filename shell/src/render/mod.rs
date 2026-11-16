@@ -6,6 +6,7 @@ mod cursor;
 mod decorations;
 mod genie;
 mod ghost;
+mod magnifier;
 pub mod profile;
 mod rounded;
 pub(crate) mod shaders;
@@ -60,12 +61,14 @@ use crate::{
 
 render_elements! {
     /// Tout ce qui peut être dessiné sur un écran.
+    #[allow(clippy::large_enum_variant)]
     pub OutputElement<=GlesRenderer>;
     Surface = WaylandSurfaceRenderElement<GlesRenderer>,
     Rounded = RoundedSurface,
     Genie = genie::GenieElement,
     Shader = PixelShaderElement,
     Memory = MemoryRenderBufferRenderElement<GlesRenderer>,
+    Texture = smithay::backend::renderer::element::texture::TextureRenderElement<GlesTexture>,
 }
 
 /// Durée sans entrée avant de préparer les menus d'avance.
@@ -92,6 +95,8 @@ pub struct RenderAssets {
     /// Fond de la vue d'ensemble : clair puis sombre, selon le thème.
     overview_overlay: [MemoryRenderBuffer; 2],
     screen_fade_overlay: MemoryRenderBuffer,
+    /// Zoom de l'écran (loupe) : image de la scène de chaque écran.
+    magnifiers: magnifier::Magnifiers,
 }
 
 impl RenderAssets {
@@ -126,6 +131,7 @@ impl RenderAssets {
             panels: Panels::new()?,
             overview_overlay,
             screen_fade_overlay,
+            magnifiers: magnifier::Magnifiers::default(),
         })
     }
 }
@@ -571,7 +577,68 @@ fn build_output_elements(
         overlays,
         &mut elements,
     );
+    push_magnifier(
+        renderer,
+        state,
+        assets,
+        output,
+        output_geo,
+        scale,
+        overlays,
+        &mut elements,
+    );
     elements
+}
+
+/// Zoom de l'écran : la scène (tout sauf le pointeur) grossie autour du pointeur.
+#[allow(clippy::too_many_arguments)]
+fn push_magnifier(
+    renderer: &mut GlesRenderer,
+    state: &Ferrite,
+    assets: &RenderAssets,
+    output: &Output,
+    output_geo: Rectangle<i32, Logical>,
+    scale: f64,
+    overlays: usize,
+    elements: &mut Vec<OutputElement>,
+) {
+    use crate::desktop::{dock::DockMotion, magnifier};
+    let target = magnifier::target_level(state.dock_config);
+    let level = if state.dock_config.reduce_motion {
+        state.magnifier_shown.set((target, None));
+        target
+    } else {
+        DockMotion::step(&state.magnifier_shown, target, magnifier::ZOOM_EASE)
+    };
+    if level < 1e-3 {
+        assets.magnifiers.clear();
+        return;
+    }
+    // Pendant le passage vers l'écran verrouillé, la scène est déjà une photo zoomée.
+    if state.screen_fade.is_some() || overlays > elements.len() {
+        return;
+    }
+    let screen = output_geo.size.to_f64();
+    let pointer = state
+        .demo_pointer
+        .map(|location| location + output_geo.loc.to_f64())
+        .or_else(|| state.pointer_location())
+        .map(|location| location - output_geo.loc.to_f64())
+        .filter(|location| Rectangle::from_size(screen).contains(*location))
+        .unwrap_or_else(|| Point::from((screen.w / 2.0, screen.h / 2.0)));
+    let scene = elements.split_off(overlays);
+    profile::timed("loupe", || {
+        assets.magnifiers.push(
+            renderer,
+            &output.name(),
+            output_geo.size,
+            scale,
+            pointer,
+            level.exp2(),
+            scene,
+            elements,
+        )
+    });
 }
 
 /// Second écran en mode « étendre » : pointeur, fenêtres du bureau courant qui le

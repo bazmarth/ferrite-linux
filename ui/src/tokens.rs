@@ -12,19 +12,24 @@ pub mod spacing {
     pub const CONTROL_VERTICAL: f32 = 5.0;
 }
 
+/// Couleurs de signal. L'accent par défaut est l'« Oxyde », l'orange de l'oxyde de fer dont
+/// la ferrite est faite : foncé en clair (texte blanc dessus, 5,8:1), vif en sombre (encre
+/// foncée dessus). Chaque couleur garde 4,5:1 comme texte sur les fonds de son thème.
 pub mod colors {
-    pub const ACCENT_LIGHT: u32 = 0x2779E0;
-    pub const ACCENT_DARK: u32 = 0x6CB8FF;
-    pub const DANGER_LIGHT: u32 = 0xE5372B;
-    pub const DANGER_DARK: u32 = 0xE5372B;
-    pub const SUCCESS_LIGHT: u32 = 0x1F9D63;
-    pub const SUCCESS_DARK: u32 = 0x1F9D63;
-    pub const WARNING_LIGHT: u32 = 0xFF9F0A;
-    pub const WARNING_DARK: u32 = 0xFF9F0A;
+    pub const ACCENT_LIGHT: u32 = 0xB83A0A;
+    pub const ACCENT_DARK: u32 = 0xFF7A45;
+    pub const DANGER_LIGHT: u32 = 0xC62828;
+    pub const DANGER_DARK: u32 = 0xF87171;
+    pub const SUCCESS_LIGHT: u32 = 0x137333;
+    pub const SUCCESS_DARK: u32 = 0x4ADE80;
+    pub const WARNING_LIGHT: u32 = 0x8F5200;
+    pub const WARNING_DARK: u32 = 0xFBBF24;
 }
 
+/// Plus l'objet est grand, plus il est rond : contrôle 7, carte et menu 10, fenêtre 14,
+/// panneau du bureau 20.
 pub mod radius {
-    pub const CONTROL: u8 = 8;
+    pub const CONTROL: u8 = 7;
     pub const WINDOW: u32 = 14;
     pub const PANEL: u8 = 10;
     pub const POPOVER: u32 = 10;
@@ -131,22 +136,34 @@ pub mod elevation {
 }
 
 /// Tailles de texte. Pas de demi-tailles : une taille entre deux prend la plus petite.
+/// Base du système : 14 (`BODY`). Rien sous 12 hors des mentions serrées (`CAPTION`).
 pub mod typography {
     /// Mentions serrées (heures d'un agenda, durées, étiquettes de pastille).
     pub const CAPTION: f32 = 11.0;
+    /// Métadonnées, aide sous un champ, titre de groupe.
     pub const SMALL: f32 = 12.0;
-    /// Libellés compacts des listes et des barres d'outils.
+    /// Libellés compacts des listes, menus, descriptions sous un libellé.
     pub const LABEL: f32 = 13.0;
+    /// Taille de base de tout le système.
     pub const BODY: f32 = 14.0;
+    /// Titre de dialogue, de carte, de notification.
     pub const HEADING: f32 = 16.0;
+    /// Titre de section dans une page.
+    pub const SECTION: f32 = 20.0;
     /// Titre de page (Réglages) et grands titres de panneau.
     pub const TITLE: f32 = 24.0;
+    /// Écrans d'accueil (installation, premier démarrage) : une fois par écran.
+    pub const DISPLAY: f32 = 32.0;
     pub const MONOSPACE: f32 = 13.0;
-    pub const WINDOW_TITLE: f32 = 14.0;
+    /// Titre de fenêtre, en semi-gras.
+    pub const WINDOW_TITLE: f32 = 13.0;
 }
 
 pub mod control {
-    pub const HEIGHT: f32 = 30.0;
+    /// Hauteur des boutons, champs et listes déroulantes.
+    pub const HEIGHT: f32 = 32.0;
+    /// Boutons d'action des écrans plein écran (connexion, installation).
+    pub const HEIGHT_LARGE: f32 = 40.0;
 }
 
 /// Durées des animations, communes au bureau et aux applications. La courbe est
@@ -155,11 +172,11 @@ pub mod motion {
     use std::time::Duration;
 
     /// Disparitions, survols, petits changements d'état.
-    pub const QUICK: Duration = Duration::from_millis(150);
+    pub const QUICK: Duration = Duration::from_millis(120);
     /// Apparition d'un panneau ou d'un menu, fondus.
     pub const SHORT: Duration = Duration::from_millis(200);
     /// Ouverture d'une fenêtre, vue d'ensemble, glissement d'un contrôle.
-    pub const NORMAL: Duration = Duration::from_millis(280);
+    pub const NORMAL: Duration = Duration::from_millis(320);
     /// Grands mouvements : changement de bureau, verrouillage, îlot, retour d'un glisser.
     pub const LONG: Duration = Duration::from_millis(360);
 }
@@ -175,10 +192,10 @@ mod tests {
         assert_eq!(spacing::MEDIUM, 8.0);
         assert_eq!(radius::WINDOW, 14);
         assert_eq!(border::HAIRLINE, 1.0);
-        assert_eq!(control::HEIGHT, 30.0);
+        assert_eq!(control::HEIGHT, 32.0);
         assert_eq!(elevation::WINDOW_ACTIVE.blur, 48.0);
         assert_eq!(motion::SHORT, Duration::from_millis(200));
-        assert_eq!(motion::NORMAL, Duration::from_millis(280));
+        assert_eq!(motion::NORMAL, Duration::from_millis(320));
     }
 
     #[test]

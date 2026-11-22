@@ -10,3 +10,8 @@ Les PNG sont rendus depuis ces SVG (resvg) et rangés dans l'image :
 | `plymouth-point.svg` | `…/plymouth/themes/ferrite/point.png` (points qui s'allument pendant le chargement) | 12 × 12 |
 
 Après une modification d'un SVG, rendre à nouveau le PNG à la même taille.
+
+`logo.png` et `point.png`, à côté des SVG, sont les rendus à jour (Oxyde, novembre 2026) :
+les copier dans `image/config/includes.chroot/usr/share/plymouth/themes/ferrite/`
+(dossier trop profond pour être écrit depuis l'assistant).
+

@@ -44,15 +44,18 @@ use smithay::{
     utils::{Logical, Point, Rectangle, Size},
 };
 
+/// Point des applications ouvertes et trait de séparation.
+type Marks = (MemoryRenderBuffer, MemoryRenderBuffer);
+
 const ICON_GAP: f64 = 8.0;
 const PAD_X: f64 = 10.0;
 /// Marge du haut et du bas du fond, identique : les icônes sont centrées, et le point des
 /// applications ouvertes se pose dans la marge du bas.
-const PAD_Y: f64 = 11.0;
+const PAD_Y: f64 = 9.0;
 const DOT_BOTTOM: f64 = 3.0;
-const BOTTOM_MARGIN: i32 = 18;
+const BOTTOM_MARGIN: i32 = 12;
 const RUNNING_DOT: f64 = 5.0;
-/// Contour sombre du point, qui le garde lisible sur un fond d'écran clair.
+/// Contour sombre du point d'accent, qui le garde lisible sur un fond d'écran clair.
 const DOT_HALO: f64 = 1.0;
 /// Place ajoutée pour chaque trait (applications ouvertes non épinglées, corbeille).
 const SEPARATOR: f64 = 9.0;
@@ -175,7 +178,7 @@ impl Default for DockConfig {
             dots: true,
             recents: true,
             bar_translucent: true,
-            battery_percent: false,
+            battery_percent: true,
             bluetooth_icon: true,
             clock: ClockStyle::Full,
             corners: [
@@ -209,7 +212,7 @@ impl DockConfig {
             dots: settings.flag("dock_points", true),
             recents: settings.flag("dock_recentes", true),
             bar_translucent: settings.flag("barre_translucide", true),
-            battery_percent: settings.flag("barre_pourcentage", false),
+            battery_percent: settings.flag("barre_pourcentage", true),
             bluetooth_icon: settings.flag("barre_bluetooth", true),
             clock: settings.clock_style(),
             corners: ["hg", "hd", "bg", "bd"].map(|corner| settings.hot_corner(corner)),
@@ -586,7 +589,7 @@ pub struct Dock {
     /// Point des applications ouvertes et trait de séparation, par échelle et par
     /// exemplaire : deux éléments tirés du même tampon portent le même identifiant, et
     /// l'affichage n'en garde qu'un.
-    marks: RefCell<HashMap<(u32, usize), (MemoryRenderBuffer, MemoryRenderBuffer)>>,
+    marks: RefCell<HashMap<(u32, usize, Color), Marks>>,
     /// Fond du Dock : place, échelle et élément. Ses paramètres ne sont réécrits que s'ils
     /// changent : chaque réécriture compte comme un changement et fait redessiner le Dock.
     plate: RefCell<Option<Plate>>,
@@ -759,13 +762,15 @@ impl Dock {
 
     /// Point des applications ouvertes et trait de séparation, à l'échelle `scale`
     /// (exemplaire `copy` : un par point ou trait dessiné).
-    fn marks(&self, scale: f64, copy: usize) -> (MemoryRenderBuffer, MemoryRenderBuffer) {
-        let key = ((scale * 1000.0).round() as u32, copy);
+    fn marks(&self, scale: f64, copy: usize) -> Marks {
+        // Point de la couleur d'accent (charte « Forge ») : il change avec le réglage.
+        let accent = crate::desktop::panels::accent();
+        let key = ((scale * 1000.0).round() as u32, copy, accent);
         self.marks
             .borrow_mut()
             .entry(key)
             .or_insert_with(|| {
-                // Point blanc cerclé de noir : visible sur un fond clair comme sombre.
+                // Point d'accent cerclé de noir : visible sur un fond clair comme sombre.
                 let side = ((RUNNING_DOT + 2.0 * DOT_HALO) * scale).round().max(1.0) as u32;
                 let mut pixels = vec![0u8; side as usize * side as usize * 4];
                 let s = side as f32;
@@ -791,7 +796,7 @@ impl Dock {
                     inner,
                     inner,
                     inner / 2.0,
-                    Color::WHITE.with_alpha(240),
+                    accent,
                 );
                 let dot = MemoryRenderBuffer::from_slice(
                     &pixels,
@@ -896,8 +901,8 @@ mod tests {
     fn dock_centre_et_laisse_une_marge_en_bas() {
         let dock = layout(output(), medium(), &items(&App::dock(), &[]), 1.0, None, 0.0);
         assert_eq!(dock.plate.size.w, 342.0);
-        assert_eq!(dock.plate.size.h, 80.0);
-        assert_eq!(dock.plate.loc, Point::from((469.0, 622.0)));
+        assert_eq!(dock.plate.size.h, 76.0);
+        assert_eq!(dock.plate.loc, Point::from((469.0, 632.0)));
         // Icônes au milieu du fond : autant de marge en haut qu'en bas.
         let icon = dock.icons[0];
         let above = icon.loc.y - dock.plate.loc.y;
@@ -1039,7 +1044,7 @@ mod tests {
             windows: &over,
             ..base
         }));
-        assert_eq!(never.reserved_height(), 104);
+        assert_eq!(never.reserved_height(), 94);
         assert_eq!(medium().reserved_height(), 0);
         let always = DockConfig {
             hiding: DockHiding::Always,

@@ -24,7 +24,7 @@ use ferrite_ui::{
 };
 
 /// Hauteur de la barre d'outils, et de la zone des boutons en haut de la colonne.
-pub const TOOLBAR_HEIGHT: f32 = 42.0;
+pub const TOOLBAR_HEIGHT: f32 = ferrite_ui::theme::TITLEBAR_HEIGHT as f32;
 /// Préférences d'apparence en vigueur (voir [`apply_preferences`]) : accentuation en
 /// `0xRRGGBB`, et taille des icônes des barres latérales en pour cent.
 static THEME_DARK: AtomicU8 = AtomicU8::new(0);
@@ -75,7 +75,7 @@ pub fn line() -> Color32 {
 /// Voile sous une fenêtre de dialogue.
 pub fn scrim() -> Color32 {
     themed(
-        Color32::from_rgba_unmultiplied(15, 23, 42, 71),
+        Color32::from_rgba_unmultiplied(10, 10, 14, 102),
         Color32::from_black_alpha(115),
     )
 }
@@ -102,7 +102,7 @@ pub fn knob_shadow(painter: &egui::Painter, center: egui::Pos2, radius: f32) {
 
 /// Segment choisi d'un contrôle à segments, sur [`control_background`].
 pub fn segment_on() -> Color32 {
-    themed(Color32::WHITE, color(palette().border_hover))
+    themed(Color32::WHITE, color(palette().window_button))
 }
 
 /// Bord d'un champ ou d'une case à cocher.
@@ -120,7 +120,7 @@ pub fn stage() -> Color32 {
 pub fn floating() -> Color32 {
     themed(
         Color32::from_white_alpha(204),
-        Color32::from_rgba_unmultiplied(28, 31, 37, 184),
+        Color32::from_rgba_unmultiplied(30, 30, 34, 184),
     )
 }
 
@@ -354,19 +354,24 @@ pub fn accent() -> Color32 {
 }
 
 pub fn accent_text() -> Color32 {
-    let accent = accent();
+    ink_on(accent())
+}
+
+/// Encre lisible posée sur `fill` : blanche sur un fond foncé, presque noire sur un fond
+/// clair (`Color::ink_on`).
+pub fn ink_on(fill: Color32) -> Color32 {
     color(
         Color {
-            r: accent.r(),
-            g: accent.g(),
-            b: accent.b(),
+            r: fill.r(),
+            g: fill.g(),
+            b: fill.b(),
             a: 255,
         }
         .ink_on(),
     )
 }
 
-/// Couleur d'une accentuation de Paramètres (le bleu Ferrite dépend du thème).
+/// Couleur d'une accentuation de Paramètres (l'Oxyde de Ferrite dépend du thème).
 pub fn accent_color(accent: Accent) -> Color32 {
     accent.rgb().map_or(color(palette().accent), from_rgb)
 }
@@ -668,7 +673,8 @@ fn apply_theme(context: &egui::Context) {
         // Menus et popovers : coins de 10, ombre flottante.
         visuals.menu_corner_radius = CornerRadius::same(10);
         visuals.popup_shadow = elevation(elevation::MENU);
-        visuals.extreme_bg_color = background;
+        // Champs de saisie sur le fond du contenu (blanc en clair), bordés par `border`.
+        visuals.extreme_bg_color = color(palette.content_background);
         visuals.faint_bg_color = color(palette.content_background);
         visuals.override_text_color = Some(text);
 
@@ -678,7 +684,7 @@ fn apply_theme(context: &egui::Context) {
         widgets.noninteractive.bg_stroke = Stroke::new(border::HAIRLINE, color(palette.control_separator));
         widgets.noninteractive.fg_stroke = Stroke::new(border::HAIRLINE, text);
         for (state, fill) in [
-            (&mut widgets.inactive, background),
+            (&mut widgets.inactive, color(palette.content_background)),
             (&mut widgets.hovered, color(palette.control_hover)),
             (&mut widgets.active, color(palette.control_pressed)),
             (&mut widgets.open, color(palette.control_pressed)),
@@ -877,13 +883,14 @@ enum WindowButton {
     Minimize,
 }
 
-/// Bouton de fenêtre : pastille de 18 px et symbole, rouge (fermer) ou couleur d'accent
-/// (agrandir, réduire) au survol, estompé si la fenêtre n'a pas le focus.
+/// Bouton de fenêtre : pastille de 14 px. Au repos, « fermer » porte l'accent (fenêtre
+/// active) et les autres sont neutres, sans symbole ; au survol, le symbole apparaît et
+/// « fermer » passe au rouge.
 fn window_button(ui: &mut egui::Ui, center: egui::Pos2, kind: WindowButton) -> egui::Response {
     let close = kind == WindowButton::Close;
-    use ferrite_ui::theme::WINDOW_BUTTON_RADIUS;
+    use ferrite_ui::theme::{WINDOW_BUTTON_GAP, WINDOW_BUTTON_RADIUS};
     let radius = WINDOW_BUTTON_RADIUS as f32;
-    let rect = egui::Rect::from_center_size(center, egui::vec2(2.0 * radius + 2.0, 2.0 * radius + 2.0));
+    let rect = egui::Rect::from_center_size(center, egui::Vec2::splat(WINDOW_BUTTON_GAP as f32));
     let salt = match kind {
         WindowButton::Close => "fermer",
         WindowButton::Zoom => "agrandir",
@@ -892,42 +899,44 @@ fn window_button(ui: &mut egui::Ui, center: egui::Pos2, kind: WindowButton) -> e
     let response = ui.interact(rect, ui.scope_id().with(salt), egui::Sense::click());
     let focused = ui.input(|input| input.viewport().focused.unwrap_or(true));
     let active_palette = palette();
-    let (fill, ink) = if response.hovered() {
-        let fill = if close {
-            color(active_palette.danger)
-        } else {
-            accent()
-        };
-        (fill, Color32::WHITE)
-    } else if focused {
-        (
-            color(active_palette.window_button),
-            color(active_palette.window_glyph),
-        )
+    let neutral = if focused {
+        color(active_palette.window_button)
     } else {
-        (
-            color(active_palette.window_button_inactive),
-            color(active_palette.window_glyph),
-        )
+        color(active_palette.window_button_inactive)
+    };
+    let fill = match (close, response.hovered(), focused) {
+        (true, true, _) => color(active_palette.danger),
+        (true, false, true) => accent(),
+        _ => neutral,
+    };
+    let ink = if close {
+        ink_on(fill)
+    } else {
+        color(active_palette.window_glyph)
+    };
+    let ink = if response.hovered() {
+        ink
+    } else {
+        Color32::TRANSPARENT
     };
     let painter = ui.painter();
     painter.circle_filled(center, radius, fill);
     let at = |x: f32, y: f32| center + egui::vec2(x, y);
     if kind == WindowButton::Minimize {
-        painter.line_segment([at(-3.5, 0.0), at(3.5, 0.0)], Stroke::new(1.6, ink));
+        painter.line_segment([at(-3.0, 0.0), at(3.0, 0.0)], Stroke::new(1.5, ink));
     } else if close {
-        let stroke = Stroke::new(1.6, ink);
-        painter.line_segment([at(-3.0, -3.0), at(3.0, 3.0)], stroke);
-        painter.line_segment([at(3.0, -3.0), at(-3.0, 3.0)], stroke);
-    } else {
         let stroke = Stroke::new(1.5, ink);
+        painter.line_segment([at(-2.5, -2.5), at(2.5, 2.5)], stroke);
+        painter.line_segment([at(2.5, -2.5), at(-2.5, 2.5)], stroke);
+    } else {
+        let stroke = Stroke::new(1.4, ink);
         for segment in [
-            [at(-3.0, 1.0), at(-3.0, 3.0)],
-            [at(-3.0, 3.0), at(-1.0, 3.0)],
-            [at(1.0, -3.0), at(3.0, -3.0)],
-            [at(3.0, -3.0), at(3.0, -1.0)],
-            [at(-3.0, 3.0), at(-0.5, 0.5)],
-            [at(3.0, -3.0), at(0.5, -0.5)],
+            [at(-2.5, 0.5), at(-2.5, 2.5)],
+            [at(-2.5, 2.5), at(-0.5, 2.5)],
+            [at(0.5, -2.5), at(2.5, -2.5)],
+            [at(2.5, -2.5), at(2.5, -0.5)],
+            [at(-2.5, 2.5), at(-0.5, 0.5)],
+            [at(2.5, -2.5), at(0.5, -0.5)],
         ] {
             painter.line_segment(segment, stroke);
         }
@@ -1009,7 +1018,7 @@ pub fn switch_sized(ui: &mut egui::Ui, on: &mut bool, enabled: bool, size: egui:
         response.mark_changed();
     }
     let progress = ui.ctx().animate_bool_responsive(response.id, *on);
-    let off = themed(rgb_color(0xD5D9E0), rgb_color(0x4B5360));
+    let off = track();
     let track = if !enabled {
         control_background()
     } else {
@@ -1022,10 +1031,6 @@ pub fn switch_sized(ui: &mut egui::Ui, on: &mut bool, enabled: bool, size: egui:
     knob_shadow(painter, egui::pos2(x, rect.center().y), radius);
     painter.circle_filled(egui::pos2(x, rect.center().y), radius, Color32::WHITE);
     response
-}
-
-fn rgb_color(hex: u32) -> Color32 {
-    from_rgb(hex)
 }
 
 macro_rules! icons {
@@ -1180,14 +1185,42 @@ pub fn surface() -> Color32 {
     color(palette().surface)
 }
 
-/// Pastille de l'élément choisi dans une colonne : un cran plus clair que la colonne.
-pub fn sidebar_pill() -> Color32 {
-    color(palette().sidebar_pill)
+/// Dossier de Fichiers sans couleur choisie (charte « Forge ») : devant et dos d'un même
+/// gris, l'emblème porte l'accent.
+pub fn folder_front() -> Color32 {
+    themed(
+        Color32::from_rgb(0xDD, 0xDD, 0xE3),
+        Color32::from_rgb(0x3A, 0x3A, 0x41),
+    )
+}
+
+pub fn folder_back() -> Color32 {
+    themed(
+        Color32::from_rgb(0xC6, 0xC6, 0xCE),
+        Color32::from_rgb(0x2B, 0x2B, 0x31),
+    )
+}
+
+/// Accent léger (charte « Forge ») : fond de l'élément choisi d'une colonne, des pastilles
+/// mises et des carrés d'icône des en-têtes de page.
+pub fn accent_soft() -> Color32 {
+    let accent = accent();
+    Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), themed(26, 40))
+}
+
+/// Accent lisible en texte sur [`accent_soft`] posé sur une colonne.
+pub fn accent_ink() -> Color32 {
+    accent()
+}
+
+/// Fond de l'élément choisi d'une colonne : accent léger, sans ombre.
+pub fn selection_pill(ui: &egui::Ui, rect: egui::Rect) {
+    ui.painter().rect_filled(rect, 8.0, accent_soft());
 }
 
 /// Ligne de colonne (Réglages, Logithèque, Calendrier, sélecteur de fichiers) : symbole au
-/// trait d'une seule couleur, puis le titre. Choisie, la ligne prend une pastille claire,
-/// le symbole passe à l'accent et le titre en semi-gras (charte, `docs/CHARTE.md`).
+/// trait d'une seule couleur, puis le titre. Choisie, la ligne prend l'accent léger, le
+/// symbole et le titre passent à l'accent, le titre en semi-gras (charte « Forge »).
 pub fn sidebar_item(
     ui: &mut egui::Ui,
     icons: &mut Icons,
@@ -1202,9 +1235,7 @@ pub fn sidebar_item(
     );
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     if selected {
-        let pill = elevation(elevation::CONTACT);
-        ui.painter().add(pill.as_shape(rect, 8));
-        ui.painter().rect_filled(rect, 8.0, sidebar_pill());
+        selection_pill(ui, rect);
     } else if response.hovered() {
         ui.painter().rect_filled(rect, 8.0, tint(9));
     }
@@ -1224,7 +1255,7 @@ pub fn sidebar_item(
         } else {
             FontId::proportional(typography::LABEL)
         },
-        primary_text(),
+        if selected { accent_ink() } else { primary_text() },
     );
     response
 }
@@ -1245,193 +1276,7 @@ pub fn sidebar_heading(ui: &mut egui::Ui, text: &str) {
     ui.add_space(3.0);
 }
 
-/// Symboles au trait des pages de Paramètres, repris tels quels des planches.
-const GLYPHS: &[(&str, &str)] = &[
-    // Calendrier : colonne latérale.
-    (
-        "glyph-calendar",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M6 4 H18 a2 2 0 0 1 2 2 V19 a2 2 0 0 1 -2 2 H6 a2 2 0 0 1 -2 -2 V6 a2 2 0 0 1 2 -2 Z M4 9.5 H20 M8 2.5 V5.5 M16 2.5 V5.5" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    (
-        "glyph-today",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8 a4 4 0 1 0 0.01 0 M12 2 V4 M12 20 V22 M2 12 H4 M20 12 H22 M4.9 4.9 L6.3 6.3 M17.7 17.7 L19.1 19.1 M4.9 19.1 L6.3 17.7 M17.7 6.3 L19.1 4.9" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    (
-        "glyph-upcoming",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 12 H16 M11 6 L17 12 L11 18 M21 5 V19" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    (
-        "glyph-overdue",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 3.5 L21.5 20 H2.5 Z M12 10 V14 M12 17 V17.1" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    (
-        "glyph-tasks",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3.5 6 L5 7.5 L7.5 5 M3.5 12 L5 13.5 L7.5 11 M3.5 18 L5 19.5 L7.5 17 M11 6.5 H20.5 M11 12.5 H20.5 M11 18.5 H20.5" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    (
-        "glyph-wifi",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 19L9.45 16.45A3.6 3.6 0 0 1 14.55 16.45Z M5.35 12.35A9.4 9.4 0 0 1 18.65 12.35L16.1 14.9A5.8 5.8 0 0 0 7.9 14.9Z M1.25 8.25A15.2 15.2 0 0 1 22.75 8.25L20.2 10.8A11.6 11.6 0 0 0 3.8 10.8Z" fill="#000" stroke="#000" stroke-width="0.8" stroke-linejoin="round"/></svg>"##,
-    ),
-    (
-        "glyph-bluetooth",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M7 7 L17 17 L12 21 V3 L17 7 L7 17" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    (
-        "glyph-network",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 3 a9 9 0 1 0 0.01 0 M3 12 H21 M12 3 a14 14 0 0 1 0 18 M12 3 a14 14 0 0 0 0 18" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    (
-        "glyph-appearance",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 3 a9 9 0 1 0 0.01 0 M12 3 V21" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    (
-        "glyph-dock",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 5 H20 V15 H4 Z M8 19 H16" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    (
-        "glyph-windows",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 5 H20 V19 H4 Z M4 9 H20" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    (
-        "glyph-bell",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M6 16 V11 a6 6 0 0 1 12 0 V16 L19.5 18 H4.5 Z M10 21 H14" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    (
-        "glyph-sound",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 9 H8 L13 5 V19 L8 15 H4 Z M16.5 9 a4 4 0 0 1 0 6" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    (
-        "glyph-sound-full",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 9 H8 L13 5 V19 L8 15 H4 Z M16.5 9 a4 4 0 0 1 0 6 M19 6.5 a8 8 0 0 1 0 11" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    (
-        "glyph-energy",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 8 H18 V16 H3 Z M20 11 V13" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    (
-        "glyph-screen",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 5 H21 V16 H3 Z M9 20 H15 M12 16 V20" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    (
-        "glyph-keyboard",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 7 H21 V17 H3 Z M7 11 H7.01 M11 11 H11.01 M15 11 H15.01 M8 14 H16" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    (
-        "glyph-mouse",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 3 a6 6 0 0 1 6 6 V15 a6 6 0 0 1 -12 0 V9 a6 6 0 0 1 6 -6 Z M12 3 V9" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    (
-        "glyph-printer",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M7 9 V3 H17 V9 M5 9 H19 V16 H5 Z M8 14 H16 V21 H8 Z" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    (
-        "glyph-account",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 4 a4 4 0 1 0 0.01 0 M4 21 a8 8 0 0 1 16 0" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    (
-        "glyph-lock",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M6 11 H18 V20 H6 Z M8.5 11 V8 a3.5 3.5 0 0 1 7 0 V11" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    (
-        "glyph-access",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 3.5 V3.6 M5 8 H19 M12 8 V14 L8 21 M12 14 L16 21" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    (
-        "glyph-update",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 12 a8 8 0 1 1 -2.3 -5.7 M20 4 V9 H15" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    (
-        "glyph-about",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 3 a9 9 0 1 0 0.01 0 M12 11 V17 M12 7.5 V7.6" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    (
-        "glyph-clock",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 3 a9 9 0 1 0 0.01 0 M12 7 V12 L15.5 14" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    (
-        "glyph-head",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 15 V12 a8 8 0 0 1 16 0 V15 M4 14 H7 V20 H4 Z M17 14 H20 V20 H17 Z" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    (
-        "glyph-phone",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M8 3 H16 V21 H8 Z M11 18 H13" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    (
-        "glyph-speaker",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M7 3 H17 V21 H7 Z M12 15 a3 3 0 1 0 0.01 0 M12 7 V7.1" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    (
-        "glyph-watch",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M8 7 H16 V17 H8 Z M9.5 7 L10 3 H14 L14.5 7 M9.5 17 L10 21 H14 L14.5 17" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    (
-        "glyph-laptop",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M5 6 H19 V16 H5 Z M3 19 H21" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    (
-        "glyph-mic",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 3 a3 3 0 0 1 3 3 V12 a3 3 0 0 1 -6 0 V6 a3 3 0 0 1 3 -3 Z M6 11 a6 6 0 0 0 12 0 M12 17 V21" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    (
-        "glyph-app",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M5 5 H19 V19 H5 Z" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    // Logithèque.
-    (
-        "glyph-star",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 3.5 L14.6 8.9 L20.5 9.6 L16.1 13.6 L17.3 19.5 L12 16.6 L6.7 19.5 L7.9 13.6 L3.5 9.6 L9.4 8.9 Z" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    // Logithèque.
-    (
-        "glyph-installed",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 4 V14 M7.5 9.5 L12 14 L16.5 9.5 M5 16.5 V19.5 H19 V16.5" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    // Logithèque.
-    (
-        "glyph-play",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M8 5.5 V18.5 L18.5 12 Z" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    // Logithèque.
-    (
-        "glyph-brush",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M15.5 4.5 L19.5 8.5 L9 19 H5 V15 Z M13 7 L17 11" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    // Logithèque.
-    (
-        "glyph-globe",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 3 a9 9 0 1 0 0.01 0 Z M3 12 H21 M12 3 C8.5 7 8.5 17 12 21 M12 3 C15.5 7 15.5 17 12 21" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    // Logithèque.
-    (
-        "glyph-doc",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M6.5 3 H14 L18.5 7.5 V21 H6.5 Z M14 3 V7.5 H18.5 M9.5 12.5 H15.5 M9.5 16.5 H15.5" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    // Logithèque.
-    (
-        "glyph-code",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M8.5 7 L3.5 12 L8.5 17 M15.5 7 L20.5 12 L15.5 17" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    // Logithèque.
-    (
-        "glyph-game",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M7 8 H17 a4 4 0 0 1 4 4 V14 a3 3 0 0 1 -5.5 1.7 L14.5 14.5 H9.5 L8.5 15.7 A3 3 0 0 1 3 14 V12 a4 4 0 0 1 4 -4 Z M8 10.5 V13.5 M6.5 12 H9.5" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    // Logithèque.
-    (
-        "glyph-book",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 6.5 C9.5 4.5 6 4.5 3.5 5.5 V19 C6 18 9.5 18 12 20 C14.5 18 18 18 20.5 19 V5.5 C18 4.5 14.5 4.5 12 6.5 Z M12 6.5 V20" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    // Logithèque.
-    (
-        "glyph-flask",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9 3.5 H15 M10.5 3.5 V9.5 L5 19 a1 1 0 0 0 1 1.5 H18 a1 1 0 0 0 1 -1.5 L13.5 9.5 V3.5 M7.5 15 H16.5" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-    // Logithèque.
-    (
-        "glyph-grid",
-        r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 4 H10 V10 H4 Z M14 4 H20 V10 H14 Z M4 14 H10 V20 H4 Z M14 14 H20 V20 H14 Z" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>"##,
-    ),
-];
+use ferrite_ui::glyphs::GLYPHS;
 
 fn rasterize(name: &str, side: u32, ink: Option<Color32>) -> Option<egui::ColorImage> {
     use resvg::{tiny_skia, usvg};
@@ -1496,7 +1341,7 @@ mod tests {
         apply_preferences(&context, &dark);
         assert_eq!(background(), color(Palette::DARK.window_background));
         assert_eq!(primary_text(), color(Palette::DARK.text));
-        assert_eq!(accent_text(), color(Color::rgb(0x0B1A2E)));
+        assert_eq!(accent_text(), color(Color::rgb(0x141416)));
         assert!(context.style_of(egui::Theme::Dark).visuals.dark_mode);
 
         let light = Settings::parse("apparence = clair\n");

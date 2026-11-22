@@ -18,11 +18,13 @@ pub fn color_key(accent: Accent) -> &'static str {
     accent.key()
 }
 
+/// Une couleur inconnue redevient le bleu, comme les étiquettes de Fichiers : la couleur
+/// d'une catégorie ne suit pas l'accent choisi dans Réglages.
 pub fn accent_from_key(key: &str) -> Accent {
     Accent::ALL
         .into_iter()
         .find(|accent| accent.key() == key)
-        .unwrap_or_default()
+        .unwrap_or(Accent::Blue)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

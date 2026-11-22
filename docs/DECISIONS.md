@@ -542,3 +542,14 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
   prolongée (démarrage rapide) ou chiffré par BitLocker n'est pas touché : l'assistant
   explique quoi faire dans Windows. La partition EFI existante est gardée telle quelle.
   Pas de partition d'échange : zram suffit (déjà en place).
+- **2026-11-22 — Nouvelle charte : accent « Oxyde », neutres sans teinte, thème GTK.**
+  L'accent par défaut passe du bleu à l'Oxyde (`#B83A0A` en clair, `#FF7A45` en sombre),
+  l'orange de l'oxyde de fer qui donne son nom à la ferrite ; le bleu reste au choix dans
+  Paramètres (`accent = bleu`). Gris neutres (plus de bleuté), fenêtre `#F4F4F6` et cartes
+  blanches en clair, `#141416` / `#1E1E22` en sombre ; chaque texte garde 4,5:1 (test
+  `textes_lisibles_sur_chaque_fond_des_deux_themes`). Barre de titre 44 px ; boutons de
+  fenêtre de 14 px, toujours à droite, « fermer » seul en accent au repos et symboles au
+  survol ; contrôles de 32 px. Les applications tierces suivent par un thème GTK
+  « Ferrite » / « Ferrite-dark » généré depuis la charte (`ferrite-theme/gtk/generer.py`),
+  choisi par ferrite-shell avec le mode clair ou sombre. Dock et barre du haut inchangés.
+

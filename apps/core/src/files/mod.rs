@@ -3164,8 +3164,13 @@ pub(crate) fn paint_path_icon(
     rect: egui::Rect,
 ) {
     if directory {
-        let (color, emblem) = looks.folder(path, &home());
-        file_art::paint_folder(painter, rect, file_art::SWATCHES[color].2, emblem);
+        // Couleur choisie par l'utilisateur : le dossier de couleur ; sinon le dossier d'un
+        // seul ton de la charte.
+        let (_, emblem) = looks.folder(path, &home());
+        match looks.get(path).and_then(|custom| custom.color) {
+            Some(color) => file_art::paint_folder(painter, rect, file_art::SWATCHES[color].2, emblem),
+            None => file_art::paint_plain_folder(painter, rect, emblem),
+        }
     } else {
         file_art::paint(painter, rect, path, looks.file_color(path));
     }

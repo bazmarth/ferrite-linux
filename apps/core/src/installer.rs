@@ -917,7 +917,7 @@ fn done(ui: &mut egui::Ui) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 72.0), Sense::hover());
     let center = rect.center();
     ui.painter().circle_filled(center, 32.0, style::success());
-    let ink = Stroke::new(5.0, Color32::WHITE);
+    let ink = Stroke::new(5.0, style::ink_on(style::success()));
     ui.painter().line_segment(
         [center + egui::vec2(-13.0, 1.0), center + egui::vec2(-3.0, 11.0)],
         ink,
@@ -930,7 +930,7 @@ fn done(ui: &mut egui::Ui) {
     ui.vertical_centered(|ui| {
         ui.label(
             RichText::new("Ferrite est installé")
-                .size(26.0)
+                .size(typography::DISPLAY)
                 .family(style::strong_family()),
         );
         ui.add_space(8.0);
@@ -956,7 +956,7 @@ fn failed(ui: &mut egui::Ui, message: &str) {
 fn title(ui: &mut egui::Ui, text: &str) {
     ui.label(
         RichText::new(text)
-            .size(26.0)
+            .size(typography::TITLE)
             .family(style::strong_family())
             .color(style::heading_text()),
     );
@@ -964,7 +964,11 @@ fn title(ui: &mut egui::Ui, text: &str) {
 }
 
 fn lead(ui: &mut egui::Ui, text: &str) {
-    ui.label(RichText::new(text).size(15.0).color(style::text_secondary()));
+    ui.label(
+        RichText::new(text)
+            .size(typography::BODY)
+            .color(style::text_secondary()),
+    );
 }
 
 fn warning(ui: &mut egui::Ui, text: &str) {

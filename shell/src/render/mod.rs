@@ -2345,22 +2345,85 @@ fn hex_color(text: &str) -> Option<ferrite_ui::theme::Color> {
         .map(ferrite_ui::theme::Color::rgb)
 }
 
-/// Toutes les applications du lanceur, de A à Z.
+/// Applications du lanceur (charte « Forge ») : sans recherche, celles de Ferrite d'abord,
+/// puis les autres rangées par rubrique, chacune de A à Z ; pendant une recherche, une
+/// seule liste de résultats.
 fn launcher_view(state: &Ferrite) -> LauncherView {
     let entries = state.launcher_entries();
-    let title = if entries.is_empty() { "Aucun résultat" } else { "" };
-    LauncherView {
-        query: state.launcher_query.clone(),
-        sections: vec![LauncherSection {
-            title: title.to_owned(),
+    let sections = if entries.is_empty() {
+        vec![LauncherSection {
+            title: "Aucun résultat".to_owned(),
+            tiles: Vec::new(),
+        }]
+    } else if !state.launcher_query.trim().is_empty() {
+        vec![LauncherSection {
+            title: String::new(),
             tiles: entries
                 .iter()
                 .enumerate()
                 .map(|(index, entry)| launcher_tile(index, entry))
                 .collect(),
-        }],
+        }]
+    } else {
+        let mut sections: Vec<LauncherSection> = LAUNCHER_RUBRICS
+            .iter()
+            .map(|(title, _)| LauncherSection {
+                title: (*title).to_owned(),
+                tiles: Vec::new(),
+            })
+            .collect();
+        for (index, entry) in entries.iter().enumerate() {
+            sections[launcher_rubric(entry)]
+                .tiles
+                .push(launcher_tile(index, entry));
+        }
+        sections.retain(|section| !section.tiles.is_empty());
+        sections
+    };
+    LauncherView {
+        query: state.launcher_query.clone(),
+        sections,
         scroll: state.launcher_scroll,
         backdrop: state.wallpaper.backdrop.clone(),
+    }
+}
+
+/// Rubriques du lanceur, dans l'ordre, avec les catégories freedesktop qui y mènent. La
+/// première reçoit les applications de Ferrite, la dernière tout ce qui reste.
+const LAUNCHER_RUBRICS: &[(&str, &[&str])] = &[
+    ("Applications Ferrite", &[]),
+    ("Internet", &["Network", "WebBrowser", "Email", "Chat"]),
+    (
+        "Bureautique",
+        &["Office", "WordProcessor", "Spreadsheet", "Presentation"],
+    ),
+    ("Multimédia", &["AudioVideo", "Audio", "Video", "Player"]),
+    (
+        "Graphisme",
+        &["Graphics", "Photography", "2DGraphics", "3DGraphics"],
+    ),
+    ("Développement", &["Development", "IDE"]),
+    ("Jeux", &["Game"]),
+    ("Éducation", &["Education", "Science"]),
+    (
+        "Outils et système",
+        &["System", "Settings", "Utility", "Accessories"],
+    ),
+    ("Autres", &[]),
+];
+
+/// Rubrique d'une application : la première dont une catégorie correspond.
+pub(crate) fn launcher_rubric(entry: &LauncherEntry<'_>) -> usize {
+    match entry {
+        LauncherEntry::Builtin(_) => 0,
+        LauncherEntry::Installed(desktop) => LAUNCHER_RUBRICS
+            .iter()
+            .position(|(_, categories)| {
+                categories
+                    .iter()
+                    .any(|category| desktop.categories.iter().any(|known| known == category))
+            })
+            .unwrap_or(LAUNCHER_RUBRICS.len() - 1),
     }
 }
 

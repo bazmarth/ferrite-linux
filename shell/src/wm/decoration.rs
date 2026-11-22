@@ -11,8 +11,9 @@ use super::resize_grab::ResizeEdge;
 pub const RESIZE_BORDER: i32 = 8;
 /// Près d'un coin, sur cette longueur le long des bords, on tire les deux côtés à la fois.
 const RESIZE_CORNER: f64 = 16.0;
-/// Rayon de clic d'un bouton : un peu plus large que la pastille dessinée.
-const BUTTON_HIT_RADIUS: f64 = WINDOW_BUTTON_RADIUS as f64 + 1.0;
+/// Rayon de clic d'un bouton : la moitié de l'écart entre deux centres, soit une cible de
+/// 22 px autour d'une pastille de 14 px, sans chevauchement entre voisins.
+const BUTTON_HIT_RADIUS: f64 = WINDOW_BUTTON_GAP as f64 / 2.0;
 
 /// Les trois boutons d'une fenêtre, tous à droite : réduire, agrandir, fermer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -162,24 +163,24 @@ mod tests {
     fn cadre_et_barre_de_titre() {
         assert_eq!(
             titlebar(content()),
-            Rectangle::new((100, 108).into(), (400, 38).into())
+            Rectangle::new((100, 102).into(), (400, 44).into())
         );
         assert_eq!(
             frame(content()),
-            Rectangle::new((100, 108).into(), (400, 338).into())
+            Rectangle::new((100, 102).into(), (400, 344).into())
         );
     }
 
     #[test]
     fn trois_boutons_a_droite_de_la_barre() {
         let c = content();
-        assert_eq!(hit(c, p(481.0, 127.0)), Some(Part::Button(WindowButton::Close)));
-        assert_eq!(hit(c, p(451.0, 127.0)), Some(Part::Button(WindowButton::Zoom)));
+        assert_eq!(hit(c, p(481.0, 124.0)), Some(Part::Button(WindowButton::Close)));
+        assert_eq!(hit(c, p(459.0, 124.0)), Some(Part::Button(WindowButton::Zoom)));
         assert_eq!(
-            hit(c, p(421.0, 127.0)),
+            hit(c, p(437.0, 124.0)),
             Some(Part::Button(WindowButton::Minimize))
         );
-        assert_eq!(hit(c, p(119.0, 127.0)), Some(Part::Titlebar));
+        assert_eq!(hit(c, p(119.0, 124.0)), Some(Part::Titlebar));
         assert_eq!(hit(c, p(300.0, 123.0)), Some(Part::Titlebar));
         assert_eq!(hit(c, p(300.0, 200.0)), None);
         assert_eq!(hovered_button(c, p(300.0, 123.0)), None);

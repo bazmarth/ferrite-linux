@@ -69,6 +69,12 @@ const FONT_MONO: &[u8] = include_bytes!("../../../assets/fonts/JetBrainsMono-Reg
 const POPOVER_MARGIN: f64 = 8.0;
 /// Icône de 18 px et écart de 16 px entre deux indicateurs.
 const INDICATOR_WIDTH: f64 = 34.0;
+/// Barre du haut en îlots (charte « Forge ») : écart au bord de la barre, entre deux
+/// îlots, marge intérieure, et largeur de l'îlot de la cloche.
+const ISLAND_INSET: f64 = 4.0;
+const ISLAND_GAP: f64 = 6.0;
+const ISLAND_PAD: f64 = 12.0;
+const BELL_WIDTH: f64 = 34.0;
 /// Lanceur : icônes par ligne, case d'une application, marges et hauteurs.
 const LAUNCHER_COLUMNS: usize = 6;
 const LAUNCHER_CELL: (f64, f64) = (114.0, 118.0);
@@ -82,21 +88,21 @@ const LAUNCHER_MAX_HEIGHT: f64 = 560.0;
 const LAUNCHER_RADIUS: f32 = 20.0;
 /// Défilement d'un cran de molette, en pixels.
 pub const LAUNCHER_SCROLL_STEP: f64 = 48.0;
-const CONTROLS_WIDTH: f64 = 364.0;
+const CONTROLS_WIDTH: f64 = 372.0;
 /// Écart entre les modules des réglages rapides, et entre eux et le bord du panneau.
-const CONTROLS_GAP: f64 = 14.0;
+const CONTROLS_GAP: f64 = 12.0;
 const CONTROLS_PAD: f64 = 14.0;
-/// Grandes tuiles Wi-Fi et Bluetooth, côte à côte en tête du panneau.
-const CONTROLS_TILE: f64 = 60.0;
-/// Grille des bascules rondes : quatre par rangée, deux rangées ; cellule (disque de 46 et
-/// libellé dessous) et écart entre deux rangées.
-const CONTROLS_ROUND: f64 = 46.0;
-const CONTROLS_ROUND_CELL: f64 = 66.0;
-const CONTROLS_ROUND_ROWS: f64 = 2.0;
-const CONTROLS_ROUND_GAP: f64 = 12.0;
-/// Curseurs épais (volume, luminosité) et pied (batterie, boutons ronds).
+/// Tuiles de même taille, deux par rangée (Wi-Fi, Bluetooth, Mode sombre, Silence,
+/// Énergie, Mode avion), et écart entre elles (charte « Forge »).
+const CONTROLS_TILE: f64 = 58.0;
+const CONTROLS_TILE_GAP: f64 = 8.0;
+const CONTROLS_TILE_ROWS: f64 = 3.0;
+/// Pastilles du bas (Mode nuit, Rétroéclairage, Clavier, second écran), trois par rangée.
+const CONTROLS_CHIP: f64 = 34.0;
+const CONTROLS_CHIPS_PER_ROW: usize = 3;
+/// Curseurs épais (volume, luminosité) et tête (batterie, boutons ronds).
 const CONTROLS_ROW: f64 = 40.0;
-const CONTROLS_FOOTER: f64 = 36.0;
+const CONTROLS_HEAD: f64 = 36.0;
 /// Listes Wi-Fi et Bluetooth : haut (retour, titre), bas (état, lien), ligne, titre de groupe,
 /// et place du mot de passe demandé sur une ligne.
 const CONTROLS_LIST_TOP: f64 = 62.0;
@@ -153,9 +159,18 @@ fn tint(alpha: u8) -> Color {
     themed(Color::BLACK, Color::WHITE).with_alpha(alpha)
 }
 
-/// Barre du haut : voile léger (#0A0E14 à 35 %) sur le fond d'écran, écriture blanche ;
-/// le fond d'écran se devine dessous (charte).
-const BAR_VEIL: Color = Color::rgb(0x0A0E14).with_alpha(90);
+/// Îlots de la barre (charte « Forge ») : verre sombre sur le fond d'écran, plus dense
+/// sous l'îlot dont le panneau est ouvert.
+const ISLAND_GLASS: Color = Color::rgb(0x1E1E22).with_alpha(150);
+const ISLAND_GLASS_OPEN: Color = Color::rgb(0x1E1E22).with_alpha(215);
+
+/// Accent posé sur un îlot : la teinte du thème sombre sur le verre sombre, celle du thème
+/// en cours sur la barre opaque.
+fn accent_on_glass(opaque: bool) -> Color {
+    let rgb = ACCENT_RGB.load(Ordering::Relaxed);
+    let palette = if opaque { palette() } else { Palette::themed(true) };
+    accent_for(palette, (rgb != 0).then_some(rgb))
+}
 
 /// Taille à donner à `Canvas::label` pour un texte de `css` pixels (la police y est agrandie
 /// de 1,22 fois).
@@ -166,7 +181,7 @@ const fn px(css: f32) -> f32 {
 /// Fond des panneaux système : gris très clair à 97 %, ou la surface sombre. Les
 /// commandes posées dessus sont plus claires ([`raised_fill`]).
 fn panel_fill() -> Color {
-    themed(Color::rgb(0xF2F3F5), Color::rgb(0x2A2E35)).with_alpha(247)
+    themed(Color::rgb(0xF4F4F6), Color::rgb(0x222226)).with_alpha(247)
 }
 
 /// Commande posée sur un panneau (bascule éteinte, curseur, bouton rond) : blanche en
@@ -177,7 +192,7 @@ fn raised_fill() -> Color {
 
 /// Fond des boutons et des tuiles éteintes.
 fn control_fill() -> Color {
-    themed(Color::rgb(0xEEF0F4), Color::rgb(0x353A42))
+    themed(Color::rgb(0xEEEEF2), Color::rgb(0x36363C))
 }
 
 fn primary_text() -> Color {
@@ -188,7 +203,7 @@ fn text_secondary() -> Color {
     palette().text_secondary
 }
 
-fn accent() -> Color {
+pub(crate) fn accent() -> Color {
     let rgb = ACCENT_RGB.load(Ordering::Relaxed);
     accent_for(palette(), (rgb != 0).then_some(rgb))
 }
@@ -2622,46 +2637,47 @@ impl Panels {
 
     fn draw_bar(&self, canvas: &mut Canvas, layout: &Layout, state: &VisualState) {
         let view = &state.view;
-        let (veil, ink, pill, rest) = if view.bar_opaque {
-            (palette().titlebar, primary_text(), tint(26), tint(12))
+        // Barre en îlots (charte « Forge ») : sur le fond d'écran, des pastilles de verre
+        // sombre écrites en blanc ; le fond d'écran reste visible entre elles. Une fenêtre
+        // agrandie rend la barre opaque : les îlots y deviennent de simples teintes.
+        let (ink, rest, open_fill) = if view.bar_opaque {
+            canvas.fill(Rect::new(0.0, 0.0, layout.w, layout.bar), 0.0, palette().titlebar);
+            (primary_text(), tint(12), tint(26))
         } else {
-            (
-                BAR_VEIL,
-                Color::WHITE,
-                Color::WHITE.with_alpha(56),
-                Color::WHITE.with_alpha(26),
-            )
+            (Color::WHITE, ISLAND_GLASS, ISLAND_GLASS_OPEN)
         };
-        canvas.fill(Rect::new(0.0, 0.0, layout.w, layout.bar), 0.0, veil);
-        // Indicateurs groupés dans une pastille, toujours visible : on voit qu'ils ouvrent
-        // le centre de contrôle.
-        let group = layout.indicators_group();
-        canvas.fill(Rect::new(group.x, 5.0, group.w, layout.bar - 10.0), 13.0, rest);
-        let applications = layout.applications_button();
-        // Pastille sous l'élément de la barre dont le panneau est ouvert.
         let open = view.popover.and_then(|popover| match popover {
-            Popover::Launcher => Some(applications),
-            Popover::Controls => Some(layout.indicators_group()),
-            Popover::Notifications => Some(layout.clock_button()),
+            Popover::Launcher => Some(BarIsland::Start),
+            Popover::Controls => Some(BarIsland::Indicators),
+            Popover::Notifications => Some(BarIsland::Clock),
             Popover::Clipboard | Popover::DockMenu | Popover::DesktopMenu | Popover::Screenshot => None,
         });
-        if let Some(rect) = open {
-            canvas.fill(Rect::new(rect.x, 5.0, rect.w, layout.bar - 10.0), 13.0, pill);
+        let clock = clock_text(view.clock_style, clock_label(SystemTime::now(), local_offset()));
+        let clock_width = canvas.text_width(&self.bold, &clock, px(13.0));
+        for island in [
+            BarIsland::Start,
+            BarIsland::Clock,
+            BarIsland::Indicators,
+            BarIsland::Bell,
+        ] {
+            let rect = layout.bar_island(island, clock_width);
+            let fill = if open == Some(island) { open_fill } else { rest };
+            canvas.fill(rect, (rect.h / 2.0) as f32, fill);
         }
-        // Symbole de Ferrite OS sans tuile, de la teinte du texte de la barre : blanc sur le
-        // voile sombre ou la barre opaque du thème sombre, sombre sur la barre opaque claire.
+        // Symbole de Ferrite OS, de la teinte du texte de la barre.
+        let applications = layout.applications_button();
         let symbol = if ink.r > 128 {
             "ferrite-symbol-white"
         } else {
             "ferrite-symbol"
         };
-        canvas.icon(symbol, applications.center(), 19.0, Style::Color);
-        // Une marque par bureau : une pilule pour celui qui est affiché.
+        canvas.icon(symbol, applications.center(), 17.0, Style::Color);
+        // Une marque par bureau : une pilule d'accent pour celui qui est affiché.
         for page in 0..view.page_count {
             let slot = layout.page_dot(page);
             let (center_x, center_y) = slot.center();
             let (width, color) = if page == view.page {
-                (PAGE_MARK_ACTIVE, ink)
+                (PAGE_MARK_ACTIVE, accent_on_glass(view.bar_opaque))
             } else {
                 (PAGE_MARK, ink.with_alpha(102))
             };
@@ -2671,19 +2687,23 @@ impl Panels {
                 color,
             );
         }
-        let clock = clock_text(view.clock_style, clock_label(SystemTime::now(), local_offset()));
-        let clock_width = canvas.text_width(&self.bold, &clock, px(14.0));
         canvas.bar_label(
             &self.bold,
             &clock,
             (layout.w - clock_width) / 2.0,
-            px(14.0),
+            px(13.0),
             ink,
             layout.bar,
         );
         for (indicator, rect) in layout.indicators() {
             let name = match indicator {
-                Indicator::Bluetooth if view.bluetooth == Some(true) => "status-bluetooth-on",
+                Indicator::Bluetooth if view.bluetooth == Some(true) => {
+                    if view.controls.connected_devices > 0 {
+                        "status-bluetooth-connected"
+                    } else {
+                        "status-bluetooth-on"
+                    }
+                }
                 Indicator::Bluetooth => "status-bluetooth-off",
                 Indicator::Network => match view.wifi {
                     Some(enabled) => svg::wifi_icon(enabled, view.wifi_signal),
@@ -2695,25 +2715,23 @@ impl Panels {
                     None => continue,
                 },
             };
-            // Les tracés du Wi-Fi remplissent leur dessin : plus petits, ils gardent le même
-            // poids visuel que le son et la batterie.
-            let size = match indicator {
-                Indicator::Bluetooth => 19.0,
-                Indicator::Network if view.wifi.is_some() => 21.0,
-                _ => 26.0,
-            };
-            canvas.icon(name, rect.center(), size, Style::Symbolic(ink));
+            // Même famille au trait, même taille pour tous (16 px, charte).
+            canvas.icon(name, rect.center(), 17.0, Style::Symbolic(ink));
         }
         if let (true, Some(battery)) = (view.battery_percent, state.battery) {
             let rect = layout.indicator(Indicator::Battery);
             let text = format!("{} %", battery.percent);
-            canvas.bar_label(
-                &self.regular,
-                &text,
-                rect.right() - 2.0,
-                px(12.0),
-                ink,
-                layout.bar,
+            canvas.bar_label(&self.bold, &text, rect.right() - 4.0, px(12.0), ink, layout.bar);
+        }
+        // Cloche des notifications, avec un point d'accent s'il y en a.
+        let bell = layout.bell_button();
+        canvas.icon("cc-bell", bell.center(), 16.0, Style::Symbolic(ink));
+        if !view.notifications.history.is_empty() && !view.notifications.do_not_disturb {
+            let (x, y) = bell.center();
+            canvas.fill(
+                Rect::new(x + 3.0, y - 8.0, 6.0, 6.0),
+                3.0,
+                accent_on_glass(view.bar_opaque),
             );
         }
     }
@@ -3065,6 +3083,7 @@ impl Panels {
     }
 
     fn draw_controls_main(&self, canvas: &mut Canvas, layout: &Layout, state: &VisualState) {
+        use ferrite_system::power::Profile;
         let view = &state.view;
         let on_off = |on: bool| if on { "Activé" } else { "Désactivé" };
         let plural = if view.controls.connected_devices > 1 {
@@ -3083,26 +3102,112 @@ impl Panels {
             Some(true) if view.controls.connected_devices > 0 => devices.as_str(),
             Some(on) => on_off(on),
         };
-        // Tête : Wi-Fi et Bluetooth, grandes tuiles ; le chevron ouvre la liste.
-        let big = [
+        let profile = view.power_profile.map(|state| state.current);
+        let (energy_glyph, energy_state) = match profile {
+            Some(Profile::Performance) => ("cc-performance", Profile::Performance.label()),
+            Some(Profile::Balanced) => ("cc-balanced", Profile::Balanced.label()),
+            Some(other) => ("cc-saver", other.label()),
+            None => ("cc-balanced", "Indisponible"),
+        };
+
+        // Tête : batterie à gauche ; compte, Paramètres, verrouiller, éteindre à droite,
+        // tous neutres (l'arrêt demande de toute façon confirmation).
+        let head = layout.controls_head();
+        if let Some(battery) = state.battery {
+            let glyph = svg::battery_icon(battery.percent, battery.charging);
+            let cy = head.y + head.h / 2.0;
+            canvas.icon(
+                glyph,
+                (head.x + 11.0, cy),
+                20.0,
+                Style::Symbolic(palette().heading),
+            );
+            let percent = format!("{} %", battery.percent);
+            let top = cy - 13.0 * 1.22 / 2.0 - 1.0;
+            canvas.label(&self.bold, &percent, head.x + 28.0, top, px(13.0), primary_text());
+            if battery.charging {
+                let width = canvas.text_width(&self.bold, &percent, px(13.0));
+                canvas.label(
+                    &self.regular,
+                    "· en charge",
+                    head.x + 28.0 + width + 6.0,
+                    top,
+                    px(13.0),
+                    text_secondary(),
+                );
+            }
+        }
+        let round = [
+            (Control::Account, "cc-account"),
+            (Control::Settings, "cc-settings"),
+            (Control::Lock, "cc-lock"),
+            (Control::Power, "cc-power"),
+        ];
+        for (control, glyph) in round {
+            let button = layout.control_row(control);
+            canvas.fill(button, button.h as f32 / 2.0, raised_fill());
+            canvas.icon(glyph, button.center(), 17.0, Style::Symbolic(palette().heading));
+        }
+
+        // Tuiles de même taille : disque, nom, état ; pleine d'accent si le réglage est mis,
+        // grisée si la machine ne l'offre pas. Le chevron ouvre la liste.
+        let tiles = [
             (
                 Control::Wifi,
-                Control::WifiMore,
+                Some(Control::WifiMore),
                 "cc-wifi",
                 "Wi-Fi",
                 wifi_state,
                 view.wifi == Some(true),
+                view.wifi.is_some(),
             ),
             (
                 Control::Bluetooth,
-                Control::BluetoothMore,
+                Some(Control::BluetoothMore),
                 "cc-bluetooth",
                 "Bluetooth",
                 bluetooth_state,
                 view.bluetooth == Some(true),
+                view.bluetooth.is_some(),
+            ),
+            (
+                Control::Dark,
+                None,
+                "cc-dark",
+                "Mode sombre",
+                on_off(view.dark_theme),
+                view.dark_theme,
+                true,
+            ),
+            (
+                Control::DoNotDisturb,
+                None,
+                "cc-dnd",
+                "Silence",
+                on_off(view.notifications.do_not_disturb),
+                view.notifications.do_not_disturb,
+                true,
+            ),
+            (
+                Control::Saver,
+                None,
+                energy_glyph,
+                "Énergie",
+                energy_state,
+                profile.is_some_and(|profile| profile != Profile::Balanced),
+                profile.is_some(),
+            ),
+            (
+                Control::Airplane,
+                None,
+                "cc-airplane",
+                "Mode avion",
+                on_off(view.airplane == Some(true)),
+                view.airplane == Some(true),
+                view.airplane.is_some(),
             ),
         ];
-        for (control, more, glyph, name, status, on) in big {
+        for (control, more, glyph, name, status, on, available) in tiles {
             let tile = layout.control_row(control);
             let (fill, disc, ink, sub) = if on {
                 let ink = accent_ink();
@@ -3110,78 +3215,57 @@ impl Panels {
             } else {
                 (raised_fill(), tint(10), palette().heading, text_secondary())
             };
-            canvas.fill(tile, 16.0, fill);
-            let center = (tile.x + 29.0, tile.y + tile.h / 2.0);
+            let dim = |color: Color| if available { color } else { color.with_alpha(90) };
+            canvas.fill(tile, 16.0, dim(fill));
+            let center = (tile.x + 28.0, tile.y + tile.h / 2.0);
             canvas.fill(
-                Rect::new(center.0 - 17.0, center.1 - 17.0, 34.0, 34.0),
-                17.0,
+                Rect::new(center.0 - 18.0, center.1 - 18.0, 36.0, 36.0),
+                18.0,
                 disc,
             );
-            canvas.icon(glyph, center, 18.0, Style::Symbolic(ink));
-            let more = layout.control_row(more);
-            canvas.icon("cc-chevron", more.center(), 13.0, Style::Symbolic(ink));
-            let room = tile.w - 56.0 - more.w;
-            let name = canvas.fit_text(&self.bold, name, px(13.0), room);
+            canvas.icon(glyph, center, 19.0, Style::Symbolic(dim(ink)));
+            let mut room = tile.w - 56.0 - 10.0;
+            if let Some(more) = more {
+                let more = layout.control_row(more);
+                canvas.icon("cc-chevron", more.center(), 14.0, Style::Symbolic(dim(ink)));
+                room = more.x - tile.x - 56.0;
+            }
             let title = if on { ink } else { primary_text() };
-            canvas.label(&self.bold, &name, tile.x + 56.0, tile.y + 12.0, px(13.0), title);
+            let name = canvas.fit_text(&self.bold, name, px(13.0), room);
+            canvas.label(
+                &self.bold,
+                &name,
+                tile.x + 56.0,
+                tile.y + 11.0,
+                px(13.0),
+                dim(title),
+            );
             let status = canvas.fit_text(&self.regular, status, px(12.0), room);
             canvas.label(
                 &self.regular,
                 &status,
                 tile.x + 56.0,
-                tile.y + 31.0,
+                tile.y + 30.0,
                 px(12.0),
-                sub,
+                dim(sub),
             );
         }
 
-        // Bascules rondes : la couleur seule dit l'état ; grisées si la machine ne les
-        // offre pas.
+        // Curseurs : à part (`draw_controls_sliders`), redessinés seuls à chaque pas.
+
+        // Pastilles : réglages secondaires, accent léger quand ils sont mis.
         let layout_code = view.keyboard.split_whitespace().next().unwrap_or("");
         let keyboard_name = if layout_code.is_empty() {
             "Clavier".to_owned()
         } else {
             format!("Clavier {layout_code}")
         };
-        let mut rounds: Vec<(Control, &str, &str, bool, bool)> = vec![
-            (Control::Dark, "cc-dark", "Mode sombre", view.dark_theme, true),
-            (
-                Control::DoNotDisturb,
-                "cc-dnd",
-                "Silence",
-                view.notifications.do_not_disturb,
-                true,
-            ),
+        let mut chips: Vec<(Control, &str, &str, bool, bool)> = vec![
             (Control::Night, "cc-night", "Mode nuit", view.night.0, true),
-            (
-                Control::Airplane,
-                "cc-airplane",
-                "Mode avion",
-                view.airplane == Some(true),
-                view.airplane.is_some(),
-            ),
-            {
-                // Une seule bascule pour les trois modes : chaque clic passe au suivant ;
-                // colorée hors du mode normal.
-                use ferrite_system::power::Profile;
-                let profile = view.power_profile.map(|state| state.current);
-                let glyph = match profile {
-                    Some(Profile::Performance) => "cc-performance",
-                    Some(Profile::Balanced) => "cc-balanced",
-                    _ => "cc-saver",
-                };
-                (
-                    Control::Saver,
-                    glyph,
-                    profile.map_or("Énergie", Profile::label),
-                    profile.is_some_and(|profile| profile != Profile::Balanced),
-                    profile.is_some(),
-                )
-            },
             (
                 Control::KeyboardLight,
                 "cc-keyboard-light",
-                "Rétroéclairage",
+                "Éclairage",
                 view.keyboard_light.is_some_and(|(level, _)| level > 0),
                 view.keyboard_light.is_some(),
             ),
@@ -3193,63 +3277,31 @@ impl Panels {
                 ScreenMode::Duplicate => ("Écran dupliqué", false),
                 ScreenMode::Extend => ("Écran étendu", true),
             };
-            rounds.push((Control::Screens, "cc-screen", name, on, true));
+            chips.push((Control::Screens, "cc-screen", name, on, true));
         }
-        for (control, glyph, name, on, available) in rounds {
-            let cell = layout.control_row(control);
-            let disc = Rect::new(
-                cell.x + (cell.w - CONTROLS_ROUND) / 2.0,
-                cell.y,
-                CONTROLS_ROUND,
-                CONTROLS_ROUND,
-            );
+        for (control, glyph, name, on, available) in chips {
+            let chip = layout.control_row(control);
             let (fill, ink) = if on {
-                (accent(), accent_ink())
+                (accent().with_alpha(38), accent())
             } else {
                 (raised_fill(), palette().heading)
             };
             let dim = |color: Color| if available { color } else { color.with_alpha(90) };
-            canvas.fill(disc, (CONTROLS_ROUND / 2.0) as f32, dim(fill));
-            canvas.icon(glyph, disc.center(), 19.0, Style::Symbolic(dim(ink)));
-            let name = canvas.fit_text(&self.regular, name, px(11.0), cell.w - 2.0);
-            let width = canvas.text_width(&self.regular, &name, px(11.0));
+            canvas.fill(chip, (chip.h / 2.0) as f32, dim(fill));
+            let room = chip.w - 16.0 - 22.0;
+            let name = canvas.fit_text(&self.bold, name, px(12.0), room);
+            let width = 16.0 + 6.0 + canvas.text_width(&self.bold, &name, px(12.0));
+            let x = chip.x + (chip.w - width) / 2.0;
+            let cy = chip.y + chip.h / 2.0;
+            canvas.icon(glyph, (x + 8.0, cy), 16.0, Style::Symbolic(dim(ink)));
             canvas.label(
-                &self.regular,
+                &self.bold,
                 &name,
-                cell.x + (cell.w - width) / 2.0,
-                disc.bottom() + 6.0,
-                px(11.0),
-                dim(palette().heading),
+                x + 22.0,
+                cy - 12.0 * 1.22 / 2.0 - 1.0,
+                px(12.0),
+                dim(ink),
             );
-        }
-
-        // Curseurs : à part (`draw_controls_sliders`), redessinés seuls à chaque pas.
-
-        let footer = layout.controls_footer();
-        let battery = state.battery.map_or(String::new(), |battery| {
-            let status = if battery.charging { " · en charge" } else { "" };
-            format!("{} %{status}", battery.percent)
-        });
-        canvas.label(
-            &self.regular,
-            &battery,
-            footer.x + 2.0,
-            footer.y + (footer.h - 12.0 * 1.22) / 2.0 - 1.0,
-            px(12.0),
-            text_secondary(),
-        );
-        // Boutons ronds, de gauche à droite : compte, Paramètres, verrouiller, éteindre ;
-        // tous neutres, l'arrêt demande de toute façon confirmation.
-        let round = [
-            (Control::Account, "cc-account"),
-            (Control::Settings, "glyph-gear"),
-            (Control::Lock, "cc-lock"),
-            (Control::Power, "cc-power"),
-        ];
-        for (control, glyph) in round {
-            let button = layout.control_row(control);
-            canvas.fill(button, button.h as f32 / 2.0, raised_fill());
-            canvas.icon(glyph, button.center(), 16.0, Style::Symbolic(palette().heading));
         }
 
         if let Some(error) = &view.error {
@@ -3277,7 +3329,9 @@ impl Panels {
             let Some(value) = value else { continue };
             let track = layout.slider_track(control);
             canvas.slider(track, value);
-            let ink = themed(palette().heading, palette().inverse_text);
+            // Le pictogramme est toujours sur la part réglée (elle part d'un disque de la
+            // hauteur de la piste) : encre lisible sur l'accent.
+            let ink = accent_ink();
             canvas.icon(
                 glyph,
                 (track.x + track.h / 2.0, track.y + track.h / 2.0),
@@ -3955,9 +4009,9 @@ impl Panels {
         // Le fond suit le thème (voir `RenderAssets::overview_overlay`) : écritures et
         // miniatures aussi.
         let text = themed(Color::rgb(0x1C1C1E), Color::WHITE);
-        let soft = themed(Color::rgb(0x4A5563), Color::rgb(0xC9D4E3));
-        let thumb_fill = themed(Color::rgb(0xCDD5DF), Color::rgb(0x16202D));
-        let ring = themed(Color::rgb(0x2F7FDB), Color::rgb(0x6CB8FF));
+        let soft = palette().text_secondary;
+        let thumb_fill = themed(Color::rgb(0xD4D4DA), Color::rgb(0x1E1E22));
+        let ring = palette().accent;
         // Bande des espaces de travail ; en mode dynamique, le dernier, vide, est le
         // « nouvel espace ».
         for (index, space) in overview.spaces.iter().enumerate() {
@@ -4387,11 +4441,7 @@ impl Panels {
         );
         // Cartes de choix sans bordure (charte) : teinte de surface, disque posé dessus.
         let (tile, dot) = (palette().surface, raised_fill());
-        let tile_on = if dark {
-            Color::rgb(0x6CB8FF).with_alpha(31)
-        } else {
-            Color::rgb(0xEAF2FD)
-        };
+        let tile_on = palette().selection;
         let red = pick(0xD92D20, 0xE5372B);
         let red_soft = if dark {
             Color::rgb(0xE5372B).with_alpha(46)
@@ -4815,7 +4865,7 @@ pub fn action_at(
         if let Some(page) = (0..view.page_count).find(|&page| layout.page_dot(page).contains(pos)) {
             return Some(DesktopAction::GoToPage(page));
         }
-        if layout.clock_button().contains(pos) {
+        if layout.clock_button().contains(pos) || layout.bell_button().contains(pos) {
             return Some(DesktopAction::TogglePopover(Popover::Notifications));
         }
         if layout.indicators_group().contains(pos) {
@@ -5244,6 +5294,16 @@ enum Indicator {
     Battery,
 }
 
+/// Îlots de la barre du haut, de gauche à droite.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BarIsland {
+    /// Symbole de Ferrite (lanceur) et marques des bureaux.
+    Start,
+    Clock,
+    Indicators,
+    Bell,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Control {
     Wifi,
@@ -5276,6 +5336,7 @@ struct Layout {
     bar: f64,
     dock_height: f64,
     page: usize,
+    page_count: usize,
     clipboard_position: Option<(i32, i32)>,
     controls_view: ControlsView,
     battery: bool,
@@ -5342,8 +5403,8 @@ impl Layout {
     }
 
     fn applications_button(&self) -> Rect {
-        // Le symbole seul (charte : barre épurée), dans une case de 40 px.
-        Rect::new(6.0, 0.0, 40.0, self.bar)
+        // Le symbole seul, en tête de l'îlot de gauche, dans une case de 36 px.
+        Rect::new(ISLAND_INSET + 4.0, 0.0, 36.0, self.bar)
     }
 
     /// Indicateurs présents, de gauche à droite.
@@ -5371,17 +5432,56 @@ impl Layout {
         let from_right = (present.len() - index) as f64;
         // Le dernier s'arrête à 16 px du bord, la case dépassant son icône de 8 px.
         Rect::new(
-            self.w - 8.0 - self.percent_width() - from_right * INDICATOR_WIDTH,
+            self.bell_button().x - ISLAND_GAP - 4.0 - self.percent_width() - from_right * INDICATOR_WIDTH,
             0.0,
             INDICATOR_WIDTH,
             self.bar,
         )
     }
 
+    /// Cloche des notifications, seule dans le dernier îlot à droite.
+    fn bell_button(&self) -> Rect {
+        Rect::new(
+            self.w - ISLAND_INSET - 4.0 - BELL_WIDTH,
+            0.0,
+            BELL_WIDTH,
+            self.bar,
+        )
+    }
+
+    /// Îlot de la barre, sur toute la hauteur moins une marge ; `clock_width` est la largeur
+    /// du texte de l'heure.
+    fn bar_island(&self, island: BarIsland, clock_width: f64) -> Rect {
+        let (y, h) = (ISLAND_INSET, self.bar - 2.0 * ISLAND_INSET);
+        match island {
+            BarIsland::Start => {
+                let last = self.page_dot(self.page_count.max(1) - 1);
+                let right = if self.page_count > 0 {
+                    last.right() + 8.0
+                } else {
+                    self.applications_button().right()
+                };
+                Rect::new(ISLAND_INSET + 4.0, y, right - ISLAND_INSET - 4.0, h)
+            }
+            BarIsland::Clock => {
+                let w = clock_width + 2.0 * ISLAND_PAD;
+                Rect::new((self.w - w) / 2.0, y, w, h)
+            }
+            BarIsland::Indicators => {
+                let group = self.indicators_group();
+                Rect::new(group.x, y, group.w, h)
+            }
+            BarIsland::Bell => {
+                let bell = self.bell_button();
+                Rect::new(bell.x, y, bell.w, h)
+            }
+        }
+    }
+
     /// Place du pourcentage de batterie.
     fn percent_width(&self) -> f64 {
         if self.battery && self.battery_percent {
-            40.0
+            36.0
         } else {
             0.0
         }
@@ -5397,7 +5497,8 @@ impl Layout {
     /// Indicateurs, qui ouvrent le centre de contrôle.
     fn indicators_group(&self) -> Rect {
         let first = self.indicator(self.present()[0]);
-        Rect::new(first.x, 0.0, self.w - 8.0 - first.x, self.bar)
+        let right = self.bell_button().x - ISLAND_GAP;
+        Rect::new(first.x - 2.0, 0.0, right - first.x + 2.0, self.bar)
     }
 
     /// Horloge au centre de la barre, qui ouvre le calendrier et les notifications.
@@ -5452,21 +5553,8 @@ impl Layout {
     fn controls(&self) -> Rect {
         let h = match self.controls_view.page {
             ControlsPage::Main => {
-                let sliders = [self.volume, self.brightness]
-                    .into_iter()
-                    .filter(|&present| present)
-                    .count() as f64;
                 let error = if self.error { 22.0 } else { 0.0 };
-                2.0 * CONTROLS_PAD
-                    + CONTROLS_TILE
-                    + CONTROLS_GAP
-                    + Self::round_grid_height()
-                    + CONTROLS_GAP
-                    + sliders * (CONTROLS_ROW + 8.0)
-                    + CONTROLS_GAP
-                    - 8.0
-                    + CONTROLS_FOOTER
-                    + error
+                self.chips_top() + self.chip_rows() * (CONTROLS_CHIP + 8.0) - 8.0 + CONTROLS_PAD + error
             }
             ControlsPage::Wifi => CONTROLS_LIST_TOP + self.wifi_list_height() + CONTROLS_LIST_BOTTOM,
             ControlsPage::Bluetooth if self.controls_view.devices.is_empty() => {
@@ -5665,57 +5753,100 @@ impl Layout {
         )
     }
 
+    /// Nombre de curseurs (volume, luminosité) que la machine offre.
+    fn slider_count(&self) -> f64 {
+        [self.volume, self.brightness]
+            .into_iter()
+            .filter(|&present| present)
+            .count() as f64
+    }
+
+    /// Haut des tuiles, depuis le haut du panneau.
+    fn tiles_top() -> f64 {
+        CONTROLS_PAD + CONTROLS_HEAD + CONTROLS_GAP
+    }
+
+    /// Haut des curseurs, depuis le haut du panneau.
+    fn sliders_top() -> f64 {
+        Self::tiles_top()
+            + CONTROLS_TILE_ROWS * CONTROLS_TILE
+            + (CONTROLS_TILE_ROWS - 1.0) * CONTROLS_TILE_GAP
+            + CONTROLS_GAP
+    }
+
+    /// Haut des pastilles, depuis le haut du panneau.
+    fn chips_top(&self) -> f64 {
+        Self::sliders_top() + self.slider_count() * (CONTROLS_ROW + 8.0)
+    }
+
+    fn chip_count(&self) -> usize {
+        if self.second_screen { 4 } else { 3 }
+    }
+
+    fn chip_rows(&self) -> f64 {
+        self.chip_count().div_ceil(CONTROLS_CHIPS_PER_ROW) as f64
+    }
+
     /// Case d'un réglage ; vide si le curseur est absent.
     fn control_row(&self, control: Control) -> Rect {
         let card = self.controls();
         let inner = card.w - 2.0 * CONTROLS_PAD;
-        let (left, top) = (card.x + CONTROLS_PAD, card.y + CONTROLS_PAD);
-        let tile_w = (inner - 10.0) / 2.0;
-        let tile = |column: f64| Rect::new(left + column * (tile_w + 10.0), top, tile_w, CONTROLS_TILE);
-        let chevron = |tile: Rect| Rect::new(tile.right() - 34.0, tile.y, 34.0, tile.h);
-        let grid_top = top + CONTROLS_TILE + CONTROLS_GAP;
-        let cell_w = inner / 4.0;
-        let round = |index: usize| {
-            let (column, row) = ((index % 4) as f64, (index / 4) as f64);
+        let left = card.x + CONTROLS_PAD;
+        let tile_w = (inner - CONTROLS_TILE_GAP) / 2.0;
+        let tile = |column: f64, row: f64| {
             Rect::new(
-                left + column * cell_w,
-                grid_top + row * (CONTROLS_ROUND_CELL + CONTROLS_ROUND_GAP),
-                cell_w,
-                CONTROLS_ROUND_CELL,
+                left + column * (tile_w + CONTROLS_TILE_GAP),
+                card.y + Self::tiles_top() + row * (CONTROLS_TILE + CONTROLS_TILE_GAP),
+                tile_w,
+                CONTROLS_TILE,
             )
         };
-        let sliders_top = grid_top + Self::round_grid_height() + CONTROLS_GAP;
+        let chevron = |tile: Rect| Rect::new(tile.right() - 34.0, tile.y, 34.0, tile.h);
         let row = |index: f64| {
             Rect::new(
                 left,
-                sliders_top + index * (CONTROLS_ROW + 8.0),
+                card.y + Self::sliders_top() + index * (CONTROLS_ROW + 8.0),
                 inner,
                 CONTROLS_ROW,
             )
         };
-        let footer = self.controls_footer();
+        let per_row = CONTROLS_CHIPS_PER_ROW as f64;
+        let chip_w = (inner - (per_row - 1.0) * 8.0) / per_row;
+        let chip = |index: usize| {
+            let (column, line) = (
+                (index % CONTROLS_CHIPS_PER_ROW) as f64,
+                (index / CONTROLS_CHIPS_PER_ROW) as f64,
+            );
+            Rect::new(
+                left + column * (chip_w + 8.0),
+                card.y + self.chips_top() + line * (CONTROLS_CHIP + 8.0),
+                chip_w,
+                CONTROLS_CHIP,
+            )
+        };
+        let head = self.controls_head();
         let button = |from_right: f64| {
             Rect::new(
-                footer.right() - from_right * 44.0 + 8.0,
-                footer.y,
-                CONTROLS_FOOTER,
-                CONTROLS_FOOTER,
+                head.right() - from_right * (CONTROLS_HEAD + 6.0) + 6.0,
+                head.y,
+                CONTROLS_HEAD,
+                CONTROLS_HEAD,
             )
         };
         let none = Rect::new(card.x, card.y, 0.0, 0.0);
         match control {
-            Control::Wifi => tile(0.0),
-            Control::Bluetooth => tile(1.0),
-            Control::WifiMore => chevron(tile(0.0)),
-            Control::BluetoothMore => chevron(tile(1.0)),
-            Control::Dark => round(0),
-            Control::DoNotDisturb => round(1),
-            Control::Night => round(2),
-            Control::Airplane => round(3),
-            Control::Saver => round(4),
-            Control::KeyboardLight => round(5),
-            Control::Keyboard => round(6),
-            Control::Screens if self.second_screen => round(7),
+            Control::Wifi => tile(0.0, 0.0),
+            Control::Bluetooth => tile(1.0, 0.0),
+            Control::WifiMore => chevron(tile(0.0, 0.0)),
+            Control::BluetoothMore => chevron(tile(1.0, 0.0)),
+            Control::Dark => tile(0.0, 1.0),
+            Control::DoNotDisturb => tile(1.0, 1.0),
+            Control::Saver => tile(0.0, 2.0),
+            Control::Airplane => tile(1.0, 2.0),
+            Control::Night => chip(0),
+            Control::KeyboardLight => chip(1),
+            Control::Keyboard => chip(2),
+            Control::Screens if self.second_screen => chip(3),
             Control::Screens => none,
             Control::Volume if self.volume => row(0.0),
             Control::Brightness if self.brightness => row(if self.volume { 1.0 } else { 0.0 }),
@@ -5727,15 +5858,14 @@ impl Layout {
         }
     }
 
-    /// Bas du centre de contrôle : batterie et boutons de session.
-    fn controls_footer(&self) -> Rect {
+    /// Tête du centre de contrôle : batterie à gauche, boutons de session à droite.
+    fn controls_head(&self) -> Rect {
         let card = self.controls();
-        let error = if self.error { 22.0 } else { 0.0 };
         Rect::new(
             card.x + CONTROLS_PAD,
-            card.bottom() - CONTROLS_PAD - error - CONTROLS_FOOTER,
+            card.y + CONTROLS_PAD,
             card.w - 2.0 * CONTROLS_PAD,
-            CONTROLS_FOOTER,
+            CONTROLS_HEAD,
         )
     }
 
@@ -5811,6 +5941,7 @@ impl Layout {
             page: view.page,
             dock_height: view.dock_height as f64,
             bar: view.bar_height as f64,
+            page_count: view.page_count,
             clipboard_position: view.clipboard.position,
             controls_view: view.controls.clone(),
             battery: battery_dir().is_some(),
@@ -5822,11 +5953,6 @@ impl Layout {
             second_screen: view.second_screen.is_some(),
             controls_shift: (0.0, 0.0),
         }
-    }
-
-    /// Hauteur de la grille des bascules rondes.
-    fn round_grid_height() -> f64 {
-        CONTROLS_ROUND_ROWS * CONTROLS_ROUND_CELL + (CONTROLS_ROUND_ROWS - 1.0) * CONTROLS_ROUND_GAP
     }
 
     /// Menu du bureau : 260 de large, des lignes de 32, marge de 6, jamais hors de l'écran.
@@ -5866,7 +5992,7 @@ impl Layout {
         let before: f64 = (0..page).map(|index| width(index) + PAGE_MARK_GAP).sum();
         // La zone du clic déborde dans les écarts.
         Rect::new(
-            58.0 + before - PAGE_MARK_GAP / 2.0,
+            self.applications_button().right() + 4.0 + before - PAGE_MARK_GAP / 2.0,
             0.0,
             width(page) + PAGE_MARK_GAP,
             self.bar,
@@ -6735,12 +6861,12 @@ impl Canvas<'_> {
     /// Curseur épais (charte) : pilule de la hauteur de `track` ; la part réglée, claire,
     /// part d'un disque de cette hauteur (où se pose le pictogramme) et s'allonge avec la
     /// valeur.
+    /// Curseur épais : piste neutre, part réglée pleine d'accent (charte « Forge »).
     fn slider(&mut self, track: Rect, value: u8) {
         let radius = (track.h / 2.0) as f32;
         self.fill(track, radius, palette().track);
         let filled = track.h + (track.w - track.h) * f64::from(value) / 100.0;
-        let fill = themed(palette().window_background, palette().text);
-        self.fill(Rect::new(track.x, track.y, filled, track.h), radius, fill);
+        self.fill(Rect::new(track.x, track.y, filled, track.h), radius, accent());
     }
 
     fn button(&mut self, rect: Rect, text: &str, background: Color, ink: Color) {
@@ -8760,7 +8886,7 @@ mod tests {
             at(Control::KeyboardLight),
             Some(DesktopAction::CycleKeyboardLight)
         );
-        // La quatrième rangée de tuiles reste au-dessus des curseurs.
+        // La dernière rangée de tuiles reste au-dessus des curseurs.
         assert!(layout.control_row(Control::Airplane).bottom() < layout.control_row(Control::Volume).y);
         assert_eq!(
             at(Control::WifiMore),
@@ -8783,7 +8909,7 @@ mod tests {
         for pair in footer.windows(2) {
             assert!(pair[0].right() < pair[1].x);
         }
-        assert!(footer[3].right() <= layout.controls_footer().right());
+        assert!(footer[3].right() <= layout.controls_head().right() + 0.5);
         // Le bouton reste dans la piste : sa course s'arrête à un demi-bouton des bords.
         let volume = layout.slider_track(Control::Volume);
         let quarter = volume.x + volume.h / 2.0 + (volume.w - volume.h) / 4.0;

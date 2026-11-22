@@ -108,7 +108,7 @@ impl AccountsState {
     /// Pastille d'un compte : son image de profil, sinon le symbole du compte.
     fn lead(&mut self, ctx: &egui::Context, account: &Account) -> Lead {
         if account.icon.is_empty() {
-            return Lead::Tile("glyph-account", Page::Accounts.color());
+            return Lead::Tile("glyph-account");
         }
         let modified = std::fs::metadata(&account.icon)
             .and_then(|metadata| metadata.modified())
@@ -131,7 +131,7 @@ impl AccountsState {
         }
         match self.pictures.get(&account.icon) {
             Some((_, Some(texture))) => Lead::Picture(texture.id()),
-            _ => Lead::Tile("glyph-account", Page::Accounts.color()),
+            _ => Lead::Tile("glyph-account"),
         }
     }
 

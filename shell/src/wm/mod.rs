@@ -901,7 +901,7 @@ mod tests {
     #[test]
     fn agrandissement_sous_la_barre_de_titre() {
         let area = rect(0, 30, 1440, 870);
-        assert_eq!(maximized_content(area, true), rect(0, 68, 1440, 832));
+        assert_eq!(maximized_content(area, true), rect(0, 74, 1440, 826));
         assert_eq!(maximized_content(area, false), area);
     }
 
@@ -978,8 +978,8 @@ mod tests {
     #[test]
     fn accrochage_garde_les_marges_et_l_ecart_de_12_px() {
         let area = rect(0, 30, 1440, 870);
-        assert_eq!(snapped_content(area, Snap::Left, true), rect(12, 80, 702, 808));
-        assert_eq!(snapped_content(area, Snap::Right, true), rect(726, 80, 702, 808));
+        assert_eq!(snapped_content(area, Snap::Left, true), rect(12, 86, 702, 802));
+        assert_eq!(snapped_content(area, Snap::Right, true), rect(726, 86, 702, 802));
         // Quarts : 12 px entre les fenêtres, et autour de la zone.
         assert_eq!(snap_zone(area, Snap::TopLeft), rect(12, 42, 702, 417));
         assert_eq!(snap_zone(area, Snap::BottomRight), rect(726, 471, 702, 417));

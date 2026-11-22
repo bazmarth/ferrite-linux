@@ -607,7 +607,13 @@ impl Panels {
                 canvas.fill(track, 3.0, BUTTON);
                 let filled = track.w * f64::from(level.min(100)) / 100.0;
                 if filled > 0.0 {
-                    canvas.fill(Rect::new(track.x, track.y, filled.max(6.0), track.h), 3.0, INK);
+                    // Niveau en accent (charte « Forge »), comme les curseurs du centre de
+                    // contrôle ; la teinte du thème sombre, l'îlot étant toujours noir.
+                    canvas.fill(
+                        Rect::new(track.x, track.y, filled.max(6.0), track.h),
+                        3.0,
+                        accent_on_glass(false),
+                    );
                 }
             }
             IslandKind::Notification { notification, more } => {

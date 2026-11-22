@@ -79,10 +79,10 @@ impl Builtin {
     /// Couleur du fond et couleur du trait du cube.
     pub fn colors(self) -> (Color, Color) {
         match self {
-            Builtin::Ferrite => (Color::rgb(0x16202D), Color::rgb(0x6CB8FF)),
+            Builtin::Ferrite => (Color::rgb(0x141416), Color::rgb(0xFF7A45)),
             Builtin::Night => (Color::rgb(0x1B2433), Color::rgb(0x9A6BFF)),
             Builtin::Slate => (Color::rgb(0x2A3340), Color::rgb(0x2FD49A)),
-            Builtin::Light => (Color::rgb(0xE7E9EE), Color::rgb(0x2779E0)),
+            Builtin::Light => (Color::rgb(0xE8E8EC), Color::rgb(0xB83A0A)),
         }
     }
 }
@@ -591,11 +591,11 @@ mod tests {
             let i = (y * 1600 + x) * 4;
             [image.rgba[i], image.rgba[i + 1], image.rgba[i + 2]]
         };
-        // Loin des traits : la couleur du fond, #16202D.
-        assert_eq!(at(10, 10), [0x16, 0x20, 0x2D]);
+        // Loin des traits : la couleur du fond, #141416.
+        assert_eq!(at(10, 10), [0x14, 0x14, 0x16]);
         // Sur le côté du grand hexagone : un peu plus clair.
         let side = at(1420, 400);
-        assert!(side[0] > 0x16 && side[0] < 0x40);
+        assert!(side[0] > 0x14 && side[0] < 0x40, "{side:?}");
         assert!(image.top_is_dark(20));
         assert!(!paint(Builtin::Light, 160, 100).top_is_dark(5));
     }

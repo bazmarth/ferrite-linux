@@ -4,6 +4,7 @@
 //! (`theme`) et les fonds d'écran (`wallpaper`). Les widgets arriveront en phase 4
 //! (voir `docs/PLAN.md`).
 
+pub mod glyphs;
 pub mod icons;
 pub mod theme;
 pub mod tokens;

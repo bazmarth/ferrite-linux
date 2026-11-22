@@ -4299,3 +4299,111 @@ Non vérifié : vrai bureau (DRM) : raccourcis, molette, fluidité et consommati
 avec la loupe. Limites : le pointeur garde sa taille ; captures d'écran et partage d'écran
 montrent l'écran sans zoom ; second écran en « étendre » sans loupe.
 
+## 2026-11-22 — Nouvelle charte visuelle (Oxyde)
+
+Demande : appliquer le nouveau design à toutes les fenêtres, écrans d'accueil et de
+verrouillage, et aux fenêtres des applications tierces (boîtes de dialogue GTK).
+- `ui/src/tokens.rs`, `ui/src/theme.rs` : accent Oxyde, signaux revus (danger, succès,
+  attention lisibles dans chaque thème), palettes claire et sombre neutres, barre de titre
+  44 px, boutons de fenêtre 14 px (écart 22), menus 240 × 28, contrôles 32 px, rayon des
+  contrôles 7, échelle de texte complétée (SECTION 20, DISPLAY 32, titre de fenêtre 13),
+  durées QUICK 120 et NORMAL 320. Test de contraste des deux thèmes.
+- Boutons de fenêtre (shader de la barre de titre et `style::window_button`) : « fermer »
+  en accent au repos, les autres neutres, symboles au survol, cible de 22 px.
+- `services/system/src/config.rs` : accent `oxyde` par défaut (le bleu devient un choix
+  fixe `#2779E0`) ; étiquettes de Fichiers toujours bleues par défaut.
+- Écran de verrouillage : fond « Ferrite », anneau du visage, bague du fond choisi et
+  avatar à l'Oxyde, encres neutres. Fond d'écran « Ferrite » `#141416` à traits Oxyde.
+- Installateur : titres 24, « Ferrite est installé » 32, texte 14. Aperçus d'Apparence.
+- Logo (point de l'anneau), `start-here`, GRUB et Plymouth : Oxyde sur fond neutre.
+- Thème GTK : `ferrite-theme/gtk/generer.py` produit Ferrite (GTK 3 clair et sombre,
+  couleurs GTK 4/libadwaita) et Ferrite-dark, `install.sh` les pose, le crochet
+  `0140-ferrite-gtk` les met dans l'image ; ferrite-shell choisit Ferrite ou Ferrite-dark
+  avec `color-scheme`.
+Vérifié (hors du PC, sur une copie) : fmt, clippy `-D warnings`, tests de ferrite-ui,
+ferrite-shell, ferrite-system et ferrite-apps (échecs restants dus à l'environnement :
+archives, fichiers de l'image, éditeur déjà en échec avant) ; captures `--winit` de
+Réglages (clair et sombre), verrouillage, centre de contrôle, dialogue d'arrêt ; boîte de
+dialogue GTK 3 rendue avec le thème (clair et sombre).
+Non vérifié : vrai bureau (DRM), `tools/ci.sh` complet sur le PC, image ISO, GTK 4 réel
+(les `@media` et variables CSS demandent GTK ≥ 4.16). À faire à la main : copier
+`assets/demarrage/logo.png` et `point.png` dans le thème Plymouth de l'image.
+
+## 2026-11-22 — Refonte « Forge », étape 1 : icônes système
+
+Demande : repenser tout le design (icônes, disposition des fenêtres et pages). Maquette
+validée : `docs/maquettes/refonte-forge.html` (icônes, bureau en îlots, centre de contrôle,
+Réglages, Fichiers, lanceur, dialogues ; plan en six étapes). Étape 1 faite :
+- `tools/icones.py` dessine une seule famille au trait (grille 24, trait 1,75, bouts
+  arrondis ; noir = allumé, gris clair = éteint) : 99 pictogrammes dans
+  `icons/SVG/symboles/` et les 72 icônes d'état `icons/SVG/status-*` (Wi-Fi par arcs
+  estompés, Bluetooth connecté à deux points, batterie à jauge, éclair découpé par un
+  masque en charge, volume, luminosité, réseau mobile…). `status-cloud` inchangé.
+- `ui/src/glyphs.rs` : table partagée ; le bureau (`shell/src/desktop/svg.rs`) et les
+  applis (`apps/core/src/style.rs`) n'ont plus leurs propres tracés. Les anciens noms
+  (`cc-…`, `glyph-…`, `clip-…`) restent valables.
+- Fichiers : colonne en pictogrammes au trait (gris, accent si choisi) au lieu des
+  dossiers en couleur ; aperçu de l'analyse avec l'icône du disque.
+- Calendrier : une couleur de catégorie inconnue redevient le bleu (le test cassait
+  depuis que l'Oxyde est l'accent par défaut).
+Vérifié : `tools/ci.sh` (sans shellcheck) ; planche de toutes les icônes ; captures
+`--winit` du centre de contrôle (clair, sombre, Bluetooth), Réglages Wi-Fi (clair) et
+Bluetooth (sombre), Fichiers (clair, sombre), presse-papiers.
+Non vérifié : vrai bureau (DRM) ; Wi-Fi et Bluetooth n'étaient pas détectés dans le bureau
+imbriqué pendant ces captures (sans lien avec les icônes), donc listes de réseaux non vues.
+Suite : étape 2 (barre du haut en îlots, centre de contrôle en tuiles, curseurs remplis,
+dock).
+
+## 2026-11-22 — Refonte « Forge », étape 2 : barre du haut, centre de contrôle, dock
+
+- Barre du haut (`draw_bar`, `Layout::bar_island`) : plus de voile sur toute la largeur ;
+  quatre îlots de verre sombre (symbole et bureaux, heure, indicateurs, cloche). Marque du
+  bureau affiché en accent. Pictogrammes d'état tous à 17 px ; Bluetooth « connecté » quand
+  un appareil l'est. Cloche (`bell_button`) : ouvre le calendrier et les notifications,
+  point d'accent s'il y en a (pas en Silence). Pourcentage de batterie affiché par défaut
+  (`barre_pourcentage`, Réglages suit).
+- Centre de contrôle (`draw_controls_main`, `control_row`) : 372 px ; tête (batterie,
+  quatre boutons ronds) ; six tuiles de même taille avec leur état (Énergie : mode en
+  cours) ; curseurs dont la part réglée est en accent (elle ne se voyait pas : blanc sur
+  gris clair) ; pastilles Mode nuit, Éclairage, Clavier (et second écran). Gris du panneau
+  et des boutons rendus neutres.
+- Dock : marges 9 px (au lieu de 11) et 12 px du bord (au lieu de 18) ; point des applis
+  ouvertes en accent (cerclé de sombre), mis en cache avec la couleur.
+Vérifié : `tools/ci.sh` ; tests des clics du centre de contrôle et de la barre (inchangés,
+sauf mesures du dock) ; captures `--winit` du centre de contrôle (clair, sombre), d'une
+fenêtre avec la barre, du dock avec la Calculatrice ouverte.
+Non vérifié : vrai bureau (DRM) ; barre opaque (fenêtre agrandie) ; point de la cloche
+avec des notifications ; curseur du volume (pas de son dans le bureau imbriqué) ; second
+écran (quatrième pastille).
+
+## 2026-11-22 — Refonte « Forge », étapes 3 à 6 : fenêtres, Réglages, Fichiers, lanceur
+
+Demande : finir toutes les étapes sans s'arrêter.
+- Colonnes (`style::sidebar_item`, `selection_pill`, `accent_soft`, `accent_ink`) : élément
+  choisi en accent léger, symbole et libellé en accent, sans ombre ; Fichiers pareil.
+  `sidebar_pill` retiré (plus utilisé).
+- Réglages : tête de page avec le symbole de la page dans un carré d'accent léger
+  (`rows::accent_tile`) ; pastilles de ligne (`Lead::Tile`, sans couleur désormais) et
+  détails d'un appareil Bluetooth en accent léger au lieu des carrés bleu, violet, vert,
+  rose ; `Page::color` retiré ; grande ligne Wi-Fi/Bluetooth sans symbole (déjà dans la
+  tête) ; état « Connecté » : point vert et texte gris.
+- Fichiers : dossiers d'un seul ton, emblème en accent (`file_art::paint_plain_folder`,
+  `style::folder_front`/`folder_back`) tant que l'utilisateur n'a pas choisi de couleur ;
+  pied sans filet, du fond du contenu. Gardé (et non supprimé comme sur la maquette) : il
+  porte la progression des copies, Ouvrir, Partager et Vider la Corbeille.
+- Lanceur (`render::launcher_view`) : rubriques « Applications Ferrite », puis Internet,
+  Bureautique, Multimédia… d'après les catégories ; recherche en une seule liste ; Entrée
+  lance la première case affichée (`input.rs`).
+- Bulle du volume et de la luminosité : niveau en accent.
+- Non repris de la maquette : pastilles de rubriques cliquables du lanceur (les rubriques
+  titrées en tiennent lieu), voile sur l'écran derrière le lanceur (rendu plein écran à
+  éviter), barre de 52 px (la barre de titre reste à 44, partagée avec les fenêtres
+  décorées par le bureau), carte « lecture en cours » du centre de contrôle (l'îlot du
+  haut s'en charge).
+Vérifié : `tools/ci.sh` ; captures `--winit` : Réglages Wi-Fi et Son (clair), Bluetooth et
+Apparence (sombre), Fichiers (clair, sombre), lanceur (sombre), dialogue d'arrêt, bulle du
+volume, calendrier et notifications avec le point de la cloche, écran de verrouillage.
+Non vérifié : vrai bureau (DRM) ; autres applications à colonne (Logithèque, Calendrier,
+Musique) vues seulement par le code commun ; thème GTK inchangé (aucune couleur de la
+charte n'a bougé).
+

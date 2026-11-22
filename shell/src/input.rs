@@ -839,11 +839,21 @@ impl Ferrite {
                 self.stop_dashboard_editing();
             }
             Some(Action::LauncherLaunchFirst) => {
+                // La première case affichée : sans recherche, les rubriques changent l'ordre.
+                let by_rubric = self.launcher_query.trim().is_empty();
                 let first = self
                     .launcher_entries()
                     .into_iter()
-                    .next()
-                    .map(|entry| entry.key());
+                    .enumerate()
+                    .min_by_key(|(index, entry)| {
+                        let rubric = if by_rubric {
+                            crate::render::launcher_rubric(entry)
+                        } else {
+                            0
+                        };
+                        (rubric, *index)
+                    })
+                    .map(|(_, entry)| entry.key());
                 if let Some(key) = first {
                     self.popover = None;
                     self.open_app(&key);

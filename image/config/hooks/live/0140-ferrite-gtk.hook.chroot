@@ -1,0 +1,692 @@
+#!/bin/sh
+# Thème GTK « Ferrite » dans l'image : GTK 3 (Ferrite et Ferrite-dark, que ferrite-shell
+# choisit selon le thème clair ou sombre), couleurs GTK 4/libadwaita pour chaque compte, et
+# réglages par défaut. Fichier généré par ferrite-theme/gtk/generer.py : ne pas modifier.
+set -eu
+t=/usr/share/themes
+mkdir -p "$t/Ferrite/gtk-3.0" "$t/Ferrite/gtk-4.0" "$t/Ferrite-dark/gtk-3.0" \
+    /etc/skel/.config/gtk-4.0 /etc/gtk-3.0 /etc/gtk-4.0 /usr/share/glib-2.0/schemas
+cat > "$t/Ferrite/gtk-3.0/gtk.css" <<'FIN_FERRITE'
+/* Ferrite — thème GTK 3 (clair). Fichier généré par ferrite-theme/gtk/generer.py. */
+@import url("resource:///org/gtk/libgtk/theme/Adwaita/gtk-contained.css");
+
+@define-color theme_bg_color #F4F4F6;
+@define-color theme_fg_color #1B1B1F;
+@define-color theme_base_color #FFFFFF;
+@define-color theme_text_color #1B1B1F;
+@define-color theme_selected_bg_color #B83A0A;
+@define-color theme_selected_fg_color #FFFFFF;
+@define-color accent_color #B83A0A;
+@define-color accent_bg_color #B83A0A;
+@define-color accent_fg_color #FFFFFF;
+
+/* Fenêtres et vues */
+window, .background, dialog, messagedialog, messagedialog.csd.background {
+  background-color: #F4F4F6;
+  color: #1B1B1F;
+}
+.view, textview text, treeview.view, iconview, list, listview, row {
+  background-color: #FFFFFF;
+  color: #1B1B1F;
+}
+.dim-label, label.dim-label, .subtitle { color: #5A5A64; opacity: 1; }
+
+/* Barre de titre unifiée de 44 px */
+headerbar, .titlebar:not(headerbar), headerbar.titlebar {
+  min-height: 44px;
+  background-image: none;
+  background-color: #EBEBEF;
+  border-bottom: 1px solid #E2E2E7;
+  box-shadow: none;
+  color: #1B1B1F;
+}
+headerbar:backdrop, .titlebar:backdrop { background-color: #F4F4F6; }
+headerbar .title, .titlebar .title { font-weight: 600; }
+headerbar .subtitle { color: #5A5A64; }
+.sidebar, placessidebar, stacksidebar { background-color: #EBEBEF; border-color: #E2E2E7; }
+separator { background-color: #E2E2E7; }
+
+/* Boutons : 32 px, rayon 7, contour #8A8A94 */
+button {
+  min-height: 22px;
+  padding: 4px 12px;
+  border-radius: 7px;
+  border: 1px solid #8A8A94;
+  background-image: none;
+  background-color: #FFFFFF;
+  color: #1B1B1F;
+  box-shadow: none;
+  text-shadow: none;
+  -gtk-icon-shadow: none;
+}
+button:hover { background-color: #E1E1E6; }
+button:active, button:checked { background-color: #D8D8DE; }
+button:disabled { opacity: 0.45; background-color: #FFFFFF; }
+button.flat, button.image-button.flat, headerbar button:not(.suggested-action):not(.destructive-action) {
+  border-color: transparent;
+  background-color: transparent;
+}
+button.flat:hover, headerbar button:not(.suggested-action):not(.destructive-action):hover {
+  background-color: #E1E1E6;
+}
+button.suggested-action, button.default:not(.destructive-action) {
+  background-color: #B83A0A;
+  border-color: #B83A0A;
+  color: #FFFFFF;
+  font-weight: 600;
+}
+button.suggested-action:hover, button.default:not(.destructive-action):hover {
+  background-color: #9C3108;
+  border-color: #9C3108;
+}
+button.destructive-action {
+  background-color: #C62828;
+  border-color: #C62828;
+  color: #FFFFFF;
+  font-weight: 600;
+}
+
+/* Boîtes de dialogue : boutons détachés, à droite, comme dans Ferrite */
+messagedialog .titlebar { min-height: 0; border: none; background: transparent; }
+messagedialog .dialog-vbox { padding: 4px 8px 0; }
+messagedialog .dialog-action-area, messagedialog .dialog-action-box {
+  padding: 16px 20px 20px;
+  border-top: none;
+  margin: 0;
+}
+messagedialog .dialog-action-area button, messagedialog .dialog-action-box button {
+  min-height: 22px;
+  border-radius: 7px;
+  border: 1px solid #8A8A94;
+  margin: 0 0 0 8px;
+}
+messagedialog .dialog-action-area button:first-child,
+messagedialog .dialog-action-box button:first-child {
+  margin-left: 0;
+}
+messagedialog .dialog-action-area button.suggested-action,
+messagedialog .dialog-action-box button.suggested-action,
+messagedialog .dialog-action-area button.default,
+messagedialog .dialog-action-box button.default {
+  border-color: #B83A0A;
+}
+messagedialog .dialog-action-area button:first-child,
+messagedialog .dialog-action-area button:last-child,
+messagedialog .dialog-action-box button:first-child,
+messagedialog .dialog-action-box button:last-child {
+  border-radius: 7px;
+}
+messagedialog label.title, messagedialog .titlebar .title { font-size: 16px; font-weight: 600; }
+messagedialog .dialog-vbox label { color: #1B1B1F; }
+button.suggested-action label, button.default:not(.destructive-action) label { color: #FFFFFF; }
+button.destructive-action label { color: #FFFFFF; }
+
+/* Champs */
+entry, spinbutton:not(.vertical), combobox entry {
+  min-height: 30px;
+  border-radius: 7px;
+  border: 1px solid #8A8A94;
+  background-image: none;
+  background-color: #FFFFFF;
+  color: #1B1B1F;
+  box-shadow: none;
+}
+entry:focus, spinbutton:focus-within {
+  border-color: #B83A0A;
+  box-shadow: inset 0 0 0 1px #B83A0A;
+}
+entry.error { border-color: #C62828; color: #1B1B1F; }
+entry placeholder, entry .placeholder { color: #5A5A64; }
+
+/* Sélection, focus et liens */
+selection, *:selected, textview text selection {
+  background-color: #B83A0A;
+  color: #FFFFFF;
+}
+row:selected, treeview.view:selected, iconview:selected, list row:selected {
+  background-color: #FDE8DD;
+  color: #8F2F09;
+}
+row:hover:not(:selected) { background-color: #E1E1E6; }
+*:link, link, button.link { color: #B83A0A; }
+*:focus-visible { outline-color: #B83A0A; }
+
+/* Interrupteurs, cases, curseurs, jauges */
+switch { border-radius: 9999px; border-color: #8A8A94; background-color: #E1E1E6; }
+switch:checked { background-color: #B83A0A; border-color: #B83A0A; }
+switch slider { border-radius: 9999px; background-image: none; background-color: #FFFFFF; border-color: #8A8A94; }
+check, radio { background-image: none; background-color: #FFFFFF; border: 1.5px solid #8A8A94; }
+check { border-radius: 4px; }
+check:checked, check:indeterminate, radio:checked, radio:indeterminate {
+  background-image: none;
+  background-color: #B83A0A;
+  border-color: #B83A0A;
+  color: #FFFFFF;
+}
+scale highlight, progressbar progress, levelbar block.filled {
+  background-image: none;
+  background-color: #B83A0A;
+  border-color: #B83A0A;
+}
+scale trough, progressbar trough { background-color: #D4D4DA; border-color: transparent; }
+scale slider { background-image: none; background-color: #FFFFFF; border: 1px solid #8A8A94; border-radius: 9999px; }
+notebook > header tab:checked { box-shadow: inset 0 -2px #B83A0A; }
+
+/* Menus, bulles, infobulles */
+menu, .menu, .context-menu, popover.background > contents, popover.menu {
+  border-radius: 10px;
+  background-color: #FFFFFF;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+}
+menu menuitem, popover modelbutton { border-radius: 5px; min-height: 26px; padding: 0 8px; }
+menu menuitem:hover, popover modelbutton:hover { background-color: #B83A0A; color: #FFFFFF; }
+tooltip, tooltip.background { background-color: #1B1B1F; color: #F2F2F5; border-radius: 6px; border: none; }
+tooltip * { color: #F2F2F5; }
+
+/* Fenêtres dessinées par l'application (CSD) */
+decoration { border-radius: 14px 14px 0 0; }
+FIN_FERRITE
+cat > "$t/Ferrite/gtk-3.0/gtk-dark.css" <<'FIN_FERRITE'
+/* Ferrite — thème GTK 3 (sombre). Fichier généré par ferrite-theme/gtk/generer.py. */
+@import url("resource:///org/gtk/libgtk/theme/Adwaita/gtk-contained-dark.css");
+
+@define-color theme_bg_color #141416;
+@define-color theme_fg_color #F2F2F5;
+@define-color theme_base_color #1E1E22;
+@define-color theme_text_color #F2F2F5;
+@define-color theme_selected_bg_color #FF7A45;
+@define-color theme_selected_fg_color #1A0B04;
+@define-color accent_color #FF7A45;
+@define-color accent_bg_color #FF7A45;
+@define-color accent_fg_color #1A0B04;
+
+/* Fenêtres et vues */
+window, .background, dialog, messagedialog, messagedialog.csd.background {
+  background-color: #141416;
+  color: #F2F2F5;
+}
+.view, textview text, treeview.view, iconview, list, listview, row {
+  background-color: #1E1E22;
+  color: #F2F2F5;
+}
+.dim-label, label.dim-label, .subtitle { color: #A6A6B0; opacity: 1; }
+
+/* Barre de titre unifiée de 44 px */
+headerbar, .titlebar:not(headerbar), headerbar.titlebar {
+  min-height: 44px;
+  background-image: none;
+  background-color: #19191C;
+  border-bottom: 1px solid #2C2C31;
+  box-shadow: none;
+  color: #F2F2F5;
+}
+headerbar:backdrop, .titlebar:backdrop { background-color: #141416; }
+headerbar .title, .titlebar .title { font-weight: 600; }
+headerbar .subtitle { color: #A6A6B0; }
+.sidebar, placessidebar, stacksidebar { background-color: #19191C; border-color: #2C2C31; }
+separator { background-color: #2C2C31; }
+
+/* Boutons : 32 px, rayon 7, contour #6E6E78 */
+button {
+  min-height: 22px;
+  padding: 4px 12px;
+  border-radius: 7px;
+  border: 1px solid #6E6E78;
+  background-image: none;
+  background-color: #1E1E22;
+  color: #F2F2F5;
+  box-shadow: none;
+  text-shadow: none;
+  -gtk-icon-shadow: none;
+}
+button:hover { background-color: #2A2A2F; }
+button:active, button:checked { background-color: #333338; }
+button:disabled { opacity: 0.45; background-color: #1E1E22; }
+button.flat, button.image-button.flat, headerbar button:not(.suggested-action):not(.destructive-action) {
+  border-color: transparent;
+  background-color: transparent;
+}
+button.flat:hover, headerbar button:not(.suggested-action):not(.destructive-action):hover {
+  background-color: #2A2A2F;
+}
+button.suggested-action, button.default:not(.destructive-action) {
+  background-color: #FF7A45;
+  border-color: #FF7A45;
+  color: #1A0B04;
+  font-weight: 600;
+}
+button.suggested-action:hover, button.default:not(.destructive-action):hover {
+  background-color: #FF9466;
+  border-color: #FF9466;
+}
+button.destructive-action {
+  background-color: #F87171;
+  border-color: #F87171;
+  color: #1F0707;
+  font-weight: 600;
+}
+
+/* Boîtes de dialogue : boutons détachés, à droite, comme dans Ferrite */
+messagedialog .titlebar { min-height: 0; border: none; background: transparent; }
+messagedialog .dialog-vbox { padding: 4px 8px 0; }
+messagedialog .dialog-action-area, messagedialog .dialog-action-box {
+  padding: 16px 20px 20px;
+  border-top: none;
+  margin: 0;
+}
+messagedialog .dialog-action-area button, messagedialog .dialog-action-box button {
+  min-height: 22px;
+  border-radius: 7px;
+  border: 1px solid #6E6E78;
+  margin: 0 0 0 8px;
+}
+messagedialog .dialog-action-area button:first-child,
+messagedialog .dialog-action-box button:first-child {
+  margin-left: 0;
+}
+messagedialog .dialog-action-area button.suggested-action,
+messagedialog .dialog-action-box button.suggested-action,
+messagedialog .dialog-action-area button.default,
+messagedialog .dialog-action-box button.default {
+  border-color: #FF7A45;
+}
+messagedialog .dialog-action-area button:first-child,
+messagedialog .dialog-action-area button:last-child,
+messagedialog .dialog-action-box button:first-child,
+messagedialog .dialog-action-box button:last-child {
+  border-radius: 7px;
+}
+messagedialog label.title, messagedialog .titlebar .title { font-size: 16px; font-weight: 600; }
+messagedialog .dialog-vbox label { color: #F2F2F5; }
+button.suggested-action label, button.default:not(.destructive-action) label { color: #1A0B04; }
+button.destructive-action label { color: #1F0707; }
+
+/* Champs */
+entry, spinbutton:not(.vertical), combobox entry {
+  min-height: 30px;
+  border-radius: 7px;
+  border: 1px solid #6E6E78;
+  background-image: none;
+  background-color: #1E1E22;
+  color: #F2F2F5;
+  box-shadow: none;
+}
+entry:focus, spinbutton:focus-within {
+  border-color: #FF7A45;
+  box-shadow: inset 0 0 0 1px #FF7A45;
+}
+entry.error { border-color: #F87171; color: #F2F2F5; }
+entry placeholder, entry .placeholder { color: #A6A6B0; }
+
+/* Sélection, focus et liens */
+selection, *:selected, textview text selection {
+  background-color: #FF7A45;
+  color: #1A0B04;
+}
+row:selected, treeview.view:selected, iconview:selected, list row:selected {
+  background-color: #3B2117;
+  color: #FFB38F;
+}
+row:hover:not(:selected) { background-color: #2A2A2F; }
+*:link, link, button.link { color: #FF7A45; }
+*:focus-visible { outline-color: #FF7A45; }
+
+/* Interrupteurs, cases, curseurs, jauges */
+switch { border-radius: 9999px; border-color: #6E6E78; background-color: #2A2A2F; }
+switch:checked { background-color: #FF7A45; border-color: #FF7A45; }
+switch slider { border-radius: 9999px; background-image: none; background-color: #1E1E22; border-color: #6E6E78; }
+check, radio { background-image: none; background-color: #1E1E22; border: 1.5px solid #6E6E78; }
+check { border-radius: 4px; }
+check:checked, check:indeterminate, radio:checked, radio:indeterminate {
+  background-image: none;
+  background-color: #FF7A45;
+  border-color: #FF7A45;
+  color: #1A0B04;
+}
+scale highlight, progressbar progress, levelbar block.filled {
+  background-image: none;
+  background-color: #FF7A45;
+  border-color: #FF7A45;
+}
+scale trough, progressbar trough { background-color: #34343A; border-color: transparent; }
+scale slider { background-image: none; background-color: #1E1E22; border: 1px solid #6E6E78; border-radius: 9999px; }
+notebook > header tab:checked { box-shadow: inset 0 -2px #FF7A45; }
+
+/* Menus, bulles, infobulles */
+menu, .menu, .context-menu, popover.background > contents, popover.menu {
+  border-radius: 10px;
+  background-color: #1E1E22;
+  border: 1px solid rgba(0, 0, 0, 0.5);
+}
+menu menuitem, popover modelbutton { border-radius: 5px; min-height: 26px; padding: 0 8px; }
+menu menuitem:hover, popover modelbutton:hover { background-color: #FF7A45; color: #1A0B04; }
+tooltip, tooltip.background { background-color: #F2F2F5; color: #1B1B1F; border-radius: 6px; border: none; }
+tooltip * { color: #1B1B1F; }
+
+/* Fenêtres dessinées par l'application (CSD) */
+decoration { border-radius: 14px 14px 0 0; }
+FIN_FERRITE
+cat > "$t/Ferrite-dark/gtk-3.0/gtk.css" <<'FIN_FERRITE'
+/* Ferrite — thème GTK 3 (sombre). Fichier généré par ferrite-theme/gtk/generer.py. */
+@import url("resource:///org/gtk/libgtk/theme/Adwaita/gtk-contained-dark.css");
+
+@define-color theme_bg_color #141416;
+@define-color theme_fg_color #F2F2F5;
+@define-color theme_base_color #1E1E22;
+@define-color theme_text_color #F2F2F5;
+@define-color theme_selected_bg_color #FF7A45;
+@define-color theme_selected_fg_color #1A0B04;
+@define-color accent_color #FF7A45;
+@define-color accent_bg_color #FF7A45;
+@define-color accent_fg_color #1A0B04;
+
+/* Fenêtres et vues */
+window, .background, dialog, messagedialog, messagedialog.csd.background {
+  background-color: #141416;
+  color: #F2F2F5;
+}
+.view, textview text, treeview.view, iconview, list, listview, row {
+  background-color: #1E1E22;
+  color: #F2F2F5;
+}
+.dim-label, label.dim-label, .subtitle { color: #A6A6B0; opacity: 1; }
+
+/* Barre de titre unifiée de 44 px */
+headerbar, .titlebar:not(headerbar), headerbar.titlebar {
+  min-height: 44px;
+  background-image: none;
+  background-color: #19191C;
+  border-bottom: 1px solid #2C2C31;
+  box-shadow: none;
+  color: #F2F2F5;
+}
+headerbar:backdrop, .titlebar:backdrop { background-color: #141416; }
+headerbar .title, .titlebar .title { font-weight: 600; }
+headerbar .subtitle { color: #A6A6B0; }
+.sidebar, placessidebar, stacksidebar { background-color: #19191C; border-color: #2C2C31; }
+separator { background-color: #2C2C31; }
+
+/* Boutons : 32 px, rayon 7, contour #6E6E78 */
+button {
+  min-height: 22px;
+  padding: 4px 12px;
+  border-radius: 7px;
+  border: 1px solid #6E6E78;
+  background-image: none;
+  background-color: #1E1E22;
+  color: #F2F2F5;
+  box-shadow: none;
+  text-shadow: none;
+  -gtk-icon-shadow: none;
+}
+button:hover { background-color: #2A2A2F; }
+button:active, button:checked { background-color: #333338; }
+button:disabled { opacity: 0.45; background-color: #1E1E22; }
+button.flat, button.image-button.flat, headerbar button:not(.suggested-action):not(.destructive-action) {
+  border-color: transparent;
+  background-color: transparent;
+}
+button.flat:hover, headerbar button:not(.suggested-action):not(.destructive-action):hover {
+  background-color: #2A2A2F;
+}
+button.suggested-action, button.default:not(.destructive-action) {
+  background-color: #FF7A45;
+  border-color: #FF7A45;
+  color: #1A0B04;
+  font-weight: 600;
+}
+button.suggested-action:hover, button.default:not(.destructive-action):hover {
+  background-color: #FF9466;
+  border-color: #FF9466;
+}
+button.destructive-action {
+  background-color: #F87171;
+  border-color: #F87171;
+  color: #1F0707;
+  font-weight: 600;
+}
+
+/* Boîtes de dialogue : boutons détachés, à droite, comme dans Ferrite */
+messagedialog .titlebar { min-height: 0; border: none; background: transparent; }
+messagedialog .dialog-vbox { padding: 4px 8px 0; }
+messagedialog .dialog-action-area, messagedialog .dialog-action-box {
+  padding: 16px 20px 20px;
+  border-top: none;
+  margin: 0;
+}
+messagedialog .dialog-action-area button, messagedialog .dialog-action-box button {
+  min-height: 22px;
+  border-radius: 7px;
+  border: 1px solid #6E6E78;
+  margin: 0 0 0 8px;
+}
+messagedialog .dialog-action-area button:first-child,
+messagedialog .dialog-action-box button:first-child {
+  margin-left: 0;
+}
+messagedialog .dialog-action-area button.suggested-action,
+messagedialog .dialog-action-box button.suggested-action,
+messagedialog .dialog-action-area button.default,
+messagedialog .dialog-action-box button.default {
+  border-color: #FF7A45;
+}
+messagedialog .dialog-action-area button:first-child,
+messagedialog .dialog-action-area button:last-child,
+messagedialog .dialog-action-box button:first-child,
+messagedialog .dialog-action-box button:last-child {
+  border-radius: 7px;
+}
+messagedialog label.title, messagedialog .titlebar .title { font-size: 16px; font-weight: 600; }
+messagedialog .dialog-vbox label { color: #F2F2F5; }
+button.suggested-action label, button.default:not(.destructive-action) label { color: #1A0B04; }
+button.destructive-action label { color: #1F0707; }
+
+/* Champs */
+entry, spinbutton:not(.vertical), combobox entry {
+  min-height: 30px;
+  border-radius: 7px;
+  border: 1px solid #6E6E78;
+  background-image: none;
+  background-color: #1E1E22;
+  color: #F2F2F5;
+  box-shadow: none;
+}
+entry:focus, spinbutton:focus-within {
+  border-color: #FF7A45;
+  box-shadow: inset 0 0 0 1px #FF7A45;
+}
+entry.error { border-color: #F87171; color: #F2F2F5; }
+entry placeholder, entry .placeholder { color: #A6A6B0; }
+
+/* Sélection, focus et liens */
+selection, *:selected, textview text selection {
+  background-color: #FF7A45;
+  color: #1A0B04;
+}
+row:selected, treeview.view:selected, iconview:selected, list row:selected {
+  background-color: #3B2117;
+  color: #FFB38F;
+}
+row:hover:not(:selected) { background-color: #2A2A2F; }
+*:link, link, button.link { color: #FF7A45; }
+*:focus-visible { outline-color: #FF7A45; }
+
+/* Interrupteurs, cases, curseurs, jauges */
+switch { border-radius: 9999px; border-color: #6E6E78; background-color: #2A2A2F; }
+switch:checked { background-color: #FF7A45; border-color: #FF7A45; }
+switch slider { border-radius: 9999px; background-image: none; background-color: #1E1E22; border-color: #6E6E78; }
+check, radio { background-image: none; background-color: #1E1E22; border: 1.5px solid #6E6E78; }
+check { border-radius: 4px; }
+check:checked, check:indeterminate, radio:checked, radio:indeterminate {
+  background-image: none;
+  background-color: #FF7A45;
+  border-color: #FF7A45;
+  color: #1A0B04;
+}
+scale highlight, progressbar progress, levelbar block.filled {
+  background-image: none;
+  background-color: #FF7A45;
+  border-color: #FF7A45;
+}
+scale trough, progressbar trough { background-color: #34343A; border-color: transparent; }
+scale slider { background-image: none; background-color: #1E1E22; border: 1px solid #6E6E78; border-radius: 9999px; }
+notebook > header tab:checked { box-shadow: inset 0 -2px #FF7A45; }
+
+/* Menus, bulles, infobulles */
+menu, .menu, .context-menu, popover.background > contents, popover.menu {
+  border-radius: 10px;
+  background-color: #1E1E22;
+  border: 1px solid rgba(0, 0, 0, 0.5);
+}
+menu menuitem, popover modelbutton { border-radius: 5px; min-height: 26px; padding: 0 8px; }
+menu menuitem:hover, popover modelbutton:hover { background-color: #FF7A45; color: #1A0B04; }
+tooltip, tooltip.background { background-color: #F2F2F5; color: #1B1B1F; border-radius: 6px; border: none; }
+tooltip * { color: #1B1B1F; }
+
+/* Fenêtres dessinées par l'application (CSD) */
+decoration { border-radius: 14px 14px 0 0; }
+FIN_FERRITE
+cat > "$t/Ferrite/gtk-4.0/gtk.css" <<'FIN_FERRITE'
+/* Ferrite — couleurs pour GTK 4 et libadwaita. Fichier généré par ferrite-theme/gtk/generer.py.
+   Installé dans ~/.config/gtk-4.0/gtk.css : GTK 4 le lit après le thème de l'application. */
+@define-color accent_color #B83A0A;
+@define-color accent_bg_color #B83A0A;
+@define-color accent_fg_color #FFFFFF;
+@define-color destructive_color #C62828;
+@define-color destructive_bg_color #C62828;
+@define-color destructive_fg_color #FFFFFF;
+@define-color success_color #137333;
+@define-color warning_color #8F5200;
+@define-color error_color #C62828;
+@define-color window_bg_color #F4F4F6;
+@define-color window_fg_color #1B1B1F;
+@define-color view_bg_color #FFFFFF;
+@define-color view_fg_color #1B1B1F;
+@define-color headerbar_bg_color #EBEBEF;
+@define-color headerbar_fg_color #1B1B1F;
+@define-color headerbar_backdrop_color #F4F4F6;
+@define-color sidebar_bg_color #EBEBEF;
+@define-color sidebar_fg_color #1B1B1F;
+@define-color card_bg_color #FFFFFF;
+@define-color card_fg_color #1B1B1F;
+@define-color dialog_bg_color #FFFFFF;
+@define-color dialog_fg_color #1B1B1F;
+@define-color popover_bg_color #FFFFFF;
+@define-color popover_fg_color #1B1B1F;
+:root {
+  --accent-color: #B83A0A;
+  --accent-bg-color: #B83A0A;
+  --accent-fg-color: #FFFFFF;
+  --destructive-color: #C62828;
+  --destructive-bg-color: #C62828;
+  --destructive-fg-color: #FFFFFF;
+  --success-color: #137333;
+  --warning-color: #8F5200;
+  --error-color: #C62828;
+  --window-bg-color: #F4F4F6;
+  --window-fg-color: #1B1B1F;
+  --view-bg-color: #FFFFFF;
+  --view-fg-color: #1B1B1F;
+  --headerbar-bg-color: #EBEBEF;
+  --headerbar-fg-color: #1B1B1F;
+  --headerbar-backdrop-color: #F4F4F6;
+  --sidebar-bg-color: #EBEBEF;
+  --sidebar-fg-color: #1B1B1F;
+  --card-bg-color: #FFFFFF;
+  --card-fg-color: #1B1B1F;
+  --dialog-bg-color: #FFFFFF;
+  --dialog-fg-color: #1B1B1F;
+  --popover-bg-color: #FFFFFF;
+  --popover-fg-color: #1B1B1F;
+  --window-radius: 14px;
+}
+@media (prefers-color-scheme: dark) {
+  @define-color accent_color #FF7A45;
+  @define-color accent_bg_color #FF7A45;
+  @define-color accent_fg_color #1A0B04;
+  @define-color destructive_color #F87171;
+  @define-color destructive_bg_color #F87171;
+  @define-color destructive_fg_color #1F0707;
+  @define-color success_color #4ADE80;
+  @define-color warning_color #FBBF24;
+  @define-color error_color #F87171;
+  @define-color window_bg_color #141416;
+  @define-color window_fg_color #F2F2F5;
+  @define-color view_bg_color #1E1E22;
+  @define-color view_fg_color #F2F2F5;
+  @define-color headerbar_bg_color #19191C;
+  @define-color headerbar_fg_color #F2F2F5;
+  @define-color headerbar_backdrop_color #141416;
+  @define-color sidebar_bg_color #19191C;
+  @define-color sidebar_fg_color #F2F2F5;
+  @define-color card_bg_color #1E1E22;
+  @define-color card_fg_color #F2F2F5;
+  @define-color dialog_bg_color #1E1E22;
+  @define-color dialog_fg_color #F2F2F5;
+  @define-color popover_bg_color #1E1E22;
+  @define-color popover_fg_color #F2F2F5;
+  :root {
+    --accent-color: #FF7A45;
+    --accent-bg-color: #FF7A45;
+    --accent-fg-color: #1A0B04;
+    --destructive-color: #F87171;
+    --destructive-bg-color: #F87171;
+    --destructive-fg-color: #1F0707;
+    --success-color: #4ADE80;
+    --warning-color: #FBBF24;
+    --error-color: #F87171;
+    --window-bg-color: #141416;
+    --window-fg-color: #F2F2F5;
+    --view-bg-color: #1E1E22;
+    --view-fg-color: #F2F2F5;
+    --headerbar-bg-color: #19191C;
+    --headerbar-fg-color: #F2F2F5;
+    --headerbar-backdrop-color: #141416;
+    --sidebar-bg-color: #19191C;
+    --sidebar-fg-color: #F2F2F5;
+    --card-bg-color: #1E1E22;
+    --card-fg-color: #F2F2F5;
+    --dialog-bg-color: #1E1E22;
+    --dialog-fg-color: #F2F2F5;
+    --popover-bg-color: #1E1E22;
+    --popover-fg-color: #F2F2F5;
+    --window-radius: 14px;
+  }
+}
+FIN_FERRITE
+cat > "$t/Ferrite/index.theme" <<'FIN_FERRITE'
+[Desktop Entry]
+Type=X-GNOME-Metatheme
+Name=Ferrite
+Comment=Thème de Ferrite OS : neutres calmes et accent Oxyde
+Encoding=UTF-8
+
+[X-GNOME-Metatheme]
+GtkTheme=Ferrite
+IconTheme=Ferrite
+CursorTheme=Ferrite-Cursors
+FIN_FERRITE
+cat > "$t/Ferrite-dark/index.theme" <<'FIN_FERRITE'
+[Desktop Entry]
+Type=X-GNOME-Metatheme
+Name=Ferrite-dark
+Comment=Thème de Ferrite OS : neutres calmes et accent Oxyde
+Encoding=UTF-8
+
+[X-GNOME-Metatheme]
+GtkTheme=Ferrite-dark
+IconTheme=Ferrite
+CursorTheme=Ferrite-Cursors
+FIN_FERRITE
+cp "$t/Ferrite/gtk-4.0/gtk.css" /etc/skel/.config/gtk-4.0/gtk.css
+if [ -d /home/user ]; then
+    mkdir -p /home/user/.config/gtk-4.0
+    cp "$t/Ferrite/gtk-4.0/gtk.css" /home/user/.config/gtk-4.0/gtk.css
+    chown -R --reference=/home/user /home/user/.config/gtk-4.0 2>/dev/null || true
+fi
+for v in 3.0 4.0; do
+    printf '[Settings]\ngtk-theme-name=Ferrite\ngtk-font-name=Inter 10.5\n' > "/etc/gtk-$v/settings.ini"
+done
+printf "[org.gnome.desktop.interface]\ngtk-theme='Ferrite'\nfont-name='Inter 10.5'\n" \
+    > /usr/share/glib-2.0/schemas/91_ferrite-gtk.gschema.override
+glib-compile-schemas /usr/share/glib-2.0/schemas

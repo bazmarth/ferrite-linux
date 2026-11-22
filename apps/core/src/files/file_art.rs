@@ -551,6 +551,35 @@ pub(crate) fn paint_folder(painter: &egui::Painter, rect: Rect, color: Color32, 
     }
 }
 
+/// Dossier d'un seul ton (charte « Forge ») : dos et devant gris, emblème en accent. Pour
+/// tout dossier dont l'utilisateur n'a pas choisi la couleur.
+pub(crate) fn paint_plain_folder(painter: &egui::Painter, rect: Rect, emblem: Emblem) {
+    let side = rect.width().min(rect.height());
+    let unit = side / 96.0;
+    let origin = rect.center() - vec2(48.0, 42.0) * unit;
+    let at = |x: f32, y: f32| origin + vec2(x, y) * unit;
+    let r = |v: f32| egui::CornerRadius::same((v * unit).round().clamp(1.0, 255.0) as u8);
+    let box_at = |x0: f32, y0: f32, x1: f32, y1: f32| Rect::from_min_max(at(x0, y0), at(x1, y1));
+    let back = crate::style::folder_back();
+    painter.rect_filled(box_at(6.0, 8.0, 40.0, 26.0), r(7.0), back);
+    painter.add(Shape::convex_polygon(
+        vec![at(32.0, 8.0), at(36.0, 8.0), at(46.0, 18.0), at(32.0, 18.0)],
+        back,
+        Stroke::NONE,
+    ));
+    painter.rect_filled(box_at(6.0, 16.0, 90.0, 78.0), r(8.0), back);
+    painter.rect_filled(
+        box_at(6.0, 26.0, 90.0, 78.0),
+        r(8.0),
+        crate::style::folder_front(),
+    );
+    if emblem != Emblem::Aucun && side >= 20.0 {
+        let glyph = Rect::from_min_size(at(34.0, 38.0), vec2(28.0, 28.0) * unit);
+        let width = (2.2 * glyph.width() / 24.0).max(1.2);
+        paint_emblem(painter, glyph, emblem, Stroke::new(width, crate::style::accent()));
+    }
+}
+
 /// Emblème tracé au trait dans `rect` (repère de 24 sur 24, comme les icônes de la planche).
 pub(crate) fn paint_emblem(painter: &egui::Painter, rect: Rect, emblem: Emblem, stroke: Stroke) {
     let unit = rect.width() / 24.0;

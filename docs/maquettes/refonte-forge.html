@@ -1,0 +1,766 @@
+<title>Ferrite Forge</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap">
+<style>
+/* Mise en page : une colonne de lecture, chaque écran de l'OS dessiné à 1200×750 puis mis à l'échelle. */
+:root {
+  --bg: #F4F4F6; --fg: #1B1B1F; --muted: #5A5A64; --line: #E2E2E7; --card: #FFFFFF;
+  --accent: #B83A0A; --accent-soft: rgba(184,58,10,.10);
+  --display: "Space Grotesk", "Inter", system-ui, sans-serif;
+  --text: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  /* Couleurs fixes des icônes d'applications (inchangées par la refonte) */
+  --app-blue: #2F7BEA; --app-yellow: #F3C94B; --app-ink: #24242A; --app-grey: #8B8B96;
+  --app-green: #22A55B; --app-violet: #7C4DEB; --app-red: #E5484D; --app-teal: #12A3A3;
+  --white: #FFFFFF; --ok: #137333; --ok-dark: #4ADE80;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0F0F11; --fg: #F2F2F5; --muted: #A6A6B0; --line: #2C2C31; --card: #19191C;
+  --accent: #FF7A45; --accent-soft: rgba(255,122,69,.14); color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0F0F11; --fg: #F2F2F5; --muted: #A6A6B0; --line: #2C2C31; --card: #19191C;
+  --accent: #FF7A45; --accent-soft: rgba(255,122,69,.14); color-scheme: dark }
+
+body { background: var(--bg); color: var(--fg); font-family: var(--text); font-size: 15px; line-height: 1.55; }
+.page { max-width: 1180px; margin: 0 auto; padding-block: 40px 80px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; gap: 64px; }
+h1, h2, h3 { font-family: var(--display); text-wrap: balance; margin: 0; letter-spacing: -.01em; }
+h1 { font-size: clamp(34px, 6vw, 56px); line-height: 1.05; }
+h2 { font-size: clamp(24px, 3.4vw, 32px); }
+h3 { font-size: 17px; }
+p { margin: 0; max-width: 68ch; }
+.lede { color: var(--muted); font-size: 17px; }
+.eyebrow { font-size: 12px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+header.hero { display: grid; gap: 18px; }
+.principles { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; margin-top: 8px; }
+.principle { background: var(--card); border-radius: 14px; padding: 16px 18px; display: grid; gap: 4px; }
+.principle b { font-size: 14px; }
+.principle span { color: var(--muted); font-size: 14px; }
+section { display: grid; gap: 20px; }
+.sec-head { display: grid; gap: 8px; }
+.changes { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px 28px; padding: 0; margin: 0; list-style: none; }
+.changes li { display: grid; grid-template-columns: 18px 1fr; gap: 10px; font-size: 14px; min-width: 0; }
+.changes li::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); margin-top: 7px; }
+.changes s { color: var(--muted); }
+
+/* Bascule clair/sombre des maquettes */
+.mock-bar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; }
+.seg { display: inline-flex; background: var(--card); border-radius: 10px; padding: 3px; gap: 2px; }
+.seg button { font: inherit; font-size: 13px; border: 0; background: transparent; color: var(--muted); padding: 6px 14px; border-radius: 8px; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--white); }
+.seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.cap { font-size: 13px; color: var(--muted); }
+
+.stage { width: 100%; aspect-ratio: 1200 / 750; position: relative; overflow: hidden; border-radius: 14px; box-shadow: 0 1px 0 var(--line), 0 18px 50px rgba(0,0,0,.18); }
+.screen { position: absolute; top: 0; left: 0; width: 1200px; height: 750px; transform-origin: 0 0; transform: scale(var(--s, .5)); }
+
+/* ---------- Icônes ---------- */
+svg.i { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.icon-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 8px; }
+.icon-cell { background: var(--card); border-radius: 12px; padding: 16px 8px 12px; display: grid; justify-items: center; gap: 10px; text-align: center; }
+.icon-cell svg.i { width: 28px; height: 28px; stroke-width: 1.6; }
+.icon-cell span { font-size: 12px; color: var(--muted); line-height: 1.3; }
+.icon-group { display: grid; gap: 10px; }
+.icon-group h3 { font-family: var(--text); font-size: 13px; font-weight: 600; color: var(--muted); }
+.sizes { display: flex; flex-wrap: wrap; gap: 12px; }
+.size-strip { background: #141416; color: #F2F2F5; border-radius: 12px; padding: 12px 16px; display: flex; align-items: center; gap: 14px; }
+.size-strip.light { background: #EBEBEF; color: #1B1B1F; }
+.size-strip small { font-size: 11px; opacity: .6; margin-right: 4px; }
+.rules { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+.rule { background: var(--card); border-radius: 12px; padding: 14px 16px; display: grid; gap: 10px; font-size: 13px; color: var(--muted); }
+.rule .row { display: flex; gap: 14px; color: var(--fg); }
+.rule .row svg.i { width: 24px; height: 24px; }
+
+/* ---------- Système (maquettes) : jetons propres à chaque thème ---------- */
+.os { font-family: var(--text); font-size: 14px; line-height: 1.35; color: var(--t); -webkit-font-smoothing: antialiased; }
+.os-light { --win: #F4F4F6; --content: #FFFFFF; --side: #EBEBEF; --surface: #FFFFFF; --t: #1B1B1F; --t2: #5A5A64; --sep: #E2E2E7;
+  --acc: #B83A0A; --acc-soft: rgba(184,58,10,.10); --on-acc: #FFFFFF; --raised: #FFFFFF; --panel: rgba(248,248,250,.97); --track: #E4E4EA;
+  --ok-s: #137333; --hover: rgba(0,0,0,.05); --folder: #E6E1DC; --folder-back: #D3CCC5; --wall: #E9E9EE; --wall-line: rgba(184,58,10,.22); --scrim: rgba(20,20,22,.18); }
+.os-dark { --win: #141416; --content: #1E1E22; --side: #19191C; --surface: #1E1E22; --t: #F2F2F5; --t2: #A6A6B0; --sep: #2C2C31;
+  --acc: #FF7A45; --acc-soft: rgba(255,122,69,.16); --on-acc: #1B0A03; --raised: #2A2A2F; --panel: rgba(30,30,34,.96); --track: #34343A;
+  --ok-s: #4ADE80; --hover: rgba(255,255,255,.06); --folder: #3A3632; --folder-back: #2C2926; --wall: #141416; --wall-line: rgba(255,122,69,.20); --scrim: rgba(0,0,0,.35); }
+.os .t2 { color: var(--t2); }
+.wall { position: absolute; inset: 0; background: var(--wall); }
+.wall svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.wall polygon { fill: none; stroke: var(--wall-line); stroke-width: 1.5; }
+
+/* Barre du haut : îlots flottants */
+.topbar { position: absolute; top: 8px; left: 10px; right: 10px; height: 30px; display: flex; align-items: center; justify-content: space-between; color: #F2F2F5; font-size: 13px; font-weight: 500; }
+.os-light .topbar { color: #1B1B1F; }
+.island { height: 30px; border-radius: 15px; padding: 0 12px; display: flex; align-items: center; gap: 12px; background: rgba(30,30,34,.55); backdrop-filter: blur(16px); }
+.os-light .island { background: rgba(255,255,255,.62); }
+.island svg.i { width: 16px; height: 16px; }
+.island.active { background: rgba(30,30,34,.85); box-shadow: inset 0 0 0 1px rgba(255,255,255,.08); }
+.os-light .island.active { background: rgba(255,255,255,.92); }
+.ws { display: flex; gap: 5px; align-items: center; }
+.ws i { width: 6px; height: 6px; border-radius: 3px; background: currentColor; opacity: .4; }
+.ws i.on { width: 18px; opacity: 1; background: var(--acc); }
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* Centre de contrôle */
+.cc { position: absolute; top: 46px; right: 10px; width: 372px; background: var(--panel); border-radius: 20px; padding: 14px; display: grid; gap: 12px;
+  box-shadow: 0 0 0 1px rgba(255,255,255,.06), 0 20px 50px rgba(0,0,0,.35); backdrop-filter: blur(24px); }
+.os-light .cc { box-shadow: 0 0 0 1px rgba(0,0,0,.05), 0 20px 50px rgba(0,0,0,.18); }
+.cc-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 2px 0 4px; }
+.cc-batt { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
+.cc-batt span { font-weight: 400; color: var(--t2); }
+.round-row { display: flex; gap: 6px; }
+.round { width: 34px; height: 34px; border-radius: 17px; background: var(--raised); display: grid; place-items: center; color: var(--t); }
+.round svg.i { width: 18px; height: 18px; }
+.tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.tile { height: 58px; border-radius: 16px; background: var(--raised); display: flex; align-items: center; gap: 10px; padding: 0 10px 0 10px; min-width: 0; }
+.tile .disc { width: 36px; height: 36px; border-radius: 18px; display: grid; place-items: center; background: var(--hover); flex: none; }
+.tile .disc svg.i { width: 19px; height: 19px; }
+.tile .tx { display: grid; min-width: 0; flex: 1; }
+.tile b { font-size: 13px; font-weight: 600; white-space: nowrap; }
+.tile small { font-size: 12px; color: var(--t2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile .chev { width: 16px; height: 16px; opacity: .7; }
+.tile.on { background: var(--acc); color: var(--on-acc); }
+.tile.on small { color: var(--on-acc); opacity: .78; }
+.tile.on .disc { background: rgba(255,255,255,.2); }
+.os-dark .tile.on .disc { background: rgba(0,0,0,.14); }
+.slider { height: 40px; border-radius: 20px; background: var(--track); position: relative; overflow: hidden; display: flex; align-items: center; }
+.slider .fill { position: absolute; inset: 0 auto 0 0; background: var(--acc); border-radius: 20px; }
+.slider .ic { position: relative; margin-left: 13px; color: var(--on-acc); display: flex; }
+.slider .ic svg.i { width: 18px; height: 18px; }
+.slider .end { position: absolute; right: 6px; top: 6px; width: 28px; height: 28px; border-radius: 14px; display: grid; place-items: center; color: var(--t2); }
+.slider .end svg.i { width: 16px; height: 16px; }
+.chips { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.chip { height: 34px; border-radius: 17px; background: var(--raised); display: flex; align-items: center; justify-content: center; gap: 7px; font-size: 12px; font-weight: 500; }
+.chip svg.i { width: 16px; height: 16px; }
+.chip.on { background: var(--acc-soft); color: var(--acc); }
+.media { border-radius: 16px; background: var(--raised); display: flex; align-items: center; gap: 12px; padding: 10px; }
+.cover { width: 44px; height: 44px; border-radius: 10px; background: linear-gradient(135deg, var(--acc), #5B1A04); flex: none; }
+.media .tx { flex: 1; display: grid; min-width: 0; }
+.media b { font-size: 13px; }
+.media small { font-size: 12px; color: var(--t2); }
+.media .ctl { display: flex; gap: 4px; }
+.media .ctl span { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 15px; }
+.media .ctl span.play { background: var(--t); color: var(--content); }
+.media .ctl svg.i { width: 16px; height: 16px; }
+
+/* Dock */
+.dock { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); display: flex; align-items: flex-end; gap: 10px; padding: 9px 12px; border-radius: 22px;
+  background: rgba(30,30,34,.55); backdrop-filter: blur(20px); box-shadow: inset 0 0 0 1px rgba(255,255,255,.10); }
+.os-light .dock { background: rgba(255,255,255,.55); box-shadow: inset 0 0 0 1px rgba(0,0,0,.06), 0 8px 30px rgba(0,0,0,.10); }
+.app { width: 50px; height: 50px; border-radius: 13px; display: grid; place-items: center; color: var(--white); position: relative; box-shadow: 0 2px 6px rgba(0,0,0,.2); }
+.app svg.i { width: 26px; height: 26px; stroke-width: 2; }
+.app.run::after { content: ""; position: absolute; bottom: -7px; left: 50%; width: 4px; height: 4px; margin-left: -2px; border-radius: 2px; background: var(--acc); }
+.dock .sep { width: 1px; height: 38px; background: rgba(255,255,255,.18); align-self: center; }
+.os-light .dock .sep { background: rgba(0,0,0,.12); }
+.a-blue { background: var(--app-blue); } .a-yellow { background: var(--app-yellow); color: #5C4300; } .a-ink { background: var(--app-ink); }
+.a-grey { background: var(--app-grey); } .a-green { background: var(--app-green); } .a-violet { background: var(--app-violet); }
+.a-red { background: var(--app-red); } .a-teal { background: var(--app-teal); } .a-glass { background: rgba(255,255,255,.14); }
+.os-light .a-glass { background: rgba(0,0,0,.06); color: var(--t); }
+
+/* Fenêtres */
+.win { position: absolute; background: var(--win); border-radius: 14px; overflow: hidden; display: flex;
+  box-shadow: 0 0 0 1px rgba(0,0,0,.08), 0 24px 70px rgba(0,0,0,.35); }
+.os-dark .win { box-shadow: 0 0 0 1px rgba(255,255,255,.07), 0 24px 70px rgba(0,0,0,.55); }
+.side { width: 236px; background: var(--side); padding: 12px 10px; display: flex; flex-direction: column; gap: 2px; flex: none; }
+.side h6 { margin: 14px 10px 4px; font-size: 11px; font-weight: 600; color: var(--t2); }
+.srow { height: 32px; border-radius: 8px; display: flex; align-items: center; gap: 10px; padding: 0 10px; font-size: 13px; }
+.srow svg.i { width: 17px; height: 17px; color: var(--t2); }
+.srow.sel { background: var(--acc-soft); color: var(--acc); font-weight: 600; }
+.srow.sel svg.i { color: var(--acc); }
+.srow .meta { margin-left: auto; font-size: 12px; color: var(--t2); font-weight: 400; }
+.srow .dot { width: 9px; height: 9px; border-radius: 5px; }
+.account { display: flex; align-items: center; gap: 10px; padding: 6px 8px 10px; }
+.avatar { width: 36px; height: 36px; border-radius: 18px; background: linear-gradient(140deg, #FF9A62, #B83A0A 70%); display: grid; place-items: center; color: var(--white); font-weight: 600; font-size: 15px; }
+.account b { display: block; font-size: 14px; } .account small { font-size: 12px; color: var(--t2); }
+.field { height: 32px; border-radius: 8px; background: var(--hover); display: flex; align-items: center; gap: 8px; padding: 0 10px; color: var(--t2); font-size: 13px; }
+.field svg.i { width: 16px; height: 16px; }
+.main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.hbar { height: 52px; display: flex; align-items: center; gap: 8px; padding: 0 14px 0 20px; flex: none; }
+.wbtns { display: flex; gap: 8px; margin-left: auto; padding-left: 8px; }
+.wbtns i { width: 13px; height: 13px; border-radius: 7px; background: var(--sep); }
+.os-dark .wbtns i { background: #3A3A40; }
+.wbtns i.close { background: var(--acc); }
+.ibtn { width: 32px; height: 32px; border-radius: 8px; display: grid; place-items: center; color: var(--t); }
+.ibtn svg.i { width: 18px; height: 18px; }
+.ibtn.dim { color: var(--t2); opacity: .5; }
+.segc { display: flex; background: var(--hover); border-radius: 8px; padding: 2px; }
+.segc span { width: 32px; height: 28px; border-radius: 6px; display: grid; place-items: center; color: var(--t2); }
+.segc span.on { background: var(--raised); color: var(--t); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+.segc svg.i { width: 16px; height: 16px; }
+.scroll { flex: 1; overflow: hidden; padding: 0 40px 24px; display: flex; flex-direction: column; gap: 22px; }
+.phead { display: flex; align-items: center; gap: 14px; }
+.ptile { width: 44px; height: 44px; border-radius: 12px; background: var(--acc-soft); color: var(--acc); display: grid; place-items: center; }
+.ptile svg.i { width: 24px; height: 24px; }
+.phead h4 { margin: 0; font-size: 24px; font-weight: 600; letter-spacing: -.01em; }
+.phead p { font-size: 13px; color: var(--t2); }
+.switch { width: 44px; height: 26px; border-radius: 13px; background: var(--track); position: relative; margin-left: auto; flex: none; }
+.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 10px; background: var(--white); box-shadow: 0 1px 3px rgba(0,0,0,.25); }
+.switch.on { background: var(--acc); } .switch.on::after { left: 21px; }
+.grp { display: grid; gap: 8px; }
+.grp h5 { margin: 0 4px; font-size: 12px; font-weight: 600; color: var(--t2); display: flex; align-items: center; gap: 8px; }
+.grp h5 svg.i { width: 14px; height: 14px; }
+.card { background: var(--surface); border-radius: 12px; overflow: hidden; }
+.os-light .card { box-shadow: 0 0 0 1px rgba(0,0,0,.03); }
+.crow { min-height: 48px; display: flex; align-items: center; gap: 12px; padding: 8px 16px; position: relative; }
+.crow + .crow::before { content: ""; position: absolute; top: 0; left: 16px; right: 0; height: 1px; background: var(--sep); }
+.crow.icon + .crow.icon::before { left: 48px; }
+.crow .grow { flex: 1; display: grid; min-width: 0; }
+.crow .grow b { font-weight: 600; }
+.crow .grow small { font-size: 12px; color: var(--t2); display: flex; align-items: center; gap: 6px; }
+.crow svg.i { color: var(--t); }
+.crow svg.lk { width: 15px; height: 15px; color: var(--t2); }
+.okdot { width: 7px; height: 7px; border-radius: 4px; background: var(--ok-s); }
+.btn { height: 30px; padding: 0 14px; border-radius: 7px; background: var(--hover); display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; }
+.btn.pri { background: var(--acc); color: var(--on-acc); }
+.btn svg.i { width: 15px; height: 15px; }
+.acctext { color: var(--acc); font-weight: 500; }
+.spin { opacity: .7; }
+
+/* Fichiers */
+.crumbs { display: flex; align-items: center; gap: 4px; font-size: 14px; font-weight: 600; min-width: 0; }
+.crumbs span.t2 { font-weight: 500; }
+.crumbs svg.i { width: 14px; height: 14px; color: var(--t2); }
+.recent { display: flex; gap: 10px; }
+.rcard { flex: 1; min-width: 0; height: 56px; border-radius: 12px; background: var(--surface); display: flex; align-items: center; gap: 10px; padding: 0 12px; }
+.ftype { width: 30px; height: 36px; border-radius: 5px; background: var(--hover); position: relative; flex: none; }
+.ftype b { position: absolute; bottom: 4px; left: 3px; right: 3px; font-size: 8px; font-weight: 700; text-align: center; color: var(--white); border-radius: 3px; padding: 1px 0; }
+.rcard .tx { display: grid; min-width: 0; }
+.rcard .tx b { font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rcard .tx small { font-size: 12px; color: var(--t2); }
+.fgrid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px 8px; }
+.fitem { display: grid; justify-items: center; gap: 4px; padding: 10px 4px; border-radius: 12px; text-align: center; }
+.fitem.sel { background: var(--acc-soft); }
+.fitem b { font-size: 13px; font-weight: 500; } .fitem small { font-size: 11px; color: var(--t2); }
+.folder { width: 72px; height: 58px; }
+.folder .back { fill: var(--folder-back); } .folder .front { fill: var(--folder); } .folder .glyph { stroke: var(--acc); }
+.fitem.sel .folder .front { fill: var(--acc); } .fitem.sel .folder .back { fill: color-mix(in srgb, var(--acc) 70%, #000); } .fitem.sel .folder .glyph { stroke: var(--on-acc); }
+.tag { width: 8px; height: 8px; border-radius: 4px; display: inline-block; }
+
+/* Lanceur */
+.scrim { position: absolute; inset: 0; background: var(--scrim); backdrop-filter: blur(6px); }
+.launcher { position: absolute; left: 50%; top: 70px; width: 780px; transform: translateX(-50%); background: var(--panel); border-radius: 22px; padding: 16px 20px 18px; display: grid; gap: 16px;
+  box-shadow: 0 0 0 1px rgba(255,255,255,.06), 0 30px 80px rgba(0,0,0,.4); }
+.search { height: 48px; border-radius: 14px; background: var(--raised); display: flex; align-items: center; gap: 12px; padding: 0 16px; color: var(--t2); font-size: 15px; }
+.search kbd { margin-left: auto; font: inherit; font-size: 11px; padding: 2px 7px; border-radius: 5px; background: var(--hover); }
+.cats { display: flex; gap: 6px; flex-wrap: wrap; }
+.cats span { height: 30px; padding: 0 13px; border-radius: 15px; display: inline-flex; align-items: center; font-size: 13px; font-weight: 500; background: var(--hover); color: var(--t2); }
+.cats span.on { background: var(--t); color: var(--content); }
+.lsec { display: grid; gap: 10px; }
+.lsec h5 { margin: 0; font-size: 12px; font-weight: 600; color: var(--t2); }
+.agrid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 14px 6px; }
+.agrid .ai { display: grid; justify-items: center; gap: 7px; font-size: 12px; text-align: center; line-height: 1.25; }
+.agrid .app { width: 54px; height: 54px; border-radius: 14px; }
+.pager { display: flex; justify-content: center; gap: 6px; }
+.pager i { width: 6px; height: 6px; border-radius: 3px; background: var(--t2); opacity: .35; } .pager i.on { width: 16px; opacity: 1; background: var(--acc); }
+
+/* Dialogues, notifications */
+.notif { position: absolute; width: 360px; background: var(--panel); border-radius: 16px; padding: 12px 14px; display: flex; gap: 12px; box-shadow: 0 0 0 1px rgba(0,0,0,.05), 0 14px 40px rgba(0,0,0,.25); }
+.notif .app { width: 36px; height: 36px; border-radius: 10px; }
+.notif .app svg.i { width: 20px; height: 20px; }
+.notif .tx { display: grid; gap: 1px; flex: 1; min-width: 0; }
+.notif .tx b { font-size: 13px; font-weight: 600; } .notif .tx small { font-size: 11px; color: var(--t2); font-weight: 400; margin-left: 6px; }
+.notif .acts { display: flex; gap: 6px; margin-top: 8px; }
+.dialog { position: absolute; width: 340px; background: var(--panel); border-radius: 20px; padding: 24px 22px 18px; display: grid; justify-items: center; gap: 10px; text-align: center;
+  box-shadow: 0 0 0 1px rgba(0,0,0,.05), 0 30px 80px rgba(0,0,0,.35); }
+.dialog .ptile { width: 52px; height: 52px; border-radius: 26px; }
+.dialog h4 { margin: 4px 0 0; font-size: 16px; font-weight: 600; }
+.dialog p { font-size: 13px; color: var(--t2); }
+.dialog .opts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; width: 100%; margin-top: 6px; }
+.dialog .opt { display: grid; justify-items: center; gap: 6px; padding: 12px 4px; border-radius: 12px; background: var(--raised); font-size: 12px; font-weight: 500; }
+.dialog .opt.on { background: var(--acc); color: var(--on-acc); }
+.dialog .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; width: 100%; margin-top: 4px; }
+.dialog .row2 .btn { justify-content: center; height: 36px; }
+.osd { position: absolute; width: 240px; height: 48px; background: var(--panel); border-radius: 24px; display: flex; align-items: center; gap: 12px; padding: 0 16px; box-shadow: 0 14px 40px rgba(0,0,0,.25); }
+.osd .bar { flex: 1; height: 6px; border-radius: 3px; background: var(--track); overflow: hidden; } .osd .bar i { display: block; height: 100%; width: 62%; background: var(--acc); }
+.wstates { position: absolute; display: grid; gap: 10px; background: var(--panel); border-radius: 16px; padding: 14px 16px; width: 300px; box-shadow: 0 14px 40px rgba(0,0,0,.2); }
+.wstates div { display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: var(--t2); }
+.wb { display: flex; gap: 8px; }
+.wb i { width: 13px; height: 13px; border-radius: 7px; background: var(--sep); display: grid; place-items: center; }
+.os-dark .wb i { background: #3A3A40; }
+.wb i.close { background: var(--acc); }
+.wb i.red { background: #E5484D; }
+.wb i svg { width: 9px; height: 9px; stroke: rgba(0,0,0,.65); stroke-width: 2.4; fill: none; stroke-linecap: round; }
+.wb i.red svg { stroke: #FFFFFF; }
+
+.plan { display: grid; gap: 10px; counter-reset: p; }
+.step { background: var(--card); border-radius: 14px; padding: 16px 18px; display: grid; grid-template-columns: 34px 1fr; gap: 4px 14px; }
+.step::before { counter-increment: p; content: counter(p); grid-row: span 2; width: 30px; height: 30px; border-radius: 15px; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; font-weight: 700; font-family: var(--display); }
+.step b { font-size: 15px; } .step span { font-size: 14px; color: var(--muted); }
+footer { color: var(--muted); font-size: 13px; }
+@media (max-width: 640px) { .page { gap: 48px; } }
+@media (prefers-reduced-motion: no-preference) { .seg button { transition: background .12s ease-out, color .12s ease-out; } }
+</style>
+
+<!-- ======== Jeu d'icônes système (24 × 24, trait 1,75, bouts arrondis) ======== -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="wifi-3" viewBox="0 0 24 24"><path d="M3.2 9.6a12.5 12.5 0 0 1 17.6 0"/><path d="M6 12.6a8.5 8.5 0 0 1 12 0"/><path d="M8.8 15.5a4.5 4.5 0 0 1 6.4 0"/><circle cx="12" cy="19" r="1.4" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="wifi-2" viewBox="0 0 24 24"><path d="M3.2 9.6a12.5 12.5 0 0 1 17.6 0" opacity=".3"/><path d="M6 12.6a8.5 8.5 0 0 1 12 0"/><path d="M8.8 15.5a4.5 4.5 0 0 1 6.4 0"/><circle cx="12" cy="19" r="1.4" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="wifi-1" viewBox="0 0 24 24"><path d="M3.2 9.6a12.5 12.5 0 0 1 17.6 0" opacity=".3"/><path d="M6 12.6a8.5 8.5 0 0 1 12 0" opacity=".3"/><path d="M8.8 15.5a4.5 4.5 0 0 1 6.4 0"/><circle cx="12" cy="19" r="1.4" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="wifi-0" viewBox="0 0 24 24"><g opacity=".3"><path d="M3.2 9.6a12.5 12.5 0 0 1 17.6 0"/><path d="M6 12.6a8.5 8.5 0 0 1 12 0"/><path d="M8.8 15.5a4.5 4.5 0 0 1 6.4 0"/></g><circle cx="12" cy="19" r="1.4" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="wifi-off" viewBox="0 0 24 24"><g opacity=".35"><path d="M3.2 9.6a12.5 12.5 0 0 1 17.6 0"/><path d="M6 12.6a8.5 8.5 0 0 1 12 0"/><path d="M8.8 15.5a4.5 4.5 0 0 1 6.4 0"/><circle cx="12" cy="19" r="1.4" fill="currentColor" stroke="none"/></g><path d="M4 4l16 16"/></symbol>
+    <symbol id="bt" viewBox="0 0 24 24"><path d="M7 7.5l10 9-5 4.5V3l5 4.5-10 9"/></symbol>
+    <symbol id="bt-conn" viewBox="0 0 24 24"><path d="M8 7.5l9 8.5-5 4.5V3.5L17 8l-9 8.5"/><circle cx="4.5" cy="12" r="1.3" fill="currentColor" stroke="none"/><circle cx="20" cy="12" r="1.3" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="bt-off" viewBox="0 0 24 24"><path d="M7 7.5l10 9-5 4.5V3l5 4.5-10 9" opacity=".35"/><path d="M4 4l16 16"/></symbol>
+    <symbol id="eth" viewBox="0 0 24 24"><rect x="8" y="3" width="8" height="6" rx="1.5"/><path d="M12 9v4M6 13h12M6 13v3.5M18 13v3.5"/><rect x="3.5" y="16.5" width="5" height="4.5" rx="1.2"/><rect x="15.5" y="16.5" width="5" height="4.5" rx="1.2"/></symbol>
+    <symbol id="bat-100" viewBox="0 0 24 24"><rect x="2.5" y="7" width="17" height="10" rx="3"/><path d="M22 10.5v3"/><rect x="4.75" y="9.25" width="12.5" height="5.5" rx="1.4" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="bat-50" viewBox="0 0 24 24"><rect x="2.5" y="7" width="17" height="10" rx="3"/><path d="M22 10.5v3"/><rect x="4.75" y="9.25" width="6.5" height="5.5" rx="1.4" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="bat-10" viewBox="0 0 24 24"><rect x="2.5" y="7" width="17" height="10" rx="3"/><path d="M22 10.5v3"/><rect x="4.75" y="9.25" width="2" height="5.5" rx="1" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="bat-chg" viewBox="0 0 24 24"><rect x="2.5" y="7" width="17" height="10" rx="3"/><path d="M22 10.5v3"/><path d="M12 8.8l-2.6 3.6h3.2L10 16" stroke-width="1.6"/></symbol>
+    <symbol id="vol-3" viewBox="0 0 24 24"><path d="M3.5 9.5h3.2L11 5.5v13l-4.3-4H3.5z"/><path d="M14.5 9.5a3.5 3.5 0 0 1 0 5"/><path d="M17 7a7 7 0 0 1 0 10"/><path d="M19.5 4.5a10.5 10.5 0 0 1 0 15"/></symbol>
+    <symbol id="vol-2" viewBox="0 0 24 24"><path d="M3.5 9.5h3.2L11 5.5v13l-4.3-4H3.5z"/><path d="M14.5 9.5a3.5 3.5 0 0 1 0 5"/><path d="M17 7a7 7 0 0 1 0 10"/><path d="M19.5 4.5a10.5 10.5 0 0 1 0 15" opacity=".3"/></symbol>
+    <symbol id="vol-1" viewBox="0 0 24 24"><path d="M3.5 9.5h3.2L11 5.5v13l-4.3-4H3.5z"/><path d="M14.5 9.5a3.5 3.5 0 0 1 0 5"/><path d="M17 7a7 7 0 0 1 0 10" opacity=".3"/><path d="M19.5 4.5a10.5 10.5 0 0 1 0 15" opacity=".3"/></symbol>
+    <symbol id="vol-mute" viewBox="0 0 24 24"><path d="M3.5 9.5h3.2L11 5.5v13l-4.3-4H3.5z"/><path d="M15 9.5l5 5M20 9.5l-5 5"/></symbol>
+    <symbol id="sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.6"/><path d="M12 3.2v1.6M12 19.2v1.6M3.2 12h1.6M19.2 12h1.6M5.8 5.8l1.1 1.1M17.1 17.1l1.1 1.1M5.8 18.2l1.1-1.1M17.1 6.9l1.1-1.1"/></symbol>
+    <symbol id="sun-low" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.6"/><path d="M12 5.5v.01M12 18.5v.01M5.5 12h.01M18.5 12h.01M7.4 7.4h.01M16.6 16.6h.01M7.4 16.6h.01M16.6 7.4h.01" stroke-width="2.2"/></symbol>
+    <symbol id="moon" viewBox="0 0 24 24"><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a6.8 6.8 0 0 0 10.5 10.5z"/></symbol>
+    <symbol id="night" viewBox="0 0 24 24"><path d="M17.5 15.5A7.5 7.5 0 1 1 8.5 6.5a6 6 0 0 0 9 9z"/><path d="M17.5 3v4M15.5 5h4M21 9.5v2M20 10.5h2"/></symbol>
+    <symbol id="bell" viewBox="0 0 24 24"><path d="M6 16.5V11a6 6 0 0 1 12 0v5.5l1.5 2h-15z"/><path d="M10 21a2.2 2.2 0 0 0 4 0"/></symbol>
+    <symbol id="bell-off" viewBox="0 0 24 24"><path d="M6 16.5V11a6 6 0 0 1 9.2-5.1M18 10.5v6l1.5 2h-15" opacity=".35"/><path d="M10 21a2.2 2.2 0 0 0 4 0" opacity=".35"/><path d="M4 4l16 16"/></symbol>
+    <symbol id="gauge" viewBox="0 0 24 24"><path d="M3.8 17.5a8.5 8.5 0 1 1 16.4 0"/><path d="M12 15.5l4.2-4.8"/><circle cx="12" cy="15.8" r="1.5" fill="currentColor" stroke="none"/><path d="M7 11.5h.01M12 7.5h.01M17 11.5h.01" stroke-width="2.2" opacity=".5"/></symbol>
+    <symbol id="leaf" viewBox="0 0 24 24"><path d="M5 19.5C5 11 10 5.5 19.5 4.5 19.5 14 14 19 6 19z"/><path d="M5 19.5l7.5-7.5"/></symbol>
+    <symbol id="plane" viewBox="0 0 24 24"><path d="M12 3c.9 0 1.5.7 1.5 1.6v4.9l7 4.5v2l-7-2.2v4.4l2 1.5V21L12 20l-3.5 1v-1.3l2-1.5v-4.4L3.5 16v-2l7-4.5V4.6C10.5 3.7 11.1 3 12 3z"/></symbol>
+    <symbol id="kbd" viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2.5"/><path d="M6.5 10h.01M9.5 10h.01M12.5 10h.01M15.5 10h.01M18 10h.01M6.5 14h.01M17.5 14h.01" stroke-width="2.1"/><path d="M9.5 14h5"/></symbol>
+    <symbol id="kbd-light" viewBox="0 0 24 24"><rect x="3" y="10.5" width="18" height="10" rx="2.5"/><path d="M7.5 15.5h9"/><path d="M12 3v2.5M6.5 5l1.4 1.8M17.5 5l-1.4 1.8"/></symbol>
+    <symbol id="lock" viewBox="0 0 24 24"><rect x="5" y="10.5" width="14" height="10" rx="2.5"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></symbol>
+    <symbol id="power" viewBox="0 0 24 24"><path d="M12 3v8.5"/><path d="M7 6.3a7.5 7.5 0 1 0 10 0"/></symbol>
+    <symbol id="restart" viewBox="0 0 24 24"><path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3"/><path d="M4.5 4v4.5H9"/></symbol>
+    <symbol id="sleep" viewBox="0 0 24 24"><path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a6.8 6.8 0 0 0 10.5 10.5z"/><path d="M14 4h4l-4 4.5h4" stroke-width="1.5"/></symbol>
+    <symbol id="user" viewBox="0 0 24 24"><circle cx="12" cy="8.5" r="3.8"/><path d="M4.8 20.5a7.2 7.2 0 0 1 14.4 0"/></symbol>
+    <symbol id="users" viewBox="0 0 24 24"><circle cx="9" cy="9" r="3.4"/><path d="M3 20a6 6 0 0 1 12 0"/><path d="M15.5 5.8a3.2 3.2 0 0 1 0 6.2M17.5 14.5A6 6 0 0 1 21 20"/></symbol>
+    <symbol id="gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.2" stroke-width="3" stroke-dasharray="2.9 3.54" stroke-linecap="butt"/><circle cx="12" cy="12" r="6.4"/><circle cx="12" cy="12" r="2.4"/></symbol>
+    <symbol id="search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></symbol>
+    <symbol id="mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></symbol>
+    <symbol id="cam" viewBox="0 0 24 24"><rect x="2.5" y="7" width="13" height="10" rx="2.5"/><path d="M15.5 10.5l6-3v9l-6-3"/></symbol>
+    <symbol id="pin" viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></symbol>
+    <symbol id="display" viewBox="0 0 24 24"><rect x="2.5" y="4" width="19" height="13" rx="2.5"/><path d="M8.5 21h7M12 17v4"/></symbol>
+    <symbol id="globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.6 2.6 3.8 5.6 3.8 9s-1.2 6.4-3.8 9c-2.6-2.6-3.8-5.6-3.8-9S9.4 5.6 12 3z"/></symbol>
+    <symbol id="chev" viewBox="0 0 24 24"><path d="M9.5 6l6 6-6 6"/></symbol>
+    <symbol id="back" viewBox="0 0 24 24"><path d="M14.5 6l-6 6 6 6"/></symbol>
+    <symbol id="plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="dots" viewBox="0 0 24 24"><path d="M6 12h.01M12 12h.01M18 12h.01" stroke-width="2.6"/></symbol>
+    <symbol id="refresh" viewBox="0 0 24 24"><path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3"/><path d="M19.5 4v4.5H15"/></symbol>
+    <symbol id="grid" viewBox="0 0 24 24"><rect x="4" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="4" width="6.5" height="6.5" rx="1.6"/><rect x="4" y="13.5" width="6.5" height="6.5" rx="1.6"/><rect x="13.5" y="13.5" width="6.5" height="6.5" rx="1.6"/></symbol>
+    <symbol id="list" viewBox="0 0 24 24"><path d="M9 6.5h11M9 12h11M9 17.5h11M4.5 6.5h.01M4.5 12h.01M4.5 17.5h.01"/></symbol>
+    <symbol id="panel" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M15 4.5v15"/></symbol>
+    <symbol id="folder" viewBox="0 0 24 24"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2.5h7.5A2.5 2.5 0 0 1 21 10v7.5a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/></symbol>
+    <symbol id="home" viewBox="0 0 24 24"><path d="M4 10.5L12 4l8 6.5V19a1.5 1.5 0 0 1-1.5 1.5H15v-6H9v6H5.5A1.5 1.5 0 0 1 4 19z"/></symbol>
+    <symbol id="doc" viewBox="0 0 24 24"><path d="M14 3.5H6.5a1 1 0 0 0-1 1v15a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1V8z"/><path d="M14 3.5V8h4.5M9 12.5h6M9 16h6"/></symbol>
+    <symbol id="download" viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 20h14"/></symbol>
+    <symbol id="image" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="15" rx="2.5"/><circle cx="8.5" cy="9.5" r="1.6"/><path d="M21 15.5l-5-5-9.5 9"/></symbol>
+    <symbol id="music" viewBox="0 0 24 24"><path d="M9 18V5.5l11-2V16"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/></symbol>
+    <symbol id="video" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2.5"/><path d="M10 9.3v5.4l4.6-2.7z"/></symbol>
+    <symbol id="trash" viewBox="0 0 24 24"><path d="M4 6.5h16M9 6.5V4.5h6v2M6 6.5l1 13a1.5 1.5 0 0 0 1.5 1.5h7a1.5 1.5 0 0 0 1.5-1.5l1-13"/><path d="M10 10.5v6M14 10.5v6"/></symbol>
+    <symbol id="clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></symbol>
+    <symbol id="drive" viewBox="0 0 24 24"><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M5 13l2.5-7.5h9L19 13"/><path d="M16.5 16.5h.01" stroke-width="2.4"/></symbol>
+    <symbol id="usb" viewBox="0 0 24 24"><rect x="7" y="9" width="10" height="12" rx="2"/><path d="M9 9V3.5h6V9M10.5 6h.01M13.5 6h.01"/></symbol>
+    <symbol id="chart" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3v9h9"/></symbol>
+    <symbol id="contrast" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="desk" viewBox="0 0 24 24"><rect x="2.5" y="4" width="19" height="14" rx="2.5"/><path d="M8 15h8"/><path d="M8 21h8" opacity=".5"/></symbol>
+    <symbol id="window" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M3 9h18"/><path d="M15.5 6.5h.01M18 6.5h.01" stroke-width="1.8"/></symbol>
+    <symbol id="mouse" viewBox="0 0 24 24"><rect x="6.5" y="3" width="11" height="18" rx="5.5"/><path d="M12 7v3"/></symbol>
+    <symbol id="printer" viewBox="0 0 24 24"><path d="M7 9V3.5h10V9M7 17H5a2 2 0 0 1-2-2v-4a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2h-2"/><rect x="7" y="14" width="10" height="6.5" rx="1"/></symbol>
+    <symbol id="apps" viewBox="0 0 24 24"><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="6.5" r="2.5"/><circle cx="6.5" cy="17.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></symbol>
+    <symbol id="shield" viewBox="0 0 24 24"><path d="M12 3l7.5 3v5.5c0 4.6-3.2 8.2-7.5 9.5-4.3-1.3-7.5-4.9-7.5-9.5V6z"/><path d="M9 12l2.2 2.2L15.5 10"/></symbol>
+    <symbol id="a11y" viewBox="0 0 24 24"><circle cx="12" cy="4.8" r="1.6"/><path d="M5 8.5l7 1.5 7-1.5M12 10v4.5M8.5 21l3.5-6.5 3.5 6.5"/></symbol>
+    <symbol id="cal" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></symbol>
+    <symbol id="info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5.5"/><path d="M12 7.6h.01" stroke-width="2.4"/></symbol>
+    <symbol id="update" viewBox="0 0 24 24"><path d="M12 3.5v10M7.5 9L12 13.5 16.5 9"/><path d="M4 15.5v2A2.5 2.5 0 0 0 6.5 20h11a2.5 2.5 0 0 0 2.5-2.5v-2"/></symbol>
+    <symbol id="warn" viewBox="0 0 24 24"><path d="M10.3 4.2a2 2 0 0 1 3.4 0l7.4 12.8a2 2 0 0 1-1.7 3H4.6a2 2 0 0 1-1.7-3z"/><path d="M12 9.5v4"/><path d="M12 16.8h.01" stroke-width="2.4"/></symbol>
+    <symbol id="check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
+    <symbol id="headph" viewBox="0 0 24 24"><path d="M4 15v-3a8 8 0 0 1 16 0v3"/><rect x="3.5" y="14" width="4.5" height="6.5" rx="1.8"/><rect x="16" y="14" width="4.5" height="6.5" rx="1.8"/></symbol>
+    <symbol id="phone" viewBox="0 0 24 24"><rect x="6.5" y="2.5" width="11" height="19" rx="2.5"/><path d="M10.5 18.5h3"/></symbol>
+    <symbol id="clip" viewBox="0 0 24 24"><rect x="5.5" y="4.5" width="13" height="16.5" rx="2"/><path d="M9 4.5V3.5h6v1"/><path d="M9 11h6M9 15h4"/></symbol>
+    <symbol id="shot" viewBox="0 0 24 24"><path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="play" viewBox="0 0 24 24"><path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/></symbol>
+    <symbol id="next" viewBox="0 0 24 24"><path d="M6 6v12l8.5-6z" fill="currentColor"/><path d="M18 6v12"/></symbol>
+    <symbol id="prev" viewBox="0 0 24 24"><path d="M18 6v12l-8.5-6z" fill="currentColor"/><path d="M6 6v12"/></symbol>
+    <symbol id="term" viewBox="0 0 24 24"><path d="M5 7l5 5-5 5M12.5 18H19"/></symbol>
+    <symbol id="lines" viewBox="0 0 24 24"><path d="M6 7h12M6 11h12M6 15h12M6 19h7"/></symbol>
+    <symbol id="calc" viewBox="0 0 24 24"><path d="M5 8h5M7.5 5.5v5M14 8h5M5.5 15.5l4 4M9.5 15.5l-4 4M14 16h5M14 19h5"/></symbol>
+    <symbol id="bag" viewBox="0 0 24 24"><path d="M5 8h14l-1 12.5H6z"/><path d="M9 10V7a3 3 0 0 1 6 0v3"/></symbol>
+    <symbol id="ring" viewBox="0 0 24 24"><path d="M19.4 9.2A8 8 0 1 1 14 4.3"/><circle cx="18.6" cy="5.6" r="2" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="x" viewBox="0 0 24 24"><path d="M7 7l10 10M17 7L7 17"/></symbol>
+    <symbol id="minus" viewBox="0 0 24 24"><path d="M6 12h12"/></symbol>
+    <symbol id="max" viewBox="0 0 24 24"><path d="M8 16l8-8M10 8h6v6"/></symbol>
+  </defs>
+</svg>
+
+<div class="page">
+
+<header class="hero">
+  <span class="eyebrow">Ferrite OS · proposition de refonte · 22 novembre 2026</span>
+  <h1>Ferrite « Forge »</h1>
+  <p class="lede">Une seule famille d'icônes au trait, des panneaux plus clairs à lire, et les mêmes pièces dans toutes les fenêtres. Les couleurs Oxyde, la police Inter et les icônes d'applications restent : c'est la forme et la disposition qui changent.</p>
+  <div class="principles">
+    <div class="principle"><b>Un seul dessin d'icône</b><span>Trait de 1,75 px, bouts arrondis, sur une grille de 24. Barre du haut, centre de contrôle, colonnes et Fichiers parlent la même langue.</span></div>
+    <div class="principle"><b>L'état se voit à la forme</b><span>Barres Wi-Fi estompées pour un signal faible, trait barré pour éteint, deux points pour Bluetooth connecté.</span></div>
+    <div class="principle"><b>L'accent montre le choix</b><span>Élément choisi d'une colonne en Oxyde léger, bascules et curseurs pleins d'Oxyde. Le reste en gris neutres.</span></div>
+    <div class="principle"><b>Moins de bandes vides</b><span>Une seule barre de 52 px en haut des fenêtres, qui porte la navigation, la recherche et les boutons.</span></div>
+  </div>
+</header>
+
+<!-- ============ ICÔNES ============ -->
+<section id="icones">
+  <div class="sec-head">
+    <span class="eyebrow">1 · Icônes système</span>
+    <h2>Un jeu complet, redessiné</h2>
+    <p class="lede">Aujourd'hui la barre du haut a des icônes pleines, le centre de contrôle des icônes au trait et Fichiers des dossiers de six couleurs. Toutes sont remplacées par cette famille. Les icônes d'applications (Fichiers, Terminal, Calculatrice…) ne bougent pas.</p>
+  </div>
+
+  <div class="rules">
+    <div class="rule"><div class="row"><svg class="i"><use href="#wifi-3"/></svg><svg class="i"><use href="#wifi-2"/></svg><svg class="i"><use href="#wifi-1"/></svg><svg class="i"><use href="#wifi-0"/></svg><svg class="i"><use href="#wifi-off"/></svg></div>Wi-Fi : la force du signal par les arcs estompés, éteint par un trait barré.</div>
+    <div class="rule"><div class="row"><svg class="i"><use href="#bt"/></svg><svg class="i"><use href="#bt-conn"/></svg><svg class="i"><use href="#bt-off"/></svg><svg class="i"><use href="#eth"/></svg></div>Bluetooth allumé, connecté (deux points), éteint. Câble réseau.</div>
+    <div class="rule"><div class="row"><svg class="i"><use href="#bat-100"/></svg><svg class="i"><use href="#bat-50"/></svg><svg class="i"><use href="#bat-10"/></svg><svg class="i"><use href="#bat-chg"/></svg></div>Batterie : la jauge se vide, l'éclair remplace la jauge en charge.</div>
+    <div class="rule"><div class="row"><svg class="i"><use href="#vol-3"/></svg><svg class="i"><use href="#vol-2"/></svg><svg class="i"><use href="#vol-1"/></svg><svg class="i"><use href="#vol-mute"/></svg><svg class="i"><use href="#sun"/></svg></div>Volume en trois ondes, coupé par une croix. Luminosité.</div>
+  </div>
+
+  <div class="sizes">
+    <div class="size-strip"><small>Barre du haut · 16 px</small><svg class="i" style="width:16px;height:16px"><use href="#bt-conn"/></svg><svg class="i" style="width:16px;height:16px"><use href="#wifi-3"/></svg><svg class="i" style="width:16px;height:16px"><use href="#vol-2"/></svg><svg class="i" style="width:16px;height:16px"><use href="#bat-50"/></svg><span style="font-size:13px;font-weight:500">47 %</span></div>
+    <div class="size-strip light"><small>Colonne · 17 px</small><svg class="i" style="width:17px;height:17px"><use href="#wifi-3"/></svg><svg class="i" style="width:17px;height:17px"><use href="#bt"/></svg><svg class="i" style="width:17px;height:17px"><use href="#globe"/></svg><svg class="i" style="width:17px;height:17px"><use href="#contrast"/></svg><svg class="i" style="width:17px;height:17px"><use href="#vol-3"/></svg></div>
+    <div class="size-strip"><small>Centre de contrôle · 20 px</small><svg class="i"><use href="#moon"/></svg><svg class="i"><use href="#bell-off"/></svg><svg class="i"><use href="#gauge"/></svg><svg class="i"><use href="#leaf"/></svg><svg class="i"><use href="#plane"/></svg></div>
+  </div>
+
+  <div class="icon-group">
+    <h3>État et contrôles</h3>
+    <div class="icon-grid" id="g-status"></div>
+  </div>
+  <div class="icon-group">
+    <h3>Réglages, lieux et actions</h3>
+    <div class="icon-grid" id="g-places"></div>
+  </div>
+</section>
+
+<!-- ============ BUREAU ============ -->
+<section id="bureau">
+  <div class="sec-head">
+    <span class="eyebrow">2 · Bureau, barre du haut, centre de contrôle, dock</span>
+    <h2>Le bureau en îlots</h2>
+  </div>
+  <ul class="changes">
+    <li><span>Barre du haut en trois îlots flottants : bureaux et logo, heure, indicateurs. Le pourcentage de batterie s'affiche à côté de l'icône.</span></li>
+    <li><span>Une cloche pour les notifications, à droite, séparée des indicateurs.</span></li>
+    <li><span>Centre de contrôle : six tuiles de même taille, chacune avec son état (« Connecté », « 2 appareils »). <s>Bascules rondes à libellé long</s>.</span></li>
+    <li><span>Curseurs volume et luminosité remplis d'Oxyde jusqu'au niveau réglé (aujourd'hui le niveau ne se voit pas).</span></li>
+    <li><span>Batterie, Réglages, verrouiller et éteindre remontés en tête du panneau ; Mode nuit, Rétroéclairage et Clavier en petites pastilles.</span></li>
+    <li><span>Dock plus bas et plus fin, point Oxyde sous les applications ouvertes.</span></li>
+  </ul>
+  <div class="mock-bar"><span class="cap">Bureau Ferrite, centre de contrôle ouvert</span><div class="seg" role="group" aria-label="Thème de la maquette"><button type="button" data-t="dark" aria-pressed="true">Sombre</button><button type="button" data-t="light" aria-pressed="false">Clair</button></div></div>
+  <div class="stage"><div class="screen os os-dark">
+    <div class="wall"><svg viewBox="0 0 1200 750" preserveAspectRatio="none"><polygon points="820,80 1060,218 1060,494 820,632 580,494 580,218"/><polygon points="230,420 400,518 400,714 230,812 60,714 60,518"/><polygon points="1100,560 1210,624 1210,752 1100,816 990,752 990,624"/></svg></div>
+    <div class="topbar">
+      <div class="island"><svg class="i" style="color:var(--acc)"><use href="#ring"/></svg><div class="ws"><i class="on"></i><i></i><i></i></div></div>
+      <div class="island tnum">dim. 22 nov. · 22:46</div>
+      <div style="display:flex;gap:6px">
+        <div class="island active"><svg class="i"><use href="#bt-conn"/></svg><svg class="i"><use href="#wifi-3"/></svg><svg class="i"><use href="#vol-2"/></svg><span style="display:flex;align-items:center;gap:5px"><svg class="i"><use href="#bat-50"/></svg><span class="tnum">47 %</span></span></div>
+        <div class="island" style="padding:0 9px"><svg class="i"><use href="#bell"/></svg></div>
+      </div>
+    </div>
+    <div class="cc">
+      <div class="cc-head">
+        <div class="cc-batt"><svg class="i"><use href="#bat-50"/></svg>47 % <span>· 3 h 10 restantes</span></div>
+        <div class="round-row"><span class="round"><svg class="i"><use href="#gear"/></svg></span><span class="round"><svg class="i"><use href="#lock"/></svg></span><span class="round"><svg class="i"><use href="#power"/></svg></span></div>
+      </div>
+      <div class="tiles">
+        <div class="tile on"><span class="disc"><svg class="i"><use href="#wifi-3"/></svg></span><span class="tx"><b>Wi-Fi</b><small>Connecté</small></span><svg class="i chev"><use href="#chev"/></svg></div>
+        <div class="tile on"><span class="disc"><svg class="i"><use href="#bt-conn"/></svg></span><span class="tx"><b>Bluetooth</b><small>2 appareils</small></span><svg class="i chev"><use href="#chev"/></svg></div>
+        <div class="tile on"><span class="disc"><svg class="i"><use href="#moon"/></svg></span><span class="tx"><b>Mode sombre</b><small>Activé</small></span></div>
+        <div class="tile"><span class="disc"><svg class="i"><use href="#bell-off"/></svg></span><span class="tx"><b>Ne pas déranger</b><small>Désactivé</small></span></div>
+        <div class="tile"><span class="disc"><svg class="i"><use href="#gauge"/></svg></span><span class="tx"><b>Énergie</b><small>Normal</small></span><svg class="i chev"><use href="#chev"/></svg></div>
+        <div class="tile"><span class="disc"><svg class="i"><use href="#plane"/></svg></span><span class="tx"><b>Mode avion</b><small>Désactivé</small></span></div>
+      </div>
+      <div class="slider"><span class="fill" style="width:62%"></span><span class="ic"><svg class="i"><use href="#vol-2"/></svg></span><span class="end"><svg class="i"><use href="#headph"/></svg></span></div>
+      <div class="slider"><span class="fill" style="width:80%"></span><span class="ic"><svg class="i"><use href="#sun"/></svg></span></div>
+      <div class="chips">
+        <span class="chip on"><svg class="i"><use href="#night"/></svg>Mode nuit</span>
+        <span class="chip"><svg class="i"><use href="#kbd-light"/></svg>Rétroéclairage</span>
+        <span class="chip"><svg class="i"><use href="#kbd"/></svg>Clavier FR</span>
+      </div>
+      <div class="media"><span class="cover"></span><span class="tx"><b>Lecture en cours</b><small>Musique · piste 3 sur 12</small></span><span class="ctl"><span><svg class="i"><use href="#prev"/></svg></span><span class="play"><svg class="i"><use href="#play"/></svg></span><span><svg class="i"><use href="#next"/></svg></span></span></div>
+    </div>
+    <div class="dock">
+      <span class="app a-blue run"><svg class="i"><use href="#folder"/></svg></span>
+      <span class="app a-yellow"><svg class="i"><use href="#lines"/></svg></span>
+      <span class="app a-ink run"><svg class="i"><use href="#term"/></svg></span>
+      <span class="app a-ink"><svg class="i"><use href="#calc"/></svg></span>
+      <span class="app a-grey run"><svg class="i"><use href="#gear"/></svg></span>
+      <span class="sep"></span>
+      <span class="app a-glass"><svg class="i"><use href="#trash"/></svg></span>
+    </div>
+  </div></div>
+</section>
+
+<!-- ============ RÉGLAGES ============ -->
+<section id="reglages">
+  <div class="sec-head">
+    <span class="eyebrow">3 · Fenêtres à colonne : Réglages</span>
+    <h2>Une page, un en-tête, des cartes</h2>
+  </div>
+  <ul class="changes">
+    <li><span>Élément choisi de la colonne en Oxyde léger, texte et icône en Oxyde. <s>Pastille blanche avec ombre</s>.</span></li>
+    <li><span>En-tête de page : icône dans un carré Oxyde léger, titre 24, une phrase d'état, et l'interrupteur principal sur la même ligne.</span></li>
+    <li><span>Plus de carré bleu pour le Wi-Fi : toutes les pages prennent l'accent choisi.</span></li>
+    <li><span>Réseau connecté : point vert et texte gris. <s>Toute la ligne en vert</s>.</span></li>
+    <li><span>Boutons de fenêtre de 13 px, « fermer » seul en Oxyde ; la barre du haut fait 52 px et ne laisse plus de grande bande vide.</span></li>
+    <li><span>Le même modèle sert à Logithèque, Calendrier, Musique, Moniteur et à toutes les pages de Réglages.</span></li>
+  </ul>
+  <div class="mock-bar"><span class="cap">Réglages, page Wi-Fi</span><div class="seg" role="group" aria-label="Thème de la maquette"><button type="button" data-t="dark" aria-pressed="false">Sombre</button><button type="button" data-t="light" aria-pressed="true">Clair</button></div></div>
+  <div class="stage"><div class="screen os os-light">
+    <div class="wall"><svg viewBox="0 0 1200 750" preserveAspectRatio="none"><polygon points="900,40 1120,167 1120,421 900,548 680,421 680,167"/><polygon points="160,480 320,572 320,756 160,848 0,756 0,572"/></svg></div>
+    <div class="topbar">
+      <div class="island"><svg class="i" style="color:var(--acc)"><use href="#ring"/></svg><div class="ws"><i class="on"></i><i></i></div></div>
+      <div class="island tnum">dim. 22 nov. · 22:46</div>
+      <div style="display:flex;gap:6px"><div class="island"><svg class="i"><use href="#bt-conn"/></svg><svg class="i"><use href="#wifi-3"/></svg><svg class="i"><use href="#vol-2"/></svg><span style="display:flex;align-items:center;gap:5px"><svg class="i"><use href="#bat-50"/></svg><span class="tnum">47 %</span></span></div><div class="island" style="padding:0 9px"><svg class="i"><use href="#bell"/></svg></div></div>
+    </div>
+    <div class="win" style="left:110px;top:58px;width:980px;height:640px">
+      <div class="side">
+        <div class="account"><span class="avatar">B</span><span><b>Bazoum</b><small>Compte et mot de passe</small></span></div>
+        <div class="field"><svg class="i"><use href="#search"/></svg>Rechercher un réglage</div>
+        <h6>Connexions</h6>
+        <div class="srow sel"><svg class="i"><use href="#wifi-3"/></svg>Wi-Fi</div>
+        <div class="srow"><svg class="i"><use href="#bt"/></svg>Bluetooth<span class="meta">2</span></div>
+        <div class="srow"><svg class="i"><use href="#globe"/></svg>Réseau</div>
+        <h6>Personnalisation</h6>
+        <div class="srow"><svg class="i"><use href="#contrast"/></svg>Apparence</div>
+        <div class="srow"><svg class="i"><use href="#desk"/></svg>Bureau et dock</div>
+        <div class="srow"><svg class="i"><use href="#window"/></svg>Fenêtres</div>
+        <div class="srow"><svg class="i"><use href="#bell"/></svg>Notifications</div>
+        <h6>Matériel</h6>
+        <div class="srow"><svg class="i"><use href="#vol-3"/></svg>Son</div>
+        <div class="srow"><svg class="i"><use href="#bat-50"/></svg>Énergie</div>
+        <div class="srow"><svg class="i"><use href="#display"/></svg>Écrans</div>
+        <div class="srow"><svg class="i"><use href="#kbd"/></svg>Clavier</div>
+      </div>
+      <div class="main">
+        <div class="hbar"><div class="wbtns"><i></i><i></i><i class="close"></i></div></div>
+        <div class="scroll">
+          <div class="phead">
+            <span class="ptile"><svg class="i"><use href="#wifi-3"/></svg></span>
+            <span><h4>Wi-Fi</h4><p>Connecté à La_Fibre_dOrange_E2C8</p></span>
+            <span class="switch on"></span>
+          </div>
+          <div class="grp">
+            <h5>Réseau actuel</h5>
+            <div class="card"><div class="crow">
+              <svg class="i" style="color:var(--acc)"><use href="#wifi-3"/></svg>
+              <span class="grow"><b>La_Fibre_dOrange_E2C8</b><small><span class="okdot"></span>Connecté · 5 GHz · WPA3 · 270 Mbit/s</small></span>
+              <span class="btn">Détails</span>
+            </div></div>
+          </div>
+          <div class="grp">
+            <h5>Réseaux disponibles <svg class="i spin"><use href="#refresh"/></svg></h5>
+            <div class="card">
+              <div class="crow icon"><svg class="i"><use href="#wifi-3"/></svg><span class="grow">ALHAMDULILAH-5G</span><svg class="i lk"><use href="#lock"/></svg></div>
+              <div class="crow icon"><svg class="i"><use href="#wifi-2"/></svg><span class="grow">ALHAMDULILAH-2G</span><svg class="i lk"><use href="#lock"/></svg></div>
+              <div class="crow icon"><svg class="i"><use href="#wifi-1"/></svg><span class="grow">ComTass</span><svg class="i lk"><use href="#lock"/></svg></div>
+              <div class="crow icon"><svg class="i" style="color:var(--acc)"><use href="#plus"/></svg><span class="grow"><span class="acctext">Autre réseau…</span><small>Réseau masqué ou réglage à la main</small></span></div>
+            </div>
+          </div>
+          <div class="grp">
+            <h5>Options</h5>
+            <div class="card">
+              <div class="crow"><span class="grow">Se connecter automatiquement<small>Aux réseaux déjà connus</small></span><span class="switch on"></span></div>
+              <div class="crow"><span class="grow">Partage de connexion</span><span class="switch"></span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+</section>
+
+<!-- ============ FICHIERS ============ -->
+<section id="fichiers">
+  <div class="sec-head">
+    <span class="eyebrow">4 · Fichiers</span>
+    <h2>Une barre, des dossiers d'une seule couleur</h2>
+  </div>
+  <ul class="changes">
+    <li><span>Dossiers dessinés d'un seul ton, avec un petit symbole Oxyde (documents, images, musique…). <s>Dossiers bleus, verts, roses, violets, orange</s>.</span></li>
+    <li><span>Colonne en icônes au trait ; espace libre du disque en petite valeur à droite.</span></li>
+    <li><span>Barre unique : précédent/suivant, chemin cliquable, affichage, recherche, nouveau dossier, menu.</span></li>
+    <li><span>Barre d'état du bas supprimée : le nombre d'éléments passe sous le chemin.</span></li>
+    <li><span>Les étiquettes gardent leurs couleurs : ce sont les seules pastilles de couleur.</span></li>
+  </ul>
+  <div class="mock-bar"><span class="cap">Fichiers, dossier perso</span><div class="seg" role="group" aria-label="Thème de la maquette"><button type="button" data-t="dark" aria-pressed="true">Sombre</button><button type="button" data-t="light" aria-pressed="false">Clair</button></div></div>
+  <div class="stage"><div class="screen os os-dark">
+    <div class="wall"><svg viewBox="0 0 1200 750" preserveAspectRatio="none"><polygon points="300,-40 520,87 520,341 300,468 80,341 80,87"/><polygon points="1050,420 1220,518 1220,714 1050,812 880,714 880,518"/></svg></div>
+    <div class="topbar">
+      <div class="island"><svg class="i" style="color:var(--acc)"><use href="#ring"/></svg><div class="ws"><i class="on"></i><i></i></div></div>
+      <div class="island tnum">dim. 22 nov. · 22:46</div>
+      <div style="display:flex;gap:6px"><div class="island"><svg class="i"><use href="#bt-conn"/></svg><svg class="i"><use href="#wifi-3"/></svg><svg class="i"><use href="#vol-2"/></svg><span style="display:flex;align-items:center;gap:5px"><svg class="i"><use href="#bat-50"/></svg><span class="tnum">47 %</span></span></div><div class="island" style="padding:0 9px"><svg class="i"><use href="#bell"/></svg></div></div>
+    </div>
+    <div class="win" style="left:90px;top:58px;width:1020px;height:640px">
+      <div class="side">
+        <div style="height:30px"></div>
+        <div class="srow"><svg class="i"><use href="#clock"/></svg>Récents</div>
+        <div class="srow sel"><svg class="i"><use href="#home"/></svg>Dossier perso</div>
+        <div class="srow"><svg class="i"><use href="#doc"/></svg>Documents</div>
+        <div class="srow"><svg class="i"><use href="#download"/></svg>Téléchargements</div>
+        <div class="srow"><svg class="i"><use href="#image"/></svg>Images</div>
+        <div class="srow"><svg class="i"><use href="#music"/></svg>Musique</div>
+        <div class="srow"><svg class="i"><use href="#video"/></svg>Vidéos</div>
+        <div class="srow"><svg class="i"><use href="#trash"/></svg>Corbeille</div>
+        <h6>Appareils</h6>
+        <div class="srow"><svg class="i"><use href="#drive"/></svg>Système<span class="meta">62 Go libres</span></div>
+        <div class="srow"><svg class="i"><use href="#chart"/></svg>Analyse de l'espace</div>
+        <h6>Étiquettes</h6>
+        <div class="srow"><span class="dot" style="background:var(--app-blue)"></span>Travail</div>
+        <div class="srow"><span class="dot" style="background:var(--app-green)"></span>Personnel</div>
+        <div class="srow"><span class="dot" style="background:var(--app-red)"></span>Important</div>
+      </div>
+      <div class="main">
+        <div class="hbar" style="padding-left:12px">
+          <span class="ibtn"><svg class="i"><use href="#back"/></svg></span><span class="ibtn dim"><svg class="i"><use href="#chev"/></svg></span>
+          <span style="display:grid;margin-left:6px;min-width:0"><span class="crumbs"><span class="t2">bazoum</span><svg class="i"><use href="#chev"/></svg><span>Dossier perso</span></span><small class="t2" style="font-size:11px">8 éléments</small></span>
+          <span style="margin-left:auto;display:flex;gap:6px;align-items:center">
+            <span class="segc"><span class="on"><svg class="i"><use href="#grid"/></svg></span><span><svg class="i"><use href="#list"/></svg></span></span>
+            <span class="field" style="width:180px"><svg class="i"><use href="#search"/></svg>Rechercher</span>
+            <span class="ibtn"><svg class="i"><use href="#plus"/></svg></span>
+            <span class="ibtn"><svg class="i"><use href="#dots"/></svg></span>
+          </span>
+          <div class="wbtns" style="margin-left:6px"><i></i><i></i><i class="close"></i></div>
+        </div>
+        <div class="scroll" style="padding:8px 24px 24px;gap:18px">
+          <div class="grp"><h5>Récents</h5>
+            <div class="recent">
+              <div class="rcard"><span class="ftype"><b style="background:var(--app-red)">PDF</b></span><span class="tx"><b>Facture-FZT9I2DT.pdf</b><small>Il y a 16 jours</small></span></div>
+              <div class="rcard"><span class="ftype"><b style="background:var(--app-violet)">PNG</b></span><span class="tx"><b>Lecteur vidéo@2x.png</b><small>Il y a 17 jours</small></span></div>
+              <div class="rcard"><span class="ftype"><b style="background:var(--acc)">PPTX</b></span><span class="tx"><b>presentation_memoire.pptx</b><small>Il y a 208 jours</small></span></div>
+            </div>
+          </div>
+          <div class="grp"><h5>Dossiers</h5>
+            <div class="fgrid" id="folders"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div></div>
+</section>
+
+<!-- ============ LANCEUR ============ -->
+<section id="lanceur">
+  <div class="sec-head">
+    <span class="eyebrow">5 · Lanceur</span>
+    <h2>Chercher d'abord, ranger ensuite</h2>
+  </div>
+  <ul class="changes">
+    <li><span>Rubriques en pastilles : Tout, Internet, Bureautique, Création, Multimédia, Système, Jeux (tirées des catégories des applications).</span></li>
+    <li><span>Une ligne « Suggestions » : les applications les plus ouvertes.</span></li>
+    <li><span>Grille de 8 colonnes, pages avec points, raccourci Super rappelé dans le champ.</span></li>
+    <li><span>Le bureau derrière est flouté et assombri : le lanceur ne se confond plus avec une fenêtre.</span></li>
+  </ul>
+  <div class="mock-bar"><span class="cap">Lanceur d'applications</span><div class="seg" role="group" aria-label="Thème de la maquette"><button type="button" data-t="dark" aria-pressed="true">Sombre</button><button type="button" data-t="light" aria-pressed="false">Clair</button></div></div>
+  <div class="stage"><div class="screen os os-dark">
+    <div class="wall"><svg viewBox="0 0 1200 750" preserveAspectRatio="none"><polygon points="820,80 1060,218 1060,494 820,632 580,494 580,218"/><polygon points="230,420 400,518 400,714 230,812 60,714 60,518"/></svg></div>
+    <div class="scrim"></div>
+    <div class="topbar">
+      <div class="island active"><svg class="i" style="color:var(--acc)"><use href="#ring"/></svg><div class="ws"><i class="on"></i><i></i></div></div>
+      <div class="island tnum">dim. 22 nov. · 22:46</div>
+      <div style="display:flex;gap:6px"><div class="island"><svg class="i"><use href="#bt-conn"/></svg><svg class="i"><use href="#wifi-3"/></svg><svg class="i"><use href="#vol-2"/></svg><span style="display:flex;align-items:center;gap:5px"><svg class="i"><use href="#bat-50"/></svg><span class="tnum">47 %</span></span></div><div class="island" style="padding:0 9px"><svg class="i"><use href="#bell"/></svg></div></div>
+    </div>
+    <div class="launcher">
+      <div class="search"><svg class="i"><use href="#search"/></svg>Rechercher des applications, fichiers, réglages<kbd>Super</kbd></div>
+      <div class="cats"><span class="on">Tout</span><span>Internet</span><span>Bureautique</span><span>Création</span><span>Multimédia</span><span>Système</span><span>Jeux</span></div>
+      <div class="lsec"><h5>Suggestions</h5><div class="agrid" id="sugg"></div></div>
+      <div class="lsec"><h5>Toutes les applications</h5><div class="agrid" id="allapps"></div></div>
+      <div class="pager"><i class="on"></i><i></i><i></i></div>
+    </div>
+  </div></div>
+</section>
+
+<!-- ============ DIALOGUES ============ -->
+<section id="dialogues">
+  <div class="sec-head">
+    <span class="eyebrow">6 · Dialogues, notifications, bulles</span>
+    <h2>Même forme pour tout ce qui s'affiche par-dessus</h2>
+  </div>
+  <ul class="changes">
+    <li><span>Dialogue d'arrêt : trois grands choix (Veille, Redémarrer, Éteindre), puis Annuler / Confirmer. Le rouge n'apparaît jamais sans raison.</span></li>
+    <li><span>Notifications : icône de l'appli, titre, heure, texte, et jusqu'à deux boutons.</span></li>
+    <li><span>Bulle de volume et de luminosité en pilule fine, en bas de l'écran.</span></li>
+    <li><span>Boutons de fenêtre : neutres au repos sauf « fermer », symbole au survol, rouge seulement au survol de « fermer ».</span></li>
+  </ul>
+  <div class="mock-bar"><span class="cap">Dialogue d'arrêt, notification, bulle de volume, boutons de fenêtre</span><div class="seg" role="group" aria-label="Thème de la maquette"><button type="button" data-t="dark" aria-pressed="false">Sombre</button><button type="button" data-t="light" aria-pressed="true">Clair</button></div></div>
+  <div class="stage"><div class="screen os os-light">
+    <div class="wall"><svg viewBox="0 0 1200 750" preserveAspectRatio="none"><polygon points="820,80 1060,218 1060,494 820,632 580,494 580,218"/><polygon points="230,420 400,518 400,714 230,812 60,714 60,518"/></svg></div>
+    <div class="scrim" style="backdrop-filter:none"></div>
+    <div class="dialog" style="left:430px;top:170px">
+      <span class="ptile"><svg class="i"><use href="#power"/></svg></span>
+      <h4>Éteindre l'ordinateur ?</h4>
+      <p>Les applications ouvertes seront fermées. Arrêt automatique dans 60 secondes.</p>
+      <div class="opts"><span class="opt"><svg class="i"><use href="#sleep"/></svg>Veille</span><span class="opt"><svg class="i"><use href="#restart"/></svg>Redémarrer</span><span class="opt on"><svg class="i"><use href="#power"/></svg>Éteindre</span></div>
+      <div class="row2"><span class="btn">Annuler</span><span class="btn pri">Éteindre</span></div>
+    </div>
+    <div class="notif" style="right:14px;top:16px">
+      <span class="app a-teal"><svg class="i"><use href="#update"/></svg></span>
+      <span class="tx"><b>Mises à jour prêtes<small>il y a 2 min</small></b><span style="font-size:13px">12 paquets peuvent être installés. Redémarrage non nécessaire.</span>
+        <span class="acts"><span class="btn pri">Installer</span><span class="btn">Plus tard</span></span></span>
+    </div>
+    <div class="osd" style="left:480px;bottom:40px"><svg class="i"><use href="#vol-2"/></svg><span class="bar"><i></i></span><span class="tnum" style="font-size:12px;color:var(--t2)">62</span></div>
+    <div class="wstates" style="left:24px;top:24px">
+      <div>Fenêtre active <span class="wb"><i></i><i></i><i class="close"></i></span></div>
+      <div>Au survol <span class="wb"><i><svg viewBox="0 0 24 24"><use href="#minus"/></svg></i><i><svg viewBox="0 0 24 24"><use href="#max"/></svg></i><i class="red"><svg viewBox="0 0 24 24"><use href="#x"/></svg></i></span></div>
+      <div>Fenêtre inactive <span class="wb"><i></i><i></i><i></i></span></div>
+    </div>
+  </div></div>
+</section>
+
+<!-- ============ PLAN ============ -->
+<section id="plan">
+  <div class="sec-head">
+    <span class="eyebrow">7 · Mise en œuvre</span>
+    <h2>Dans quel ordre</h2>
+    <p class="lede">Chaque étape se termine par des captures en clair et en sombre, et peut être essayée sur le vrai bureau avant la suivante.</p>
+  </div>
+  <div class="plan">
+    <div class="step"><b>Icônes</b><span>Redessiner les SVG de <code>icons/SVG</code> (état, réglages, lieux) dans cette famille ; même fichier pour le bureau et les applis.</span></div>
+    <div class="step"><b>Barre du haut, centre de contrôle, dock</b><span>Îlots, tuiles uniformes, curseurs remplis, cloche, dock affiné.</span></div>
+    <div class="step"><b>Pièces communes des applis</b><span>Ligne de colonne choisie en Oxyde léger, en-tête de page, barre de 52 px, boutons de fenêtre : un changement dans <code>style.rs</code> et <code>kit.rs</code> touche toutes les applis.</span></div>
+    <div class="step"><b>Réglages, page par page</b><span>Les 19 pages, en commençant par Wi-Fi, Bluetooth, Son et Énergie.</span></div>
+    <div class="step"><b>Fichiers et lanceur</b><span>Dossiers d'un seul ton, barre unique, rubriques du lanceur.</span></div>
+    <div class="step"><b>Le reste</b><span>Dialogues, notifications, verrouillage, connexion, installateur, autres applis ; charte et thème GTK mis à jour.</span></div>
+  </div>
+</section>
+
+<footer>Maquette de travail. Les icônes d'applications du dock et du lanceur sont des formes simplifiées : les vraies ne changent pas.</footer>
+</div>
+
+<script>
+(function () {
+  var NS = "http://www.w3.org/2000/svg";
+  function icon(id, cls) { return '<svg class="i' + (cls ? ' ' + cls : '') + '"><use href="#' + id + '"/></svg>'; }
+
+  var status = [["wifi-3","Wi-Fi fort"],["wifi-1","Wi-Fi faible"],["wifi-off","Wi-Fi éteint"],["bt","Bluetooth"],["bt-conn","Bluetooth connecté"],["bt-off","Bluetooth éteint"],["eth","Câble réseau"],["bat-100","Batterie pleine"],["bat-10","Batterie faible"],["bat-chg","En charge"],["vol-3","Volume"],["vol-mute","Son coupé"],["sun","Luminosité"],["moon","Mode sombre"],["night","Mode nuit"],["bell","Notifications"],["bell-off","Ne pas déranger"],["gauge","Performance"],["leaf","Économie"],["plane","Mode avion"],["kbd","Clavier"],["kbd-light","Rétroéclairage"],["mic","Micro"],["cam","Caméra"],["pin","Position"],["shot","Capture d'écran"],["lock","Verrouiller"],["power","Éteindre"],["restart","Redémarrer"],["sleep","Veille"]];
+  var places = [["user","Compte"],["users","Comptes"],["gear","Réglages"],["search","Rechercher"],["globe","Réseau"],["contrast","Apparence"],["desk","Bureau et dock"],["window","Fenêtres"],["display","Écrans"],["mouse","Souris"],["printer","Imprimantes"],["apps","Applis par défaut"],["shield","Confidentialité"],["a11y","Accessibilité"],["cal","Date et heure"],["info","À propos"],["update","Mises à jour"],["headph","Casque"],["phone","Téléphone"],["usb","Clé USB"],["home","Dossier perso"],["folder","Dossier"],["doc","Documents"],["download","Téléchargements"],["image","Images"],["music","Musique"],["video","Vidéos"],["trash","Corbeille"],["clock","Récents"],["drive","Disque"],["clip","Presse-papiers"],["warn","Attention"]];
+  function fill(id, list) {
+    document.getElementById(id).innerHTML = list.map(function (x) { return '<div class="icon-cell">' + icon(x[0]) + '<span>' + x[1] + '</span></div>'; }).join("");
+  }
+  fill("g-status", status); fill("g-places", places);
+
+  var folders = [["Documents","21 éléments","doc"],["Downloads","1 élément","download"],["Images","46 éléments","image"],["markitdown","2 éléments",""],["Musique","18 éléments","music"],["Téléchargements","52 éléments","download"],["Untitled","2 éléments",""],["Vidéos","6 éléments","video"]];
+  document.getElementById("folders").innerHTML = folders.map(function (f, n) {
+    var glyph = f[2] ? '<svg x="25" y="24" width="22" height="22" viewBox="0 0 24 24" class="glyph" fill="none" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><use href="#' + f[2] + '"/></svg>' : '';
+    return '<div class="fitem' + (n === 2 ? ' sel' : '') + '"><svg class="folder" viewBox="0 0 72 58"><path class="back" d="M4 10a5 5 0 0 1 5-5h17l6 6h31a5 5 0 0 1 5 5v4H4z"/><rect class="front" x="4" y="15" width="64" height="40" rx="6"/>' + glyph + '</svg><b>' + f[0] + '</b><small>' + f[1] + '</small></div>';
+  }).join("");
+
+  var sugg = [["Fichiers","a-blue","folder"],["Terminal","a-ink","term"],["Réglages","a-grey","gear"],["Éditeur","a-yellow","lines"],["Musique","a-red","music"],["Calendrier","a-teal","cal"],["Logithèque","a-violet","bag"],["Calculatrice","a-ink","calc"]];
+  var all = [["Calculatrice","a-ink","calc"],["Calendrier","a-teal","cal"],["Capture","a-green","shot"],["Fichiers","a-blue","folder"],["Horloge","a-ink","clock"],["Images","a-violet","image"],["Lecteur PDF","a-red","doc"],["Lecteur vidéo","a-red","video"],["Logithèque","a-violet","bag"],["Moniteur","a-green","chart"],["Musique","a-red","music"],["Navigateur","a-blue","globe"],["Presse-papiers","a-grey","clip"],["Réglages","a-grey","gear"],["Terminal","a-ink","term"],["Éditeur","a-yellow","lines"]];
+  function apps(id, list) { document.getElementById(id).innerHTML = list.map(function (a) { return '<span class="ai"><span class="app ' + a[1] + '">' + icon(a[2]) + '</span>' + a[0] + '</span>'; }).join(""); }
+  apps("sugg", sugg); apps("allapps", all);
+
+  // Mise à l'échelle des écrans
+  function fit() { document.querySelectorAll(".stage").forEach(function (s) { s.firstElementChild.style.setProperty("--s", s.clientWidth / 1200); }); }
+  if (window.ResizeObserver) { var ro = new ResizeObserver(fit); document.querySelectorAll(".stage").forEach(function (s) { ro.observe(s); }); }
+  window.addEventListener("resize", fit); fit();
+
+  // Clair / sombre par maquette
+  document.querySelectorAll(".mock-bar").forEach(function (bar) {
+    var screen = bar.nextElementSibling.firstElementChild;
+    bar.querySelectorAll("button").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var dark = b.dataset.t === "dark";
+        screen.classList.toggle("os-dark", dark); screen.classList.toggle("os-light", !dark);
+        bar.querySelectorAll("button").forEach(function (o) { o.setAttribute("aria-pressed", String(o === b)); });
+      });
+    });
+  });
+})();
+</script>

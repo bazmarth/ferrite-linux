@@ -174,8 +174,8 @@ fn paint_lock_picture(width: u32, height: u32, dark: bool, blur: u8, picture: &L
 pub const LOCK_WALLS: [(&str, WallColors, WallColors); 4] = [
     (
         "Ferrite",
-        [0x0E1622, 0x0E9AA7, 0x2779E0, 0x7C4DE8],
-        [0xE9F3F5, 0x7FDCE3, 0x9CC7FF, 0xC9B6FF],
+        [0x141416, 0xB83A0A, 0xFF7A45, 0x5A2312],
+        [0xF4F4F6, 0xFFB38F, 0xFDE8DD, 0xFFCDB4],
     ),
     (
         "Savane",
@@ -210,8 +210,9 @@ const AVATAR_TOP: f64 = 330.0;
 /// Côté de l'image de l'anneau du visage, et nombre de ses images (un tour complet).
 const FACE_RING: f64 = 150.0;
 const FACE_FRAMES: u16 = 30;
-/// Teinte de l'écran de verrouillage : attente, œil, anneau du visage.
-const TEAL: Color = Color::rgb(0x0E9AA7);
+/// Teinte de l'écran de verrouillage : attente, œil, anneau du visage. L'Oxyde vif, lisible
+/// sur le fond clair comme sombre.
+const ACCENT: Color = Color::rgb(0xFF7A45);
 
 const DAYS: [&str; 7] = [
     "dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi",
@@ -255,13 +256,13 @@ struct Tokens {
 
 fn tokens(dark: bool) -> Tokens {
     let white = Color::WHITE;
-    let ink = Color::rgb(0x14202B);
+    let ink = Color::rgb(0x1B1B1F);
     if dark {
         Tokens {
-            fg: Color::rgb(0xF3F6F9),
-            fg2: Color::rgb(0xDDE5EE),
-            fg3: Color::rgb(0xA9B4C2),
-            glass: Color::rgb(0x161E2C).with_alpha(140),
+            fg: Color::rgb(0xF2F2F5),
+            fg2: Color::rgb(0xDDDDE3),
+            fg3: Color::rgb(0xA6A6B0),
+            glass: Color::rgb(0x19191C).with_alpha(140),
             border: white.with_alpha(36),
             chip: white.with_alpha(26),
             button: white.with_alpha(26),
@@ -272,17 +273,17 @@ fn tokens(dark: bool) -> Tokens {
             field_edge: white.with_alpha(56),
             ring: white.with_alpha(41),
             veil: (
-                Color::rgb(0x080C12).with_alpha(31),
-                Color::rgb(0x080C12).with_alpha(102),
+                Color::rgb(0x0B0B0D).with_alpha(31),
+                Color::rgb(0x0B0B0D).with_alpha(102),
             ),
-            error: (Color::rgb(0xF07A6E), Color::rgb(0xFFB4AB)),
-            swatch_gap: Color::rgb(0x0E1622),
+            error: (Color::rgb(0xF87171), Color::rgb(0xFCA5A5)),
+            swatch_gap: Color::rgb(0x141416),
         }
     } else {
         Tokens {
             fg: ink,
-            fg2: Color::rgb(0x2B3744),
-            fg3: Color::rgb(0x4B5563),
+            fg2: Color::rgb(0x2E2E35),
+            fg3: Color::rgb(0x5A5A64),
             glass: white.with_alpha(140),
             border: white.with_alpha(204),
             chip: white.with_alpha(128),
@@ -294,7 +295,7 @@ fn tokens(dark: bool) -> Tokens {
             field_edge: ink.with_alpha(46),
             ring: white.with_alpha(217),
             veil: (white.with_alpha(15), white.with_alpha(82)),
-            error: (Color::rgb(0xC42B20), Color::rgb(0xB42318)),
+            error: (Color::rgb(0xC62828), Color::rgb(0xB42318)),
             swatch_gap: white,
         }
     }
@@ -660,20 +661,24 @@ fn draw_face_ring(canvas: &mut Canvas, frame: u16, track: Color) {
     let radius = AVATAR / 2.0 + 11.0;
     let circle = Rect::new(center - radius, center - radius, radius * 2.0, radius * 2.0);
     if frame >= FACE_FRAMES {
-        canvas.stroke(circle, radius as f32, TEAL, 5.0);
+        canvas.stroke(circle, radius as f32, ACCENT, 5.0);
         let badge = (center + 40.0, center + 40.0);
-        canvas.fill(Rect::new(badge.0 - 14.0, badge.1 - 14.0, 28.0, 28.0), 14.0, TEAL);
+        canvas.fill(
+            Rect::new(badge.0 - 14.0, badge.1 - 14.0, 28.0, 28.0),
+            14.0,
+            ACCENT,
+        );
         canvas.line(
             (badge.0 - 6.0, badge.1),
             (badge.0 - 1.5, badge.1 + 5.0),
             2.4,
-            Color::WHITE,
+            ACCENT.ink_on(),
         );
         canvas.line(
             (badge.0 - 1.5, badge.1 + 5.0),
             (badge.0 + 6.5, badge.1 - 5.0),
             2.4,
-            Color::WHITE,
+            ACCENT.ink_on(),
         );
         return;
     }
@@ -693,7 +698,7 @@ fn draw_face_ring(canvas: &mut Canvas, frame: u16, track: Color) {
                 (center + a.cos() * radius, center + a.sin() * radius),
                 (center + b.cos() * radius, center + b.sin() * radius),
                 width,
-                TEAL.with_alpha((255.0 * fade * strength) as u8),
+                ACCENT.with_alpha((255.0 * fade * strength) as u8),
             );
         }
     }
@@ -702,7 +707,7 @@ fn draw_face_ring(canvas: &mut Canvas, frame: u16, track: Color) {
     let dy = (turn * TAU).cos() * (inner - 10.0);
     let half = (inner * inner - dy * dy).max(0.0).sqrt() - 4.0;
     let y = center + dy;
-    canvas.line((center - half, y), (center + half, y), 7.0, TEAL.with_alpha(70));
+    canvas.line((center - half, y), (center + half, y), 7.0, ACCENT.with_alpha(70));
     canvas.line(
         (center - half, y),
         (center + half, y),
@@ -727,9 +732,9 @@ pub(super) fn paint_lock_wall(width: u32, height: u32, dark: bool, wall: usize) 
     ];
     let hexagon: [HexagonEdge; 9] = {
         let (edge, inner, edge_tone, inner_tone) = if dark {
-            (0.07, 0.18, [255.0, 255.0, 255.0], rgb(0x7FDCE3))
+            (0.07, 0.18, [255.0, 255.0, 255.0], rgb(0xFFB38F))
         } else {
-            (0.08, 0.25, rgb(0x14202B), rgb(0x0E9AA7))
+            (0.08, 0.25, rgb(0x1B1B1F), rgb(0xB83A0A))
         };
         let e = (edge, edge_tone);
         let i = (inner, inner_tone);
@@ -1495,7 +1500,7 @@ impl Panels {
             let colors = if lock.dark { night } else { day };
             let swatch = places.swatch(index);
             if index == lock.wall {
-                canvas.fill(swatch.expand(4.0), 19.0, Color::rgb(0x0E9AA7));
+                canvas.fill(swatch.expand(4.0), 19.0, ACCENT);
                 canvas.fill(swatch.expand(2.0), 17.0, tokens.swatch_gap);
             }
             canvas.gradient(
@@ -1507,7 +1512,7 @@ impl Panels {
         if let Some(picture) = &lock.picture {
             let swatch = places.swatch(LOCK_WALLS.len());
             if lock.wall == LOCK_WALLS.len() {
-                canvas.fill(swatch.expand(4.0), 19.0, Color::rgb(0x0E9AA7));
+                canvas.fill(swatch.expand(4.0), 19.0, ACCENT);
                 canvas.fill(swatch.expand(2.0), 17.0, tokens.swatch_gap);
             }
             canvas.image_cover(swatch, &picture.thumb, 15.0);
@@ -1525,7 +1530,7 @@ impl Panels {
         if let Some(picture) = &lock.avatar {
             canvas.image_cover(avatar, picture, AVATAR / 2.0);
         } else {
-            canvas.gradient(avatar, 52.0, &[(0.0, 0x3CC7D1), (1.0, 0x2779E0)]);
+            canvas.gradient(avatar, 52.0, &[(0.0, 0xFF9466), (1.0, 0xB83A0A)]);
             canvas.centered(
                 &self.bold,
                 &lock.initial.to_string(),
@@ -1574,7 +1579,7 @@ impl Panels {
                     (spinner.0 + a.cos() * 7.5, spinner.1 + a.sin() * 7.5),
                     (spinner.0 + b.cos() * 7.5, spinner.1 + b.sin() * 7.5),
                     2.2,
-                    TEAL,
+                    ACCENT,
                 );
             }
             canvas.text(&self.regular, text, x + 30.0, field.y + 15.0, 14.0, tokens.fg2);
@@ -1633,7 +1638,7 @@ impl Panels {
             canvas.fill(Rect::new(caret, field.y + 14.0, 1.6, 20.0), 0.8, tokens.fg);
             if lock.length > 0 {
                 let (name, ink) = if lock.shown.is_some() {
-                    ("cc-eye-off", TEAL)
+                    ("cc-eye-off", ACCENT)
                 } else {
                     ("cc-eye", tokens.fg3)
                 };

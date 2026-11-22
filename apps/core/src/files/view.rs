@@ -593,10 +593,8 @@ impl FilesState {
         let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 34.0), Sense::click());
         let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
         if selected {
-            // Pastille claire de la charte, comme toutes les colonnes.
-            ui.painter()
-                .add(style::elevation(ferrite_ui::tokens::elevation::CONTACT).as_shape(rect, 8));
-            ui.painter().rect_filled(rect, 8.0, style::sidebar_pill());
+            // Accent léger de la charte, comme toutes les colonnes.
+            style::selection_pill(ui, rect);
         } else if response.hovered() {
             ui.painter().rect_filled(rect, 8.0, style::tint(8));
         }
@@ -604,7 +602,7 @@ impl FilesState {
             egui::pos2(rect.left() + 21.0, rect.center().y),
             egui::Vec2::splat(22.0),
         );
-        self.icons.paint(ui, icon, icon_rect, IconStyle::Color);
+        paint_place_icon(&mut self.icons, ui, icon, icon_rect, selected, look);
         let right = match count {
             Some(count) => {
                 text(
@@ -627,7 +625,7 @@ impl FilesState {
             egui::pos2(icon_rect.right() + 10.0, rect.center().y),
             egui::Align2::LEFT_CENTER,
             font(14.0, selected),
-            look.fg,
+            if selected { style::accent_ink() } else { look.fg },
             right - icon_rect.right() - 10.0,
         );
         response
@@ -650,10 +648,8 @@ impl FilesState {
             ui.allocate_exact_size(egui::vec2(ui.available_width(), height), Sense::click());
         let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
         if selected {
-            // Pastille claire de la charte, comme toutes les colonnes.
-            ui.painter()
-                .add(style::elevation(ferrite_ui::tokens::elevation::CONTACT).as_shape(rect, 8));
-            ui.painter().rect_filled(rect, 8.0, style::sidebar_pill());
+            // Accent léger de la charte, comme toutes les colonnes.
+            style::selection_pill(ui, rect);
         } else if response.hovered() {
             ui.painter().rect_filled(rect, 8.0, style::tint(8));
         }
@@ -665,14 +661,14 @@ impl FilesState {
         };
         let icon_rect =
             egui::Rect::from_center_size(egui::pos2(rect.left() + 21.0, line), egui::Vec2::splat(22.0));
-        self.icons.paint(ui, icon, icon_rect, IconStyle::Color);
+        paint_place_icon(&mut self.icons, ui, icon, icon_rect, selected, look);
         text(
             ui,
             name,
             egui::pos2(icon_rect.right() + 10.0, line),
             egui::Align2::LEFT_CENTER,
             font(14.0, selected),
-            look.fg,
+            if selected { style::accent_ink() } else { look.fg },
             rect.right() - icon_rect.right() - 44.0,
         );
         if let Some((eject, _)) = button {
@@ -709,10 +705,8 @@ impl FilesState {
         let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 30.0), Sense::click());
         let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
         if selected {
-            // Pastille claire de la charte, comme toutes les colonnes.
-            ui.painter()
-                .add(style::elevation(ferrite_ui::tokens::elevation::CONTACT).as_shape(rect, 8));
-            ui.painter().rect_filled(rect, 8.0, style::sidebar_pill());
+            // Accent léger de la charte, comme toutes les colonnes.
+            style::selection_pill(ui, rect);
         } else if response.hovered() {
             ui.painter().rect_filled(rect, 8.0, style::tint(8));
         }
@@ -1443,16 +1437,11 @@ impl FilesState {
         let ctx = ui.ctx().clone();
         egui::Panel::bottom(ui.scope_id().with("etat"))
             .resizable(false)
+            .show_separator_line(false)
             .exact_size(STATUS_HEIGHT)
-            .frame(
-                Frame::new()
-                    .fill(look.preview)
-                    .inner_margin(Margin::symmetric(18, 0)),
-            )
+            // Pied fondu dans le contenu (charte « Forge ») : même fond, sans filet.
+            .frame(Frame::new().fill(look.win).inner_margin(Margin::symmetric(18, 0)))
             .show(ui, |ui| {
-                let full = ui.max_rect().expand2(egui::vec2(18.0, 0.0));
-                ui.painter()
-                    .hline(full.x_range(), full.top() + 0.5, Stroke::new(1.0, look.line));
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     ui.visuals_mut().override_text_color = Some(look.fg2);
                     ui.style_mut().override_font_id = Some(font(12.0, false));
@@ -2108,7 +2097,7 @@ impl FilesState {
                                     Location::Trash => ("places-trash", "Corbeille".into()),
                                     Location::Recent => ("app-clock", "Récents".into()),
                                     Location::Tag(tag) => ("places-folder", tag.clone()),
-                                    Location::Analysis { dir, .. } => ("status-storage", file_name(dir)),
+                                    Location::Analysis { dir, .. } => ("places-computer", file_name(dir)),
                                 };
                                 (icon, name, format!("Dossier · {count} élément{}", plural(count)))
                             }
@@ -2348,8 +2337,8 @@ impl FilesState {
     ) {
         let custom = self.looks.get(&entry.path).copied().unwrap_or_default();
         let (color, emblem) = if entry.directory {
-            let (color, emblem) = self.looks.folder(&entry.path, &home());
-            (Some(color), Some(emblem))
+            let (_, emblem) = self.looks.folder(&entry.path, &home());
+            (custom.color, Some(emblem))
         } else {
             (custom.color, None)
         };
@@ -3245,4 +3234,45 @@ fn dashed_pill(painter: &egui::Painter, rect: egui::Rect, color: Color32) {
         4.0,
         3.0,
     ));
+}
+
+/// Pictogramme au trait d'un emplacement de la colonne (charte « Forge ») : gris, ou
+/// d'accent s'il est choisi. Une icône sans équivalent garde ses couleurs.
+fn paint_place_icon(
+    icons: &mut Icons,
+    ui: &egui::Ui,
+    icon: &'static str,
+    rect: egui::Rect,
+    selected: bool,
+    look: &Look,
+) {
+    match place_glyph(icon) {
+        Some(glyph) => {
+            let ink = if selected { look.accent } else { look.fg2 };
+            icons.paint(ui, glyph, rect.shrink(2.5), IconStyle::Tinted(ink));
+        }
+        None => icons.paint(ui, icon, rect, IconStyle::Color),
+    }
+}
+
+/// Pictogramme au trait qui remplace l'icône en couleur d'un emplacement.
+fn place_glyph(icon: &str) -> Option<&'static str> {
+    Some(match icon {
+        "app-clock" => "glyph-recent",
+        "places-home" => "glyph-home",
+        "places-desktop" => "glyph-dock",
+        "places-documents" => "glyph-documents",
+        "places-downloads" => "glyph-downloads",
+        "places-pictures" => "glyph-pictures",
+        "places-music" => "glyph-music",
+        "places-videos" => "glyph-videos",
+        "places-trash" | "places-trash-full" => "glyph-trash",
+        "places-templates" => "glyph-templates",
+        "places-public" => "glyph-share",
+        "places-folder" => "glyph-folder",
+        "places-computer" => "glyph-drive",
+        "places-usb" => "glyph-usb",
+        "status-storage" => "glyph-analysis",
+        _ => return None,
+    })
 }

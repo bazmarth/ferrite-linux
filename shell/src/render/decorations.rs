@@ -224,6 +224,8 @@ impl Decorations {
                 palette.window_button_inactive,
             )
         };
+        // « Fermer » porte l'accent au repos, seulement sur la fenêtre active.
+        let close = if active { palette.accent } else { button };
         let uniforms = || {
             vec![
                 Uniform::new("scale", scale as f32),
@@ -232,7 +234,7 @@ impl Decorations {
                 Uniform::new("button", premultiplied(button)),
                 Uniform::new("glyph", premultiplied(palette.window_glyph)),
                 Uniform::new("danger", premultiplied(palette.danger)),
-                Uniform::new("accent", premultiplied(palette.accent)),
+                Uniform::new("accent", premultiplied(close)),
                 Uniform::new(
                     "hover",
                     match hover {

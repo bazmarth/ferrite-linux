@@ -279,11 +279,12 @@ fn defs_path() -> PathBuf {
     ferrite_system::config::Settings::path().with_file_name("etiquettes-liste")
 }
 
+/// Couleur d'une étiquette ; bleue si elle n'en a pas (une étiquette n'est pas l'accent).
 fn accent_of(key: &str) -> Accent {
     Accent::ALL
         .into_iter()
         .find(|accent| accent.key() == key)
-        .unwrap_or_default()
+        .unwrap_or(Accent::Blue)
 }
 
 /// Lit la liste « nom<TAB>couleur » ; `None` si le fichier n'existe pas encore.

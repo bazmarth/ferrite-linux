@@ -336,26 +336,30 @@ Elle prime sur la charte §3.4 de `PLAN.md` (voir `DECISIONS.md`, 2026-11-02).
 
 - Pixels **logiques** ; échelle en 120es (`Scale`, 240 = ×2).
 - Barre du haut 34 px (horloge centrée, menu Applications à gauche, indicateurs à droite) ;
-  barre de titre 46 px ; rayon des fenêtres 14 px ; trois boutons de fenêtre à droite
-  (réduire, agrandir, fermer au bord, 30 px entre deux centres) de rayon 9 ; Dock : icônes 58 px, écart 10, marge 12.
-- Accent `#2779E0` (clair) / `#6CB8FF` (sombre) ; danger `#E5372B` ; succès `#1F9D63` ;
-  attention `#FF9F0A`. Fond uni `#16202D` à hexagones par défaut.
+  barre de titre 44 px ; rayon des fenêtres 14 px ; trois boutons de fenêtre à droite
+  (réduire, agrandir, fermer au bord, 22 px entre deux centres) de rayon 7, « fermer » en
+  accent au repos ; Dock : icônes 58 px, écart 10, marge 12.
+- Accent « Oxyde » `#B83A0A` (clair) / `#FF7A45` (sombre) ; danger `#C62828` / `#F87171` ;
+  succès `#137333` / `#4ADE80` ; attention `#8F5200` / `#FBBF24`. Fond uni `#141416` à
+  hexagones par défaut. Charte détaillée : `docs/CHARTE.md`.
 - Ombres : active `0 28 70` noir 38 % ; inactive `0 6 14` noir 22 %.
-- Rayons : contrôles 8, panneaux/menus 10, dialogues 20.
+- Rayons : contrôles 7, panneaux/menus 10, dialogues 20. Contrôles de 32 px.
 - Polices embarquées : Inter Medium/SemiBold (interface), InterDisplay Light (grande horloge),
-  JetBrains Mono (terminal, code). Tailles : 12 / 14 (corps) / 16 / 13 mono.
+  JetBrains Mono (terminal, code). Tailles : 11 / 12 / 13 / 14 (corps) / 16 / 20 / 24 / 32,
+  13 mono.
 - **Rôles de couleur** dans `Palette` (fond, filet, rail, titre, scène, inverse, succès…) :
   les applications les lisent par `style::nom()`, le bureau par `palette().nom`. Une couleur
   écrite à la main est refusée par `tools/check-colors.sh` (lancé par `tools/ci.sh`), sauf
   les exceptions listées en tête du script. La galerie (`ferrite-apps galerie`) les montre.
 - Mode sombre sans couleur figée : `themed` (valeur par thème) et `tint` ; la barre du haut
   suit la luminosité du fond d'écran ; le thème est annoncé aux applis tierces par la clé
-  GNOME `color-scheme` (portail GTK).
+  GNOME `color-scheme` (portail GTK) et, pour GTK 3, par `gtk-theme` (Ferrite ou
+  Ferrite-dark, si le thème est installé).
 
 ### 3.2 Animations
 
-- Échelle commune `tokens::motion` : QUICK 150 ms (disparitions, survols), SHORT 200
-  (panneaux, fondus, Dock), NORMAL 280 (fenêtres, vue d'ensemble, contrôles), LONG 360
+- Échelle commune `tokens::motion` : QUICK 120 ms (disparitions, survols), SHORT 200
+  (panneaux, fondus, Dock), NORMAL 320 (fenêtres, vue d'ensemble, contrôles), LONG 360
   (bureaux, verrouillage, îlot, retour d'un glisser). `EaseOut` cubique pour les
   apparitions, `EaseInOut` entre deux états. Applications : `kit::glide`. Exceptions
   voulues : génie 520 ms, rebond du Dock, pulsation de l'invitation, verrouillage et

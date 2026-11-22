@@ -157,25 +157,7 @@ impl Page {
         }
     }
 
-    /// Couleur de la pastille : celle de la famille de la rubrique (Connexions en bleu,
-    /// Personnalisation en violet, Matériel en vert, Système en gris).
-    fn color(self) -> u32 {
-        match self {
-            Page::Network | Page::Bluetooth | Page::Wired => 0x2F6FDB,
-            Page::Desktop | Page::Dock | Page::Windows | Page::Notifications => 0x7048E8,
-            Page::Sound | Page::Energy | Page::Displays | Page::Keyboard | Page::Mouse | Page::Printers => {
-                0x2F9E44
-            }
-            Page::Accounts
-            | Page::Defaults
-            | Page::Privacy
-            | Page::Accessibility
-            | Page::Updates
-            | Page::DateTime
-            | Page::About => 0x5C6370,
-        }
-    }
-
+    /// Symbole au trait de la rubrique (colonne, tête de page).
     fn icon(self) -> &'static str {
         match self {
             Page::Network => "glyph-wifi",
@@ -740,8 +722,14 @@ impl SettingsState {
                         ui.add_space(side);
                         ui.vertical(|ui| {
                             ui.set_width(width);
+                            // Tête de page (charte « Forge ») : symbole de la page dans un
+                            // carré d'accent léger, puis le titre.
                             ui.horizontal(|ui| {
                                 ui.add_space(4.0);
+                                ui.spacing_mut().item_spacing.x = 12.0;
+                                let (tile, _) =
+                                    ui.allocate_exact_size(egui::vec2(40.0, 40.0), egui::Sense::hover());
+                                rows::accent_tile(ui, &mut self.icons, self.page.icon(), tile, 11.0);
                                 ui.label(
                                     RichText::new(title)
                                         .size(ferrite_ui::tokens::typography::TITLE)
@@ -1019,14 +1007,7 @@ impl SettingsState {
             (None, _) => "Aucune carte Wi-Fi détectée".to_owned(),
         };
         let mut on = wifi == Some(true);
-        if hero(
-            ui,
-            &mut self.icons,
-            (Page::Network.icon(), Page::Network.color()),
-            "Wi-Fi",
-            &subtitle,
-            Some((&mut on, wifi.is_some())),
-        ) {
+        if hero(ui, "Wi-Fi", &subtitle, Some((&mut on, wifi.is_some()))) {
             self.act(ctx, "", move || network::set_wifi(on));
             self.wifi_scanned = None;
         }
@@ -1564,14 +1545,7 @@ impl SettingsState {
             (None, _) => "Aucun adaptateur Bluetooth détecté".to_owned(),
         };
         let mut on = powered == Some(true);
-        if hero(
-            ui,
-            &mut self.icons,
-            (Page::Bluetooth.icon(), Page::Bluetooth.color()),
-            "Bluetooth",
-            &subtitle,
-            Some((&mut on, powered.is_some())),
-        ) {
+        if hero(ui, "Bluetooth", &subtitle, Some((&mut on, powered.is_some()))) {
             self.act(ctx, "", move || bluetooth::set_powered(on));
         }
 
@@ -1695,9 +1669,9 @@ impl SettingsState {
             self.bluetooth_details = None;
             return;
         };
-        let (glyph, color) = match device_lead(&device) {
-            Lead::Tile(glyph, color) => (glyph, color),
-            _ => ("glyph-bluetooth", 0x2779E0),
+        let glyph = match device_lead(&device) {
+            Lead::Tile(glyph) => glyph,
+            _ => "glyph-bluetooth",
         };
         let icons = &mut self.icons;
         let (mut closed, mut footer, mut trust) = (false, details::Footer::default(), None);
@@ -1717,16 +1691,7 @@ impl SettingsState {
                 t,
                 52.0,
                 43.0,
-                |ui, rect| {
-                    let fill = Color32::from_rgb((color >> 16) as u8, (color >> 8) as u8, color as u8);
-                    ui.painter().rect_filled(rect, 14.0, fill);
-                    icons.paint(
-                        ui,
-                        glyph,
-                        rect.shrink(12.0),
-                        style::IconStyle::Tinted(Color32::WHITE),
-                    );
-                },
+                |ui, rect| rows::accent_tile(ui, icons, glyph, rect, 14.0),
                 |ui| details::title_and_state(ui, t, &device.name, state, state_color),
             );
             details::body(ui, |ui| {
@@ -1883,7 +1848,7 @@ impl SettingsState {
         group(ui, &mut self.icons, "Entrée", |rows| {
             for source in &sources {
                 let row = Row::new(&source.name)
-                    .lead(Lead::Tile("glyph-mic", 0x4B5563))
+                    .lead(Lead::Tile("glyph-mic"))
                     .bold(source.default);
                 if rows.row(row, |ui| rows::radio(ui, source.default).clicked()).0 && !source.default {
                     choice = Some(Choice::Source(source.id));
@@ -1916,7 +1881,7 @@ impl SettingsState {
                 } else {
                     &stream.name
                 };
-                let row = Row::new(name).lead(Lead::Tile("glyph-app", 0x4B5563));
+                let row = Row::new(name).lead(Lead::Tile("glyph-app"));
                 let text = format!("{} %", stream.volume);
                 let (response, _) = rows.row(row, |ui| rows::slider(ui, &mut stream.volume, &text));
                 touched |= response.changed();
@@ -2113,7 +2078,7 @@ impl SettingsState {
                 &mut settings,
                 Row::new("Pourcentage de batterie"),
                 "barre_pourcentage",
-                false,
+                true,
             );
             let mut bar = settings.bar_hiding();
             let labels = hiding_labels();
@@ -2583,7 +2548,7 @@ impl SettingsState {
             let row = Row::new("Ferrite OS")
                 .hint(&status)
                 .ok(up_to_date)
-                .lead(Lead::Tile(Page::Updates.icon(), Page::Updates.color()));
+                .lead(Lead::Tile(Page::Updates.icon()));
             search = rows
                 .row(row, |ui| {
                     ui.add_enabled_ui(!busy, |ui| rows::button(ui, "Rechercher", false))
@@ -2673,7 +2638,7 @@ impl SettingsState {
     /// celles trouvées sur le réseau ou en USB, à ajouter d'un clic (sans pilote).
     fn printers_page(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
-        let tile = Lead::Tile(Page::Printers.icon(), Page::Printers.color());
+        let tile = Lead::Tile(Page::Printers.icon());
         let installed: Vec<Printer> = match &self.printers {
             None => {
                 group(ui, &mut self.icons, "", |rows| {
@@ -3743,21 +3708,21 @@ fn device_lead(device: &bluetooth::Device) -> Lead {
     let name = device.name.to_lowercase();
     let kind = |known: &str, word: &str| device.icon.contains(known) || name.contains(word);
     if kind("audio-head", "casque") || kind("audio-card", "buds") {
-        Lead::Tile("glyph-head", 0xDB2C57)
+        Lead::Tile("glyph-head")
     } else if kind("mouse", "souris") {
-        Lead::Tile("glyph-mouse", 0x4B5563)
+        Lead::Tile("glyph-mouse")
     } else if kind("keyboard", "clavier") {
-        Lead::Tile("glyph-keyboard", 0x4B5563)
+        Lead::Tile("glyph-keyboard")
     } else if kind("phone", "téléphone") {
-        Lead::Tile("glyph-phone", 0x1F9D63)
+        Lead::Tile("glyph-phone")
     } else if kind("watch", "montre") {
-        Lead::Tile("glyph-watch", 0x7C4DE8)
+        Lead::Tile("glyph-watch")
     } else if kind("computer", "laptop") {
-        Lead::Tile("glyph-laptop", 0x4B5563)
+        Lead::Tile("glyph-laptop")
     } else if kind("audio", "enceinte") {
-        Lead::Tile("glyph-speaker", 0xE5571A)
+        Lead::Tile("glyph-speaker")
     } else {
-        Lead::Tile("glyph-bluetooth", 0x2779E0)
+        Lead::Tile("glyph-bluetooth")
     }
 }
 
@@ -3788,11 +3753,11 @@ fn device_hint(device: &bluetooth::Device) -> String {
 fn sink_lead(name: &str) -> Lead {
     let lower = name.to_lowercase();
     if lower.contains("hdmi") || lower.contains("displayport") {
-        Lead::Tile("glyph-screen", 0x2779E0)
+        Lead::Tile("glyph-screen")
     } else if lower.contains("head") || lower.contains("casque") || lower.contains("bluez") {
-        Lead::Tile("glyph-head", 0xDB2C57)
+        Lead::Tile("glyph-head")
     } else {
-        Lead::Tile("glyph-laptop", 0x4B5563)
+        Lead::Tile("glyph-laptop")
     }
 }
 
@@ -4239,9 +4204,9 @@ fn appearance_choice(ui: &mut egui::Ui, mode: Appearance, selected: bool) -> egu
     let card = egui::Rect::from_min_size(rect.min, egui::vec2(rect.width(), 128.0));
     let paint = |painter: &egui::Painter, dark: bool| {
         let (wall, window, bar, line) = if dark {
-            (0x16202D, 0x22262D, 0x2A2E35, 0x3A3F47)
+            (0x141416, 0x1E1E22, 0x19191C, 0x2C2C31)
         } else {
-            (0x6CB8FF, 0xFFFFFF, 0xF2F3F6, 0xD5D9E0)
+            (0xFFCDB4, 0xFFFFFF, 0xEBEBEF, 0xE2E2E7)
         };
         painter.rect_filled(card, 12.0, rgb(wall));
         let body = egui::Rect::from_min_max(
@@ -4305,7 +4270,7 @@ fn appearance_choice(ui: &mut egui::Ui, mode: Appearance, selected: bool) -> egu
 
 /// Pastilles des couleurs d'accentuation, en ligne ; la choisie est cerclée.
 fn accent_picker(ui: &mut egui::Ui, accent: &mut Accent) {
-    const STEP: f32 = 44.0;
+    const STEP: f32 = 40.0;
     let count = Accent::ALL.len() as f32;
     let (rect, _) = ui.allocate_exact_size(egui::vec2(count * STEP, 40.0), egui::Sense::hover());
     for (index, choice) in Accent::ALL.into_iter().enumerate() {

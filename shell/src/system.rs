@@ -220,14 +220,31 @@ pub fn start(handle: &LoopHandle<'static, Ferrite>) -> Result<SystemLink, String
     Ok(SystemLink { sender, events })
 }
 
-/// Annonce le thème aux applications tierces : GTK, et par le portail Firefox ou
-/// Chromium, suivent cette clé en direct.
+/// Annonce le thème aux applications tierces : GTK 4, et par le portail Firefox ou
+/// Chromium, suivent cette clé en direct. GTK 3 ne la lit pas : il reçoit le thème
+/// « Ferrite » ou « Ferrite-dark » (`ferrite-theme/gtk`), s'il est installé.
 fn publish_color_scheme(dark: bool) {
     let scheme = if dark { "prefer-dark" } else { "default" };
     let args = ["set", "org.gnome.desktop.interface", "color-scheme", scheme];
     if let Err(err) = command::run("gsettings", &args) {
         warn!("thème des applications tierces non transmis : {err}");
     }
+    if gtk_theme_installed() {
+        let theme = if dark { "Ferrite-dark" } else { "Ferrite" };
+        let args = ["set", "org.gnome.desktop.interface", "gtk-theme", theme];
+        if let Err(err) = command::run("gsettings", &args) {
+            warn!("thème GTK 3 non transmis : {err}");
+        }
+    }
+}
+
+/// Vrai si le thème GTK de Ferrite est installé pour tout le système ou pour le compte.
+fn gtk_theme_installed() -> bool {
+    let user = std::env::var_os("XDG_DATA_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|home| std::path::Path::new(&home).join(".local/share")))
+        .map(|data| data.join("themes/Ferrite-dark"));
+    std::path::Path::new("/usr/share/themes/Ferrite-dark").is_dir() || user.is_some_and(|dir| dir.is_dir())
 }
 
 /// Boutons de fenêtre des applications GTK (et de Firefox, Chromium, Brave, qui suivent

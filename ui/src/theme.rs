@@ -13,8 +13,8 @@ use crate::tokens::{colors, motion};
 
 /// Hauteur de la barre du haut.
 pub const MENUBAR_HEIGHT: u32 = 34;
-/// Hauteur de la barre de titre des fenêtres.
-pub const TITLEBAR_HEIGHT: u32 = 38;
+/// Hauteur de la barre de titre des fenêtres (titre et barre d'outils unifiés).
+pub const TITLEBAR_HEIGHT: u32 = 44;
 /// Rayon des coins des fenêtres.
 pub const WINDOW_RADIUS: u32 = crate::tokens::radius::WINDOW;
 /// Côté des icônes du Dock.
@@ -24,15 +24,16 @@ pub const DOCK_GAP: u32 = 10;
 /// Marge intérieure du Dock.
 pub const DOCK_PADDING: u32 = 12;
 /// Largeur d'un menu déroulant.
-pub const MENU_WIDTH: u32 = 220;
+pub const MENU_WIDTH: u32 = 240;
 /// Hauteur d'une ligne de menu.
-pub const MENU_ITEM_HEIGHT: u32 = 32;
+pub const MENU_ITEM_HEIGHT: u32 = 28;
 
-/// Boutons de fenêtre, tous à droite (réduire, agrandir, fermer) : pastille de 18 px,
-/// centre du bouton fermer à 19 px du bord, 30 px entre deux centres.
-pub const WINDOW_BUTTON_RADIUS: u32 = 9;
+/// Boutons de fenêtre, tous à droite (réduire, agrandir, fermer) : pastille de 14 px,
+/// centre du bouton fermer à 19 px du bord, 22 px entre deux centres (8 px d'écart).
+/// Au repos, seul « fermer » porte l'accent ; les symboles apparaissent au survol.
+pub const WINDOW_BUTTON_RADIUS: u32 = 7;
 pub const WINDOW_BUTTON_INSET: u32 = 19;
-pub const WINDOW_BUTTON_GAP: u32 = 30;
+pub const WINDOW_BUTTON_GAP: u32 = 22;
 
 /// Polices de l'interface (fichiers dans `assets/fonts`).
 pub const FONT_UI: &str = "Inter";
@@ -83,7 +84,7 @@ impl Color {
     pub fn ink_on(self) -> Color {
         let brightness = (299 * u32::from(self.r) + 587 * u32::from(self.g) + 114 * u32::from(self.b)) / 1000;
         if brightness > 145 {
-            Color::rgb(0x0B1A2E)
+            Color::rgb(0x141416)
         } else {
             Color::WHITE
         }
@@ -175,94 +176,98 @@ pub struct Palette {
 }
 
 impl Palette {
+    /// Thème clair : fenêtre gris très clair, contenu et cartes blancs, chrome (barre de
+    /// titre, colonne, barres d'outils) un cran plus soutenu. Neutres sans teinte bleue.
     pub const LIGHT: Palette = Palette {
         accent: Color::rgb(colors::ACCENT_LIGHT),
-        window_background: Color::rgb(0xFFFFFF),
+        window_background: Color::rgb(0xF4F4F6),
         content_background: Color::rgb(0xFFFFFF),
-        header_background: Color::rgb(0xF7F8FA),
-        sidebar_background: Color::rgb(0xF2F3F6),
-        toolbar_top: Color::rgb(0xF7F8FA),
-        toolbar_bottom: Color::rgb(0xF7F8FA),
-        titlebar: Color::rgb(0xF7F8FA),
-        titlebar_inactive: Color::rgb(0xFBFBFC),
-        titlebar_line: Color::rgb(0xE3E6EB),
-        titlebar_line_inactive: Color::rgb(0xEDEFF2),
-        window_title_active: Color::rgb(0x1F2937),
-        window_title_inactive: Color::rgb(0x6B7280),
-        titlebar_action_active: Color::rgb(0x4B5563),
-        titlebar_action_inactive: Color::rgb(0x6B7280),
-        text: Color::rgb(0x16181C),
-        text_secondary: Color::rgb(0x4B5563),
-        separator: Color::rgb(0xE3E6EB),
-        control_separator: Color::rgb(0xEDEFF2),
-        border: Color::rgb(0xD5D9E0),
-        border_hover: Color::rgb(0xAEB6C2),
-        control_hover: Color::rgb(0xEEF0F4),
-        control_pressed: Color::rgb(0xE7E9EE),
+        header_background: Color::rgb(0xEBEBEF),
+        sidebar_background: Color::rgb(0xEBEBEF),
+        toolbar_top: Color::rgb(0xEBEBEF),
+        toolbar_bottom: Color::rgb(0xEBEBEF),
+        titlebar: Color::rgb(0xEBEBEF),
+        titlebar_inactive: Color::rgb(0xF1F1F4),
+        titlebar_line: Color::rgb(0xE2E2E7),
+        titlebar_line_inactive: Color::rgb(0xE8E8EC),
+        window_title_active: Color::rgb(0x1B1B1F),
+        window_title_inactive: Color::rgb(0x5A5A64),
+        titlebar_action_active: Color::rgb(0x3A3A42),
+        titlebar_action_inactive: Color::rgb(0x6E6E78),
+        text: Color::rgb(0x1B1B1F),
+        text_secondary: Color::rgb(0x5A5A64),
+        separator: Color::rgb(0xE2E2E7),
+        control_separator: Color::rgb(0xEBEBEF),
+        border: Color::rgb(0xD4D4DA),
+        border_hover: Color::rgb(0x8A8A94),
+        control_hover: Color::rgb(0xE1E1E6),
+        control_pressed: Color::rgb(0xD8D8DE),
         danger: Color::rgb(colors::DANGER_LIGHT),
         success: Color::rgb(colors::SUCCESS_LIGHT),
         warning: Color::rgb(colors::WARNING_LIGHT),
-        window_button: Color::rgb(0xD5D9E0),
-        window_button_inactive: Color::rgb(0xE7E9EE),
-        window_glyph: Color::rgb(0x4B5563),
-        window_ring: Color::BLACK.with_alpha(20),
-        selection: Color::rgb(0xDCEAFB),
-        selection_text: Color::rgb(0x174F9E),
+        window_button: Color::rgb(0xD4D4DA),
+        window_button_inactive: Color::rgb(0xDDDDE2),
+        window_glyph: Color::rgb(0x3A3A42),
+        window_ring: Color::BLACK.with_alpha(31),
+        selection: Color::rgb(0xFDE8DD),
+        selection_text: Color::rgb(0x8F2F09),
         shadow: Color::BLACK.with_alpha(97),
-        track: Color::rgb(0xD5D9E0),
-        heading: Color::rgb(0x374151),
-        success_text: Color::rgb(0x1F7A4D),
-        stage: Color::rgb(0xEDEFF2),
-        inverse: Color::rgb(0x16181C),
-        inverse_text: Color::WHITE,
-        inverse_action: Color::rgb(0x9CC7FF),
-        surface: Color::rgb(0xF4F5F7),
+        track: Color::rgb(0xD4D4DA),
+        heading: Color::rgb(0x2E2E35),
+        success_text: Color::rgb(0x137333),
+        stage: Color::rgb(0xE8E8EC),
+        inverse: Color::rgb(0x1B1B1F),
+        inverse_text: Color::rgb(0xF2F2F5),
+        inverse_action: Color::rgb(0xFFB38F),
+        surface: Color::rgb(0xFFFFFF),
         sidebar_pill: Color::WHITE,
     };
 
+    /// Thème sombre : presque noir neutre, cartes un cran plus claires, contour de
+    /// fenêtre blanc à 10 % pour la détacher du fond.
     pub const DARK: Palette = Palette {
         accent: Color::rgb(colors::ACCENT_DARK),
-        window_background: Color::rgb(0x22262D),
-        content_background: Color::rgb(0x22262D),
-        header_background: Color::rgb(0x2A2E35),
-        sidebar_background: Color::rgb(0x1E2127),
-        toolbar_top: Color::rgb(0x2A2E35),
-        toolbar_bottom: Color::rgb(0x2A2E35),
-        titlebar: Color::rgb(0x2A2E35),
-        titlebar_inactive: Color::rgb(0x25282E),
-        titlebar_line: Color::rgb(0x353A42),
-        titlebar_line_inactive: Color::rgb(0x2E333A),
-        window_title_active: Color::rgb(0xE5E7EB),
-        window_title_inactive: Color::rgb(0x9CA3AF),
-        titlebar_action_active: Color::rgb(0xC9CED6),
-        titlebar_action_inactive: Color::rgb(0x9CA3AF),
-        text: Color::rgb(0xE5E7EB),
-        text_secondary: Color::rgb(0x9CA3AF),
-        separator: Color::rgb(0x353A42),
-        control_separator: Color::rgb(0x2E333A),
-        border: Color::rgb(0x353A42),
-        border_hover: Color::rgb(0x4B5360),
-        control_hover: Color::rgb(0x30343B),
-        control_pressed: Color::rgb(0x3A3F47),
+        window_background: Color::rgb(0x141416),
+        content_background: Color::rgb(0x1E1E22),
+        header_background: Color::rgb(0x19191C),
+        sidebar_background: Color::rgb(0x19191C),
+        toolbar_top: Color::rgb(0x19191C),
+        toolbar_bottom: Color::rgb(0x19191C),
+        titlebar: Color::rgb(0x19191C),
+        titlebar_inactive: Color::rgb(0x161618),
+        titlebar_line: Color::rgb(0x2C2C31),
+        titlebar_line_inactive: Color::rgb(0x232327),
+        window_title_active: Color::rgb(0xF2F2F5),
+        window_title_inactive: Color::rgb(0xA6A6B0),
+        titlebar_action_active: Color::rgb(0xD8D8DE),
+        titlebar_action_inactive: Color::rgb(0x8C8C96),
+        text: Color::rgb(0xF2F2F5),
+        text_secondary: Color::rgb(0xA6A6B0),
+        separator: Color::rgb(0x2C2C31),
+        control_separator: Color::rgb(0x232327),
+        border: Color::rgb(0x34343A),
+        border_hover: Color::rgb(0x6E6E78),
+        control_hover: Color::rgb(0x2A2A2F),
+        control_pressed: Color::rgb(0x333338),
         danger: Color::rgb(colors::DANGER_DARK),
         success: Color::rgb(colors::SUCCESS_DARK),
         warning: Color::rgb(colors::WARNING_DARK),
-        window_button: Color::rgb(0x4B5360),
-        window_button_inactive: Color::rgb(0x3A3F47),
-        window_glyph: Color::rgb(0xE5E7EB),
-        window_ring: Color::WHITE.with_alpha(15),
-        selection: Color::rgb(0x23395B),
-        selection_text: Color::rgb(0xCFE3FB),
-        shadow: Color::BLACK.with_alpha(115),
-        track: Color::rgb(0x4B5360),
-        heading: Color::rgb(0xD1D5DB),
+        window_button: Color::rgb(0x3A3A40),
+        window_button_inactive: Color::rgb(0x2A2A2F),
+        window_glyph: Color::rgb(0xE6E6EA),
+        window_ring: Color::WHITE.with_alpha(26),
+        selection: Color::rgb(0x3B2117),
+        selection_text: Color::rgb(0xFFB38F),
+        shadow: Color::BLACK.with_alpha(140),
+        track: Color::rgb(0x3A3A40),
+        heading: Color::rgb(0xD8D8DE),
         success_text: Color::rgb(0x4ADE80),
-        stage: Color::rgb(0x121418),
-        inverse: Color::rgb(0xE5E7EB),
-        inverse_text: Color::rgb(0x16181C),
-        inverse_action: Color::rgb(0x174F9E),
-        surface: Color::rgb(0x2B2F36),
-        sidebar_pill: Color::rgb(0x343840),
+        stage: Color::rgb(0x0E0E10),
+        inverse: Color::rgb(0xF2F2F5),
+        inverse_text: Color::rgb(0x1B1B1F),
+        inverse_action: Color::rgb(0xB83A0A),
+        surface: Color::rgb(0x1E1E22),
+        sidebar_pill: Color::rgb(0x2A2A2F),
     };
 
     pub const fn for_mode(mode: ThemeMode) -> Palette {
@@ -303,16 +308,16 @@ impl Palette {
                 border_hover: Color::WHITE,
                 window_glyph: Color::WHITE,
                 window_ring: Color::WHITE.with_alpha(110),
-                selection: Color::rgb(0xCFE3FB),
-                selection_text: Color::rgb(0x0B1F3A),
+                selection: Color::rgb(0xFFB38F),
+                selection_text: Color::rgb(0x1A0B04),
                 track: Color::rgb(0x9CA3AF),
                 ..self
             }
         } else {
             Palette {
                 text: Color::BLACK,
-                text_secondary: Color::rgb(0x1F2937),
-                heading: Color::rgb(0x111827),
+                text_secondary: Color::rgb(0x2E2E35),
+                heading: Color::rgb(0x111114),
                 window_title_active: Color::BLACK,
                 window_title_inactive: Color::rgb(0x374151),
                 titlebar_action_active: Color::rgb(0x111827),
@@ -325,7 +330,7 @@ impl Palette {
                 border_hover: Color::rgb(0x111827),
                 window_glyph: Color::rgb(0x111827),
                 window_ring: Color::BLACK.with_alpha(130),
-                selection: Color::rgb(0x174F9E),
+                selection: Color::rgb(0x8F2F09),
                 selection_text: Color::WHITE,
                 track: Color::rgb(0x6B7280),
                 ..self
@@ -454,7 +459,7 @@ mod tests {
         let scale = Scale::from_factor(1.75).unwrap();
         assert_eq!(scale.as_120ths(), 210);
         assert_eq!(scale.ceil(), 2);
-        assert_eq!(scale.to_physical(TITLEBAR_HEIGHT), 67);
+        assert_eq!(scale.to_physical(TITLEBAR_HEIGHT), 77);
         assert_eq!(scale.to_logical(2880), 1646);
         assert_eq!(Scale::from_factor(0.0), None);
         assert_eq!(Scale::from_factor(f64::NAN), None);
@@ -463,7 +468,7 @@ mod tests {
     #[test]
     fn couleurs() {
         let accent = Palette::LIGHT.accent;
-        assert_eq!((accent.r, accent.g, accent.b, accent.a), (0x27, 0x79, 0xE0, 255));
+        assert_eq!((accent.r, accent.g, accent.b, accent.a), (0xB8, 0x3A, 0x0A, 255));
         assert_eq!(Color::WHITE.to_argb8888_premultiplied(), 0xFFFF_FFFF);
         assert_eq!(
             Color::WHITE.with_alpha(128).to_argb8888_premultiplied(),
@@ -474,8 +479,54 @@ mod tests {
         assert_eq!(Palette::for_mode(ThemeMode::Dark), Palette::DARK);
         assert_ne!(Palette::LIGHT.window_background, Palette::DARK.window_background);
         assert_ne!(Palette::LIGHT.text, Palette::DARK.text);
-        assert_eq!(Palette::LIGHT.danger, Palette::DARK.danger);
+        assert_ne!(Palette::LIGHT.danger, Palette::DARK.danger);
         assert_eq!((Palette::LIGHT.border.a, Palette::DARK.border.a), (255, 255));
+    }
+
+    /// Rapport de contraste WCAG entre deux couleurs opaques.
+    fn contrast(a: Color, b: Color) -> f32 {
+        let lum = |c: Color| {
+            let f = |v: u8| {
+                let v = f32::from(v) / 255.0;
+                if v <= 0.039_28 {
+                    v / 12.92
+                } else {
+                    ((v + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b)
+        };
+        let (x, y) = (lum(a), lum(b));
+        (x.max(y) + 0.05) / (x.min(y) + 0.05)
+    }
+
+    #[test]
+    fn textes_lisibles_sur_chaque_fond_des_deux_themes() {
+        for palette in [Palette::LIGHT, Palette::DARK] {
+            for ground in [
+                palette.window_background,
+                palette.content_background,
+                palette.sidebar_background,
+                palette.titlebar,
+                palette.surface,
+                palette.control_hover,
+            ] {
+                assert!(contrast(palette.text, ground) >= 4.5);
+                assert!(contrast(palette.text_secondary, ground) >= 4.5);
+            }
+            for ground in [
+                palette.window_background,
+                palette.surface,
+                palette.sidebar_background,
+            ] {
+                assert!(contrast(palette.accent, ground) >= 4.5, "accent comme texte");
+            }
+            assert!(contrast(palette.accent.ink_on(), palette.accent) >= 4.5);
+            assert!(contrast(palette.selection_text, palette.selection) >= 4.5);
+            assert!(contrast(palette.window_title_inactive, palette.titlebar_inactive) >= 4.5);
+            assert!(contrast(palette.danger, palette.surface) >= 4.5);
+            assert!(contrast(palette.success_text, palette.surface) >= 4.5);
+        }
     }
 
     #[test]

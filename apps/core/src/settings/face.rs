@@ -16,7 +16,7 @@ use eframe::egui;
 use ferrite_system::config::Settings;
 
 use super::{
-    Page, SettingsState,
+    SettingsState,
     rows::{self, Lead, Row, group},
 };
 
@@ -201,9 +201,7 @@ impl SettingsState {
                 ),
             };
             rows.row(
-                Row::new(&status)
-                    .hint(hint)
-                    .lead(Lead::Tile("glyph-account", Page::Privacy.color())),
+                Row::new(&status).hint(hint).lead(Lead::Tile("glyph-account")),
                 |ui| {
                     if enrolling {
                         ui.add(egui::Spinner::new().size(16.0));

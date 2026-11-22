@@ -1184,8 +1184,9 @@ impl Appearance {
 /// Couleur d'accentuation, comme dans les Réglages de macOS.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Accent {
-    /// Le bleu Ferrite, plus clair en thème sombre.
+    /// L'Oxyde de Ferrite, plus vif en thème sombre.
     #[default]
+    Oxide,
     Blue,
     Teal,
     Green,
@@ -1198,7 +1199,8 @@ pub enum Accent {
 }
 
 impl Accent {
-    pub const ALL: [Accent; 9] = [
+    pub const ALL: [Accent; 10] = [
+        Accent::Oxide,
         Accent::Blue,
         Accent::Teal,
         Accent::Green,
@@ -1219,6 +1221,7 @@ impl Accent {
 
     pub fn key(self) -> &'static str {
         match self {
+            Accent::Oxide => "oxyde",
             Accent::Blue => "bleu",
             Accent::Teal => "turquoise",
             Accent::Purple => "violet",
@@ -1233,6 +1236,7 @@ impl Accent {
 
     pub fn label(self) -> &'static str {
         match self {
+            Accent::Oxide => "Oxyde",
             Accent::Blue => "Bleu",
             Accent::Teal => "Turquoise",
             Accent::Purple => "Violet",
@@ -1245,10 +1249,11 @@ impl Accent {
         }
     }
 
-    /// Couleur `0xRRGGBB` ; `None` pour le bleu Ferrite, qui dépend du thème.
+    /// Couleur `0xRRGGBB` ; `None` pour l'Oxyde de Ferrite, qui dépend du thème.
     pub fn rgb(self) -> Option<u32> {
         match self {
-            Accent::Blue => None,
+            Accent::Oxide => None,
+            Accent::Blue => Some(0x2779E0),
             Accent::Teal => Some(0x0E9AA7),
             Accent::Green => Some(0x1F9D63),
             Accent::Yellow => Some(0xE3A008),
@@ -1562,7 +1567,7 @@ mod tests {
     fn reglages_d_apparence() {
         let defaults = Settings::default();
         assert_eq!(defaults.appearance(), Appearance::Light);
-        assert_eq!(defaults.accent(), Accent::Blue);
+        assert_eq!(defaults.accent(), Accent::Oxide);
         assert_eq!(defaults.highlight(), None);
         assert_eq!(defaults.sidebar_icons(), DockSize::Medium);
         assert_eq!(defaults.scroll_bars(), ScrollBars::Auto);

@@ -25,8 +25,8 @@ pub fn page_color() -> Color32 {
 pub enum Lead {
     #[default]
     None,
-    /// Pastille colorée de 30 px et son symbole blanc.
-    Tile(&'static str, u32),
+    /// Carré de 30 px en accent léger et son symbole en accent (charte « Forge »).
+    Tile(&'static str),
     /// Force du signal Wi-Fi, de 1 à 3 ondes.
     Bars(u8),
     /// Image ronde de 30 px (image de profil).
@@ -159,18 +159,12 @@ impl Group<'_> {
         let mut x = inner.left();
         match row.lead {
             Lead::None => {}
-            Lead::Tile(glyph, color) => {
+            Lead::Tile(glyph) => {
                 let tile = egui::Rect::from_center_size(
                     egui::pos2(x + 15.0, inner.center().y),
                     egui::vec2(30.0, 30.0),
                 );
-                child.painter().rect_filled(tile, 8.0, rgb(color));
-                self.icons.paint(
-                    &child,
-                    glyph,
-                    tile.shrink(6.5),
-                    style::IconStyle::Tinted(Color32::WHITE),
-                );
+                accent_tile(&child, self.icons, glyph, tile, 8.0);
                 x += 42.0;
             }
             Lead::Picture(texture) => {
@@ -207,11 +201,8 @@ impl Group<'_> {
             egui::FontId::proportional(14.0)
         };
         let title = one_line(&child, row.label, font, style::primary_text(), width);
-        let hint_color = if row.ok {
-            style::success()
-        } else {
-            style::text_secondary()
-        };
+        // Un état « bon » (connecté…) se dit par un point vert devant l'indication grise.
+        let hint_color = style::text_secondary();
         if row.hint.is_empty() {
             let y = inner.center().y - title.size().y / 2.0;
             child
@@ -231,7 +222,15 @@ impl Group<'_> {
             child
                 .painter()
                 .galley(egui::pos2(x, top), title, style::primary_text());
-            child.painter().galley(egui::pos2(x, below), hint, hint_color);
+            let mut hint_x = x;
+            if row.ok {
+                let dot = egui::pos2(x + 3.5, below + hint.size().y / 2.0);
+                child.painter().circle_filled(dot, 3.5, style::success());
+                hint_x += 12.0;
+            }
+            child
+                .painter()
+                .galley(egui::pos2(hint_x, below), hint, hint_color);
         }
         let response = if row.enabled {
             response
@@ -260,16 +259,21 @@ fn one_line(
     ui.painter().layout_job(job)
 }
 
-/// Grande ligne de tête (Wi-Fi, Bluetooth) : pastille de 44 px, titre, état et
-/// interrupteur principal, dans sa propre carte.
-pub fn hero(
-    ui: &mut egui::Ui,
-    icons: &mut Icons,
-    (glyph, color): (&'static str, u32),
-    title: &str,
-    subtitle: &str,
-    toggle: Option<(&mut bool, bool)>,
-) -> bool {
+/// Carré d'icône en accent léger, symbole en accent (charte « Forge ») : têtes de page,
+/// lignes à pastille, détails d'un appareil.
+pub fn accent_tile(ui: &egui::Ui, icons: &mut Icons, glyph: &'static str, tile: egui::Rect, radius: f32) {
+    ui.painter().rect_filled(tile, radius, style::accent_soft());
+    icons.paint(
+        ui,
+        glyph,
+        tile.shrink(tile.width() * 0.22),
+        style::IconStyle::Tinted(style::accent_ink()),
+    );
+}
+
+/// Grande ligne de tête (Wi-Fi, Bluetooth) : titre, état et interrupteur principal, dans
+/// sa propre carte. Le symbole est dans la tête de page, juste au-dessus.
+pub fn hero(ui: &mut egui::Ui, title: &str, subtitle: &str, toggle: Option<(&mut bool, bool)>) -> bool {
     let mut changed = false;
     Frame::new()
         .fill(style::surface())
@@ -279,14 +283,6 @@ pub fn hero(
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 14.0;
-                let (tile, _) = ui.allocate_exact_size(egui::vec2(44.0, 44.0), Sense::hover());
-                ui.painter().rect_filled(tile, 11.0, rgb(color));
-                icons.paint(
-                    ui,
-                    glyph,
-                    tile.shrink(10.0),
-                    style::IconStyle::Tinted(Color32::WHITE),
-                );
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
                     ui.add_space(4.0);
@@ -412,9 +408,4 @@ pub fn meter(ui: &mut egui::Ui, level: usize) {
         };
         ui.painter().rect_filled(cell, 2.0, color);
     }
-}
-
-fn rgb(hex: u32) -> Color32 {
-    let [_, r, g, b] = hex.to_be_bytes();
-    Color32::from_rgb(r, g, b)
 }

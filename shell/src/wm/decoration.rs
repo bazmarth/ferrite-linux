@@ -174,11 +174,11 @@ mod tests {
     #[test]
     fn trois_boutons_a_droite_de_la_barre() {
         let c = content();
-        // Boutons ronds de 28 px (thème « Fusion ») : centres à 22, 56 et 90 px du bord.
-        assert_eq!(hit(c, p(478.0, 124.0)), Some(Part::Button(WindowButton::Close)));
-        assert_eq!(hit(c, p(444.0, 124.0)), Some(Part::Button(WindowButton::Zoom)));
+        // Boutons ronds de 24 px (thème « Fusion ») : centres à 20, 50 et 80 px du bord.
+        assert_eq!(hit(c, p(480.0, 124.0)), Some(Part::Button(WindowButton::Close)));
+        assert_eq!(hit(c, p(450.0, 124.0)), Some(Part::Button(WindowButton::Zoom)));
         assert_eq!(
-            hit(c, p(410.0, 124.0)),
+            hit(c, p(420.0, 124.0)),
             Some(Part::Button(WindowButton::Minimize))
         );
         assert_eq!(hit(c, p(119.0, 124.0)), Some(Part::Titlebar));

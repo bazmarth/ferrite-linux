@@ -714,7 +714,7 @@ impl PdfViewerState {
         self.sync_title(&ctx);
         self.refresh_search();
 
-        style::toolbar_with(ui, true, style::background(), style::line(), |ui| {
+        style::toolbar_with(ui, true, style::header_color(), Color32::TRANSPARENT, |ui| {
             self.toolbar(ui, &ctx, recents)
         });
         if let Some(strip) = tabs {
@@ -726,22 +726,25 @@ impl PdfViewerState {
         if self.sidebar && self.info.is_some() {
             self.side_panel(ui, &ctx);
         }
-        egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(style::stage()))
-            .show(ui, |ui| {
-                if let Some(error) = self.error.clone() {
-                    self.error_screen(ui, &ctx, &error);
-                } else if self.info.is_none() {
-                    ui.centered_and_justified(|ui| {
-                        ui.horizontal_centered(|ui| {
-                            ui.spinner();
-                            ui.label("Ouverture du document…");
+        // Thème « Fusion » : barre sur le chrome, contenu dans la carte encastrée.
+        style::inset_panel(ui, true, false, |ui| {
+            egui::CentralPanel::default()
+                .frame(egui::Frame::new().fill(style::stage()))
+                .show(ui, |ui| {
+                    if let Some(error) = self.error.clone() {
+                        self.error_screen(ui, &ctx, &error);
+                    } else if self.info.is_none() {
+                        ui.centered_and_justified(|ui| {
+                            ui.horizontal_centered(|ui| {
+                                ui.spinner();
+                                ui.label("Ouverture du document…");
+                            });
                         });
-                    });
-                } else {
-                    self.pages_view(ui, &ctx);
-                }
-            });
+                    } else {
+                        self.pages_view(ui, &ctx);
+                    }
+                });
+        });
     }
 
     fn error_screen(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, error: &str) {
@@ -1954,7 +1957,7 @@ impl ViewerApp {
         let ctx = ui.ctx().clone();
         self.pump_covers(&ctx);
         let mut action = None;
-        style::toolbar_with(ui, true, style::background(), style::line(), |ui| {
+        style::toolbar_with(ui, true, style::header_color(), Color32::TRANSPARENT, |ui| {
             ui.add_space(12.0);
             ui.label(
                 egui::RichText::new("Lecteur PDF")
@@ -1968,144 +1971,148 @@ impl ViewerApp {
             });
         });
         let recents = self.recents.clone();
-        egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(style::stage()))
-            .show(ui, |ui| {
-                if recents.is_empty() {
-                    if welcome(ui, &mut self.icons) {
-                        action = Some(EmptyAction::Open);
+        // Thème « Fusion » : barre sur le chrome, contenu dans la carte encastrée.
+        style::inset_panel(ui, true, false, |ui| {
+            egui::CentralPanel::default()
+                .frame(egui::Frame::new().fill(style::stage()))
+                .show(ui, |ui| {
+                    if recents.is_empty() {
+                        if welcome(ui, &mut self.icons) {
+                            action = Some(EmptyAction::Open);
+                        }
+                        return;
                     }
-                    return;
-                }
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        let full = ui.max_rect();
-                        let (card_w, cover_h, gap) = (150.0, 196.0, 22.0);
-                        let columns =
-                            (((full.width() - 64.0 + gap) / (card_w + gap)).floor() as usize).clamp(1, 6);
-                        let grid_w = columns as f32 * (card_w + gap) - gap;
-                        let left = full.left() + ((full.width() - grid_w) / 2.0).max(24.0);
-                        ui.add_space(26.0);
-                        ui.horizontal(|ui| {
-                            ui.add_space(left - full.left());
-                            ui.label(
-                                egui::RichText::new("Documents récents")
-                                    .size(20.0)
-                                    .strong()
-                                    .color(style::heading_text()),
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            let full = ui.max_rect();
+                            let (card_w, cover_h, gap) = (150.0, 196.0, 22.0);
+                            let columns =
+                                (((full.width() - 64.0 + gap) / (card_w + gap)).floor() as usize).clamp(1, 6);
+                            let grid_w = columns as f32 * (card_w + gap) - gap;
+                            let left = full.left() + ((full.width() - grid_w) / 2.0).max(24.0);
+                            ui.add_space(26.0);
+                            ui.horizontal(|ui| {
+                                ui.add_space(left - full.left());
+                                ui.label(
+                                    egui::RichText::new("Documents récents")
+                                        .size(20.0)
+                                        .strong()
+                                        .color(style::heading_text()),
+                                );
+                            });
+                            ui.add_space(16.0);
+                            let top = ui.cursor().top();
+                            let pixels = (card_w * ctx.pixels_per_point()).ceil() as u32;
+                            let rows = recents.len().div_ceil(columns);
+                            let row_h = cover_h + 58.0;
+                            let (area, _) = ui.allocate_exact_size(
+                                vec2(full.width(), rows as f32 * (row_h + gap)),
+                                Sense::hover(),
                             );
-                        });
-                        ui.add_space(16.0);
-                        let top = ui.cursor().top();
-                        let pixels = (card_w * ctx.pixels_per_point()).ceil() as u32;
-                        let rows = recents.len().div_ceil(columns);
-                        let row_h = cover_h + 58.0;
-                        let (area, _) = ui.allocate_exact_size(
-                            vec2(full.width(), rows as f32 * (row_h + gap)),
-                            Sense::hover(),
-                        );
-                        let _ = area;
-                        for (index, recent) in recents.iter().enumerate() {
-                            let (row, column) = (index / columns, index % columns);
-                            let card = Rect::from_min_size(
-                                pos2(
-                                    left + column as f32 * (card_w + gap),
-                                    top + row as f32 * (row_h + gap),
-                                ),
-                                vec2(card_w, row_h),
-                            );
-                            let response = ui
-                                .interact(card, ui.scope_id().with(("recent", index)), Sense::click())
-                                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                                .on_hover_text(recent.path.display().to_string());
-                            if response.clicked() {
-                                action = Some(EmptyAction::Recent(recent.path.clone()));
-                            }
-                            response.context_menu(|ui| {
-                                style::menu_style(ui);
-                                if style::menu_row(ui, "Ouvrir", "", false, true).clicked() {
+                            let _ = area;
+                            for (index, recent) in recents.iter().enumerate() {
+                                let (row, column) = (index / columns, index % columns);
+                                let card = Rect::from_min_size(
+                                    pos2(
+                                        left + column as f32 * (card_w + gap),
+                                        top + row as f32 * (row_h + gap),
+                                    ),
+                                    vec2(card_w, row_h),
+                                );
+                                let response = ui
+                                    .interact(card, ui.scope_id().with(("recent", index)), Sense::click())
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                                    .on_hover_text(recent.path.display().to_string());
+                                if response.clicked() {
                                     action = Some(EmptyAction::Recent(recent.path.clone()));
                                 }
-                                if style::menu_row(ui, "Retirer de la liste", "", false, true).clicked() {
-                                    action = Some(EmptyAction::Forget(recent.path.clone()));
+                                response.context_menu(|ui| {
+                                    style::menu_style(ui);
+                                    if style::menu_row(ui, "Ouvrir", "", false, true).clicked() {
+                                        action = Some(EmptyAction::Recent(recent.path.clone()));
+                                    }
+                                    if style::menu_row(ui, "Retirer de la liste", "", false, true).clicked() {
+                                        action = Some(EmptyAction::Forget(recent.path.clone()));
+                                    }
+                                    style::menu_separator(ui);
+                                    if style::menu_row(ui, "Effacer la liste", "", true, true).clicked() {
+                                        action = Some(EmptyAction::Clear);
+                                    }
+                                });
+                                let cover_area = Rect::from_min_size(card.min, vec2(card_w, cover_h));
+                                let painter = ui.painter();
+                                if response.hovered() {
+                                    painter.rect_filled(
+                                        card.expand(8.0),
+                                        CornerRadius::same(12),
+                                        style::tint(10),
+                                    );
                                 }
-                                style::menu_separator(ui);
-                                if style::menu_row(ui, "Effacer la liste", "", true, true).clicked() {
-                                    action = Some(EmptyAction::Clear);
+                                let cover = self.cover(&ctx, &recent.path, pixels);
+                                let paper = match &cover {
+                                    Some(texture) => {
+                                        let size = texture.size_vec2();
+                                        let fit = (card_w / size.x).min(cover_h / size.y);
+                                        Rect::from_center_size(cover_area.center(), size * fit)
+                                    }
+                                    None => Rect::from_center_size(
+                                        cover_area.center(),
+                                        vec2(card_w * 0.76, cover_h),
+                                    ),
+                                };
+                                let shadow = style::elevation(ferrite_ui::tokens::elevation::WINDOW_INACTIVE);
+                                painter.add(shadow.as_shape(paper, CornerRadius::same(3)));
+                                painter.rect_filled(paper, CornerRadius::same(3), Color32::WHITE);
+                                if let Some(texture) = cover {
+                                    let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+                                    painter.image(texture.id(), paper, uv, Color32::WHITE);
                                 }
-                            });
-                            let cover_area = Rect::from_min_size(card.min, vec2(card_w, cover_h));
-                            let painter = ui.painter();
-                            if response.hovered() {
-                                painter.rect_filled(
-                                    card.expand(8.0),
-                                    CornerRadius::same(12),
-                                    style::tint(10),
+                                painter.rect_stroke(
+                                    paper,
+                                    CornerRadius::same(3),
+                                    Stroke::new(1.0, style::tint(24)),
+                                    egui::StrokeKind::Outside,
                                 );
-                            }
-                            let cover = self.cover(&ctx, &recent.path, pixels);
-                            let paper = match &cover {
-                                Some(texture) => {
-                                    let size = texture.size_vec2();
-                                    let fit = (card_w / size.x).min(cover_h / size.y);
-                                    Rect::from_center_size(cover_area.center(), size * fit)
-                                }
-                                None => {
-                                    Rect::from_center_size(cover_area.center(), vec2(card_w * 0.76, cover_h))
-                                }
-                            };
-                            let shadow = style::elevation(ferrite_ui::tokens::elevation::WINDOW_INACTIVE);
-                            painter.add(shadow.as_shape(paper, CornerRadius::same(3)));
-                            painter.rect_filled(paper, CornerRadius::same(3), Color32::WHITE);
-                            if let Some(texture) = cover {
-                                let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
-                                painter.image(texture.id(), paper, uv, Color32::WHITE);
-                            }
-                            painter.rect_stroke(
-                                paper,
-                                CornerRadius::same(3),
-                                Stroke::new(1.0, style::tint(24)),
-                                egui::StrokeKind::Outside,
-                            );
-                            let name = file_name(&recent.path);
-                            let title = painter.layout(
-                                name,
-                                egui::FontId::new(13.0, style::strong_family()),
-                                style::primary_text(),
-                                card_w,
-                            );
-                            let title_rows = title.rows.len();
-                            let title = if title_rows > 2 {
-                                painter.layout_no_wrap(
-                                    shorten(&file_name(&recent.path), 20),
+                                let name = file_name(&recent.path);
+                                let title = painter.layout(
+                                    name,
                                     egui::FontId::new(13.0, style::strong_family()),
                                     style::primary_text(),
-                                )
-                            } else {
-                                title
-                            };
-                            let title_pos =
-                                pos2(card.center().x - title.size().x / 2.0, cover_area.bottom() + 10.0);
-                            let title_h = title.size().y;
-                            painter.galley(title_pos, title, style::primary_text());
-                            painter.text(
-                                pos2(card.center().x, cover_area.bottom() + 12.0 + title_h),
-                                egui::Align2::CENTER_TOP,
-                                format!("Page {}", recent.page),
-                                egui::FontId::proportional(12.0),
-                                style::text_secondary(),
-                            );
-                        }
-                        ui.add_space(8.0);
-                        ui.vertical_centered(|ui| {
-                            if kit::button(ui, "Ouvrir un autre document…", false).clicked() {
-                                action = Some(EmptyAction::Open);
+                                    card_w,
+                                );
+                                let title_rows = title.rows.len();
+                                let title = if title_rows > 2 {
+                                    painter.layout_no_wrap(
+                                        shorten(&file_name(&recent.path), 20),
+                                        egui::FontId::new(13.0, style::strong_family()),
+                                        style::primary_text(),
+                                    )
+                                } else {
+                                    title
+                                };
+                                let title_pos =
+                                    pos2(card.center().x - title.size().x / 2.0, cover_area.bottom() + 10.0);
+                                let title_h = title.size().y;
+                                painter.galley(title_pos, title, style::primary_text());
+                                painter.text(
+                                    pos2(card.center().x, cover_area.bottom() + 12.0 + title_h),
+                                    egui::Align2::CENTER_TOP,
+                                    format!("Page {}", recent.page),
+                                    egui::FontId::proportional(12.0),
+                                    style::text_secondary(),
+                                );
                             }
+                            ui.add_space(8.0);
+                            ui.vertical_centered(|ui| {
+                                if kit::button(ui, "Ouvrir un autre document…", false).clicked() {
+                                    action = Some(EmptyAction::Open);
+                                }
+                            });
+                            ui.add_space(24.0);
                         });
-                        ui.add_space(24.0);
-                    });
-            });
+                });
+        });
         action
     }
 }

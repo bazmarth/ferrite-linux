@@ -29,11 +29,11 @@ pub const MENU_WIDTH: u32 = 240;
 pub const MENU_ITEM_HEIGHT: u32 = 28;
 
 /// Boutons de fenêtre (thème « Fusion »), tous à droite (réduire, agrandir, fermer) :
-/// ronds de 28 px sur un voile neutre, symbole toujours visible, 6 px d'écart ; centre de
-/// « fermer » à 22 px du bord. Au survol, le voile fonce ; « fermer » passe au rouge.
-pub const WINDOW_BUTTON_RADIUS: u32 = 14;
-pub const WINDOW_BUTTON_INSET: u32 = 22;
-pub const WINDOW_BUTTON_GAP: u32 = 34;
+/// ronds de 24 px sur un voile neutre, symbole toujours visible, 6 px d'écart ; centre de
+/// « fermer » à 20 px du bord. Au survol, le voile fonce ; « fermer » passe au rouge.
+pub const WINDOW_BUTTON_RADIUS: u32 = 12;
+pub const WINDOW_BUTTON_INSET: u32 = 20;
+pub const WINDOW_BUTTON_GAP: u32 = 30;
 
 /// Polices de l'interface (fichiers dans `assets/fonts`).
 pub const FONT_UI: &str = "Inter";

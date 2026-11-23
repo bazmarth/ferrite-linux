@@ -185,6 +185,27 @@ tooltip * { color: #F2F2F5; }
 
 /* Fenêtres dessinées par l'application (CSD) */
 decoration { border-radius: 14px 14px 0 0; }
+
+/* Thème « Fusion » : boutons de fenêtre ronds de 24 sur un voile, symbole visible ;
+   « fermer » rouge au survol. Interrupteur 40 × 22, poignée de 16. */
+headerbar button.titlebutton, .titlebar button.titlebutton {
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
+  margin: 0 3px;
+  border: none;
+  border-radius: 9999px;
+  box-shadow: none;
+  background-image: none;
+  background-color: #E1E1E6;
+  color: #1B1B1F;
+}
+headerbar button.titlebutton:hover { background-color: #D8D8DE; }
+headerbar button.titlebutton.close:hover { background-color: #C62828; color: #FFFFFF; }
+switch { min-width: 40px; min-height: 22px; }
+switch slider { min-width: 16px; min-height: 16px; margin: 3px; border: none; background-color: #1B1B1F; }
+switch:checked slider { background-color: #FFFFFF; }
+.sidebar row:selected, placessidebar row:selected { background-color: #FDE8DD; color: #8F2F09; }
 FIN_FERRITE
 cat > "$t/Ferrite/gtk-3.0/gtk-dark.css" <<'FIN_FERRITE'
 /* Ferrite — thème GTK 3 (sombre). Fichier généré par ferrite-theme/gtk/generer.py. */
@@ -365,6 +386,27 @@ tooltip * { color: #1B1B1F; }
 
 /* Fenêtres dessinées par l'application (CSD) */
 decoration { border-radius: 14px 14px 0 0; }
+
+/* Thème « Fusion » : boutons de fenêtre ronds de 24 sur un voile, symbole visible ;
+   « fermer » rouge au survol. Interrupteur 40 × 22, poignée de 16. */
+headerbar button.titlebutton, .titlebar button.titlebutton {
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
+  margin: 0 3px;
+  border: none;
+  border-radius: 9999px;
+  box-shadow: none;
+  background-image: none;
+  background-color: #2A2A2F;
+  color: #F2F2F5;
+}
+headerbar button.titlebutton:hover { background-color: #333338; }
+headerbar button.titlebutton.close:hover { background-color: #F87171; color: #1F0707; }
+switch { min-width: 40px; min-height: 22px; }
+switch slider { min-width: 16px; min-height: 16px; margin: 3px; border: none; background-color: #F2F2F5; }
+switch:checked slider { background-color: #1A0B04; }
+.sidebar row:selected, placessidebar row:selected { background-color: #3B2117; color: #FFB38F; }
 FIN_FERRITE
 cat > "$t/Ferrite-dark/gtk-3.0/gtk.css" <<'FIN_FERRITE'
 /* Ferrite — thème GTK 3 (sombre). Fichier généré par ferrite-theme/gtk/generer.py. */
@@ -545,10 +587,37 @@ tooltip * { color: #1B1B1F; }
 
 /* Fenêtres dessinées par l'application (CSD) */
 decoration { border-radius: 14px 14px 0 0; }
+
+/* Thème « Fusion » : boutons de fenêtre ronds de 24 sur un voile, symbole visible ;
+   « fermer » rouge au survol. Interrupteur 40 × 22, poignée de 16. */
+headerbar button.titlebutton, .titlebar button.titlebutton {
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
+  margin: 0 3px;
+  border: none;
+  border-radius: 9999px;
+  box-shadow: none;
+  background-image: none;
+  background-color: #2A2A2F;
+  color: #F2F2F5;
+}
+headerbar button.titlebutton:hover { background-color: #333338; }
+headerbar button.titlebutton.close:hover { background-color: #F87171; color: #1F0707; }
+switch { min-width: 40px; min-height: 22px; }
+switch slider { min-width: 16px; min-height: 16px; margin: 3px; border: none; background-color: #F2F2F5; }
+switch:checked slider { background-color: #1A0B04; }
+.sidebar row:selected, placessidebar row:selected { background-color: #3B2117; color: #FFB38F; }
 FIN_FERRITE
 cat > "$t/Ferrite/gtk-4.0/gtk.css" <<'FIN_FERRITE'
 /* Ferrite — couleurs pour GTK 4 et libadwaita. Fichier généré par ferrite-theme/gtk/generer.py.
    Installé dans ~/.config/gtk-4.0/gtk.css : GTK 4 le lit après le thème de l'application. */
+/* Thème « Fusion » : boutons de fenêtre ronds de 24, voile neutre, symbole visible. */
+windowcontrols > button { min-width: 24px; min-height: 24px; padding: 0; margin: 0 3px; }
+windowcontrols > button > image { border-radius: 9999px; padding: 5px; background-color: alpha(currentColor, 0.1); }
+windowcontrols > button:hover > image { background-color: alpha(currentColor, 0.18); }
+windowcontrols > button.close:hover > image { background-color: @destructive_bg_color; color: @destructive_fg_color; }
+switch { min-width: 40px; min-height: 22px; }
 @define-color accent_color #B83A0A;
 @define-color accent_bg_color #B83A0A;
 @define-color accent_fg_color #FFFFFF;
@@ -600,6 +669,12 @@ cat > "$t/Ferrite/gtk-4.0/gtk.css" <<'FIN_FERRITE'
   --popover-fg-color: #1B1B1F;
   --window-radius: 14px;
 }
+.navigation-sidebar > row:selected, row.activatable:selected {
+  background-color: #FDE8DD;
+  color: #8F2F09;
+}
+switch slider { background-color: #1B1B1F; }
+switch:checked slider { background-color: #FFFFFF; }
 @media (prefers-color-scheme: dark) {
   @define-color accent_color #FF7A45;
   @define-color accent_bg_color #FF7A45;
@@ -652,6 +727,12 @@ cat > "$t/Ferrite/gtk-4.0/gtk.css" <<'FIN_FERRITE'
     --popover-fg-color: #F2F2F5;
     --window-radius: 14px;
   }
+  .navigation-sidebar > row:selected, row.activatable:selected {
+    background-color: #3B2117;
+    color: #FFB38F;
+  }
+  switch slider { background-color: #F2F2F5; }
+  switch:checked slider { background-color: #1A0B04; }
 }
 FIN_FERRITE
 cat > "$t/Ferrite/index.theme" <<'FIN_FERRITE'

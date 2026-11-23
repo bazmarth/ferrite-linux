@@ -4519,3 +4519,35 @@ de la Logithèque ; barre du haut de la maquette (32 px, nom de l'appli active) 
 Horloge, TextEdit, Lecteur PDF, Terminal) : seulement les nouveaux boutons et commandes.
 Non vérifié : vrai bureau.
 
+## 2026-11-23 — Thème « Fusion » : écrans du bureau d'après la maquette
+
+Demande : faire toutes les étapes de design restantes sans demander ; boutons d'action un
+peu plus petits.
+- Boutons de fenêtre ronds de 24 px (au lieu de 28), dans les applications et sur les
+  barres de titre du bureau (`WINDOW_BUTTON_*` 12 / 20 / 30).
+- Centre de contrôle d'après la maquette : 388 px ; tête (pastille de batterie, capture
+  d'écran, Réglages, verrouiller, éteindre) ; curseurs fins avec pourcentage avant les
+  tuiles ; tuiles en pilule ; Silence passe en pastille, Mode nuit en tuile ; carte de
+  lecture à bouton d'accent. Bouton « Compte » remplacé par « Capture d'écran »
+  (`DesktopAction::OpenCapture`).
+- Lanceur : menu de 680 px, recherche en pilule à trait d'accent, cases de 106 × 100 à
+  icône de 56, titres de 16, pied (compte, verrouiller, éteindre) ; fond de verre uniforme.
+- Barre du haut : voile pleine largeur et filet, pastille symbole + bureaux, nom de
+  l'application active (`DesktopView::active_app`), heure avec point de notification
+  (plus de cloche), pastille des indicateurs.
+- Verrouillage : bouton d'entrée et anneau du champ en accent, « Ferrite » en haut à
+  gauche.
+- Logithèque : recherche en pilule, bannière « Sélection de la semaine », rubriques en
+  pastilles, « Populaires », cartes `surface-1` à filet (`style::hero_*`).
+- Lecteur PDF et Horloge : contenu dans la carte encastrée.
+- Thème GTK (`ferrite-theme/gtk/generer.py`, hors commit ; crochet 0140 de l'image
+  régénéré) : boutons de fenêtre ronds, interrupteurs 40 × 22, colonnes en accent léger.
+Vérifié : `tools/ci.sh` ; tests des clics (centre de contrôle, lanceur) ; captures du
+centre de contrôle (clair, sombre), du lanceur (clair, sombre), de la barre (clair,
+sombre), du verrouillage en saisie, de la Logithèque, du Lecteur PDF, de l'Horloge et de
+Réglages.
+Non fait : installateur à colonne d'étapes et assistant de premier démarrage de la
+maquette (refonte du déroulé, à part) ; panneau calendrier et notifications en deux
+colonnes ; aperçus des bureaux au-dessus du lanceur ; widgets de l'écran de
+verrouillage (agenda, messages). Non vérifié : vrai bureau, applications GTK réelles.
+

@@ -1764,6 +1764,7 @@ impl Ferrite {
                 }
             }
             DesktopAction::GoToPage(page) => self.go_to_page(page),
+            DesktopAction::OpenCapture => self.open_capture(self.screenshot_mode),
             DesktopAction::LauncherRubric(index) => {
                 self.launcher_rubric = index;
                 self.launcher_scroll = 0;

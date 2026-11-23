@@ -1576,6 +1576,11 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
         error: state.system_error.clone(),
         bar_visible: state.bar_visible(),
         bar_opaque: !state.dock_config.bar_translucent || state.space.elements().any(wm::is_maximized),
+        active_app: state
+            .active_window()
+            .and_then(|window| app_id(&window))
+            .map(|id| AppKey::for_window(&id, &state.applications).name(&state.applications))
+            .unwrap_or_default(),
         battery_percent: state.dock_config.battery_percent,
         bluetooth_icon: state.dock_config.bluetooth_icon,
         clock_style: state.dock_config.clock,
@@ -2399,6 +2404,7 @@ pub(crate) fn launcher_view(state: &Ferrite) -> LauncherView {
         query: state.launcher_query.clone(),
         rubrics,
         rubric,
+        user: launcher_user(),
         sections,
         scroll: state.launcher_scroll,
         backdrop: state.wallpaper.backdrop.clone(),
@@ -2428,6 +2434,16 @@ const LAUNCHER_RUBRICS: &[(&str, &[&str])] = &[
     ),
     ("Autres", &[]),
 ];
+
+/// Nom du compte au pied du lanceur, avec une capitale.
+fn launcher_user() -> String {
+    let name = crate::desktop::lock::user_name();
+    let mut letters = name.chars();
+    letters
+        .next()
+        .map(|first| first.to_uppercase().chain(letters).collect::<String>())
+        .unwrap_or_else(|| "Utilisateur".to_owned())
+}
 
 /// Libellé court d'une rubrique, pour sa pastille.
 fn launcher_chip_label(title: &str) -> String {

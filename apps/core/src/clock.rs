@@ -286,17 +286,20 @@ impl ClockState {
         }
 
         style::header(ui, |ui| self.tabs(ui));
-        egui::CentralPanel::no_frame()
-            .frame(
-                Frame::new()
-                    .fill(style::background())
-                    .inner_margin(Margin::symmetric(22, 18)),
-            )
-            .show(ui, |ui| match self.tab {
-                Tab::Horloge => self.clock(ui),
-                Tab::Minuteur => self.timer(ui),
-                Tab::Chronomètre => self.stopwatch(ui),
-            });
+        // Thème « Fusion » : barre sur le chrome, contenu dans la carte encastrée.
+        style::inset_panel(ui, true, false, |ui| {
+            egui::CentralPanel::no_frame()
+                .frame(
+                    Frame::new()
+                        .fill(style::background())
+                        .inner_margin(Margin::symmetric(22, 18)),
+                )
+                .show(ui, |ui| match self.tab {
+                    Tab::Horloge => self.clock(ui),
+                    Tab::Minuteur => self.timer(ui),
+                    Tab::Chronomètre => self.stopwatch(ui),
+                });
+        });
         self.report_to_island();
     }
 

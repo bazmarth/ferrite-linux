@@ -948,19 +948,19 @@ fn window_button(ui: &mut egui::Ui, center: egui::Pos2, kind: WindowButton) -> e
     let stroke = Stroke::new(1.7, ink);
     match kind {
         WindowButton::Minimize => {
-            painter.line_segment([at(-4.5, 0.0), at(4.5, 0.0)], stroke);
+            painter.line_segment([at(-4.0, 0.0), at(4.0, 0.0)], stroke);
         }
         WindowButton::Zoom => {
             painter.rect_stroke(
-                egui::Rect::from_center_size(center, egui::Vec2::splat(9.0)),
+                egui::Rect::from_center_size(center, egui::Vec2::splat(8.0)),
                 2.5,
                 Stroke::new(1.6, ink),
                 egui::StrokeKind::Middle,
             );
         }
         WindowButton::Close => {
-            painter.line_segment([at(-3.5, -3.5), at(3.5, 3.5)], stroke);
-            painter.line_segment([at(3.5, -3.5), at(-3.5, 3.5)], stroke);
+            painter.line_segment([at(-3.0, -3.0), at(3.0, 3.0)], stroke);
+            painter.line_segment([at(3.0, -3.0), at(-3.0, 3.0)], stroke);
         }
     }
     response
@@ -1273,6 +1273,26 @@ pub fn accent_ink() -> Color32 {
     } else {
         accent
     }
+}
+
+/// Bannière « Sélection de la semaine » de la Logithèque (thème « Fusion ») : fond, halo
+/// violet et surtitre.
+pub fn hero_background() -> Color32 {
+    themed(
+        Color32::from_rgb(0xF1, 0xEA, 0xFD),
+        Color32::from_rgb(0x17, 0x12, 0x1F),
+    )
+}
+
+pub fn hero_glow() -> Color32 {
+    Color32::from_rgb(0x9D, 0x74, 0xFF)
+}
+
+pub fn hero_overline() -> Color32 {
+    themed(
+        Color32::from_rgb(0x5B, 0x34, 0xC9),
+        Color32::from_rgb(0xE3, 0xD9, 0xFF),
+    )
 }
 
 /// Survol et pression neutres (`surface-3`) : ligne survolée, bouton fantôme pressé.

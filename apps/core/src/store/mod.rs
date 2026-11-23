@@ -599,17 +599,40 @@ impl StoreState {
                 self.deb = None;
             }
         }
-        // Champ de recherche au milieu de la barre.
-        let width = 320.0_f32.min(bar.width() - 80.0).max(120.0);
-        let field = egui::Rect::from_center_size(bar.center(), egui::vec2(width, 28.0));
-        ui.painter().rect_filled(field, 8.0, style::control_background());
-        let inner = field.shrink2(egui::vec2(10.0, 0.0));
+        // Champ de recherche en pilule (thème « Fusion ») : à gauche, 34 px, fond du contenu
+        // et filet, loupe devant.
+        let left = ui.cursor().left() + 10.0;
+        let width = 420.0_f32.min(bar.width() - 180.0).max(140.0);
+        let field =
+            egui::Rect::from_min_size(egui::pos2(left, bar.center().y - 17.0), egui::vec2(width, 34.0));
+        ui.painter().rect_filled(field, 17.0, style::surface());
+        ui.painter().rect_stroke(
+            field,
+            17.0,
+            egui::Stroke::new(1.0, style::hairline()),
+            egui::StrokeKind::Inside,
+        );
+        let lens = egui::Rect::from_center_size(
+            egui::pos2(field.left() + 20.0, field.center().y),
+            egui::Vec2::splat(16.0),
+        );
+        self.icons.paint(
+            ui,
+            "glyph-search",
+            lens,
+            style::IconStyle::Tinted(style::text_secondary()),
+        );
+        let inner = egui::Rect::from_min_max(
+            egui::pos2(field.left() + 34.0, field.top()),
+            egui::pos2(field.right() - 12.0, field.bottom()),
+        );
         let response = ui.put(
             inner,
             egui::TextEdit::singleline(&mut self.search)
                 .id(egui::Id::unique("logitheque-recherche"))
-                .hint_text(RichText::new("Rechercher des applications").size(14.0))
-                .font(FontId::proportional(14.0))
+                .hint_text(RichText::new("Rechercher une application").size(13.0))
+                .font(FontId::proportional(13.0))
+                .background_color(egui::Color32::TRANSPARENT)
                 .frame(Frame::NONE)
                 .align(egui::Align2::LEFT_CENTER)
                 .desired_width(inner.width()),
@@ -646,12 +669,26 @@ impl StoreState {
         }
         let apps = Arc::clone(&self.apps);
         egui::ScrollArea::vertical().id_salt("decouvrir").show(ui, |ui| {
-            ui.add_space(8.0);
+            ui.add_space(4.0);
             self.sources_cards(ui);
             let selection: Vec<&App> = SELECTION.iter().filter_map(|id| find(&apps, id)).collect();
-            if !selection.is_empty() {
-                kit::heading(ui, "Sélection");
-                self.grid(ui, &selection);
+            // Thème « Fusion » : bannière de la sélection, puis les rubriques en pastilles.
+            if let Some(first) = selection.first() {
+                if self.hero(ui, first).clicked() {
+                    self.detail = Some(Detail {
+                        id: first.id.clone(),
+                        origin: first.main().origin(),
+                        shot: 0,
+                    });
+                }
+                ui.add_space(22.0);
+            }
+            if let Some(index) = category_pills(ui) {
+                self.page = Page::Category(index);
+            }
+            if selection.len() > 1 {
+                heading_row(ui, "Populaires", |_| {});
+                self.grid(ui, &selection[1..]);
             }
             for (index, (key, label, _)) in CATEGORIES.iter().enumerate().take(6) {
                 let mut picks: Vec<&App> = apps
@@ -1088,17 +1125,99 @@ impl StoreState {
         }
     }
 
+    /// Bannière « Sélection de la semaine » (thème « Fusion ») : 220 px, coins de 14, halos
+    /// d'accent et de violet, grande icône, titre en 32, et un bouton en pilule qui ouvre la
+    /// fiche.
+    fn hero(&mut self, ui: &mut egui::Ui, app: &App) -> egui::Response {
+        let (rect, response) =
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), 220.0), Sense::click());
+        let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+        let painter = ui.painter_at(rect);
+        painter.rect_filled(rect, 14.0, style::hero_background());
+        // Halos : disques de plus en plus grands et transparents.
+        let glow = |center: egui::Pos2, radius: f32, color: egui::Color32, strength: f32| {
+            for step in 0..14 {
+                let part = step as f32 / 14.0;
+                let alpha = (strength * (1.0 - part) * 28.0) as u8;
+                painter.circle_filled(
+                    center,
+                    radius * (0.25 + 0.75 * part),
+                    egui::Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha / 3),
+                );
+            }
+        };
+        glow(
+            egui::pos2(rect.right() - rect.width() * 0.15, rect.top() + 60.0),
+            260.0,
+            style::hero_glow(),
+            1.0,
+        );
+        glow(
+            egui::pos2(rect.left() + rect.width() * 0.1, rect.bottom()),
+            220.0,
+            style::accent(),
+            0.8,
+        );
+        let main = app.main();
+        let icon = egui::Rect::from_min_size(
+            egui::pos2(rect.left() + 36.0, rect.center().y - 52.0),
+            egui::Vec2::splat(104.0),
+        );
+        self.paint_icon(ui, main, icon);
+        let x = icon.right() + 28.0;
+        let violet = style::hero_overline();
+        let overline = style::overline(ui, "Sélection de la semaine", violet);
+        let top = rect.center().y - 46.0;
+        painter.galley(egui::pos2(x, top), overline, violet);
+        painter.text(
+            egui::pos2(x, top + 20.0),
+            egui::Align2::LEFT_TOP,
+            &main.name,
+            FontId::new(32.0, style::strong_family()),
+            style::primary_text(),
+        );
+        let mut job = egui::text::LayoutJob::simple(
+            main.summary.clone(),
+            FontId::proportional(14.0),
+            style::text_secondary(),
+            (rect.right() - 200.0 - x).max(120.0),
+        );
+        job.wrap.max_rows = 2;
+        let summary = painter.layout_job(job);
+        painter.galley(egui::pos2(x, top + 64.0), summary, style::text_secondary());
+        let button = egui::Rect::from_min_size(
+            egui::pos2(rect.right() - 36.0 - 120.0, rect.center().y - 20.0),
+            egui::vec2(120.0, 40.0),
+        );
+        painter.rect_filled(button, 20.0, style::primary_text());
+        painter.text(
+            button.center(),
+            egui::Align2::CENTER_CENTER,
+            "Voir la fiche",
+            FontId::new(14.0, style::strong_family()),
+            style::background(),
+        );
+        response
+    }
+
     fn card(&mut self, ui: &mut egui::Ui, rect: egui::Rect, app: &App) -> egui::Response {
         let response = ui
             .interact(rect, ui.scope_id().with(("carte", &app.id)), Sense::click())
             .on_hover_cursor(egui::CursorIcon::PointingHand);
         let painter = ui.painter_at(rect);
+        // Thème « Fusion » : carte `surface-1` à filet, coins de 10 ; survol `surface-3`.
         let fill = if response.hovered() {
-            style::control_hover()
+            style::surface_hover()
         } else {
-            style::sidebar_color()
+            style::surface()
         };
-        painter.rect_filled(rect, 14.0, fill);
+        painter.rect_filled(rect, 10.0, fill);
+        painter.rect_stroke(
+            rect,
+            10.0,
+            egui::Stroke::new(1.0, style::hairline()),
+            egui::StrokeKind::Inside,
+        );
         let main = app.main();
         let icon = egui::Rect::from_min_size(rect.min + egui::vec2(14.0, 14.0), egui::Vec2::splat(56.0));
         self.paint_icon(ui, main, icon);
@@ -1640,10 +1759,44 @@ fn install_driver(driver: drivers::Driver, progress: &dyn Fn(u32)) -> Result<Str
     ))
 }
 
+/// Rubriques en pastilles (thème « Fusion ») : « Tout » pleine d'accent, les autres
+/// `surface-1` à filet. Rend la rubrique cliquée.
+fn category_pills(ui: &mut egui::Ui) -> Option<usize> {
+    let mut picked = None;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
+        let pill = |ui: &mut egui::Ui, text: &str, on: bool| {
+            let (fill, ink, stroke) = if on {
+                (style::accent(), style::accent_text(), egui::Stroke::NONE)
+            } else {
+                (
+                    style::surface(),
+                    style::primary_text(),
+                    egui::Stroke::new(1.0, style::hairline()),
+                )
+            };
+            ui.add(
+                egui::Button::new(RichText::new(text).size(13.0).color(ink))
+                    .fill(fill)
+                    .stroke(stroke)
+                    .corner_radius(16)
+                    .min_size(egui::vec2(0.0, 32.0)),
+            )
+        };
+        pill(ui, "Tout", true);
+        for (index, (_, label, _)) in CATEGORIES.iter().enumerate().take(6) {
+            if pill(ui, label, false).clicked() {
+                picked = Some(index);
+            }
+        }
+    });
+    picked
+}
+
 fn heading_row(ui: &mut egui::Ui, text: &str, right: impl FnOnce(&mut egui::Ui)) {
     ui.add_space(20.0);
     ui.horizontal(|ui| {
-        ui.label(RichText::new(text).size(17.0).family(style::strong_family()));
+        ui.label(RichText::new(text).size(20.0).family(style::strong_family()));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), right);
     });
     ui.add_space(8.0);

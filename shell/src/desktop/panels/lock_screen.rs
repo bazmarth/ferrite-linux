@@ -252,6 +252,9 @@ struct Tokens {
     error: (Color, Color),
     /// Bague autour du fond choisi.
     swatch_gap: Color,
+    /// Accent du thème (bouton d'entrée, anneau du champ) et encre posée dessus.
+    accent: Color,
+    on_accent: Color,
 }
 
 fn tokens(dark: bool) -> Tokens {
@@ -278,6 +281,8 @@ fn tokens(dark: bool) -> Tokens {
             ),
             error: (Color::rgb(0xF87171), Color::rgb(0xFCA5A5)),
             swatch_gap: Color::rgb(0x141416),
+            accent: ACCENT,
+            on_accent: Color::rgb(0x1A0B04),
         }
     } else {
         Tokens {
@@ -297,6 +302,8 @@ fn tokens(dark: bool) -> Tokens {
             veil: (white.with_alpha(15), white.with_alpha(82)),
             error: (Color::rgb(0xC62828), Color::rgb(0xB42318)),
             swatch_gap: white,
+            accent: Color::rgb(0xB83A0A),
+            on_accent: white,
         }
     }
 }
@@ -1277,8 +1284,15 @@ impl Panels {
         canvas.icon("cc-power", power.center(), 20.0, Style::Symbolic(tokens.fg));
     }
 
-    /// En haut à droite : Wi-Fi et batterie.
+    /// En haut : la marque à gauche (thème « Fusion »), Wi-Fi et batterie à droite.
     fn lock_status(&self, canvas: &mut Canvas, places: &Places, state: &VisualState, tokens: &Tokens) {
+        canvas.icon(
+            "ferrite-symbol-white",
+            (36.0, 30.0),
+            16.0,
+            Style::Symbolic(tokens.fg),
+        );
+        canvas.text(&self.bold, "Ferrite", 52.0, 22.0, 14.0, tokens.fg);
         let mut right = places.w - 28.0;
         if let Some(battery) = state.battery {
             let text = format!("{} %", battery.percent);
@@ -1589,7 +1603,11 @@ impl Panels {
             let wrong = matches!(lock.message, LockMessage::Empty | LockMessage::Wrong);
             canvas.fill(field, 24.0, tokens.field);
             let edge = if wrong { tokens.error.0 } else { tokens.field_edge };
-            canvas.stroke(field, 24.0, edge, 1.5);
+            canvas.stroke(field, 24.0, edge, 1.0);
+            // Thème « Fusion » : anneau d'accent de 2 px, à 2 px du champ (champ actif).
+            if !wrong {
+                canvas.stroke(field.expand(3.0), 27.0, tokens.accent, 2.0);
+            }
             let x = field.x + 16.0;
             let eye = places.eye();
             let eye = Rect::new(eye.x + shake, eye.y, eye.w, eye.h);
@@ -1646,11 +1664,12 @@ impl Panels {
             }
             let submit = places.submit();
             let submit = Rect::new(submit.x + shake, submit.y, submit.w, submit.h);
-            canvas.fill(submit, 18.0, Color::rgb(0x0B7C86));
+            canvas.fill(submit, 18.0, tokens.accent);
             let (cx, cy) = submit.center();
-            canvas.line((cx - 5.0, cy), (cx + 5.0, cy), 2.0, Color::WHITE);
-            canvas.line((cx + 1.0, cy - 4.0), (cx + 5.0, cy), 2.0, Color::WHITE);
-            canvas.line((cx + 1.0, cy + 4.0), (cx + 5.0, cy), 2.0, Color::WHITE);
+            let ink = tokens.on_accent;
+            canvas.line((cx - 5.0, cy), (cx + 5.0, cy), 2.0, ink);
+            canvas.line((cx + 1.0, cy - 4.0), (cx + 5.0, cy), 2.0, ink);
+            canvas.line((cx + 1.0, cy + 4.0), (cx + 5.0, cy), 2.0, ink);
             let (text, ink) = match (lock.message, lock.face) {
                 (LockMessage::Empty, _) => ("Saisissez votre mot de passe", tokens.error.1),
                 (LockMessage::Wrong, _) => ("Mot de passe incorrect", tokens.error.1),

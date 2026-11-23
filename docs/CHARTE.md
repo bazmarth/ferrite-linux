@@ -100,8 +100,8 @@ ailleurs, pas de capitales forcées.
 
 ### Boutons de fenêtre (thème « Fusion »)
 
-- Toujours à droite : réduire, agrandir, fermer (au bord). Ronds de 28 px sur un voile
-  neutre (`window_button`), 6 px d'écart, centre de « fermer » à 22 px du bord.
+- Toujours à droite : réduire, agrandir, fermer (au bord). Ronds de 24 px sur un voile
+  neutre (`window_button`), 6 px d'écart, centre de « fermer » à 20 px du bord.
 - Symbole toujours visible (trait, carré arrondi, croix) ; au survol le voile fonce, et
   « fermer » passe au rouge. Fenêtre inactive : symboles estompés.
 - Même dessin dans les applications (`style::window_buttons`) et sur les barres de titre
@@ -167,31 +167,30 @@ Thème « Fusion » (maquette « FerriteOS — Concept de design », novembre 20
 
 ### Centre de contrôle
 
-- Panneau de 372 px, rayon 20, marge 14, gris neutre (sans teinte bleue).
-- Tête : batterie (pictogramme, pourcentage, « en charge ») à gauche ; à droite, boutons
-  ronds neutres (compte, Réglages, verrouiller, éteindre). L'arrêt n'est pas rouge : il
-  ouvre une confirmation.
-- Six tuiles de même taille, deux par rangée (Wi-Fi, Bluetooth, Mode sombre, Silence,
-  Énergie, Mode avion) : disque, nom, état sur une ligne. Allumée = pleine d'accent ; le
-  chevron (Wi-Fi, Bluetooth) ouvre la liste. Indisponible sur la machine = grisée, jamais
-  absente sans raison.
-- Curseurs épais de 40 px (volume, luminosité) : piste `track`, part réglée pleine
-  d'accent, pictogramme dedans à gauche, **sans pourcentage**.
-- Pastilles du bas (Mode nuit, Éclairage du clavier, Clavier, second écran), trois par
-  rangée : accent léger quand le réglage est mis.
-- Lecture en cours (un lecteur joue) : carte sous les pastilles, pochette 40 px, titre et
-  artiste, puis précédent, lecture/pause (pastille pleine) et suivant ; un clic sur la
-  carte ouvre le lecteur.
+Thème « Fusion » :
+- Panneau de 388 px, rayon 20, marge et écarts de 16, gris neutre.
+- Tête : batterie dans une pastille (pictogramme, pourcentage, « en charge ») ; à droite,
+  boutons ronds de 36 sur un voile : capture d'écran, Réglages, verrouiller, éteindre.
+- Curseurs fins juste dessous (volume, luminosité) : symbole, piste de 4 px remplie
+  d'accent, poignée ronde de 16, pourcentage à droite.
+- Six tuiles en pilule de 56 px, deux par rangée (Wi-Fi, Bluetooth, Mode sombre, Mode
+  nuit, Énergie, Mode avion) : symbole, nom, état ; pleine d'accent si mise, voile sinon ;
+  chevron (Wi-Fi, Bluetooth) vers la liste ; grisée si la machine ne l'offre pas.
+- Pastilles (Silence, Éclairage du clavier, Clavier, second écran), trois par rangée.
+- Lecture en cours (un lecteur joue) : carte avec pochette de 48, « En lecture », titre,
+  artiste, précédent, lecture (ronde de 40, d'accent) et suivant.
 
 ### Barre du haut
 
-- En îlots sur le fond d'écran : verre sombre écrit en blanc, le fond d'écran visible
-  entre eux. Une fenêtre agrandie rend la barre opaque : les îlots deviennent des teintes.
-- À gauche : le symbole Ferrite (ouvre le lanceur) et les marques des bureaux (celui qui
-  est affiché en pilule d'accent).
-- Au centre : la date et l'heure (calendrier et notifications).
-- À droite : les indicateurs et le pourcentage de batterie (ouvrent le centre de
-  contrôle), puis la cloche des notifications, avec un point d'accent s'il y en a.
+Thème « Fusion » :
+- Voile sur toute la largeur (sombre ou clair selon le thème) et filet en bas ; opaque, de
+  la teinte des barres de titre, quand une fenêtre est agrandie.
+- À gauche : une pastille de 24 px (symbole Ferrite, qui ouvre le lanceur, et marques des
+  bureaux), puis le nom de l'application active en 13 semi-gras.
+- Au centre : la date et l'heure (calendrier et notifications), suivies d'un point
+  d'accent s'il y a des notifications (pas en Silence).
+- À droite : une pastille des indicateurs et du pourcentage de batterie (centre de
+  contrôle).
 
 ### Dock
 
@@ -203,15 +202,16 @@ Thème « Fusion » (maquette « FerriteOS — Concept de design », novembre 20
 
 ### Lanceur
 
-- Panneau `panel_fill`, rayon 20, champ de recherche `raised_fill` de 48 px en tête.
-- Titres de rubrique en 12 semi-gras gris, sans capitales.
-- Sans recherche : « Applications Ferrite », puis les autres applications rangées par
-  rubrique (Internet, Bureautique, Multimédia, Graphisme, Développement, Jeux,
-  Éducation, Outils et système, Autres), d'après leurs catégories freedesktop. Pendant
-  une recherche : une seule liste. Entrée lance la première case affichée.
-- Pastilles de rubriques sous le champ (« Tout », « Ferrite », « Internet »…, sur
-  plusieurs rangées s'il le faut) : la choisie pleine (encre du texte), les autres sur un
-  voile ; masquées pendant une recherche.
+Thème « Fusion » :
+- Menu centré de 680 px, rayon 20, même épaisseur de verre partout.
+- Champ de recherche en pilule de 40, fond de la page, filet, trait d'accent dessous,
+  touche « Super » rappelée à droite.
+- Pastilles de rubriques (« Tout », « Ferrite », « Internet »…, sur plusieurs rangées s'il
+  le faut), alignées sur le champ ; masquées pendant une recherche.
+- Rubriques titrées en 16 semi-gras ; cases de 106 × 100, icône de 56, libellé de 12.
+- Sans recherche : « Applications Ferrite », puis les autres applications par rubrique
+  d'après leurs catégories freedesktop ; Entrée lance la première case affichée.
+- Pied de 64 px : compte (Paramètres → Comptes), verrouiller, éteindre.
 
 ## 6. Mouvement
 

@@ -47,7 +47,8 @@ Liste : `image/config/package-lists/ferrite.list.chroot`. Points notables :
 | `firmware-atheros`, `firmware-brcm80211`, `firmware-mediatek`, `firmware-cirrus`, `bluez-firmware`, `amd64-microcode` | autres PC : Wi-Fi, son et Bluetooth sans lesquels rien ne se télécharge ensuite |
 | *(absents)* `firmware-amd-graphics`, `firmware-nvidia-graphics` | retirés de l'ISO (55 Mo, copiés aussi dans l'initrd) ; proposés par la Logithèque, rubrique Pilotes |
 | `dbus-user-session` | services utilisateur PipeWire/WirePlumber sans environnement de bureau |
-| `libinput-tools`, `alsa-utils`, `pciutils`, `usbutils` | vérifications de la phase 1 (`ferrite-check`) |
+| `libinput-tools`, `alsa-utils`, `pciutils`, `usbutils` | vérifications de la phase 1 (`ferrite-check`) ; `lspci` donne aussi le nom des cartes graphiques au Moniteur d'activité |
+| `nvidia-smi` (pilote propriétaire NVIDIA, facultatif, pas dans l'image) | Moniteur d'activité : activité, mémoire vidéo, température et consommation d'une carte NVIDIA ; sans lui, la page le dit |
 | `xwayland`, `mesa-vulkan-drivers`, `libegl1`, `libgles2` | préparés pour le compositeur (phase 2) |
 | `xdg-desktop-portal`, `xdg-desktop-portal-gtk` | dialogues de fichiers et ouverture de liens des applications (navigateurs, Flatpak) |
 | `pulseaudio-utils` | `pactl` : balance et volume par application dans Paramètres |

@@ -81,7 +81,10 @@ fn create(
             target.as_deref().and_then(|path| path.to_str()),
         )),
         "settings" => opened(Box::<SettingsState>::default()),
-        "monitor" => Box::new(MonitorState::default()),
+        // `ferrite-apps monitor performances` (ou `gpu`, `capteurs`…) : cette page d'emblée.
+        "monitor" => Box::new(MonitorState::with_page(
+            target.as_deref().and_then(|path| path.to_str()),
+        )),
         "viewer" => Box::new(ViewerApp::new(target)),
         "pdf" => Box::new(Pdf(ViewerApp::new_pdf(target))),
         "music" => Box::new(MusicState::new(target)),

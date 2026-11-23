@@ -143,7 +143,7 @@ pub const APPS: &[AppInfo] = &[
         "ferrite-monitor",
         "Moniteur d'activité",
         "app-monitor",
-        (1000, 640),
+        (1120, 720),
         (680, 460),
         false,
     ),

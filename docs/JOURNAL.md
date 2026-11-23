@@ -4551,3 +4551,32 @@ maquette (refonte du déroulé, à part) ; panneau calendrier et notifications e
 colonnes ; aperçus des bureaux au-dessus du lanceur ; widgets de l'écran de
 verrouillage (agenda, messages). Non vérifié : vrai bureau, applications GTK réelles.
 
+## 2026-11-23 — Moniteur d'activité détaillé, pour tous les PC
+
+Demande : un moniteur système plus détaillé, plus moderne, qui s'adapte à tous les PC
+(jusqu'à un Core i9-14900HX avec RTX 5070 8 Go).
+- Onglet « Performances » (remplace « Ressources ») : colonne d'appareils à petits
+  graphiques (processeur, mémoire, chaque carte graphique, chaque disque, chaque interface
+  réseau, batterie, capteurs, système), page détaillée à droite ; fenêtre étroite
+  (< 780 px) : la colonne devient un bandeau défilant.
+- Processeur : modèle, cœurs hybrides P / E (Intel `cpu_core`/`cpu_atom`, ARM
+  `cpu_capacity`), fréquence par cœur, température (coretemp, k10temp, zenpower), caches
+  cumulés, temps noyau, changements de contexte, interruptions, profil d'énergie ; grille
+  des cœurs qui s'adapte au nombre (2 comme 128) ; vue « Par cœur » (un graphique chacun).
+- Cartes graphiques (toutes celles du bus PCI) : NVIDIA par `nvidia-smi` (activité,
+  mémoire vidéo, température, watts, fréquence, ventilateur), AMD par sysfs, Intel par
+  les compteurs `fdinfo` des applications (activité et mémoire par application). Carte
+  dédiée d'un portable en veille : affichée « En veille », jamais réveillée pour la mesure.
+- Disques un par un (modèle, type, activité, temps de réponse, température, partitions,
+  y compris derrière LUKS) ; réseaux un par un (Wi-Fi et signal, adresses, débit du lien) ;
+  batterie (santé, cycles, watts, autonomie) ; tous les capteurs hwmon ; page Système.
+- Processus : en-têtes avec le total de chaque colonne, fond « chaleur », colonnes Disque
+  (débit par processus) et GPU ; colonnes ôtées et cartes compactes en fenêtre étroite.
+- `ferrite-apps monitor performances|coeurs|memoire|gpu|disque|reseau|batterie|capteurs|systeme`
+  ouvre une page (captures). Taille par défaut 1120 × 720.
+Vérifié : `tools/ci.sh` (shellcheck absent du PC) ; captures sur le ThinkBook (i5-12500H,
+Iris Xe) : Processus (large et étroit), Processeur (clair, sombre), Mémoire, Carte
+graphique (large et étroit), Disque, Réseau (Wi-Fi), Capteurs, Batterie (clair,
+sombre), vue « Par cœur ».
+Non vérifié : carte NVIDIA réelle (pas de NVIDIA ici : lecture de `nvidia-smi` testée
+sur une ligne d'exemple seulement), carte AMD, page Système en capture, vrai bureau.

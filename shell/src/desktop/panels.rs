@@ -69,6 +69,8 @@ const FONT_MONO: &[u8] = include_bytes!("../../../assets/fonts/JetBrainsMono-Reg
 const POPOVER_MARGIN: f64 = 8.0;
 /// Icône de 18 px et écart de 16 px entre deux indicateurs.
 const INDICATOR_WIDTH: f64 = 34.0;
+/// Débit réseau de la barre : deux colonnes « ↓ 888 Ko/s » et « ↑ 888 Ko/s ».
+const NETWORK_RATE_WIDTH: f64 = 168.0;
 /// Barre du haut en îlots (charte « Forge ») : écart au bord de la barre, entre deux
 /// îlots, marge intérieure, et largeur de l'îlot de la cloche.
 const ISLAND_INSET: f64 = 4.0;
@@ -793,6 +795,8 @@ pub struct DesktopView {
     /// Réglages rapides qui ne viennent pas du fil système.
     pub controls: ControlsView,
     pub battery_percent: bool,
+    /// Débit réseau (octets reçus, envoyés par seconde), à gauche des indicateurs.
+    pub network_rate: Option<(u64, u64)>,
     pub bluetooth_icon: bool,
     pub clock_style: ClockStyle,
     pub keyboard: String,
@@ -872,6 +876,8 @@ struct VisualState {
 /// le ThinkBook, une saccade visible). L'écran verrouillé les montre : il garde tout ; le
 /// centre de contrôle montre la batterie.
 fn without_unseen(mut state: VisualState) -> VisualState {
+    // Le débit réseau n'est que dans la barre, qui a sa propre image.
+    state.view.network_rate = None;
     // Compte à rebours et nombre d'applications ouvertes : seulement dans le dialogue
     // d'arrêt. Sans cela, chaque fenêtre ouverte ou fermée redessinait tout l'écran.
     if state.view.power.is_none() {
@@ -2318,7 +2324,7 @@ impl Panels {
                 .ok()
                 .and_then(|text| text.split_whitespace().next()?.parse::<f64>().ok())
                 .map_or(0, |seconds| seconds as u64 / 60);
-            if let Some((received, sent)) = network_counters() {
+            if let Some((received, sent)) = super::throughput::counters() {
                 if let Some((previous_received, previous_sent)) = monitor.previous_network
                     && elapsed > 0.0
                 {
@@ -2749,6 +2755,16 @@ impl Panels {
                 },
             };
             canvas.icon(name, rect.center(), 16.0, Style::Symbolic(ink));
+        }
+        if let Some((down, up)) = view.network_rate {
+            // Deux colonnes fixes : la flèche ne bouge pas quand le nombre change.
+            let rect = layout.network_rate();
+            let column = (rect.w - 8.0) / 2.0;
+            for (slot, arrow, rate) in [(0.0, "↓", down), (1.0, "↑", up)] {
+                let text = format!("{arrow} {}", super::throughput::label(rate));
+                let x = rect.x + 8.0 + slot * column;
+                canvas.bar_label(&self.bold, &text, x, px(12.0), ink, layout.bar);
+            }
         }
         if let (true, Some(battery)) = (view.battery_percent, state.battery) {
             let rect = layout.indicator(Indicator::Battery);
@@ -5554,6 +5570,8 @@ struct Layout {
     controls_view: ControlsView,
     battery: bool,
     battery_percent: bool,
+    /// Débit réseau affiché à gauche des indicateurs.
+    network_rate: bool,
     bluetooth: bool,
     volume: bool,
     brightness: bool,
@@ -5699,6 +5717,26 @@ impl Layout {
         }
     }
 
+    /// Place du débit réseau, à gauche des indicateurs.
+    fn network_width(&self) -> f64 {
+        if self.network_rate {
+            NETWORK_RATE_WIDTH
+        } else {
+            0.0
+        }
+    }
+
+    /// Débit réseau, dans l'îlot des indicateurs ; vide s'il n'est pas affiché.
+    fn network_rate(&self) -> Rect {
+        let first = self.indicator(self.present()[0]);
+        Rect::new(
+            first.x - self.network_width(),
+            0.0,
+            self.network_width(),
+            self.bar,
+        )
+    }
+
     fn indicators(&self) -> Vec<(Indicator, Rect)> {
         self.present()
             .into_iter()
@@ -5708,9 +5746,9 @@ impl Layout {
 
     /// Indicateurs, qui ouvrent le centre de contrôle.
     fn indicators_group(&self) -> Rect {
-        let first = self.indicator(self.present()[0]);
+        let left = self.network_rate().x;
         let right = self.bell_button().x - ISLAND_GAP;
-        Rect::new(first.x - 2.0, 0.0, right - first.x + 2.0, self.bar)
+        Rect::new(left - 2.0, 0.0, right - left + 2.0, self.bar)
     }
 
     /// Horloge au centre de la barre, qui ouvre le calendrier et les notifications.
@@ -6194,6 +6232,7 @@ impl Layout {
             controls_view: view.controls.clone(),
             battery: battery_dir().is_some(),
             battery_percent: view.battery_percent,
+            network_rate: view.network_rate.is_some(),
             bluetooth: view.bluetooth_icon && view.bluetooth.is_some(),
             volume: view.volume.is_some(),
             brightness: view.brightness.is_some(),
@@ -7492,27 +7531,6 @@ fn cpu_counters() -> Option<(u64, u64)> {
     let total = values.iter().sum();
     let idle = values.get(3)?.saturating_add(*values.get(4).unwrap_or(&0));
     Some((total, idle))
-}
-
-fn network_counters() -> Option<(u64, u64)> {
-    let text = fs::read_to_string("/proc/net/dev").ok()?;
-    text.lines()
-        .skip(2)
-        .filter_map(|line| {
-            let (interface, counters) = line.split_once(':')?;
-            if interface.trim() == "lo" {
-                return None;
-            }
-            let counters: Vec<u64> = counters
-                .split_whitespace()
-                .map(str::parse)
-                .collect::<Result<_, _>>()
-                .ok()?;
-            Some((*counters.first()?, *counters.get(8)?))
-        })
-        .fold(None, |totals, (received, sent)| {
-            Some(totals.map_or((received, sent), |(rx, tx)| (rx + received, tx + sent)))
-        })
 }
 
 fn memory_usage() -> Option<u8> {

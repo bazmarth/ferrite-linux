@@ -1590,6 +1590,7 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
             .map(|id| AppKey::for_window(&id, &state.applications).name(&state.applications))
             .unwrap_or_default(),
         battery_percent: state.dock_config.battery_percent,
+        network_rate: state.throughput.rate.filter(|_| state.dock_config.network_rate),
         bluetooth_icon: state.dock_config.bluetooth_icon,
         clock_style: state.dock_config.clock,
         controls: if state.popover == Some(Popover::Controls) {

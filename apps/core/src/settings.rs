@@ -2156,6 +2156,7 @@ impl SettingsState {
                 "barre_pourcentage",
                 true,
             );
+            flag_row(rows, &mut settings, Row::new("Débit réseau"), "barre_debit", true);
             let mut bar = settings.bar_hiding();
             let labels = hiding_labels();
             if rows

@@ -173,7 +173,7 @@ lu par `ferrite_system::config::Settings`. Paramètres l'écrit ; le fil systèm
 surveille sa date de modification et envoie des `Event` à la boucle (application sans
 redémarrage). Clés en français, valeurs en français. Clés actuelles :
 
-`accent`, `aimantation`, `apparence` (clair/sombre/auto), `barre_bluetooth`,
+`accent`, `aimantation`, `apparence` (clair/sombre/auto), `barre_bluetooth`, `barre_debit`,
 `barre_hauteur`, `barre_laterale_icones`, `barre_masquage`, `barre_pourcentage`,
 `barre_translucide`, `barres_defilement`, `bouton_alimentation` (veille, rien, dialogue :
 bouton physique seulement), `cadre_propre` (applications qui gardent leur barre de titre),

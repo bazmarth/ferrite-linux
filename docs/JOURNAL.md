@@ -4616,3 +4616,19 @@ graphique (large et étroit), Disque, Réseau (Wi-Fi), Capteurs, Batterie (clair
 sombre), vue « Par cœur ».
 Non vérifié : carte NVIDIA réelle (pas de NVIDIA ici : lecture de `nvidia-smi` testée
 sur une ligne d'exemple seulement), carte AMD, page Système en capture, vrai bureau.
+
+## 2026-11-23 — Débit réseau en temps réel dans la barre du haut
+
+Demande : afficher le débit de la connexion en temps réel.
+- `shell/src/desktop/throughput.rs` : relit `/proc/net/dev` chaque seconde (toutes les
+  interfaces sauf `lo`), calcule les octets reçus et envoyés par seconde ; la barre n'est
+  redessinée que si le texte affiché change, et seulement quand elle est visible.
+- Barre du haut : « ↓ 4,0 Mo/s  ↑ 83 Ko/s » au début de l'îlot des indicateurs, en deux
+  colonnes fixes (168 px) pour que rien ne saute ; un clic ouvre le centre de contrôle
+  comme les icônes. Unités Ko/s, Mo/s, Go/s, virgule française.
+- Réglage `barre_debit` (oui par défaut), interrupteur « Débit réseau » dans
+  Paramètres › Barre du haut, sous « Pourcentage de batterie ».
+- Le lecteur des compteurs de la carte « Système » du bureau est désormais celui du module.
+Vérifié : `tools/ci.sh` (shellcheck absent du PC) ; captures du bureau d'essai au repos
+(0 Ko/s) et pendant un téléchargement (8,4 Mo/s, puis 4,0 Mo/s), thèmes sombre et clair.
+Non vérifié : l'interrupteur de Paramètres en capture, le vrai bureau.

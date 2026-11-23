@@ -268,6 +268,8 @@ pub struct Ferrite {
     /// Minuteur de l'Horloge suivi par l'îlot, îlot déplié par un clic, et seconde suivie.
     pub island_timer: Option<crate::desktop::island::TimerActivity>,
     pub island_open_until: Option<std::time::Instant>,
+    /// Débit réseau de la barre du haut, mesuré chaque seconde.
+    pub throughput: crate::desktop::throughput::Throughput,
     pub island_ticking: bool,
     /// Activité dépliée par un clic (une bulle), sinon la première.
     pub island_focus: Option<crate::desktop::island::IslandFocus>,
@@ -569,6 +571,7 @@ impl Ferrite {
             recording: None,
             island_timer: None,
             island_open_until: None,
+            throughput: Default::default(),
             island_ticking: false,
             island_focus: None,
             island_click_folded: false,

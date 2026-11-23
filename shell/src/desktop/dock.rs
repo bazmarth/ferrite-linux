@@ -141,9 +141,11 @@ pub struct DockConfig {
     /// Point sous les applications ouvertes, et applications ouvertes non épinglées.
     pub dots: bool,
     pub recents: bool,
-    /// Barre du haut : translucide, pourcentage de batterie, icône Bluetooth, horloge.
+    /// Barre du haut : translucide, pourcentage de batterie, débit réseau, icône Bluetooth,
+    /// horloge.
     pub bar_translucent: bool,
     pub battery_percent: bool,
+    pub network_rate: bool,
     pub bluetooth_icon: bool,
     pub clock: ClockStyle,
     /// Coins actifs : haut gauche, haut droit, bas gauche, bas droit.
@@ -177,6 +179,7 @@ impl Default for DockConfig {
             recents: true,
             bar_translucent: true,
             battery_percent: true,
+            network_rate: true,
             bluetooth_icon: true,
             clock: ClockStyle::Full,
             corners: [
@@ -211,6 +214,7 @@ impl DockConfig {
             recents: settings.flag("dock_recentes", true),
             bar_translucent: settings.flag("barre_translucide", true),
             battery_percent: settings.flag("barre_pourcentage", true),
+            network_rate: settings.flag("barre_debit", true),
             bluetooth_icon: settings.flag("barre_bluetooth", true),
             clock: settings.clock_style(),
             corners: ["hg", "hd", "bg", "bd"].map(|corner| settings.hot_corner(corner)),

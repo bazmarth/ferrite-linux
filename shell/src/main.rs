@@ -179,6 +179,9 @@ fn run(options: Options) -> Result<u8, Box<dyn std::error::Error>> {
     if let Err(err) = desktop::widgets::start_agenda_watch(&event_loop.handle()) {
         warn!("agenda du Calendrier non suivi : {err}");
     }
+    if let Err(err) = desktop::throughput::start(&event_loop.handle()) {
+        warn!("débit réseau de la barre non mesuré : {err}");
+    }
 
     // Ouverture de session (ferrite-session, connexion automatique) : le bureau démarre
     // verrouillé. Un bureau imbriqué, lancé depuis un terminal, hérite de la variable : il

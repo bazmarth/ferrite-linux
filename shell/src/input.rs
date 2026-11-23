@@ -839,21 +839,14 @@ impl Ferrite {
                 self.stop_dashboard_editing();
             }
             Some(Action::LauncherLaunchFirst) => {
-                // La première case affichée : sans recherche, les rubriques changent l'ordre.
-                let by_rubric = self.launcher_query.trim().is_empty();
-                let first = self
-                    .launcher_entries()
-                    .into_iter()
-                    .enumerate()
-                    .min_by_key(|(index, entry)| {
-                        let rubric = if by_rubric {
-                            crate::render::launcher_rubric(entry)
-                        } else {
-                            0
-                        };
-                        (rubric, *index)
-                    })
-                    .map(|(_, entry)| entry.key());
+                // La première case affichée (rubriques et pastille choisie comprises).
+                let view = crate::render::launcher_view(self);
+                let first = view
+                    .sections
+                    .iter()
+                    .find_map(|section| section.tiles.first())
+                    .and_then(|tile| self.launcher_entries().into_iter().nth(tile.index))
+                    .map(|entry| entry.key());
                 if let Some(key) = first {
                     self.popover = None;
                     self.open_app(&key);
@@ -1601,6 +1594,7 @@ impl Ferrite {
     /// Le lanceur revient en haut de sa liste.
     fn reset_launcher_view(&mut self) {
         self.launcher_scroll = 0;
+        self.launcher_rubric = 0;
     }
 
     pub(crate) fn handle_desktop_action(&mut self, action: DesktopAction) {
@@ -1770,6 +1764,11 @@ impl Ferrite {
                 }
             }
             DesktopAction::GoToPage(page) => self.go_to_page(page),
+            DesktopAction::LauncherRubric(index) => {
+                self.launcher_rubric = index;
+                self.launcher_scroll = 0;
+                self.request_redraw();
+            }
             DesktopAction::LaunchTile(index) => {
                 let key = self
                     .launcher_entries()

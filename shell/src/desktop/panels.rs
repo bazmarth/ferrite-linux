@@ -81,6 +81,9 @@ const LAUNCHER_CELL: (f64, f64) = (114.0, 118.0);
 const LAUNCHER_PAD: f64 = 18.0;
 /// Hauteur du champ de recherche, en haut du lanceur.
 const LAUNCHER_HEADER: f64 = 76.0;
+/// Pastilles des rubriques sous le champ de recherche : hauteur, écart, rangée.
+const LAUNCHER_CHIP: f64 = 30.0;
+const LAUNCHER_CHIP_GAP: f64 = 6.0;
 /// Hauteur du titre d'une rubrique, et espace entre deux rubriques.
 const LAUNCHER_TITLE: f64 = 40.0;
 const LAUNCHER_GAP: f64 = 14.0;
@@ -100,6 +103,8 @@ const CONTROLS_TILE_ROWS: f64 = 3.0;
 /// Pastilles du bas (Mode nuit, Rétroéclairage, Clavier, second écran), trois par rangée.
 const CONTROLS_CHIP: f64 = 34.0;
 const CONTROLS_CHIPS_PER_ROW: usize = 3;
+/// Carte « lecture en cours », sous les pastilles, quand un lecteur est ouvert.
+const CONTROLS_MEDIA: f64 = 60.0;
 /// Curseurs épais (volume, luminosité) et tête (batterie, boutons ronds).
 const CONTROLS_ROW: f64 = 40.0;
 const CONTROLS_HEAD: f64 = 36.0;
@@ -251,6 +256,8 @@ pub enum DesktopAction {
     Island(IslandHit),
     /// Application du lanceur : position dans la liste (filtrée) des applications.
     LaunchTile(usize),
+    /// Pastille de rubrique du lanceur (0 : Tout).
+    LauncherRubric(usize),
     ToggleWifi,
     ToggleBluetooth,
     SetVolume(u8),
@@ -438,6 +445,10 @@ pub struct LauncherSection {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct LauncherView {
     pub query: String,
+    /// Pastilles des rubriques (« Tout » d'abord) ; vide pendant une recherche.
+    pub rubrics: Vec<String>,
+    /// Pastille choisie (0 : Tout).
+    pub rubric: usize,
     pub sections: Vec<LauncherSection>,
     /// Défilement demandé, en pixels logiques (borné à l'affichage).
     pub scroll: u32,
@@ -2808,6 +2819,26 @@ impl Panels {
             text_x + 2.0 + canvas.text_width(&self.regular, &launcher.query, px(15.0))
         };
         canvas.fill(Rect::new(caret, field.y + 13.0, 2.0, 22.0), 1.0, accent());
+        // Pastilles des rubriques : la choisie pleine, les autres sur un voile.
+        for (index, chip) in layout.launcher_chips().into_iter().enumerate() {
+            let on = index == launcher.rubric;
+            let (fill, ink) = if on {
+                (primary_text(), palette().window_background)
+            } else {
+                (tint(14), text_secondary())
+            };
+            canvas.fill(chip, (chip.h / 2.0) as f32, fill);
+            let label = canvas.fit_text(&self.bold, &launcher.rubrics[index], px(13.0), chip.w - 16.0);
+            let width = canvas.text_width(&self.bold, &label, px(13.0));
+            canvas.label(
+                &self.bold,
+                &label,
+                chip.x + (chip.w - width) / 2.0,
+                chip.y + (chip.h - 13.0 * 1.22) / 2.0 - 1.0,
+                px(13.0),
+                ink,
+            );
+        }
     }
 
     /// Barre d'outils de capture, toujours sombre : modes, photo ou vidéo, déclencheur,
@@ -3302,6 +3333,65 @@ impl Panels {
                 px(12.0),
                 dim(ink),
             );
+        }
+
+        // Lecture en cours : pochette, titre et artiste, puis précédent, lecture, suivant.
+        if let Some(media) = &view.dashboard.media {
+            let card = layout.control_row(Control::MediaCard);
+            canvas.fill(card, 16.0, raised_fill());
+            let art = Rect::new(card.x + 10.0, card.y + 10.0, 40.0, 40.0);
+            match &media.cover {
+                Some(cover) => canvas.image_cover(art, cover, 10.0),
+                None => {
+                    canvas.fill(art, 10.0, accent().with_alpha(38));
+                    canvas.icon("cc-music", art.center(), 20.0, Style::Symbolic(accent()));
+                }
+            }
+            let previous = layout.control_row(Control::MediaPrevious);
+            let room = previous.x - art.right() - 20.0;
+            let title = if media.title.is_empty() {
+                media.detail.as_str()
+            } else {
+                media.title.as_str()
+            };
+            let title = canvas.fit_text(&self.bold, title, px(13.0), room);
+            canvas.label(
+                &self.bold,
+                &title,
+                art.right() + 12.0,
+                card.y + 12.0,
+                px(13.0),
+                primary_text(),
+            );
+            let artist = if media.artist.is_empty() {
+                if media.playing { "En lecture" } else { "En pause" }
+            } else {
+                media.artist.as_str()
+            };
+            let artist = canvas.fit_text(&self.regular, artist, px(12.0), room);
+            canvas.label(
+                &self.regular,
+                &artist,
+                art.right() + 12.0,
+                card.y + 31.0,
+                px(12.0),
+                text_secondary(),
+            );
+            let play = if media.playing { "cc-pause" } else { "cc-play" };
+            for (control, glyph) in [
+                (Control::MediaPrevious, "cc-previous"),
+                (Control::MediaPlay, play),
+                (Control::MediaNext, "cc-next"),
+            ] {
+                let button = layout.control_row(control);
+                let (fill, ink) = if control == Control::MediaPlay {
+                    (primary_text(), palette().window_background)
+                } else {
+                    (Color::TRANSPARENT, palette().heading)
+                };
+                canvas.fill(button, (button.h / 2.0) as f32, fill);
+                canvas.icon(glyph, button.center(), 16.0, Style::Symbolic(ink));
+            }
         }
 
         if let Some(error) = &view.error {
@@ -4904,7 +4994,9 @@ pub fn action_at(
         },
         Popover::Launcher if layout.launcher().contains(pos) => {
             let launcher = &view.launcher;
-            if !layout.launcher_content().contains(pos) {
+            if let Some(index) = layout.launcher_chips().iter().position(|chip| chip.contains(pos)) {
+                DesktopAction::LauncherRubric(index)
+            } else if !layout.launcher_content().contains(pos) {
                 DesktopAction::Consume
             } else {
                 layout
@@ -4955,6 +5047,14 @@ pub fn action_at(
                     DesktopAction::Lock
                 } else if on(Control::Power) {
                     DesktopAction::OpenPowerDialog
+                } else if on(Control::MediaPrevious) {
+                    DesktopAction::DashboardMedia(crate::desktop::lock::MediaCommand::Previous)
+                } else if on(Control::MediaPlay) {
+                    DesktopAction::DashboardMedia(crate::desktop::lock::MediaCommand::PlayPause)
+                } else if on(Control::MediaNext) {
+                    DesktopAction::DashboardMedia(crate::desktop::lock::MediaCommand::Next)
+                } else if on(Control::MediaCard) {
+                    DesktopAction::DashboardOpenMusic
                 } else if on(Control::Volume) && view.volume.is_some() {
                     DesktopAction::SetVolume(percent(Control::Volume))
                 } else if on(Control::Brightness) && view.brightness.is_some() {
@@ -5319,6 +5419,11 @@ enum Control {
     Screens,
     Volume,
     Brightness,
+    /// Carte « lecture en cours » et ses trois boutons.
+    MediaCard,
+    MediaPrevious,
+    MediaPlay,
+    MediaNext,
     /// Chevrons des tuiles Wi-Fi et Bluetooth.
     WifiMore,
     BluetoothMore,
@@ -5347,6 +5452,10 @@ struct Layout {
     error: bool,
     /// Un second écran est branché : une rangée de tuiles en plus.
     second_screen: bool,
+    /// Pastilles des rubriques du lanceur.
+    launcher_rubrics: Vec<String>,
+    /// Un lecteur est ouvert : carte « lecture en cours » au bas du centre de contrôle.
+    media: bool,
     /// Décalage retiré de la place du centre de contrôle (et donc de tout ce qui en
     /// dépend) : il est dessiné sur une toile de sa taille, pas de celle de l'écran.
     controls_shift: (f64, f64),
@@ -5554,7 +5663,11 @@ impl Layout {
         let h = match self.controls_view.page {
             ControlsPage::Main => {
                 let error = if self.error { 22.0 } else { 0.0 };
-                self.chips_top() + self.chip_rows() * (CONTROLS_CHIP + 8.0) - 8.0 + CONTROLS_PAD + error
+                let media = if self.media { 8.0 + CONTROLS_MEDIA } else { 0.0 };
+                self.chips_top() + self.chip_rows() * (CONTROLS_CHIP + 8.0) - 8.0
+                    + media
+                    + CONTROLS_PAD
+                    + error
             }
             ControlsPage::Wifi => CONTROLS_LIST_TOP + self.wifi_list_height() + CONTROLS_LIST_BOTTOM,
             ControlsPage::Bluetooth if self.controls_view.devices.is_empty() => {
@@ -5824,6 +5937,20 @@ impl Layout {
                 CONTROLS_CHIP,
             )
         };
+        let media_card = Rect::new(
+            left,
+            card.y + self.chips_top() + self.chip_rows() * (CONTROLS_CHIP + 8.0),
+            inner,
+            CONTROLS_MEDIA,
+        );
+        let media_button = |from_right: f64| {
+            Rect::new(
+                media_card.right() - 10.0 - from_right * 38.0 + 4.0,
+                media_card.y + (CONTROLS_MEDIA - 34.0) / 2.0,
+                34.0,
+                34.0,
+            )
+        };
         let head = self.controls_head();
         let button = |from_right: f64| {
             Rect::new(
@@ -5851,6 +5978,11 @@ impl Layout {
             Control::Volume if self.volume => row(0.0),
             Control::Brightness if self.brightness => row(if self.volume { 1.0 } else { 0.0 }),
             Control::Volume | Control::Brightness => none,
+            Control::MediaCard if self.media => media_card,
+            Control::MediaPrevious if self.media => media_button(3.0),
+            Control::MediaPlay if self.media => media_button(2.0),
+            Control::MediaNext if self.media => media_button(1.0),
+            Control::MediaCard | Control::MediaPrevious | Control::MediaPlay | Control::MediaNext => none,
             Control::Account => button(4.0),
             Control::Settings => button(3.0),
             Control::Lock => button(2.0),
@@ -5941,6 +6073,8 @@ impl Layout {
             page: view.page,
             dock_height: view.dock_height as f64,
             bar: view.bar_height as f64,
+            media: view.dashboard.media.is_some(),
+            launcher_rubrics: view.launcher.rubrics.clone(),
             page_count: view.page_count,
             clipboard_position: view.clipboard.position,
             controls_view: view.controls.clone(),
@@ -6013,15 +6147,40 @@ impl Layout {
         )
     }
 
+    /// Pastilles des rubriques, à la suite sous le champ de recherche, sur plusieurs
+    /// rangées s'il le faut. La largeur suit le nombre de lettres du libellé.
+    fn launcher_chips(&self) -> Vec<Rect> {
+        let card = self.launcher();
+        let (left, right) = (card.x + 16.0, card.right() - 16.0);
+        let (mut x, mut y) = (left, card.y + 74.0);
+        self.launcher_rubrics
+            .iter()
+            .map(|label| {
+                let w = 28.0 + 7.6 * label.chars().count() as f64;
+                if x + w > right && x > left {
+                    x = left;
+                    y += LAUNCHER_CHIP + LAUNCHER_CHIP_GAP;
+                }
+                let rect = Rect::new(x, y, w, LAUNCHER_CHIP);
+                x += w + LAUNCHER_CHIP_GAP;
+                rect
+            })
+            .collect()
+    }
+
+    /// Hauteur de la tête du lanceur : champ de recherche, puis pastilles s'il y en a.
+    fn launcher_header(&self) -> f64 {
+        match self.launcher_chips().last() {
+            Some(last) => last.bottom() - self.launcher().y + 8.0,
+            None => LAUNCHER_HEADER,
+        }
+    }
+
     /// Partie qui défile, sous le champ de recherche.
     fn launcher_content(&self) -> Rect {
         let card = self.launcher();
-        Rect::new(
-            card.x,
-            card.y + LAUNCHER_HEADER,
-            card.w,
-            card.h - LAUNCHER_HEADER - 10.0,
-        )
+        let header = self.launcher_header();
+        Rect::new(card.x, card.y + header, card.w, card.h - header - 10.0)
     }
 
     /// Titres, liens, traits et cases des rubriques, à leur place (défilement compris).
@@ -8446,6 +8605,28 @@ mod tests {
         );
         let title = Rect::new(card.x + 180.0, card.y + 40.0, 10.0, 10.0);
         assert_eq!(at(title, &desktop), Some(DesktopAction::DashboardOpenMusic));
+
+        // Même lecteur dans le centre de contrôle : carte et trois boutons sous les pastilles.
+        desktop.dashboard.shown = false;
+        desktop.popover = Some(Popover::Controls);
+        let layout = Layout::new(1280.0, 720.0, &desktop);
+        let media = layout.control_row(Control::MediaCard);
+        assert!(media.y > layout.control_row(Control::Night).bottom());
+        assert!(media.bottom() <= layout.controls().bottom());
+        for (control, command) in [
+            (Control::MediaPrevious, MediaCommand::Previous),
+            (Control::MediaPlay, MediaCommand::PlayPause),
+            (Control::MediaNext, MediaCommand::Next),
+        ] {
+            assert_eq!(
+                at(layout.control_row(control), &desktop),
+                Some(DesktopAction::DashboardMedia(command))
+            );
+        }
+        assert_eq!(
+            at(Rect::new(media.x + 20.0, media.y + 20.0, 4.0, 4.0), &desktop),
+            Some(DesktopAction::DashboardOpenMusic)
+        );
     }
 
     fn point(x: f64, y: f64) -> Point<f64, Logical> {
@@ -8814,6 +8995,65 @@ mod tests {
             },
             ..view(Some(Popover::Launcher))
         }
+    }
+
+    #[test]
+    fn les_pastilles_du_lanceur_choisissent_une_rubrique() {
+        let mut open = launcher(10, 0);
+        let plain = Layout::new(1280.0, 720.0, &open).launcher_content();
+        open.launcher.rubrics = [
+            "Tout",
+            "Ferrite",
+            "Internet",
+            "Bureautique",
+            "Multimédia",
+            "Graphisme",
+            "Développement",
+            "Jeux",
+            "Éducation",
+            "Système",
+            "Autres",
+        ]
+        .map(str::to_owned)
+        .to_vec();
+        let layout = Layout::new(1280.0, 720.0, &open);
+        let chips = layout.launcher_chips();
+        assert_eq!(chips.len(), 11);
+        // Les pastilles restent dans le panneau et poussent la liste vers le bas.
+        let card = layout.launcher();
+        assert!(
+            chips
+                .iter()
+                .all(|chip| chip.x >= card.x && chip.right() <= card.right())
+        );
+        assert!(layout.launcher_content().y > plain.y);
+        assert!(
+            chips
+                .iter()
+                .all(|chip| chip.bottom() <= layout.launcher_content().y)
+        );
+        for index in [0, 3, 10] {
+            let (x, y) = chips[index].center();
+            assert_eq!(
+                action_at(output(), point(x, y), &open),
+                Some(DesktopAction::LauncherRubric(index))
+            );
+        }
+        // Les cases se cliquent toujours, sous les pastilles.
+        let first = layout
+            .launcher_items(&open.launcher)
+            .into_iter()
+            .find_map(|item| match item {
+                LauncherItem::Tile { rect, .. } => Some(rect),
+                LauncherItem::Title { .. } => None,
+            })
+            .expect("case présente");
+        let (x, y) = first.center();
+        assert!(y > layout.launcher_content().y);
+        assert_eq!(
+            action_at(output(), point(x, y), &open),
+            Some(DesktopAction::LaunchTile(0))
+        );
     }
 
     fn tile_rect(view: &DesktopView, index: usize) -> Rect {

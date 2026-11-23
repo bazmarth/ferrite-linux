@@ -53,6 +53,11 @@ glyphs![
     "cc-chevron" => "chevron",
     "cc-search" => "rechercher",
     "cc-bell" => "cloche",
+    "cc-play" => "lire",
+    "cc-pause" => "pause",
+    "cc-previous" => "precedent",
+    "cc-next" => "suivant",
+    "cc-music" => "musique",
     // Presse-papiers.
     "clip-code" => "code",
     "clip-link" => "lien",

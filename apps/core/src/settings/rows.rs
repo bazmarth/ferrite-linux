@@ -14,12 +14,6 @@ pub const COLUMN: f32 = 680.0;
 /// Marge minimale de part et d'autre de la colonne.
 pub const COLUMN_MARGIN: f32 = 24.0;
 
-/// Fond de la page : celui de la fenêtre ; les cartes de groupe s'en détachent par leur
-/// teinte ([`style::surface`]), sans bordure.
-pub fn page_color() -> Color32 {
-    style::background()
-}
-
 /// Ce qui précède le libellé d'une ligne.
 #[derive(Clone, Copy, Default)]
 pub enum Lead {
@@ -277,7 +271,8 @@ pub fn hero(ui: &mut egui::Ui, title: &str, subtitle: &str, toggle: Option<(&mut
     let mut changed = false;
     Frame::new()
         .fill(style::surface())
-        .corner_radius(12)
+        .corner_radius(10)
+        .stroke(Stroke::new(1.0, style::hairline()))
         .inner_margin(Margin::symmetric(16, 12))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -302,13 +297,14 @@ pub fn hero(ui: &mut egui::Ui, title: &str, subtitle: &str, toggle: Option<(&mut
 
 /// Titre de groupe : 12 px, semi-gras, couleur secondaire. Le même partout.
 pub fn group_title(ui: &mut egui::Ui, title: &str) {
+    // Thème « Fusion » : titre de section 16 px semi-gras (`title-3`), couleur du texte.
     ui.horizontal(|ui| {
-        ui.add_space(4.0);
+        ui.add_space(2.0);
         ui.label(
             RichText::new(title)
-                .size(12.0)
+                .size(16.0)
                 .family(style::strong_family())
-                .color(style::text_secondary()),
+                .color(style::primary_text()),
         );
     });
     ui.add_space(8.0);
@@ -329,7 +325,8 @@ pub fn card<R>(ui: &mut egui::Ui, title: &str, add: impl FnOnce(&mut egui::Ui) -
     group_title(ui, title);
     let result = Frame::new()
         .fill(style::surface())
-        .corner_radius(12)
+        .corner_radius(10)
+        .stroke(Stroke::new(1.0, style::hairline()))
         .inner_margin(Margin::same(16))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -352,7 +349,8 @@ pub fn group<R>(
     }
     let result = Frame::new()
         .fill(style::surface())
-        .corner_radius(12)
+        .corner_radius(10)
+        .stroke(Stroke::new(1.0, style::hairline()))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = 0.0;

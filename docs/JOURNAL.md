@@ -4470,3 +4470,52 @@ Vérifié : `tools/ci.sh` (test des bornes ajouté) ; captures du Dock à 25 et 
 Calculatrice ouverte, et du curseur (40 px par défaut).
 Non vérifié : vrai bureau. Un compte qui avait déjà réglé la taille garde sa valeur.
 
+## 2026-11-23 — Centre de contrôle : lecture en cours ; lanceur : pastilles de rubriques
+
+Les deux éléments de la maquette « Forge » qui restaient.
+- Centre de contrôle : carte « lecture en cours » sous les pastilles quand un lecteur joue
+  (`view.dashboard.media`) : pochette, titre, artiste, précédent / lecture / suivant
+  (`DesktopAction::DashboardMedia`, déjà utilisé par le widget Musique) ; clic sur la
+  carte : ouvre le lecteur. Icônes `lire`, `pause`, `precedent`, `suivant` ajoutées à
+  `tools/icones.py` (`cc-play`, `cc-pause`, `cc-previous`, `cc-next`, `cc-music`).
+- Lanceur : pastilles « Tout » puis une par rubrique présente (`LauncherView::rubrics`,
+  `Layout::launcher_chips`, `DesktopAction::LauncherRubric`, `launcher_rubric` dans
+  l'état, remis à « Tout » à l'ouverture) ; masquées pendant une recherche. Entrée lance
+  la première case affichée (calculée par `render::launcher_view`).
+Vérifié : `tools/ci.sh` ; tests des clics (boutons de lecture du centre de contrôle,
+pastilles et cases du lanceur) ; captures du lanceur (clair, sombre).
+Non vérifié : carte de lecture à l'écran (pas de son dans le bureau imbriqué, donc aucun
+lecteur ne joue) ; vrai bureau. En clair, la tête du lanceur (champ et pastilles) se
+distingue légèrement de la liste.
+
+## 2026-11-23 — Thème « Fusion » pour toutes les fenêtres
+
+Demande : appliquer exactement le thème de la maquette « FerriteOS — Concept de design »
+(planche Design, 20 écrans clair et sombre, `tokens.json` « FerriteOs ») à toutes les
+fenêtres. Les couleurs de base étaient déjà celles de la charte Oxyde ; changent la
+structure et les pièces :
+- Fenêtres à colonne (Réglages, Fichiers, Logithèque, Calendrier, Musique) : fond du
+  chrome, colonne sans filet, contenu dans une carte encastrée (`style::inset_panel` :
+  8 px, coins de 10, filet léger, 3 px de marge intérieure pour les coins) ; barres
+  d'outils et barre d'état dans la carte au fond de la page (`in_inset`). Moniteur : barre
+  sur le chrome, carte dessous.
+- Boutons de fenêtre : ronds de 28 px sur voile, symbole toujours visible, rouge au survol
+  de « fermer » (`style::window_button`, shader `TITLEBAR`, constantes
+  `WINDOW_BUTTON_*` 14 / 22 / 34, couleurs `window_button`, `window_glyph`).
+- Colonnes : lignes de 34 px, survol `surface-3`, choisie en `accent-soft` plein
+  (#FDE8DD / #3B2117) avec barre d'accent de 3 px et texte `accent-ink`
+  (#8F2F09 / #FFB38F) ; titres de groupe en MAJUSCULES espacées (aussi Fichiers,
+  Musique).
+- Réglages : pastilles de couleur devant les rubriques (`Page::tile`), tête de page titre
+  + description (`Page::description`), titres de section 16 semi-gras, cartes à filet,
+  interrupteurs 40 × 22 à poignée de 16.
+Vérifié : `tools/ci.sh` ; captures Réglages (Notifications, clair et sombre ; Apparence
+sombre), Fichiers, Logithèque, Calendrier, Musique, Moniteur, Calculatrice, et `foot`
+(barre de titre du bureau).
+Non repris : fenêtres translucides avec flou (« Mica ») : le chrome est opaque
+(`surface-2`), comme le prévoit le jeton pour un compositeur sans flou ; boutons pilules
+de la Logithèque ; barre du haut de la maquette (32 px, nom de l'appli active) ; thème GTK
+(`ferrite-theme/`, hors commit) non régénéré. Applications sans colonne (Calculatrice,
+Horloge, TextEdit, Lecteur PDF, Terminal) : seulement les nouveaux boutons et commandes.
+Non vérifié : vrai bureau.
+

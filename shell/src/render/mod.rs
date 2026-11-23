@@ -2348,7 +2348,7 @@ fn hex_color(text: &str) -> Option<ferrite_ui::theme::Color> {
 /// Applications du lanceur (charte « Forge ») : sans recherche, celles de Ferrite d'abord,
 /// puis les autres rangées par rubrique, chacune de A à Z ; pendant une recherche, une
 /// seule liste de résultats.
-fn launcher_view(state: &Ferrite) -> LauncherView {
+pub(crate) fn launcher_view(state: &Ferrite) -> LauncherView {
     let entries = state.launcher_entries();
     let sections = if entries.is_empty() {
         vec![LauncherSection {
@@ -2380,8 +2380,25 @@ fn launcher_view(state: &Ferrite) -> LauncherView {
         sections.retain(|section| !section.tiles.is_empty());
         sections
     };
+    // Pastilles : « Tout », puis une par rubrique présente (sans recherche seulement).
+    let (rubrics, rubric, sections) = if state.launcher_query.trim().is_empty() && sections.len() > 1 {
+        let rubrics: Vec<String> = std::iter::once("Tout".to_owned())
+            .chain(sections.iter().map(|section| launcher_chip_label(&section.title)))
+            .collect();
+        let rubric = state.launcher_rubric.min(rubrics.len() - 1);
+        let sections = if rubric == 0 {
+            sections
+        } else {
+            vec![sections[rubric - 1].clone()]
+        };
+        (rubrics, rubric, sections)
+    } else {
+        (Vec::new(), 0, sections)
+    };
     LauncherView {
         query: state.launcher_query.clone(),
+        rubrics,
+        rubric,
         sections,
         scroll: state.launcher_scroll,
         backdrop: state.wallpaper.backdrop.clone(),
@@ -2411,6 +2428,15 @@ const LAUNCHER_RUBRICS: &[(&str, &[&str])] = &[
     ),
     ("Autres", &[]),
 ];
+
+/// Libellé court d'une rubrique, pour sa pastille.
+fn launcher_chip_label(title: &str) -> String {
+    match title {
+        "Applications Ferrite" => "Ferrite".to_owned(),
+        "Outils et système" => "Système".to_owned(),
+        other => other.to_owned(),
+    }
+}
 
 /// Rubrique d'une application : la première dont une catégorie correspond.
 pub(crate) fn launcher_rubric(entry: &LauncherEntry<'_>) -> usize {

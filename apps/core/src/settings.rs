@@ -157,6 +157,57 @@ impl Page {
         }
     }
 
+    /// Couleur de la pastille de la rubrique dans la colonne (thème « Fusion »).
+    fn tile(self) -> u32 {
+        match self {
+            Page::Network => 0x1D6FD8,
+            Page::Bluetooth => 0x2F4FD8,
+            Page::Wired => 0x13866B,
+            Page::Desktop => 0xB83A0A,
+            Page::Dock => 0x5B34C9,
+            Page::Windows => 0x7A4FE0,
+            Page::Notifications => 0xD9346A,
+            Page::Sound => 0xC9431C,
+            Page::Energy => 0x137333,
+            Page::Displays => 0x4D4D55,
+            Page::Keyboard | Page::Mouse => 0x5A5A64,
+            Page::Printers | Page::About => 0x7A7A84,
+            Page::Accounts => 0x8A5CF5,
+            Page::Defaults => 0xE07A00,
+            Page::Accessibility => 0x1D6FD8,
+            Page::DateTime => 0x4D4D55,
+            Page::Privacy | Page::Updates => 0x3A3A40,
+        }
+    }
+
+    /// Phrase sous le titre de la page.
+    fn description(self) -> &'static str {
+        match self {
+            Page::Network => "Réseaux sans fil, connexion automatique et partage de connexion.",
+            Page::Bluetooth => "Appareils associés, appareils à proximité et réception de fichiers.",
+            Page::Wired => "Câble réseau, adresse IP, DNS et VPN.",
+            Page::Desktop => {
+                "Thème, couleur d'accent et fond d'écran de tout le système, apps tierces comprises."
+            }
+            Page::Dock => "Taille et comportement du dock, barre supérieure et horloge.",
+            Page::Windows => "Aimantation, tuilage et applications à plusieurs fenêtres.",
+            Page::Notifications => "Ne pas déranger, bannières et sons des notifications.",
+            Page::Sound => "Sortie, entrée et volume de chaque application.",
+            Page::Energy => "Mise en veille, extinction de l'écran et bouton d'alimentation.",
+            Page::Displays => "Luminosité, échelle, second écran et mode nuit.",
+            Page::Keyboard => "Disposition du clavier et raccourcis du bureau.",
+            Page::Mouse => "Sens et vitesse du défilement, pavé tactile.",
+            Page::Printers => "Imprimantes ajoutées et imprimantes trouvées.",
+            Page::Accounts => "Comptes de cet ordinateur, mots de passe et images de profil.",
+            Page::Defaults => "Applications qui ouvrent chaque type de fichier.",
+            Page::Privacy => "Déverrouillage par le visage et données gardées par le système.",
+            Page::Accessibility => "Lisibilité, zoom de l'écran et aides à la saisie.",
+            Page::Updates => "Mises à jour du système et des applications.",
+            Page::DateTime => "Fuseau horaire et réglage automatique de l'heure.",
+            Page::About => "Cet ordinateur, son stockage et la version de Ferrite.",
+        }
+    }
+
     /// Symbole au trait de la rubrique (colonne, tête de page).
     fn icon(self) -> &'static str {
         match self {
@@ -711,12 +762,11 @@ impl SettingsState {
             self.sidebar(ui)
         });
         let title = self.page.title();
-        // Bande du haut sans titre ni filet, du même fond que la page : elle porte les
-        // boutons de fenêtre et sert à déplacer. Le titre est dans la page, en grand.
-        style::toolbar_with(ui, true, rows::page_color(), Color32::TRANSPARENT, |_| {});
-        egui::CentralPanel::no_frame()
-            .frame(Frame::new().fill(rows::page_color()))
-            .show(ui, |ui| {
+        // Thème « Fusion » : contenu dans une carte encastrée ; sa bande du haut, sans titre
+        // ni filet, porte les boutons de fenêtre et sert à déplacer. Le titre est dans la page.
+        style::inset_panel(ui, false, true, |ui| {
+            style::toolbar_with(ui, true, Color32::TRANSPARENT, Color32::TRANSPARENT, |_| {});
+            egui::CentralPanel::no_frame().frame(Frame::new()).show(ui, |ui| {
                 egui::ScrollArea::vertical().auto_shrink(false).show(ui, |ui| {
                     // Une seule colonne de 680 px au plus, centrée : le libellé et son
                     // réglage restent proches, même sur un grand écran.
@@ -727,20 +777,24 @@ impl SettingsState {
                         ui.add_space(side);
                         ui.vertical(|ui| {
                             ui.set_width(width);
-                            // Tête de page (charte « Forge ») : symbole de la page dans un
-                            // carré d'accent léger, puis le titre.
+                            // Tête de page (thème « Fusion ») : titre 24 semi-gras, puis une
+                            // phrase en 13 grise.
                             ui.horizontal(|ui| {
-                                ui.add_space(4.0);
-                                ui.spacing_mut().item_spacing.x = 12.0;
-                                let (tile, _) =
-                                    ui.allocate_exact_size(egui::vec2(40.0, 40.0), egui::Sense::hover());
-                                rows::accent_tile(ui, &mut self.icons, self.page.icon(), tile, 11.0);
-                                ui.label(
-                                    RichText::new(title)
-                                        .size(ferrite_ui::tokens::typography::TITLE)
-                                        .family(style::strong_family())
-                                        .color(style::primary_text()),
-                                );
+                                ui.add_space(2.0);
+                                ui.vertical(|ui| {
+                                    ui.spacing_mut().item_spacing.y = 2.0;
+                                    ui.label(
+                                        RichText::new(title)
+                                            .size(ferrite_ui::tokens::typography::TITLE)
+                                            .family(style::strong_family())
+                                            .color(style::primary_text()),
+                                    );
+                                    ui.label(
+                                        RichText::new(self.page.description())
+                                            .size(13.0)
+                                            .color(style::text_secondary()),
+                                    );
+                                });
                             });
                             ui.add_space(18.0);
                             self.page_body(ui, &ctx);
@@ -749,6 +803,7 @@ impl SettingsState {
                     });
                 });
             });
+        });
         self.wifi_details_dialog(&ctx);
         self.bluetooth_details_dialog(&ctx);
         self.wifi_password_dialog(&ctx);
@@ -837,11 +892,13 @@ impl SettingsState {
                 ui.add_space(8.0);
                 style::sidebar_heading(ui, name);
                 for page in pages {
-                    let response = style::sidebar_item(
+                    let [_, r, g, b] = page.tile().to_be_bytes();
+                    let response = style::sidebar_tile_item(
                         ui,
                         &mut self.icons,
                         page.icon(),
                         page.title(),
+                        Color32::from_rgb(r, g, b),
                         self.page == page,
                     );
                     if response.clicked() {

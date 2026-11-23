@@ -96,40 +96,37 @@ void main() {
         color = separator;
     }
 
-    // Boutons à droite, pastilles de 14 px. Au repos, « fermer » porte l'accent (`accent`
-    // vaut la pastille neutre si la fenêtre est inactive) et les autres sont neutres ; les
-    // symboles n'apparaissent qu'au survol du bouton, « fermer » passant alors au rouge.
+    // Boutons à droite (thème « Fusion ») : ronds de 28 px sur un voile neutre, symbole
+    // toujours visible. Au survol, le voile fonce ; « fermer » passe au rouge. Fenêtre
+    // inactive : symboles estompés.
     float y = size.y * 0.5;
+    vec3 ink = glyph.rgb * glyph.a;
+    float dim = accent.a < 0.5 ? 0.45 : 1.0;
+
+    // Fermer : une croix.
     vec2 q = p - vec2(size.x - BUTTON_INSET, y);
     bool lit = hover > 0.5 && hover < 1.5;
-    vec3 fill = lit ? danger.rgb : accent.rgb;
+    vec3 fill = lit ? danger.rgb : button.rgb;
     color = over(color, fill, coverage(length(q) - BUTTON_RADIUS, scale));
-    float s = min(segment(q, vec2(-2.5, -2.5), vec2(2.5, 2.5)), segment(q, vec2(2.5, -2.5), vec2(-2.5, 2.5)));
-    if (lit) {
-        color = over(color, ink_on(fill), coverage(s - 0.75, scale));
-    }
+    float s = min(segment(q, vec2(-3.5, -3.5), vec2(3.5, 3.5)), segment(q, vec2(3.5, -3.5), vec2(-3.5, 3.5)));
+    color = over(color, lit ? ink_on(fill) : mix(fill, ink, dim), coverage(s - 0.85, scale));
 
-    // Agrandir, à gauche de fermer : deux flèches opposées.
+    // Agrandir, à gauche de fermer : un carré aux coins arrondis.
     q = p - vec2(size.x - BUTTON_INSET - BUTTON_GAP, y);
     lit = hover > 1.5 && hover < 2.5;
-    color = over(color, button.rgb, coverage(length(q) - BUTTON_RADIUS, scale));
-    s = min(segment(q, vec2(-2.5, 0.5), vec2(-2.5, 2.5)), segment(q, vec2(-2.5, 2.5), vec2(-0.5, 2.5)));
-    s = min(s, segment(q, vec2(0.5, -2.5), vec2(2.5, -2.5)));
-    s = min(s, segment(q, vec2(2.5, -2.5), vec2(2.5, -0.5)));
-    s = min(s, segment(q, vec2(-2.5, 2.5), vec2(-0.5, 0.5)));
-    s = min(s, segment(q, vec2(2.5, -2.5), vec2(0.5, -0.5)));
-    if (lit) {
-        color = over(color, glyph.rgb, coverage(s - 0.7, scale));
-    }
+    fill = lit ? mix(button.rgb, ink, 0.12) : button.rgb;
+    color = over(color, fill, coverage(length(q) - BUTTON_RADIUS, scale));
+    vec2 b = abs(q) - vec2(2.0);
+    s = abs(length(max(b, 0.0)) + min(max(b.x, b.y), 0.0) - 2.5);
+    color = over(color, mix(fill, ink, dim), coverage(s - 0.8, scale));
 
     // Réduire, à gauche d'agrandir : un trait.
     q = p - vec2(size.x - BUTTON_INSET - 2.0 * BUTTON_GAP, y);
     lit = hover > 2.5;
-    color = over(color, button.rgb, coverage(length(q) - BUTTON_RADIUS, scale));
-    s = segment(q, vec2(-3.0, 0.0), vec2(3.0, 0.0));
-    if (lit) {
-        color = over(color, glyph.rgb, coverage(s - 0.75, scale));
-    }
+    fill = lit ? mix(button.rgb, ink, 0.12) : button.rgb;
+    color = over(color, fill, coverage(length(q) - BUTTON_RADIUS, scale));
+    s = segment(q, vec2(-4.5, 0.0), vec2(4.5, 0.0));
+    color = over(color, mix(fill, ink, dim), coverage(s - 0.85, scale));
 
     gl_FragColor = finish(color);
 }
@@ -531,8 +528,8 @@ mod tests {
     fn source_de_la_barre_de_titre() {
         let source = titlebar_source();
         // Les constantes sont définies avant d'être utilisées par le code.
-        assert!(source.starts_with("#define BUTTON_RADIUS 7.000\n"));
-        assert!(source.find("#define BUTTON_INSET 19.000").unwrap() < source.find("void main").unwrap());
+        assert!(source.starts_with("#define BUTTON_RADIUS 14.000\n"));
+        assert!(source.find("#define BUTTON_INSET 22.000").unwrap() < source.find("void main").unwrap());
     }
 
     #[test]

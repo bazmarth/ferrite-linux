@@ -89,6 +89,8 @@ pub struct Ferrite {
     /// Recherche tapée dans le menu Applications.
     pub launcher_query: String,
     pub launcher_scroll: u32,
+    /// Pastille de rubrique choisie dans le lanceur (0 : Tout).
+    pub launcher_rubric: usize,
     /// Volume et luminosité réglés à la main récemment : la relecture du système attend.
     pub volume_held_until: Option<Instant>,
     pub brightness_held_until: Option<Instant>,
@@ -464,6 +466,7 @@ impl Ferrite {
             nested: false,
             launcher_query: String::new(),
             launcher_scroll: 0,
+            launcher_rubric: 0,
             slider_drag: None,
             dock_config: crate::desktop::dock::DockConfig::from_settings(&settings),
             bar_revealed: Default::default(),

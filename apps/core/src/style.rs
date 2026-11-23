@@ -743,7 +743,13 @@ pub fn header(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
 /// `buttons`, elle porte à droite réduire, agrandir et fermer. Le vide sert à déplacer la
 /// fenêtre.
 pub fn toolbar(ui: &mut egui::Ui, buttons: bool, add: impl FnOnce(&mut egui::Ui)) {
-    toolbar_with(ui, buttons, header_color(), color(palette().titlebar_line), add);
+    // Dans la carte encastrée (thème « Fusion »), la barre prend le fond de la carte, sans
+    // filet ; ailleurs, celui du chrome.
+    if in_inset(ui) {
+        toolbar_with(ui, buttons, background(), Color32::TRANSPARENT, add);
+    } else {
+        toolbar_with(ui, buttons, header_color(), color(palette().titlebar_line), add);
+    }
 }
 
 /// Comme [`toolbar`], sur le fond `fill` et avec le filet `line` (Fichiers reprend les
@@ -804,15 +810,13 @@ pub fn sidebar(
 ) {
     egui::Panel::left(ui.scope_id().with(id))
         .resizable(false)
+        .show_separator_line(false)
         .exact_size(width)
         .frame(Frame::new().fill(fill))
         .show(ui, |ui| {
+            // Thème « Fusion » : la colonne est posée sur le chrome, sans filet ; le contenu
+            // est une carte encastrée à côté.
             let full = ui.max_rect();
-            ui.painter().vline(
-                full.right() - 0.5,
-                full.y_range(),
-                Stroke::new(border::HAIRLINE, color(palette().titlebar_line)),
-            );
             let top = egui::Rect::from_min_size(full.min, egui::vec2(full.width(), TOOLBAR_HEIGHT));
             if buttons {
                 drag_area(ui, top, "colonne");
@@ -903,14 +907,14 @@ enum WindowButton {
     Minimize,
 }
 
-/// Bouton de fenêtre : pastille de 14 px. Au repos, « fermer » porte l'accent (fenêtre
-/// active) et les autres sont neutres, sans symbole ; au survol, le symbole apparaît et
+/// Bouton de fenêtre (thème « Fusion ») : rond de 28 px sur un voile neutre, symbole
+/// toujours visible (estompé si la fenêtre est inactive) ; au survol le voile fonce et
 /// « fermer » passe au rouge.
 fn window_button(ui: &mut egui::Ui, center: egui::Pos2, kind: WindowButton) -> egui::Response {
     let close = kind == WindowButton::Close;
-    use ferrite_ui::theme::{WINDOW_BUTTON_GAP, WINDOW_BUTTON_RADIUS};
+    use ferrite_ui::theme::WINDOW_BUTTON_RADIUS;
     let radius = WINDOW_BUTTON_RADIUS as f32;
-    let rect = egui::Rect::from_center_size(center, egui::Vec2::splat(WINDOW_BUTTON_GAP as f32));
+    let rect = egui::Rect::from_center_size(center, egui::Vec2::splat(2.0 * radius));
     let salt = match kind {
         WindowButton::Close => "fermer",
         WindowButton::Zoom => "agrandir",
@@ -918,47 +922,45 @@ fn window_button(ui: &mut egui::Ui, center: egui::Pos2, kind: WindowButton) -> e
     };
     let response = ui.interact(rect, ui.scope_id().with(salt), egui::Sense::click());
     let focused = ui.input(|input| input.viewport().focused.unwrap_or(true));
-    let active_palette = palette();
+    let palette = palette();
+    let glyph = color(palette.window_glyph);
     let neutral = if focused {
-        color(active_palette.window_button)
+        color(palette.window_button)
     } else {
-        color(active_palette.window_button_inactive)
+        color(palette.window_button_inactive)
     };
-    let fill = match (close, response.hovered(), focused) {
-        (true, true, _) => color(active_palette.danger),
-        (true, false, true) => accent(),
+    let hovered = response.hovered();
+    let fill = match (close, hovered) {
+        (true, true) => color(palette.danger),
+        (false, true) => neutral.lerp_to_gamma(glyph, 0.12),
         _ => neutral,
     };
-    let ink = if close {
+    let ink = if close && hovered {
         ink_on(fill)
+    } else if focused {
+        glyph
     } else {
-        color(active_palette.window_glyph)
-    };
-    let ink = if response.hovered() {
-        ink
-    } else {
-        Color32::TRANSPARENT
+        fill.lerp_to_gamma(glyph, 0.45)
     };
     let painter = ui.painter();
     painter.circle_filled(center, radius, fill);
     let at = |x: f32, y: f32| center + egui::vec2(x, y);
-    if kind == WindowButton::Minimize {
-        painter.line_segment([at(-3.0, 0.0), at(3.0, 0.0)], Stroke::new(1.5, ink));
-    } else if close {
-        let stroke = Stroke::new(1.5, ink);
-        painter.line_segment([at(-2.5, -2.5), at(2.5, 2.5)], stroke);
-        painter.line_segment([at(2.5, -2.5), at(-2.5, 2.5)], stroke);
-    } else {
-        let stroke = Stroke::new(1.4, ink);
-        for segment in [
-            [at(-2.5, 0.5), at(-2.5, 2.5)],
-            [at(-2.5, 2.5), at(-0.5, 2.5)],
-            [at(0.5, -2.5), at(2.5, -2.5)],
-            [at(2.5, -2.5), at(2.5, -0.5)],
-            [at(-2.5, 2.5), at(-0.5, 0.5)],
-            [at(2.5, -2.5), at(0.5, -0.5)],
-        ] {
-            painter.line_segment(segment, stroke);
+    let stroke = Stroke::new(1.7, ink);
+    match kind {
+        WindowButton::Minimize => {
+            painter.line_segment([at(-4.5, 0.0), at(4.5, 0.0)], stroke);
+        }
+        WindowButton::Zoom => {
+            painter.rect_stroke(
+                egui::Rect::from_center_size(center, egui::Vec2::splat(9.0)),
+                2.5,
+                Stroke::new(1.6, ink),
+                egui::StrokeKind::Middle,
+            );
+        }
+        WindowButton::Close => {
+            painter.line_segment([at(-3.5, -3.5), at(3.5, 3.5)], stroke);
+            painter.line_segment([at(3.5, -3.5), at(-3.5, 3.5)], stroke);
         }
     }
     response
@@ -989,13 +991,15 @@ pub fn minimize_button(ui: &mut egui::Ui, center: egui::Pos2) {
 
 /// Barre d'état discrète en bas de la fenêtre.
 pub fn status_bar(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
+    let fill = if in_inset(ui) {
+        background()
+    } else {
+        header_color()
+    };
     egui::Panel::bottom(ui.scope_id().with("ferrite-status"))
         .resizable(false)
-        .frame(
-            Frame::new()
-                .fill(header_color())
-                .inner_margin(Margin::symmetric(12, 7)),
-        )
+        .show_separator_line(false)
+        .frame(Frame::new().fill(fill).inner_margin(Margin::symmetric(12, 7)))
         .show(ui, |ui| {
             let full = ui.max_rect().expand2(egui::vec2(12.0, 5.0));
             ui.painter().hline(
@@ -1022,7 +1026,7 @@ pub fn suggested_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
 
 /// Interrupteur à glissière, comme dans les réglages rapides du bureau.
 pub fn switch(ui: &mut egui::Ui, on: &mut bool, enabled: bool) -> egui::Response {
-    switch_sized(ui, on, enabled, egui::vec2(44.0, 26.0))
+    switch_sized(ui, on, enabled, egui::vec2(40.0, 22.0))
 }
 
 /// Interrupteur de la taille voulue : bouton blanc ombré, piste couleur d'accent s'il est mis.
@@ -1046,10 +1050,17 @@ pub fn switch_sized(ui: &mut egui::Ui, on: &mut bool, enabled: bool, size: egui:
     };
     let painter = ui.painter();
     painter.rect_filled(rect, rect.height() / 2.0, track);
-    let radius = rect.height() / 2.0 - 2.0;
-    let x = egui::lerp(rect.left() + radius + 2.0..=rect.right() - radius - 2.0, progress);
+    // Thème « Fusion » : poignée à 3 px du bord, encre sur l'accent une fois mis (foncée en
+    // sombre), couleur du texte éteint.
+    let radius = rect.height() / 2.0 - 3.0;
+    let x = egui::lerp(rect.left() + radius + 3.0..=rect.right() - radius - 3.0, progress);
+    let off_knob = themed(
+        Color32::from_rgb(0x1B, 0x1B, 0x1F),
+        Color32::from_rgb(0xF2, 0xF2, 0xF5),
+    );
+    let knob = off_knob.lerp_to_gamma(ink_on(accent()), progress);
     knob_shadow(painter, egui::pos2(x, rect.center().y), radius);
-    painter.circle_filled(egui::pos2(x, rect.center().y), radius, Color32::WHITE);
+    painter.circle_filled(egui::pos2(x, rect.center().y), radius, knob);
     response
 }
 
@@ -1236,21 +1247,99 @@ pub fn folder_back() -> Color32 {
     )
 }
 
-/// Accent léger (charte « Forge ») : fond de l'élément choisi d'une colonne, des pastilles
-/// mises et des carrés d'icône des en-têtes de page.
+/// Accent léger (thème « Fusion », `accent-soft`) : fond plein de l'élément choisi d'une
+/// colonne, d'une ligne choisie, d'un badge. Teintes du thème pour l'Oxyde, sinon l'accent
+/// mêlé au fond.
 pub fn accent_soft() -> Color32 {
     let accent = accent();
-    Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), themed(26, 40))
+    if accent == color(palette().accent) {
+        themed(
+            Color32::from_rgb(0xFD, 0xE8, 0xDD),
+            Color32::from_rgb(0x3B, 0x21, 0x17),
+        )
+    } else {
+        background().lerp_to_gamma(accent, themed(0.14, 0.2))
+    }
 }
 
-/// Accent lisible en texte sur [`accent_soft`] posé sur une colonne.
+/// Texte et symbole posés sur [`accent_soft`] (`accent-ink`).
 pub fn accent_ink() -> Color32 {
-    accent()
+    let accent = accent();
+    if accent == color(palette().accent) {
+        themed(
+            Color32::from_rgb(0x8F, 0x2F, 0x09),
+            Color32::from_rgb(0xFF, 0xB3, 0x8F),
+        )
+    } else {
+        accent
+    }
 }
 
-/// Fond de l'élément choisi d'une colonne : accent léger, sans ombre.
+/// Survol et pression neutres (`surface-3`) : ligne survolée, bouton fantôme pressé.
+pub fn surface_hover() -> Color32 {
+    themed(
+        Color32::from_rgb(0xE1, 0xE1, 0xE6),
+        Color32::from_rgb(0x2A, 0x2A, 0x2F),
+    )
+}
+
+/// Filet fin entre deux zones et autour des cartes (`line`).
+pub fn hairline() -> Color32 {
+    color(palette().separator)
+}
+
+/// Contour d'une carte encastrée (contenu d'une fenêtre) : à peine visible.
+pub fn inset_border() -> Color32 {
+    themed(Color32::from_black_alpha(11), Color32::from_white_alpha(15))
+}
+
+/// Contenu d'une fenêtre (thème « Fusion ») : carte du fond `surface-0`, encastrée dans le
+/// chrome (`sidebar_color`) à 8 px du bord de droite et du bas, et du haut si `top` (la
+/// barre d'outils est alors dans la carte), et de la gauche si `left` (pas de colonne).
+/// `add` y pose ses barres et son contenu, sans fond propre : la carte garde ses coins.
+pub fn inset_panel<R>(ui: &mut egui::Ui, left: bool, top: bool, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    egui::CentralPanel::no_frame()
+        .frame(Frame::new().fill(sidebar_color()).inner_margin(Margin {
+            left: if left { 8 } else { 0 },
+            right: 8,
+            top: if top { 8 } else { 0 },
+            bottom: 8,
+        }))
+        .show(ui, |ui| {
+            Frame::new()
+                .fill(background())
+                .corner_radius(10)
+                .stroke(Stroke::new(1.0, inset_border()))
+                // 3 px de marge : les fonds carrés des barres restent dans les coins arrondis.
+                .inner_margin(Margin::same(3))
+                .show(ui, |ui| {
+                    ui.set_min_size(ui.available_size());
+                    let flag = egui::Id::unique("ferrite-dans-la-carte");
+                    ui.data_mut(|data| data.insert_temp(flag, true));
+                    let result = add(ui);
+                    ui.data_mut(|data| data.remove::<bool>(flag));
+                    result
+                })
+                .inner
+        })
+        .inner
+}
+
+/// Vrai dans [`inset_panel`] : les barres d'outils y prennent le fond de la carte.
+fn in_inset(ui: &egui::Ui) -> bool {
+    ui.data(|data| data.get_temp::<bool>(egui::Id::unique("ferrite-dans-la-carte")))
+        .unwrap_or(false)
+}
+
+/// Fond de l'élément choisi d'une colonne : accent léger plein et barre d'accent de 3 px
+/// à gauche (thème « Fusion »).
 pub fn selection_pill(ui: &egui::Ui, rect: egui::Rect) {
-    ui.painter().rect_filled(rect, 8.0, accent_soft());
+    ui.painter().rect_filled(rect, 7.0, accent_soft());
+    let bar = egui::Rect::from_center_size(
+        egui::pos2(rect.left() + 1.5, rect.center().y),
+        egui::vec2(3.0, 14.0),
+    );
+    ui.painter().rect_filled(bar, 1.5, accent());
 }
 
 /// Ligne de colonne (Réglages, Logithèque, Calendrier, sélecteur de fichiers) : symbole au
@@ -1265,21 +1354,21 @@ pub fn sidebar_item(
 ) -> egui::Response {
     let scale = sidebar_scale();
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), 32.0 * scale),
+        egui::vec2(ui.available_width(), 34.0 * scale),
         egui::Sense::click(),
     );
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     if selected {
         selection_pill(ui, rect);
     } else if response.hovered() {
-        ui.painter().rect_filled(rect, 8.0, tint(9));
+        ui.painter().rect_filled(rect, 7.0, surface_hover());
     }
-    let side = 17.0 * scale;
+    let side = 16.0 * scale;
     let icon_rect = egui::Rect::from_center_size(
         egui::pos2(rect.left() + 10.0 + side / 2.0, rect.center().y),
         egui::Vec2::splat(side),
     );
-    let ink = if selected { accent() } else { text_secondary() };
+    let ink = if selected { accent_ink() } else { primary_text() };
     icons.paint(ui, icon, icon_rect, IconStyle::Tinted(ink));
     ui.painter().text(
         egui::pos2(icon_rect.right() + 11.0, rect.center().y),
@@ -1295,20 +1384,93 @@ pub fn sidebar_item(
     response
 }
 
-/// Titre de groupe d'une barre latérale (« Favoris », « Appareils »…) : petit, semi-gras,
-/// gris, sans capitales forcées ; aligné sur les symboles des lignes.
+/// Ligne de colonne à pastille de couleur (Réglages, thème « Fusion ») : carré de 24 px aux
+/// coins de 6 de la couleur `tile`, symbole blanc ; choisie, la pastille prend l'accent et
+/// la ligne l'accent léger avec sa barre.
+pub fn sidebar_tile_item(
+    ui: &mut egui::Ui,
+    icons: &mut Icons,
+    icon: &'static str,
+    text: &str,
+    tile: Color32,
+    selected: bool,
+) -> egui::Response {
+    let scale = sidebar_scale();
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), 34.0 * scale),
+        egui::Sense::click(),
+    );
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    if selected {
+        selection_pill(ui, rect);
+    } else if response.hovered() {
+        ui.painter().rect_filled(rect, 7.0, surface_hover());
+    }
+    let side = 24.0 * scale;
+    let square = egui::Rect::from_center_size(
+        egui::pos2(rect.left() + 10.0 + side / 2.0, rect.center().y),
+        egui::Vec2::splat(side),
+    );
+    let fill = if selected { accent() } else { tile };
+    ui.painter().rect_filled(square, 6.0 * scale, fill);
+    icons.paint(
+        ui,
+        icon,
+        square.shrink(5.0 * scale),
+        IconStyle::Tinted(ink_on(fill)),
+    );
+    ui.painter().text(
+        egui::pos2(square.right() + 10.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        text,
+        if selected {
+            FontId::new(typography::LABEL + 1.0, strong_family())
+        } else {
+            FontId::proportional(typography::LABEL + 1.0)
+        },
+        if selected { accent_ink() } else { primary_text() },
+    );
+    response
+}
+
+/// Texte d'un titre de groupe de colonne (thème « Fusion ») : MAJUSCULES, 11 px semi-gras,
+/// espacé de 0,06 em, couleur `color`. Pour le dessiner soi-même (Fichiers).
+pub fn overline(ui: &egui::Ui, text: &str, color: Color32) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::default();
+    job.append(
+        &text.to_uppercase(),
+        0.0,
+        egui::TextFormat {
+            font_id: FontId::new(typography::CAPTION, strong_family()),
+            color,
+            extra_letter_spacing: typography::CAPTION * 0.06,
+            ..Default::default()
+        },
+    );
+    ui.painter().layout_job(job)
+}
+
+/// Titre de groupe d'une barre latérale (« FAVORIS », « APPAREILS »…), thème « Fusion » :
+/// 11 px semi-gras, en MAJUSCULES espacées (0,06 em), gris ; aligné sur les symboles.
 pub fn sidebar_heading(ui: &mut egui::Ui, text: &str) {
-    ui.add_space(8.0);
+    ui.add_space(10.0);
+    let label = text.to_uppercase();
+    let mut job = egui::text::LayoutJob::default();
+    job.append(
+        &label,
+        0.0,
+        egui::TextFormat {
+            font_id: FontId::new(typography::CAPTION, strong_family()),
+            color: text_secondary(),
+            extra_letter_spacing: typography::CAPTION * 0.06,
+            ..Default::default()
+        },
+    );
     ui.horizontal(|ui| {
         ui.add_space(10.0);
-        ui.label(
-            egui::RichText::new(text)
-                .size(typography::CAPTION)
-                .family(strong_family())
-                .color(text_secondary()),
-        );
+        ui.label(job);
     });
-    ui.add_space(3.0);
+    ui.add_space(4.0);
 }
 
 use ferrite_ui::glyphs::GLYPHS;

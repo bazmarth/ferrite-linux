@@ -5,7 +5,8 @@ Les valeurs exactes vivent dans le code (`ui/src/tokens.rs`, `ui/src/theme.rs`) 
 document dit **comment s'en servir**. En cas de doute, il prime sur une habitude du code.
 
 Maquette validée le 10 novembre 2026 : bureau et centre de contrôle, lanceur, Réglages
-(page Écrans en clair, page Apparence en sombre). Revue le 22 novembre 2026 : accent
+(page Écrans en clair, page Apparence en sombre). Thème « Fusion » appliqué aux fenêtres le 23 novembre 2026 (carte encastrée, boutons
+ronds, sélection à barre d'accent). Revue le 22 novembre 2026 : accent
 « Oxyde », neutres sans teinte, barre de titre de 44 px, thème GTK pour les applications
 tierces ; puis refonte « Forge » (maquette `docs/maquettes/refonte-forge.html`) : icônes au
 trait, barre en îlots, centre de contrôle en tuiles, sélection en accent léger.
@@ -67,8 +68,9 @@ Police Inter. Tailles de `tokens::typography`, jamais de demi-taille :
 | 12 `SMALL` | titre de groupe (semi-gras, gris), indication sous un libellé |
 | 11 `CAPTION` | titre de section de colonne, libellé sous une bascule ronde |
 
-**Pas de capitales forcées** (ni `to_uppercase`, ni lettres espacées) pour les titres de
-section : « Connexions », pas « CONNEXIONS ».
+Titres de groupe des **colonnes** seulement : MAJUSCULES espacées de 0,06 em
+(`style::sidebar_heading`, `style::overline`), 11 semi-gras gris : « CONNEXIONS ». Partout
+ailleurs, pas de capitales forcées.
 
 ## 4. Formes et mesures
 
@@ -96,13 +98,14 @@ section : « Connexions », pas « CONNEXIONS ».
   dessiner de tracé à la main dans le code : ajouter le dessin au script et le relancer.
 - Tailles : 16 dans la barre du haut, 17 dans les colonnes, 20 dans le centre de contrôle.
 
-### Boutons de fenêtre
+### Boutons de fenêtre (thème « Fusion »)
 
-- Toujours à droite : réduire, agrandir, fermer (au bord). Pastilles de 14 px, 22 px
-  entre deux centres, cible de clic de 22 px.
-- Au repos, « fermer » est seul en accent (fenêtre active) ; les autres sont neutres et
-  sans symbole. Au survol, le symbole apparaît et « fermer » passe au rouge. Fenêtre
-  inactive : les trois neutres.
+- Toujours à droite : réduire, agrandir, fermer (au bord). Ronds de 28 px sur un voile
+  neutre (`window_button`), 6 px d'écart, centre de « fermer » à 22 px du bord.
+- Symbole toujours visible (trait, carré arrondi, croix) ; au survol le voile fonce, et
+  « fermer » passe au rouge. Fenêtre inactive : symboles estompés.
+- Même dessin dans les applications (`style::window_buttons`) et sur les barres de titre
+  que le bureau dessine pour les applications tierces (titre centré).
 
 ### Applications tierces
 
@@ -114,15 +117,20 @@ section : « Connexions », pas « CONNEXIONS ».
 
 ### Fenêtre d'application à colonne (Réglages, Logithèque, Calendrier…)
 
-- Colonne `sidebar_background`, pleine hauteur, compte et recherche en tête.
-- Ligne de colonne (`style::sidebar_item`) : symbole au trait de 17 px **gris**, libellé
-  13. Choisie : fond en accent léger (`style::selection_pill`, sans ombre), symbole et
-  libellé en accent, libellé en semi-gras. Même règle dans Fichiers.
-- Titre de section (`style::sidebar_heading`) : 11 semi-gras gris, sans capitales.
-- Contenu : bande du haut **sans titre ni filet**, du fond de la page (elle porte les
-  boutons de fenêtre et sert à déplacer) ; tête de page dans le contenu : symbole de la
-  page dans un carré de 40 px en accent léger (`rows::accent_tile`), puis le titre en 24
-  semi-gras.
+Thème « Fusion » (maquette « FerriteOS — Concept de design », novembre 2026) :
+- La fenêtre entière a la teinte du chrome (`sidebar_background`, `surface-2`) ; la
+  colonne y est posée, **sans filet**, compte et recherche en tête.
+- Le contenu est une **carte encastrée** (`style::inset_panel`) : fond de la page
+  (`surface-0`), coins de 10, filet léger, à 8 px du bord droit, du bas et du haut (la
+  barre d'outils, avec les boutons de fenêtre, est dans la carte). Sans colonne
+  (Moniteur), la barre d'outils reste sur le chrome et la carte commence dessous.
+- Ligne de colonne (`style::sidebar_item`) : 34 px, symbole au trait de 16 px, libellé
+  13. Survol : `surface-3`. Choisie (`style::selection_pill`) : fond `accent-soft` plein,
+  barre d'accent de 3 × 14 px à gauche, symbole et libellé `accent-ink`, semi-gras.
+- Réglages : pastille de couleur de 24 px (coins de 6, symbole blanc) devant chaque
+  rubrique (`style::sidebar_tile_item`, `Page::tile`) ; choisie, la pastille prend
+  l'accent. Tête de page : titre 24 semi-gras puis une phrase en 13 grise
+  (`Page::description`).
 
 ### Commandes (boutons, listes, champs)
 
@@ -138,12 +146,14 @@ section : « Connexions », pas « CONNEXIONS ».
 
 ### Groupes de réglages (`settings/rows.rs`)
 
-- Titre de groupe 12 semi-gras gris, au-dessus de la carte.
-- Carte `surface`, rayon 12, **sans bordure** ; lignes de 48 px séparées par un filet
-  `separator` décalé de 16 px.
+- Titre de section 16 semi-gras, couleur du texte (`title-3`), au-dessus de la carte.
+- Carte `surface` (`surface-1`), rayon 10, **filet `line`** ; lignes de 48 px séparées par
+  un filet décalé de 16 px.
+- Interrupteur 40 × 22, poignée de 16 : éteint, piste `track` et poignée de la couleur du
+  texte ; mis, piste d'accent et poignée `on-accent`.
 - Valeur à droite en 13 gris ; commandes à droite (interrupteur, liste, segments).
 - Pastille de ligne (appareil, compte, imprimante…) : carré de 30 px en accent léger,
-  symbole en accent. Plus de pastilles de couleurs différentes selon la rubrique.
+  symbole en accent.
 - État « bon » (connecté…) : point vert devant l'indication, texte gris (jamais toute la
   ligne en vert).
 - Grande ligne de tête (Wi-Fi, Bluetooth) : titre, état et interrupteur, sans symbole
@@ -169,6 +179,9 @@ section : « Connexions », pas « CONNEXIONS ».
   d'accent, pictogramme dedans à gauche, **sans pourcentage**.
 - Pastilles du bas (Mode nuit, Éclairage du clavier, Clavier, second écran), trois par
   rangée : accent léger quand le réglage est mis.
+- Lecture en cours (un lecteur joue) : carte sous les pastilles, pochette 40 px, titre et
+  artiste, puis précédent, lecture/pause (pastille pleine) et suivant ; un clic sur la
+  carte ouvre le lecteur.
 
 ### Barre du haut
 
@@ -196,6 +209,9 @@ section : « Connexions », pas « CONNEXIONS ».
   rubrique (Internet, Bureautique, Multimédia, Graphisme, Développement, Jeux,
   Éducation, Outils et système, Autres), d'après leurs catégories freedesktop. Pendant
   une recherche : une seule liste. Entrée lance la première case affichée.
+- Pastilles de rubriques sous le champ (« Tout », « Ferrite », « Internet »…, sur
+  plusieurs rangées s'il le faut) : la choisie pleine (encre du texte), les autres sur un
+  voile ; masquées pendant une recherche.
 
 ## 6. Mouvement
 
@@ -207,5 +223,6 @@ Durées de `tokens::motion` (QUICK 120, SHORT 200, NORMAL 320, LONG 360 ms), cou
 1. Aucune couleur à la main (`tools/check-colors.sh`).
 2. Capture en clair **et** en sombre.
 3. Aucun texte coupé par « … » dans la configuration par défaut.
-4. Pas de capitales forcées, pas de bordure autour d'une carte de groupe.
+4. Capitales forcées seulement pour les titres de groupe des colonnes ; cartes de groupe
+   avec leur filet `line`.
 5. Aucun bouton qui fait semblant : grisé s'il ne fait rien.

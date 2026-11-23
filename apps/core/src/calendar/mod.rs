@@ -536,94 +536,98 @@ impl CalendarState {
                 },
             );
         }
-        let mut toggle = false;
-        style::toolbar(ui, true, |ui| {
-            toggle = self.toolbar(ui, sidebar);
-        });
-        if toggle {
-            self.sidebar = Some(!sidebar);
-        }
-        let waiting: Vec<Reminder> = self.book.waiting(&self.agenda, now);
-        let mut quick_added: Option<(String, Option<Date>)> = None;
-        let actions = {
-            let mut view = Painter {
-                agenda: &self.agenda,
-                now,
-                hidden: &self.hidden,
-                actions: Vec::new(),
-            };
-            egui::CentralPanel::no_frame()
-                .frame(
-                    Frame::new()
-                        .fill(style::background())
-                        .inner_margin(Margin::symmetric(14, 10)),
-                )
-                .show(ui, |ui| {
-                    if !self.search.trim().is_empty() {
-                        lists::column(ui, |ui| {
-                            ui.add_space(6.0);
-                            ui.label(
-                                RichText::new("Recherche")
-                                    .size(24.0)
-                                    .family(style::strong_family()),
-                            );
-                            views::search_results(ui, &mut view, &self.search, now.date);
-                        });
-                        return;
-                    }
-                    match self.page {
-                        Page::Calendar => {
-                            // Dans une fenêtre basse, la grille garde sa place : les rappels
-                            // restent dans « Aujourd'hui » et dans les notifications.
-                            if !waiting.is_empty()
-                                && self.mode != Mode::Agenda
-                                && ui.available_height() > 620.0
-                            {
-                                views::waiting_reminders(ui, &mut view, &waiting);
-                            }
-                            match self.mode {
-                                Mode::Month => views::month(ui, &mut view, self.cursor),
-                                Mode::Week => views::time_grid(
-                                    ui,
-                                    &mut view,
-                                    self.cursor.week_start(),
-                                    7,
-                                    self.cursor,
-                                    &mut self.scroll_to,
-                                ),
-                                Mode::Day => views::time_grid(
-                                    ui,
-                                    &mut view,
-                                    self.cursor,
-                                    1,
-                                    self.cursor,
-                                    &mut self.scroll_to,
-                                ),
-                                Mode::Agenda => lists::column(ui, |ui| {
+        let (actions, quick_added) = style::inset_panel(ui, !sidebar, true, |ui| {
+            let mut toggle = false;
+            style::toolbar(ui, true, |ui| {
+                toggle = self.toolbar(ui, sidebar);
+            });
+            if toggle {
+                self.sidebar = Some(!sidebar);
+            }
+            let waiting: Vec<Reminder> = self.book.waiting(&self.agenda, now);
+            let mut quick_added: Option<(String, Option<Date>)> = None;
+            let actions = {
+                let mut view = Painter {
+                    agenda: &self.agenda,
+                    now,
+                    hidden: &self.hidden,
+                    actions: Vec::new(),
+                };
+                egui::CentralPanel::no_frame()
+                    .frame(
+                        Frame::new()
+                            .fill(style::background())
+                            .inner_margin(Margin::symmetric(14, 10)),
+                    )
+                    .show(ui, |ui| {
+                        if !self.search.trim().is_empty() {
+                            lists::column(ui, |ui| {
+                                ui.add_space(6.0);
+                                ui.label(
+                                    RichText::new("Recherche")
+                                        .size(24.0)
+                                        .family(style::strong_family()),
+                                );
+                                views::search_results(ui, &mut view, &self.search, now.date);
+                            });
+                            return;
+                        }
+                        match self.page {
+                            Page::Calendar => {
+                                // Dans une fenêtre basse, la grille garde sa place : les rappels
+                                // restent dans « Aujourd'hui » et dans les notifications.
+                                if !waiting.is_empty()
+                                    && self.mode != Mode::Agenda
+                                    && ui.available_height() > 620.0
+                                {
                                     views::waiting_reminders(ui, &mut view, &waiting);
-                                    views::agenda(ui, &mut view, self.cursor, 60);
-                                }),
+                                }
+                                match self.mode {
+                                    Mode::Month => views::month(ui, &mut view, self.cursor),
+                                    Mode::Week => views::time_grid(
+                                        ui,
+                                        &mut view,
+                                        self.cursor.week_start(),
+                                        7,
+                                        self.cursor,
+                                        &mut self.scroll_to,
+                                    ),
+                                    Mode::Day => views::time_grid(
+                                        ui,
+                                        &mut view,
+                                        self.cursor,
+                                        1,
+                                        self.cursor,
+                                        &mut self.scroll_to,
+                                    ),
+                                    Mode::Agenda => lists::column(ui, |ui| {
+                                        views::waiting_reminders(ui, &mut view, &waiting);
+                                        views::agenda(ui, &mut view, self.cursor, 60);
+                                    }),
+                                }
+                            }
+                            Page::Today => {
+                                if let Some(title) =
+                                    lists::today(ui, &mut view, &waiting, &mut self.quick_today)
+                                {
+                                    quick_added = Some((title, Some(now.date)));
+                                }
+                            }
+                            Page::Upcoming => lists::upcoming(ui, &mut view),
+                            Page::Overdue => lists::overdue(ui, &mut view),
+                            Page::Tasks => {
+                                if let Some(title) =
+                                    lists::tasks(ui, &mut view, &mut self.filter, &mut self.quick_tasks)
+                                {
+                                    quick_added = Some((title, None));
+                                }
                             }
                         }
-                        Page::Today => {
-                            if let Some(title) = lists::today(ui, &mut view, &waiting, &mut self.quick_today)
-                            {
-                                quick_added = Some((title, Some(now.date)));
-                            }
-                        }
-                        Page::Upcoming => lists::upcoming(ui, &mut view),
-                        Page::Overdue => lists::overdue(ui, &mut view),
-                        Page::Tasks => {
-                            if let Some(title) =
-                                lists::tasks(ui, &mut view, &mut self.filter, &mut self.quick_tasks)
-                            {
-                                quick_added = Some((title, None));
-                            }
-                        }
-                    }
-                });
-            view.actions
-        };
+                    });
+                view.actions
+            };
+            (actions, quick_added)
+        });
         for action in actions {
             self.apply(action);
         }

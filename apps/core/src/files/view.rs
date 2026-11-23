@@ -326,42 +326,45 @@ impl FilesState {
         style::sidebar(ui, "emplacements", SIDEBAR_WIDTH, look.side, !picker, |ui| {
             self.sidebar(ui, &look, &mut actions, &mut targets)
         });
-        style::toolbar_with(ui, !picker, look.win, look.line, |ui| {
-            self.toolbar(ui, &look, &mut actions, &mut targets)
-        });
-        if !picker && self.tabs.len() > 1 {
-            self.tab_bar(ui, &look, &mut actions, &mut targets);
-        }
-        if picker {
-            self.picker_bar(ui, &mut actions);
-        } else {
-            if self.preview {
-                self.preview_panel(ui, &look, &mut actions);
+        // Thème « Fusion » : barre, rubans et liste dans la carte encastrée.
+        let (layer, (area, offset)) = style::inset_panel(ui, picker, !picker, |ui| {
+            style::toolbar_with(ui, !picker, look.win, look.line, |ui| {
+                self.toolbar(ui, &look, &mut actions, &mut targets)
+            });
+            if !picker && self.tabs.len() > 1 {
+                self.tab_bar(ui, &look, &mut actions, &mut targets);
             }
-            self.status_panel(ui, &look, &mut actions);
-        }
-        let analyzing = matches!(self.location, Location::Analysis { .. });
-        if analyzing {
-            self.analysis_bar(ui, &look, &mut actions);
-        } else {
-            self.filter_bar(ui, &look, &mut actions);
-        }
-        if !self.recent_strip.is_empty() && self.search.trim().is_empty() && self.filter == Filter::All {
-            self.recent_panel(ui, &look, &mut actions);
-        }
-        self.item_rects.clear();
-        let (layer, (area, offset)) = egui::CentralPanel::no_frame()
-            .frame(Frame::new().fill(look.win))
-            .show(ui, |ui| {
-                // L'analyse se lit en liste : tailles, parts et barres alignées.
-                let shown = match self.view {
-                    _ if analyzing => self.list(ui, &look, &mut actions, &mut targets),
-                    View::List => self.list(ui, &look, &mut actions, &mut targets),
-                    View::Grid => self.grid(ui, &look, &mut actions, &mut targets),
-                };
-                (ui.layer_id(), shown)
-            })
-            .inner;
+            if picker {
+                self.picker_bar(ui, &mut actions);
+            } else {
+                if self.preview {
+                    self.preview_panel(ui, &look, &mut actions);
+                }
+                self.status_panel(ui, &look, &mut actions);
+            }
+            let analyzing = matches!(self.location, Location::Analysis { .. });
+            if analyzing {
+                self.analysis_bar(ui, &look, &mut actions);
+            } else {
+                self.filter_bar(ui, &look, &mut actions);
+            }
+            if !self.recent_strip.is_empty() && self.search.trim().is_empty() && self.filter == Filter::All {
+                self.recent_panel(ui, &look, &mut actions);
+            }
+            self.item_rects.clear();
+            egui::CentralPanel::no_frame()
+                .frame(Frame::new().fill(look.win))
+                .show(ui, |ui| {
+                    // L'analyse se lit en liste : tailles, parts et barres alignées.
+                    let shown = match self.view {
+                        _ if analyzing => self.list(ui, &look, &mut actions, &mut targets),
+                        View::List => self.list(ui, &look, &mut actions, &mut targets),
+                        View::Grid => self.grid(ui, &look, &mut actions, &mut targets),
+                    };
+                    (ui.layer_id(), shown)
+                })
+                .inner
+        });
         self.lasso_frame(&ctx, &look, layer, area, offset);
         self.drag_frame(&ctx, &look, &targets, &mut actions);
         self.deposits(&ctx, &look, &targets, &mut actions);
@@ -542,13 +545,10 @@ impl FilesState {
     /// Titre de rubrique avec un bouton « + » à droite ; vrai si on l'a cliqué.
     fn heading_with_add(&self, ui: &mut egui::Ui, look: &Look, title: &str, hint: &str) -> bool {
         let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 34.0), Sense::hover());
-        ui.painter().text(
-            egui::pos2(rect.left() + 10.0, rect.bottom() - 5.0),
-            egui::Align2::LEFT_BOTTOM,
-            title,
-            font(11.0, true),
-            look.head,
-        );
+        // Thème « Fusion » : MAJUSCULES espacées.
+        let galley = style::overline(ui, title, look.head);
+        let at = egui::pos2(rect.left() + 10.0, rect.bottom() - 5.0 - galley.size().y);
+        ui.painter().galley(at, galley, look.head);
         let button = egui::Rect::from_center_size(
             egui::pos2(rect.right() - 16.0, rect.bottom() - 11.0),
             egui::Vec2::splat(24.0),
@@ -571,13 +571,10 @@ impl FilesState {
 
     fn heading(&self, ui: &mut egui::Ui, look: &Look, title: &str) {
         let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 34.0), Sense::hover());
-        ui.painter().text(
-            egui::pos2(rect.left() + 10.0, rect.bottom() - 5.0),
-            egui::Align2::LEFT_BOTTOM,
-            title,
-            font(11.0, true),
-            look.head,
-        );
+        // Thème « Fusion » : MAJUSCULES espacées.
+        let galley = style::overline(ui, title, look.head);
+        let at = egui::pos2(rect.left() + 10.0, rect.bottom() - 5.0 - galley.size().y);
+        ui.painter().galley(at, galley, look.head);
     }
 
     /// Ligne d'emplacement : icône de 22, nom de 14, compteur éventuel à droite.

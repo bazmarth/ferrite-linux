@@ -28,12 +28,12 @@ pub const MENU_WIDTH: u32 = 240;
 /// Hauteur d'une ligne de menu.
 pub const MENU_ITEM_HEIGHT: u32 = 28;
 
-/// Boutons de fenêtre, tous à droite (réduire, agrandir, fermer) : pastille de 14 px,
-/// centre du bouton fermer à 19 px du bord, 22 px entre deux centres (8 px d'écart).
-/// Au repos, seul « fermer » porte l'accent ; les symboles apparaissent au survol.
-pub const WINDOW_BUTTON_RADIUS: u32 = 7;
-pub const WINDOW_BUTTON_INSET: u32 = 19;
-pub const WINDOW_BUTTON_GAP: u32 = 22;
+/// Boutons de fenêtre (thème « Fusion »), tous à droite (réduire, agrandir, fermer) :
+/// ronds de 28 px sur un voile neutre, symbole toujours visible, 6 px d'écart ; centre de
+/// « fermer » à 22 px du bord. Au survol, le voile fonce ; « fermer » passe au rouge.
+pub const WINDOW_BUTTON_RADIUS: u32 = 14;
+pub const WINDOW_BUTTON_INSET: u32 = 22;
+pub const WINDOW_BUTTON_GAP: u32 = 34;
 
 /// Polices de l'interface (fichiers dans `assets/fonts`).
 pub const FONT_UI: &str = "Inter";
@@ -205,9 +205,9 @@ impl Palette {
         danger: Color::rgb(colors::DANGER_LIGHT),
         success: Color::rgb(colors::SUCCESS_LIGHT),
         warning: Color::rgb(colors::WARNING_LIGHT),
-        window_button: Color::rgb(0xD4D4DA),
-        window_button_inactive: Color::rgb(0xDDDDE2),
-        window_glyph: Color::rgb(0x3A3A42),
+        window_button: Color::rgb(0xDCDCE1),
+        window_button_inactive: Color::rgb(0xE1E1E6),
+        window_glyph: Color::rgb(0x1B1B1F),
         window_ring: Color::BLACK.with_alpha(31),
         selection: Color::rgb(0xFDE8DD),
         selection_text: Color::rgb(0x8F2F09),
@@ -252,9 +252,9 @@ impl Palette {
         danger: Color::rgb(colors::DANGER_DARK),
         success: Color::rgb(colors::SUCCESS_DARK),
         warning: Color::rgb(colors::WARNING_DARK),
-        window_button: Color::rgb(0x3A3A40),
-        window_button_inactive: Color::rgb(0x2A2A2F),
-        window_glyph: Color::rgb(0xE6E6EA),
+        window_button: Color::rgb(0x2B2B30),
+        window_button_inactive: Color::rgb(0x242428),
+        window_glyph: Color::rgb(0xF2F2F5),
         window_ring: Color::WHITE.with_alpha(26),
         selection: Color::rgb(0x3B2117),
         selection_text: Color::rgb(0xFFB38F),

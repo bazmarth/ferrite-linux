@@ -244,29 +244,32 @@ impl MonitorState {
         }
 
         style::header(ui, |ui| self.header(ui));
-        self.status_bar(ui);
-        egui::CentralPanel::no_frame()
-            .frame(
-                Frame::new()
-                    .fill(style::background())
-                    .inner_margin(Margin::same(14)),
-            )
-            .show(ui, |ui| {
-                if self.snapshot.is_none() {
-                    ui.centered_and_justified(|ui| {
-                        ui.label(RichText::new("Mesure en cours…").color(style::text_secondary()));
-                    });
-                    return;
-                }
-                match self.tab {
-                    Tab::Processes => {
-                        self.cards(ui);
-                        ui.add_space(12.0);
-                        self.process_list(ui);
+        // Thème « Fusion » : barre d'outils sur le chrome, contenu dans la carte encastrée.
+        style::inset_panel(ui, true, false, |ui| {
+            self.status_bar(ui);
+            egui::CentralPanel::no_frame()
+                .frame(
+                    Frame::new()
+                        .fill(style::background())
+                        .inner_margin(Margin::same(14)),
+                )
+                .show(ui, |ui| {
+                    if self.snapshot.is_none() {
+                        ui.centered_and_justified(|ui| {
+                            ui.label(RichText::new("Mesure en cours…").color(style::text_secondary()));
+                        });
+                        return;
                     }
-                    Tab::Resources => self.resources(ui),
-                }
-            });
+                    match self.tab {
+                        Tab::Processes => {
+                            self.cards(ui);
+                            ui.add_space(12.0);
+                            self.process_list(ui);
+                        }
+                        Tab::Resources => self.resources(ui),
+                    }
+                });
+        });
         self.confirm_dialog(&ctx);
     }
 

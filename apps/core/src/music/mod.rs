@@ -485,35 +485,37 @@ impl MusicState {
         style::sidebar(ui, "musique-bibliotheque", SIDEBAR_WIDTH, side(), true, |ui| {
             self.sidebar(ui)
         });
-        egui::Panel::bottom(ui.scope_id().with("musique-lecteur"))
-            .resizable(false)
-            .exact_size(PLAYER_HEIGHT)
-            .frame(egui::Frame::new().fill(bar()))
-            .show(ui, |ui| self.player(ui, &status));
-        if self.show_queue && !self.queue.is_empty() && ui.available_width() > QUEUE_WIDTH + 520.0 {
-            egui::Panel::right(ui.scope_id().with("musique-file"))
+        style::inset_panel(ui, false, true, |ui| {
+            egui::Panel::bottom(ui.scope_id().with("musique-lecteur"))
                 .resizable(false)
-                .exact_size(QUEUE_WIDTH)
-                .frame(
-                    egui::Frame::new()
-                        .fill(side())
-                        .inner_margin(egui::Margin::symmetric(14, 20)),
-                )
-                .show(ui, |ui| self.queue_panel(ui, &status));
-        }
-        let title = self.page_title();
-        style::toolbar_with(ui, true, window(), line(), |ui| {
-            ui.add_space(10.0);
-            ui.label(
-                egui::RichText::new(title)
-                    .font(FontId::new(15.0, style::strong_family()))
-                    .color(style::primary_text()),
-            );
-        });
-        egui::CentralPanel::no_frame().show(ui, |ui| {
-            ui.painter()
-                .rect_filled(ui.max_rect(), CornerRadius::ZERO, window());
-            self.content(ui, &status);
+                .exact_size(PLAYER_HEIGHT)
+                .frame(egui::Frame::new().fill(bar()))
+                .show(ui, |ui| self.player(ui, &status));
+            if self.show_queue && !self.queue.is_empty() && ui.available_width() > QUEUE_WIDTH + 520.0 {
+                egui::Panel::right(ui.scope_id().with("musique-file"))
+                    .resizable(false)
+                    .exact_size(QUEUE_WIDTH)
+                    .frame(
+                        egui::Frame::new()
+                            .fill(side())
+                            .inner_margin(egui::Margin::symmetric(14, 20)),
+                    )
+                    .show(ui, |ui| self.queue_panel(ui, &status));
+            }
+            let title = self.page_title();
+            style::toolbar_with(ui, true, window(), line(), |ui| {
+                ui.add_space(10.0);
+                ui.label(
+                    egui::RichText::new(title)
+                        .font(FontId::new(15.0, style::strong_family()))
+                        .color(style::primary_text()),
+                );
+            });
+            egui::CentralPanel::no_frame().show(ui, |ui| {
+                ui.painter()
+                    .rect_filled(ui.max_rect(), CornerRadius::ZERO, window());
+                self.content(ui, &status);
+            });
         });
     }
 
@@ -558,17 +560,7 @@ impl MusicState {
         ];
         for (index, (glyph, label, page)) in items.into_iter().enumerate() {
             if index == 1 {
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    ui.add_space(22.0);
-                    ui.label(
-                        egui::RichText::new("Bibliothèque")
-                            .size(12.0)
-                            .strong()
-                            .color(style::text_secondary()),
-                    );
-                });
-                ui.add_space(4.0);
+                style::sidebar_heading(ui, "Bibliothèque");
             }
             let selected = self.page == page
                 || matches!(

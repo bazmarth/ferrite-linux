@@ -224,8 +224,13 @@ impl Decorations {
                 palette.window_button_inactive,
             )
         };
-        // « Fermer » porte l'accent au repos, seulement sur la fenêtre active.
-        let close = if active { palette.accent } else { button };
+        // Thème « Fusion » : boutons neutres ; l'alpha d'`accent` dit si la fenêtre est
+        // active (symboles pleins) ou non (symboles estompés).
+        let close = if active {
+            palette.accent
+        } else {
+            palette.accent.with_alpha(0)
+        };
         let uniforms = || {
             vec![
                 Uniform::new("scale", scale as f32),

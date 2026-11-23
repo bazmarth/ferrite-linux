@@ -438,51 +438,53 @@ impl StoreState {
                 self.sidebar(ui);
             },
         );
-        style::toolbar(ui, true, |ui| self.toolbar(ui));
-        if let Some(operation) = self.operation.clone() {
-            style::status_bar(ui, |ui| {
-                ui.add(egui::Spinner::new().size(14.0));
-                ui.label(RichText::new(operation.label()).size(13.0));
-                if let Some(percent) = operation.percent {
-                    ui.add(egui::ProgressBar::new(percent as f32 / 100.0).desired_width(160.0));
-                }
-            });
-        } else if let Some(notice) = self.notice.clone() {
-            style::status_bar(ui, |ui| {
-                match &notice {
-                    Ok(text) => ui.colored_label(style::success(), text),
-                    Err(text) => ui.colored_label(style::error(), text),
-                };
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button("OK").clicked() {
-                        self.notice = None;
+        style::inset_panel(ui, false, true, |ui| {
+            style::toolbar(ui, true, |ui| self.toolbar(ui));
+            if let Some(operation) = self.operation.clone() {
+                style::status_bar(ui, |ui| {
+                    ui.add(egui::Spinner::new().size(14.0));
+                    ui.label(RichText::new(operation.label()).size(13.0));
+                    if let Some(percent) = operation.percent {
+                        ui.add(egui::ProgressBar::new(percent as f32 / 100.0).desired_width(160.0));
                     }
                 });
-            });
-        }
-        egui::CentralPanel::no_frame()
-            .frame(
-                Frame::new()
-                    .fill(style::background())
-                    .inner_margin(Margin::symmetric(28, 0)),
-            )
-            .show(ui, |ui| {
-                if self.deb.is_some() {
-                    self.deb_page(ui);
-                } else if let Some(detail) = self.detail.clone() {
-                    self.detail_page(ui, &detail);
-                } else if !self.search.trim().is_empty() {
-                    self.search_page(ui);
-                } else {
-                    match self.page {
-                        Page::Discover => self.discover_page(ui),
-                        Page::Category(index) => self.category_page(ui, index),
-                        Page::Installed => self.installed_page(ui),
-                        Page::Updates => self.updates_page(ui),
-                        Page::Drivers => self.drivers_page(ui),
+            } else if let Some(notice) = self.notice.clone() {
+                style::status_bar(ui, |ui| {
+                    match &notice {
+                        Ok(text) => ui.colored_label(style::success(), text),
+                        Err(text) => ui.colored_label(style::error(), text),
+                    };
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("OK").clicked() {
+                            self.notice = None;
+                        }
+                    });
+                });
+            }
+            egui::CentralPanel::no_frame()
+                .frame(
+                    Frame::new()
+                        .fill(style::background())
+                        .inner_margin(Margin::symmetric(28, 0)),
+                )
+                .show(ui, |ui| {
+                    if self.deb.is_some() {
+                        self.deb_page(ui);
+                    } else if let Some(detail) = self.detail.clone() {
+                        self.detail_page(ui, &detail);
+                    } else if !self.search.trim().is_empty() {
+                        self.search_page(ui);
+                    } else {
+                        match self.page {
+                            Page::Discover => self.discover_page(ui),
+                            Page::Category(index) => self.category_page(ui, index),
+                            Page::Installed => self.installed_page(ui),
+                            Page::Updates => self.updates_page(ui),
+                            Page::Drivers => self.drivers_page(ui),
+                        }
                     }
-                }
-            });
+                });
+        });
     }
 
     // ———————————————————————————— Cadre ————————————————————————————

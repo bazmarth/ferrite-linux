@@ -278,6 +278,11 @@ SYMBOLES = {
     "liste": '<path d="M9 6.5h11M9 12h11M9 17.5h11"/><path d="M4.5 6.5h.01M4.5 12h.01M4.5 17.5h.01" stroke-width="2.2"/>',
     "panneau": '<rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M15 4.5v15"/>',
     "plus-d-actions": '<path d="M6 12h.01M12 12h.01M18 12h.01" stroke-width="2.6"/>',
+    # Lecture (centre de contrôle, îlot)
+    "lire": '<path d="M8 5.5v13l10.5-6.5z" fill="#000"/>',
+    "pause": '<rect x="6.5" y="5" width="4" height="14" rx="1.4" fill="#000" stroke="none"/><rect x="13.5" y="5" width="4" height="14" rx="1.4" fill="#000" stroke="none"/>',
+    "precedent": '<path d="M18 6v12l-8.5-6z" fill="#000"/><path d="M6 6v12"/>',
+    "suivant": '<path d="M6 6v12l8.5-6z" fill="#000"/><path d="M18 6v12"/>',
     "capture": '<path d="M4 8V6a2 2 0 0 1 2-2h2M16 4h2a2 2 0 0 1 2 2v2M20 16v2a2 2 0 0 1-2 2h-2M8 20H6a2 2 0 0 1-2-2v-2"/><circle cx="12" cy="12" r="3"/>',
 }
 

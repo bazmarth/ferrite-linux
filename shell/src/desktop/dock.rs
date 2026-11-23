@@ -670,12 +670,14 @@ impl Dock {
             let texture = self.texture(&item.icon, side);
             push(&texture, rect, (side as f64, side as f64));
         }
+        // Trait de séparation : 40 px au plus, jamais plus haut que les icônes.
+        let separator = SEPARATOR_HEIGHT.min(config.icon());
         for (index, &x) in geometry.separators.iter().enumerate() {
             let (_, line) = self.marks(scale, index);
             let plate = geometry.plate;
             let rect = Rectangle::new(
-                Point::from((x, plate.loc.y + (plate.size.h - SEPARATOR_HEIGHT) / 2.0)),
-                Size::from((1.0, SEPARATOR_HEIGHT)),
+                Point::from((x, plate.loc.y + (plate.size.h - separator) / 2.0)),
+                Size::from((1.0, separator)),
             );
             push(&line, rect, (1.0, 1.0));
         }

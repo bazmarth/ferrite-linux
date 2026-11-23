@@ -457,6 +457,7 @@ impl InstallerState {
                         .find(|(_, zone)| *zone == self.locale.timezone)
                         .map_or("", |(name, _)| name);
                     egui::ComboBox::from_id_salt("fuseau")
+                        .icon(crate::style::combo_chevron)
                         .width(220.0)
                         .selected_text(current)
                         .show_ui(ui, |ui| {

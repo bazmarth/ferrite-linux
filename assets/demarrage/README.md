@@ -11,7 +11,7 @@ Les PNG sont rendus depuis ces SVG (resvg) et rangés dans l'image :
 
 Après une modification d'un SVG, rendre à nouveau le PNG à la même taille.
 
-`logo.png` et `point.png`, à côté des SVG, sont les rendus à jour (Oxyde, novembre 2026) :
-les copier dans `image/config/includes.chroot/usr/share/plymouth/themes/ferrite/`
-(dossier trop profond pour être écrit depuis l'assistant).
+`logo.png` et `point.png`, à côté des SVG, sont les rendus à jour (Oxyde, novembre 2026),
+copiés dans `image/config/includes.chroot/usr/share/plymouth/themes/ferrite/`. Le fond de
+Plymouth (`ferrite.script`) est un dégradé gris neutre, comme le fond d'écran « Ferrite ».
 

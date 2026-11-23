@@ -89,7 +89,7 @@ pub fn paint_file(painter: &egui::Painter, rect: Rect, kind: FileKind) {
         );
     };
     match kind {
-        FileKind::Folder => paint_folder(painter, rect, Color32::from_rgb(0x5B, 0x9B, 0xF8)),
+        FileKind::Folder => paint_folder(painter, rect),
         FileKind::Markdown => badge(Color32::from_rgb(0x3B, 0x76, 0xF0), Color32::WHITE, "MD"),
         FileKind::TypeScript => badge(Color32::from_rgb(0x31, 0x78, 0xC6), Color32::WHITE, "TS"),
         FileKind::JavaScript => badge(
@@ -139,20 +139,22 @@ pub fn paint_file(painter: &egui::Painter, rect: Rect, kind: FileKind) {
     }
 }
 
-/// Dossier plein, onglet en haut à gauche.
-fn paint_folder(painter: &egui::Painter, rect: Rect, color: Color32) {
-    let body = Rect::from_min_max(
-        pos2(rect.center().x - 8.0, rect.center().y - 4.5),
-        pos2(rect.center().x + 8.0, rect.center().y + 6.0),
-    );
-    let tab = Rect::from_min_size(body.left_top() - vec2(0.0, 2.0), vec2(7.0, 4.0));
-    painter.rect_filled(tab, 1.5, color.gamma_multiply(0.85));
-    painter.rect_filled(body, 2.5, color);
-    painter.hline(
-        body.left() + 1.0..=body.right() - 1.0,
-        body.top() + 2.5,
-        Stroke::new(1.0, Color32::from_white_alpha(70)),
-    );
+/// Dossier au trait gris (charte « Forge »), comme ceux des favoris.
+fn paint_folder(painter: &egui::Painter, rect: Rect) {
+    let c = rect.center();
+    let stroke = Stroke::new(1.4, style::text_secondary());
+    let (left, right, top, bottom) = (c.x - 7.5, c.x + 7.5, c.y - 5.5, c.y + 6.0);
+    painter.add(egui::Shape::closed_line(
+        vec![
+            pos2(left, top),
+            pos2(left + 5.0, top),
+            pos2(left + 6.5, top + 2.0),
+            pos2(right, top + 2.0),
+            pos2(right, bottom),
+            pos2(left, bottom),
+        ],
+        stroke,
+    ));
 }
 
 /// Feuille au coin replié, avec deux lignes de texte.

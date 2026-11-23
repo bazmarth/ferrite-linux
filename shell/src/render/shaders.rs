@@ -199,9 +199,11 @@ float rounded_box(vec2 p, vec2 half_size, float r) {
 void main() {
     vec2 p = v_coords * size;
     vec2 half_plate = size * 0.5 - MARGIN;
-    float d = rounded_box(p - size * 0.5, half_plate, 22.0);
-    float near = rounded_box(p - size * 0.5 - vec2(0.0, CONTACT.x), half_plate, 22.0);
-    float far = rounded_box(p - size * 0.5 - vec2(0.0, LEVEL.x), half_plate, 22.0);
+    // Rayon de 22, jamais plus que la demi-hauteur (petites icônes du Dock).
+    float radius = min(22.0, min(half_plate.x, half_plate.y));
+    float d = rounded_box(p - size * 0.5, half_plate, radius);
+    float near = rounded_box(p - size * 0.5 - vec2(0.0, CONTACT.x), half_plate, radius);
+    float far = rounded_box(p - size * 0.5 - vec2(0.0, LEVEL.x), half_plate, radius);
     float a = CONTACT.z * shadow_profile(near, CONTACT.y);
     a = a + LEVEL.z * shadow_profile(far, LEVEL.y) * (1.0 - a);
     float outside = 1.0 - coverage(d, scale);

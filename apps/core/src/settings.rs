@@ -420,6 +420,11 @@ impl SettingsState {
         let name = if name == "wifi-partage" {
             self.demo_share = 1;
             "wifi"
+        } else if name == "wifi-masque" {
+            // Pour les captures : le dialogue « Réseau masqué » ouvert.
+            self.hidden_network = true;
+            self.password_for = Some(String::new());
+            "wifi"
         } else {
             name
         };
@@ -1066,7 +1071,9 @@ impl SettingsState {
                     choice = Some(Choice::Join(network.clone()));
                 }
             }
-            let other = Row::new("Autre réseau…").hint("Réseau masqué ou configuration manuelle");
+            let other = Row::new("Autre réseau…")
+                .hint("Réseau masqué ou configuration manuelle")
+                .lead(Lead::Tile("glyph-add"));
             if rows
                 .row(other, |ui| rows::button(ui, "Ajouter…", false).clicked())
                 .0
@@ -1376,125 +1383,134 @@ impl SettingsState {
             return;
         };
         let hidden = self.hidden_network;
-        let mut open = true;
         let mut connect = false;
         let mut cancel = false;
-        egui::Window::new("Joindre au réseau Wi-Fi")
-            .collapsible(false)
-            .resizable(false)
-            .title_bar(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-            .open(&mut open)
-            .frame(
-                Frame::new()
-                    .fill(style::background())
-                    .corner_radius(16)
-                    .inner_margin(Margin {
-                        left: 28,
-                        right: 28,
-                        top: 26,
-                        bottom: 22,
-                    })
-                    .stroke(Stroke::new(1.0, style::separator()))
-                    .shadow(style::elevation(ferrite_ui::tokens::elevation::PANEL)),
-            )
-            .show(ctx, |ui| {
-                ui.set_width(420.0);
-                ui.vertical_centered(|ui| {
-                    ui.label(
-                        RichText::new("Joindre au réseau Wi-Fi")
-                            .size(22.0)
-                            .family(style::strong_family()),
+        // Même cadre que les détails d'un réseau (charte « Forge ») : en-tête, champs,
+        // pied avec Annuler et Connecter.
+        let icons = &mut self.icons;
+        let password = &mut self.password;
+        let visible = &mut self.password_visible;
+        let escape = details::show(ctx, "joindre-wifi", |ui, t| {
+            let title = if hidden {
+                "Réseau masqué".to_owned()
+            } else {
+                ssid.clone()
+            };
+            let closed = details::header(
+                ui,
+                t,
+                52.0,
+                43.0,
+                |ui, rect| rows::accent_tile(ui, icons, "glyph-wifi", rect, 14.0),
+                |ui| {
+                    let width = ui.available_width();
+                    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 43.0), egui::Sense::hover());
+                    details::text(
+                        ui,
+                        rect.left_top(),
+                        egui::Align2::LEFT_TOP,
+                        &title,
+                        details::font(19.0, true),
+                        t.fg,
+                        width,
                     );
-                    ui.add_space(7.0);
-                    if !hidden {
-                        ui.label(RichText::new(&ssid).size(15.0).color(style::text_secondary()));
-                    }
-                });
-                if hidden {
-                    ui.add_space(20.0);
-                    ui.label(
-                        RichText::new("Nom du réseau")
-                            .size(14.0)
-                            .family(style::strong_family()),
-                    );
-                    ui.add_space(6.0);
-                    ui.add_sized(
-                        [410.0, 44.0],
-                        egui::TextEdit::singleline(&mut ssid).margin(egui::vec2(14.0, 12.0)),
-                    );
-                }
-                ui.add_space(20.0);
-                ui.label(
-                    RichText::new("Mot de passe")
-                        .size(14.0)
-                        .family(style::strong_family()),
-                );
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 10.0;
-                    let mut password_edit = egui::TextEdit::singleline(&mut self.password)
-                        .hint_text("Saisir le mot de passe")
-                        .desired_width(356.0)
-                        .margin(egui::vec2(14.0, 12.0));
-                    if !self.password_visible {
-                        password_edit = password_edit.password(true);
-                    }
-                    let field = ui.add_sized([356.0, 44.0], password_edit);
-                    let eye = if self.password_visible { "◉" } else { "◎" };
-                    let eye_button = ui
-                        .add_sized(
-                            [44.0, 44.0],
-                            egui::Button::new(RichText::new(eye).size(18.0).monospace()).corner_radius(10),
-                        )
-                        .on_hover_text(if self.password_visible {
-                            "Masquer le mot de passe"
+                    details::text(
+                        ui,
+                        rect.left_top() + egui::vec2(0.0, 27.0),
+                        egui::Align2::LEFT_TOP,
+                        if hidden {
+                            "Nom et mot de passe du réseau"
                         } else {
-                            "Afficher le mot de passe"
+                            "Ce réseau demande un mot de passe"
+                        },
+                        details::font(13.0, false),
+                        t.fg2,
+                        width,
+                    );
+                },
+            );
+            if closed {
+                cancel = true;
+            }
+            details::body(ui, |ui| {
+                Frame::new()
+                    .inner_margin(Margin::symmetric(22, 0))
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.y = 6.0;
+                        let width = ui.available_width();
+                        let caption = |ui: &mut egui::Ui, text: &str| {
+                            ui.label(
+                                RichText::new(text)
+                                    .size(13.0)
+                                    .family(style::strong_family())
+                                    .color(t.fg2),
+                            );
+                        };
+                        if hidden {
+                            caption(ui, "Nom du réseau");
+                            ui.add_sized(
+                                [width, 40.0],
+                                egui::TextEdit::singleline(&mut ssid).margin(egui::vec2(12.0, 10.0)),
+                            );
+                            ui.add_space(10.0);
+                        }
+                        caption(ui, "Mot de passe");
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 8.0;
+                            let field = ui.add_sized(
+                                [width - 48.0, 40.0],
+                                egui::TextEdit::singleline(password)
+                                    .hint_text("Saisir le mot de passe")
+                                    .password(!*visible)
+                                    .margin(egui::vec2(12.0, 10.0)),
+                            );
+                            if hidden && ssid.is_empty() {
+                                // Le nom d'abord.
+                            } else if !field.has_focus() && password.is_empty() {
+                                field.request_focus();
+                            }
+                            let (eye, response) =
+                                ui.allocate_exact_size(egui::vec2(40.0, 40.0), egui::Sense::click());
+                            let response = response.on_hover_text(if *visible {
+                                "Masquer le mot de passe"
+                            } else {
+                                "Afficher le mot de passe"
+                            });
+                            let fill = if response.hovered() {
+                                style::tint(style::themed(20, 30))
+                            } else {
+                                style::tint(style::themed(12, 20))
+                            };
+                            ui.painter().rect_filled(eye, 8.0, fill);
+                            icons.paint(
+                                ui,
+                                if *visible { "cc-eye-off" } else { "cc-eye" },
+                                eye.shrink(10.0),
+                                style::IconStyle::Tinted(style::text_secondary()),
+                            );
+                            if response.clicked() {
+                                *visible = !*visible;
+                            }
+                            if field.has_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
+                                connect = true;
+                            }
                         });
-                    if eye_button.clicked() {
-                        self.password_visible = !self.password_visible;
-                    }
-                    if field.has_focus() && ui.ctx().input(|input| input.key_pressed(egui::Key::Enter)) {
-                        connect = true;
-                    }
-                });
-                ui.add_space(20.0);
-                ui.horizontal(|ui| {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui
-                            .add_sized(
-                                [112.0, 40.0],
-                                egui::Button::new(
-                                    RichText::new("Connecter").size(14.0).color(style::accent_text()),
-                                )
-                                .fill(style::accent())
-                                .stroke(Stroke::new(
-                                    1.0,
-                                    style::accent().lerp_to_gamma(Color32::BLACK, 0.12),
-                                ))
-                                .corner_radius(10),
-                            )
-                            .clicked()
-                        {
-                            connect = true;
-                        }
-                        if ui
-                            .add_sized(
-                                [112.0, 40.0],
-                                egui::Button::new(RichText::new("Annuler").size(14.0)).corner_radius(10),
-                            )
-                            .clicked()
-                        {
-                            cancel = true;
-                        }
                     });
-                });
             });
+            let footer = details::footer(ui, t, details::Left::Note(""), &["Annuler", "Connecter"]);
+            match footer.button {
+                Some(0) => cancel = true,
+                Some(_) => connect = true,
+                None => {}
+            }
+        });
+        if escape {
+            cancel = true;
+        }
         if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
             cancel = true;
         }
-        if !open || cancel {
+        if cancel {
             self.password_for = None;
             self.password.clear();
             self.password_visible = false;
@@ -2000,14 +2016,17 @@ impl SettingsState {
         let custom_dock = settings.dock_pinned().is_some();
         let icons = &mut self.icons;
         group(ui, icons, "Dock", |rows| {
+            // De 25 à 80 px (40 par défaut) : le curseur va de 0 à 100.
+            use ferrite_system::config::{DOCK_ICON_MAX, DOCK_ICON_MIN};
+            let span = DOCK_ICON_MAX - DOCK_ICON_MIN;
             let px = settings.dock_icon();
-            let mut percent = ((px - 40) * 100 / 40) as u8;
+            let mut percent = ((px - DOCK_ICON_MIN) * 100 / span) as u8;
             let text = format!("{px} px");
             let (response, _) = rows.row(Row::new("Taille des icônes"), |ui| {
                 rows::slider(ui, &mut percent, &text)
             });
             if response.changed() {
-                let px = 40 + u32::from(percent) * 40 / 100;
+                let px = DOCK_ICON_MIN + (u32::from(percent) * span + 50) / 100;
                 settings.set("dock_icones", &px.to_string());
             }
             flag_row(
@@ -3139,6 +3158,7 @@ impl SettingsState {
             let row = Row::new("Disposition").hint("S’applique aussitôt à toutes les applications");
             rows.row(row, |ui| {
                 egui::ComboBox::from_id_salt("clavier")
+                    .icon(crate::style::combo_chevron)
                     .selected_text(RichText::new(current).size(13.0))
                     .width(240.0)
                     .show_ui(ui, |ui| {

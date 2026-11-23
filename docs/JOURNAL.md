@@ -4407,3 +4407,66 @@ Non vérifié : vrai bureau (DRM) ; autres applications à colonne (Logithèque,
 Musique) vues seulement par le code commun ; thème GTK inchangé (aucune couleur de la
 charte n'a bougé).
 
+## 2026-11-22 — Refonte « Forge » : revue des autres applications
+
+Captures `--winit` (clair ou sombre) de Logithèque, Musique, Moniteur, TextEdit, Lecteur
+PDF, Installateur, Horloge, Calculatrice, Galerie et des listes Wi-Fi et Bluetooth du
+centre de contrôle : elles suivent la charte (colonnes en accent léger, icônes au trait).
+Corrigé :
+- TextEdit : dossiers de l'explorateur au trait gris (`editor/icons.rs`), comme les
+  favoris, au lieu de dossiers bleus pleins.
+- Réglages → Wi-Fi : « Autre réseau… » précédé d'un « + » en accent léger.
+Vérifié : `tools/ci.sh` ; captures de TextEdit (sombre) et de la page Wi-Fi (clair).
+Non vérifié : lignes de réseaux et d'appareils des listes du centre de contrôle (aucun
+Wi-Fi ni Bluetooth dans le bureau imbriqué) ; vrai bureau.
+
+
+## 2026-11-22 — Réglages : commandes (début)
+
+- Sélection de texte, élément choisi d'une liste et anneau du champ actif en accent
+  (`style::apply_theme`) au lieu du bleu d'egui.
+- Boutons secondaires (`kit::button`) : voile léger au lieu du gris plein.
+Vérifié : clippy de ferrite-apps, `check-colors.sh`, capture de la page Clavier.
+Reste à faire : listes déroulantes (`rows::pick`, chevron et menu), champs de saisie
+(fond en retrait), fenêtre « Joindre au réseau Wi-Fi » (`egui::Window`, à passer en
+`details::show`), `tools/ci.sh` complet.
+
+## 2026-11-23 — Réglages : listes, champs et dialogue Wi-Fi
+
+Suite de l'entrée précédente (commandes).
+- `style::apply_theme` : boutons, listes et champs sur un voile léger, sans bordure au
+  repos (bord de 3:1 au survol) ; champs en retrait (`text_edit_bg_color`) ; `bg_fill`
+  plus marqué gardé pour les poignées de défilement et les cases.
+- Listes déroulantes : chevron au trait (`style::combo_chevron`) sur les 12 listes des
+  applications (Réglages, Calendrier, sélecteur de fichiers, installateur).
+- « Joindre au réseau Wi-Fi » : passé du `egui::Window` au cadre des détails
+  (`details::show`) : en-tête, champs titrés, œil au trait, pied Annuler / Connecter.
+  `ferrite-apps settings wifi-masque` l'ouvre pour les captures.
+Vérifié : `tools/ci.sh` ; captures Clavier (clair, sombre), Énergie (sombre), Date et
+heure (clair), dialogue réseau masqué (clair, sombre) ; TextEdit, Calendrier et Terminal
+inchangés (zone de texte de TextEdit toujours blanche).
+Non vérifié : vrai bureau ; dialogue avec un vrai réseau protégé (connexion réelle).
+
+
+## 2026-11-23 — Démarrage : logo Oxyde et fond neutre dans l'image
+
+- `assets/demarrage/logo.png` et `point.png` (Oxyde) copiés dans le thème Plymouth de
+  l'image (`includes.chroot/usr/share/plymouth/themes/ferrite/`).
+- `ferrite.script` : fond en dégradé gris neutre (#141416 vers #0A0A0B) au lieu du bleu
+  nuit, comme le fond d'écran « Ferrite ».
+Vérifié : tailles des images (160 et 12 px), logo rendu sur fond sombre.
+Non vérifié : ISO reconstruite (`tools/usb.sh`, demande le mot de passe : à lancer par
+l'utilisateur ; nouveau crochet 0140 donc reconstruction complète) et démarrage en VM.
+
+## 2026-11-23 — Dock : icônes de 25 à 80 px, 40 par défaut
+
+Demande : pouvoir réduire les icônes du Dock jusqu'à 25 px, 40 par défaut.
+- `config::dock_icon` : de 25 à 80 (`DOCK_ICON_MIN/DEFAULT/MAX`), 40 si rien n'est
+  choisi ; l'ancien `dock_taille` sert encore s'il est seul écrit.
+- Réglages → Bureau et dock : le curseur couvre 25 à 80 px.
+- Dock : trait de séparation jamais plus haut que les icônes ; rayon du plateau (shader)
+  borné à la demi-hauteur.
+Vérifié : `tools/ci.sh` (test des bornes ajouté) ; captures du Dock à 25 et 40 px avec la
+Calculatrice ouverte, et du curseur (40 px par défaut).
+Non vérifié : vrai bureau. Un compte qui avait déjà réglé la taille garde sa valeur.
+

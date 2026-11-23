@@ -124,6 +124,18 @@ section : « Connexions », pas « CONNEXIONS ».
   page dans un carré de 40 px en accent léger (`rows::accent_tile`), puis le titre en 24
   semi-gras.
 
+### Commandes (boutons, listes, champs)
+
+- Bouton secondaire, liste déroulante et champ de saisie : voile léger (noir à 5 % en
+  clair, blanc à 8 % en sombre), rayon 7, **sans bordure au repos** ; bord de 3:1 au
+  survol. Bouton principal : plein d'accent.
+- Liste déroulante : chevron vers le bas au trait (`style::combo_chevron`), jamais de
+  triangle plein.
+- Champ actif : anneau d'accent de 1,5 ; curseur de texte et sélection en accent.
+- Dialogue : cadre des détails (`details::show`) : en-tête (carré d'accent léger, titre,
+  sous-titre, croix ronde), champs titrés en 13 semi-gras gris, pied avec Annuler et
+  l'action principale à droite.
+
 ### Groupes de réglages (`settings/rows.rs`)
 
 - Titre de groupe 12 semi-gras gris, au-dessus de la carte.
@@ -172,7 +184,9 @@ section : « Connexions », pas « CONNEXIONS ».
 
 - Plateau ardoise translucide, rayon 22, liseré clair très fin, marges réduites (9 px
   autour des icônes, 12 px au-dessus du bord de l'écran).
-- Point d'accent sous les applications ouvertes ; trait fin avant la corbeille.
+- Point d'accent sous les applications ouvertes ; trait fin avant la corbeille (40 px au
+  plus, jamais plus haut que les icônes).
+- Icônes de 25 à 80 px, 40 par défaut (Réglages → Bureau et dock).
 
 ### Lanceur
 

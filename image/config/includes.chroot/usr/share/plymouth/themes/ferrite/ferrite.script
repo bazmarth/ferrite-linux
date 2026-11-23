@@ -1,8 +1,9 @@
-# Démarrage de Ferrite OS : fond nuit en dégradé, symbole au centre, trois points
-# turquoise qui s'allument tour à tour sous le logo.
+# Démarrage de Ferrite OS : fond gris neutre en dégradé (#141416 vers #0A0A0B, comme le
+# fond d'écran « Ferrite »), symbole au centre, trois points Oxyde qui s'allument tour à
+# tour sous le logo.
 
-Window.SetBackgroundTopColor(0.082, 0.106, 0.180);
-Window.SetBackgroundBottomColor(0.027, 0.039, 0.071);
+Window.SetBackgroundTopColor(0.078, 0.078, 0.086);
+Window.SetBackgroundBottomColor(0.039, 0.039, 0.043);
 
 largeur = Window.GetWidth();
 hauteur = Window.GetHeight();

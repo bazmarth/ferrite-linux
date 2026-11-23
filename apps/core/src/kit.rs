@@ -112,12 +112,12 @@ pub fn separator(ui: &mut egui::Ui) {
     );
 }
 
-/// Bouton : gris, ou couleur d'accent pour l'action principale.
+/// Bouton : voile léger (charte « Forge »), ou couleur d'accent pour l'action principale.
 pub fn button(ui: &mut egui::Ui, text: &str, primary: bool) -> egui::Response {
     let (fill, ink) = if primary {
         (style::accent(), style::accent_text())
     } else {
-        (style::control_background(), style::primary_text())
+        (style::tint(style::themed(12, 22)), style::primary_text())
     };
     ui.add(
         egui::Button::new(RichText::new(text).size(13.0).color(ink))

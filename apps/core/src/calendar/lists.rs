@@ -357,6 +357,7 @@ pub fn tasks(
                     Priority::Low => "Toutes priorités",
                 });
             egui::ComboBox::from_id_salt("filtre-priorite")
+                .icon(crate::style::combo_chevron)
                 .selected_text(priority)
                 .width(140.0)
                 .show_ui(ui, |ui| {
@@ -385,6 +386,7 @@ pub fn tasks(
                 Sort::Created => "Plus récentes",
             };
             egui::ComboBox::from_id_salt("tri-taches")
+                .icon(crate::style::combo_chevron)
                 .selected_text(sort)
                 .width(130.0)
                 .show_ui(ui, |ui| {

@@ -634,6 +634,7 @@ impl ChooserState {
                     if self.request.filters.len() > 1 {
                         let mut filter = self.filter;
                         egui::ComboBox::from_id_salt("filtre")
+                            .icon(crate::style::combo_chevron)
                             .selected_text(&self.request.filters[filter].name)
                             .show_ui(ui, |ui| {
                                 for (index, item) in self.request.filters.iter().enumerate() {

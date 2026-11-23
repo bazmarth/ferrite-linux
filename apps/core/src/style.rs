@@ -679,24 +679,44 @@ fn apply_theme(context: &egui::Context) {
         visuals.override_text_color = Some(text);
 
         let radius = CornerRadius::same(radius::CONTROL);
-        let border = Stroke::new(border::HAIRLINE, color(palette.border));
+        let dark = THEME_DARK.load(Ordering::Relaxed) == 1;
+        let veil = |light: u8, dark_alpha: u8| {
+            let alpha = if dark { dark_alpha } else { light };
+            if dark {
+                Color32::from_white_alpha(alpha)
+            } else {
+                Color32::from_black_alpha(alpha)
+            }
+        };
+        // Commandes (charte « Forge ») : boutons, listes et champs sur un voile léger, sans
+        // bordure au repos ; bord de 3:1 au survol, anneau d'accent sur le champ actif.
         let widgets = &mut visuals.widgets;
         widgets.noninteractive.bg_stroke = Stroke::new(border::HAIRLINE, color(palette.control_separator));
         widgets.noninteractive.fg_stroke = Stroke::new(border::HAIRLINE, text);
-        for (state, fill) in [
-            (&mut widgets.inactive, color(palette.content_background)),
-            (&mut widgets.hovered, color(palette.control_hover)),
-            (&mut widgets.active, color(palette.control_pressed)),
-            (&mut widgets.open, color(palette.control_pressed)),
+        // `bg_fill` reste plus marqué : poignée des barres de défilement, case à cocher.
+        for (state, weak, strong) in [
+            (&mut widgets.inactive, veil(12, 20), veil(46, 56)),
+            (&mut widgets.hovered, veil(20, 30), veil(76, 86)),
+            (&mut widgets.active, veil(28, 40), veil(96, 106)),
+            (&mut widgets.open, veil(28, 40), veil(96, 106)),
         ] {
-            state.bg_fill = fill;
-            state.weak_bg_fill = fill;
-            state.bg_stroke = border;
+            state.bg_fill = strong;
+            state.weak_bg_fill = weak;
+            state.bg_stroke = Stroke::NONE;
             state.fg_stroke = Stroke::new(border::HAIRLINE, text);
             state.corner_radius = radius;
             state.expansion = 0.0;
         }
         widgets.hovered.bg_stroke = Stroke::new(border::HAIRLINE, color(palette.border_hover));
+        // Champs de saisie en retrait, du même voile que les commandes.
+        visuals.text_edit_bg_color = Some(veil(12, 20));
+        // Sélection de texte, élément choisi d'une liste et anneau du champ actif : en
+        // accent (charte « Forge »), plus le bleu par défaut d'egui.
+        let accent = accent();
+        visuals.selection.bg_fill =
+            Color32::from_rgba_unmultiplied(accent.r(), accent.g(), accent.b(), themed(56, 72));
+        visuals.selection.stroke = Stroke::new(1.5, accent);
+        visuals.text_cursor.stroke = Stroke::new(2.0, accent);
     });
 }
 
@@ -1183,6 +1203,21 @@ fn paint_texture(ui: &egui::Ui, texture: &TextureHandle, rect: egui::Rect) {
 /// de la fenêtre (charte, `docs/CHARTE.md`).
 pub fn surface() -> Color32 {
     color(palette().surface)
+}
+
+/// Chevron vers le bas des listes déroulantes (charte « Forge ») : `ComboBox::icon`.
+pub fn combo_chevron(ui: &egui::Ui, rect: egui::Rect, _visuals: &egui::style::WidgetVisuals, open: bool) {
+    let c = rect.center();
+    let (w, h) = (4.0, 2.5);
+    let flip = if open { -1.0 } else { 1.0 };
+    ui.painter().line(
+        vec![
+            c + egui::vec2(-w, -h * flip),
+            c + egui::vec2(0.0, h * flip),
+            c + egui::vec2(w, -h * flip),
+        ],
+        Stroke::new(1.6, text_secondary()),
+    );
 }
 
 /// Dossier de Fichiers sans couleur choisie (charte « Forge ») : devant et dos d'un même

@@ -886,9 +886,14 @@ impl Settings {
         self.flag("notifications_apercu", true)
     }
 
-    /// Côté des icônes du Dock, en pixels logiques.
+    /// Côté des icônes du Dock, en pixels logiques : de 25 à 80, 40 par défaut. L'ancien
+    /// réglage `dock_taille` (petit, moyen, grand) sert encore s'il est seul écrit.
     pub fn dock_icon(&self) -> u32 {
-        parse_height(self.get("dock_icones"), self.dock_size().icon() as u32, 40, 80)
+        let default = match self.get("dock_taille") {
+            Some(size) if !size.is_empty() => self.dock_size().icon() as u32,
+            _ => DOCK_ICON_DEFAULT,
+        };
+        parse_height(self.get("dock_icones"), default, DOCK_ICON_MIN, DOCK_ICON_MAX)
     }
 
     pub fn clock_style(&self) -> ClockStyle {
@@ -1027,6 +1032,11 @@ impl Settings {
         fs::rename(temporary, path)
     }
 }
+
+/// Côté des icônes du Dock : plus petit, par défaut, plus grand (pixels logiques).
+pub const DOCK_ICON_MIN: u32 = 25;
+pub const DOCK_ICON_DEFAULT: u32 = 40;
+pub const DOCK_ICON_MAX: u32 = 80;
 
 /// Taille des icônes du Dock.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -1614,6 +1624,10 @@ dock_masquage = jamais
 ",
         );
         assert_eq!(dock.dock_size(), DockSize::Large);
+        assert_eq!(dock.dock_icon(), 72);
+        assert_eq!(Settings::default().dock_icon(), DOCK_ICON_DEFAULT);
+        assert_eq!(Settings::parse("dock_icones = 10\n").dock_icon(), DOCK_ICON_MIN);
+        assert_eq!(Settings::parse("dock_icones = 25\n").dock_icon(), 25);
         assert_eq!(dock.dock_hiding(), DockHiding::Never);
         assert_eq!(Settings::default().dock_hiding(), DockHiding::Smart);
         assert_eq!(Settings::default().bar_hiding(), DockHiding::Never);

@@ -99,6 +99,7 @@ fn reminders_editor(ui: &mut egui::Ui, id: &str, reminders: &mut Vec<u32>, all_d
             .collect();
         if !choices.is_empty() {
             egui::ComboBox::from_id_salt(("ajout-rappel", id))
+                .icon(crate::style::combo_chevron)
                 .selected_text(if reminders.is_empty() {
                     "Ajouter un rappel"
                 } else {
@@ -397,6 +398,7 @@ impl EventEditor {
                 widgets::dot(ui, widgets::tint(Some(category.color)), 10.0);
             }
             egui::ComboBox::from_id_salt("categorie-evenement")
+                .icon(crate::style::combo_chevron)
                 .selected_text(text)
                 .width(180.0)
                 .show_ui(ui, |ui| {
@@ -446,6 +448,7 @@ impl EventEditor {
     fn recurrence_fields(&mut self, ui: &mut egui::Ui, today: Date) {
         row(ui, "Répétition", |ui| {
             egui::ComboBox::from_id_salt("repetition")
+                .icon(crate::style::combo_chevron)
                 .selected_text(self.recurrence.frequency.label())
                 .width(180.0)
                 .show_ui(ui, |ui| {
@@ -697,6 +700,7 @@ impl TaskEditor {
                     widgets::dot(ui, widgets::tint(Some(list.color)), 10.0);
                 }
                 egui::ComboBox::from_id_salt("liste-tache")
+                    .icon(crate::style::combo_chevron)
                     .selected_text(current.map_or("Aucune".to_owned(), |list| list.name.clone()))
                     .width(180.0)
                     .show_ui(ui, |ui| {
@@ -745,6 +749,7 @@ impl TaskEditor {
             row(ui, "Événement", |ui| {
                 let current = self.task.event.and_then(|id| agenda.event(id));
                 egui::ComboBox::from_id_salt("evenement-tache")
+                    .icon(crate::style::combo_chevron)
                     .selected_text(current.map_or("Aucun".to_owned(), |event| event.title.clone()))
                     .width(250.0)
                     .show_ui(ui, |ui| {

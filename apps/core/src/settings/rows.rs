@@ -382,6 +382,7 @@ pub fn pick<T: PartialEq + Copy>(ui: &mut egui::Ui, id: &str, value: &mut T, opt
         .find(|(option, _)| option == value)
         .map_or("", |(_, label)| *label);
     egui::ComboBox::from_id_salt(id)
+        .icon(crate::style::combo_chevron)
         .selected_text(RichText::new(selected).size(13.0))
         .show_ui(ui, |ui| {
             for (option, label) in options {

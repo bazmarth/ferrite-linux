@@ -770,6 +770,7 @@ impl CalendarState {
                 let selected = Mode::ALL.iter().position(|mode| *mode == self.mode).unwrap_or(2);
                 if compact {
                     egui::ComboBox::from_id_salt("vue-calendrier")
+                        .icon(crate::style::combo_chevron)
                         .selected_text(self.mode.label())
                         .width(78.0)
                         .show_ui(ui, |ui| {

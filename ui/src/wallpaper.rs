@@ -1,6 +1,7 @@
-//! Fonds d'écran de Ferrite : ceux dessinés par Ferrite (couleur unie et hexagones au
-//! trait fin, comme sur les planches du thème), ou une image PNG ou JPEG de l'utilisateur,
-//! recadrée pour couvrir l'écran. Partagé par le compositeur (fond réel) et Paramètres (vignettes).
+//! Fonds d'écran de Ferrite : ceux dessinés par Ferrite (thème « Fusion » : un dégradé
+//! sombre ou clair et trois lueurs douces, comme sur la maquette), ou une image PNG ou
+//! JPEG de l'utilisateur, recadrée pour couvrir l'écran. Partagé par le compositeur (fond
+//! réel et écran de verrouillage) et Paramètres (vignettes).
 
 use std::{
     fs,
@@ -21,7 +22,7 @@ pub enum Source {
 
 impl Default for Source {
     fn default() -> Self {
-        Source::Builtin(Builtin::Ferrite)
+        Source::Builtin(Builtin::DEFAULT)
     }
 }
 
@@ -31,6 +32,12 @@ impl Source {
         if value.starts_with('/') {
             return Source::File(PathBuf::from(value));
         }
+        // Anciens fonds aux hexagones : remplacés par Fusion, sombre ou clair.
+        let value = match value {
+            "ferrite" | "nuit" | "ardoise" => "fusion",
+            "clair" => "fusion-claire",
+            other => other,
+        };
         Builtin::ALL
             .into_iter()
             .find(|builtin| builtin.key() == value)
@@ -40,110 +47,274 @@ impl Source {
 
     pub fn key(&self) -> String {
         match self {
-            Source::Builtin(builtin) => builtin.key().to_owned(),
+            Source::Builtin(builtin) => builtin.key(),
             Source::File(path) => path.display().to_string(),
         }
     }
 }
 
-/// Fonds dessinés par Ferrite : mêmes hexagones, couleurs différentes.
+/// Ambiance d'un fond dessiné : la teinte de la base et des trois lueurs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Builtin {
-    Ferrite,
-    Night,
-    Slate,
-    Light,
+pub enum Mood {
+    /// Celle de la maquette : lueur orange en haut à droite, prune en bas à gauche.
+    Fusion,
+    /// Plus rouge, comme des braises.
+    Ember,
+    /// Rose et violet.
+    Amethyst,
+    /// Orange sur un bleu-vert profond.
+    Lagoon,
 }
 
-impl Builtin {
-    pub const ALL: [Builtin; 4] = [Builtin::Ferrite, Builtin::Night, Builtin::Slate, Builtin::Light];
+/// Teintes d'une ambiance : base en dégradé (haut gauche, milieu, bas droite), lueur
+/// chaude (haut droite), lueur profonde (bas gauche), halo du centre, trait de l'anneau.
+struct Tones {
+    base: [u32; 3],
+    warm: u32,
+    deep: u32,
+    glow: u32,
+    line: u32,
+}
 
-    pub fn key(self) -> &'static str {
+impl Mood {
+    pub const ALL: [Mood; 4] = [Mood::Fusion, Mood::Ember, Mood::Amethyst, Mood::Lagoon];
+
+    fn key(self) -> &'static str {
         match self {
-            Builtin::Ferrite => "ferrite",
-            Builtin::Night => "nuit",
-            Builtin::Slate => "ardoise",
-            Builtin::Light => "clair",
+            Mood::Fusion => "fusion",
+            Mood::Ember => "braise",
+            Mood::Amethyst => "amethyste",
+            Mood::Lagoon => "lagune",
         }
     }
 
     pub fn label(self) -> &'static str {
         match self {
-            Builtin::Ferrite => "Ferrite",
-            Builtin::Night => "Nuit",
-            Builtin::Slate => "Ardoise",
-            Builtin::Light => "Clair",
+            Mood::Fusion => "Fusion",
+            Mood::Ember => "Braise",
+            Mood::Amethyst => "Améthyste",
+            Mood::Lagoon => "Lagune",
         }
     }
 
-    /// Couleur du fond et couleur du trait du cube.
-    pub fn colors(self) -> (Color, Color) {
-        match self {
-            Builtin::Ferrite => (Color::rgb(0x141416), Color::rgb(0xFF7A45)),
-            Builtin::Night => (Color::rgb(0x1B2433), Color::rgb(0x9A6BFF)),
-            Builtin::Slate => (Color::rgb(0x2A3340), Color::rgb(0x2FD49A)),
-            Builtin::Light => (Color::rgb(0xE8E8EC), Color::rgb(0xB83A0A)),
+    /// Teintes en sombre ou en clair. Sur le bureau clair, la lueur chaude est adoucie
+    /// (`soft`), comme sur la maquette ; l'écran de verrouillage la garde franche.
+    fn tones(self, dark: bool, soft: bool) -> Tones {
+        let (base, warm, soft_warm, deep, glow, line) = match (self, dark) {
+            (Mood::Fusion, true) => (
+                [0x1C1016, 0x0B0B0D, 0x140A12],
+                0xFF7A45,
+                0xFF7A45,
+                0x7A2858,
+                0xFFAA6E,
+                0xFFB48C,
+            ),
+            (Mood::Fusion, false) => (
+                [0xFDF0E8, 0xF4EFF3, 0xEFE3EC],
+                0xFF7A45,
+                0xFF9664,
+                0xCD8CB9,
+                0xFFAA6E,
+                0xFFB48C,
+            ),
+            (Mood::Ember, true) => (
+                [0x1A0E0A, 0x0C0A0A, 0x170B08],
+                0xFF5A28,
+                0xFF5A28,
+                0x8C1E14,
+                0xFFBE5A,
+                0xFFAA78,
+            ),
+            (Mood::Ember, false) => (
+                [0xFDF1E6, 0xF7EFEA, 0xF4E4DA],
+                0xFF6E32,
+                0xFF8C50,
+                0xEB8C6E,
+                0xFFC878,
+                0xFFAA78,
+            ),
+            (Mood::Amethyst, true) => (
+                [0x150F1E, 0x0B0B10, 0x120A18],
+                0xFF6E96,
+                0xFF6E96,
+                0x6234A0,
+                0xFFAA6E,
+                0xFFB4C8,
+            ),
+            (Mood::Amethyst, false) => (
+                [0xF8EFF8, 0xF2EFF6, 0xEBE4F3],
+                0xFF7896,
+                0xFF96AA,
+                0xAF96E6,
+                0xFFBE96,
+                0xFFB4C8,
+            ),
+            (Mood::Lagoon, true) => (
+                [0x0D1418, 0x0B0B0D, 0x0A1216],
+                0xFF7A45,
+                0xFF7A45,
+                0x145A6E,
+                0x78C8D2,
+                0xFFB48C,
+            ),
+            (Mood::Lagoon, false) => (
+                [0xFBF0E9, 0xEEF2F3, 0xE3EEF0],
+                0xFF7A45,
+                0xFF9664,
+                0x82C3CD,
+                0xFFBE8C,
+                0xFFB48C,
+            ),
+        };
+        Tones {
+            base,
+            warm: if soft { soft_warm } else { warm },
+            deep,
+            glow,
+            line,
+        }
+    }
+
+    /// Trois teintes `0xRRGGBB` pour une pastille de choix : de la lueur chaude à la
+    /// lueur profonde, ce qui distingue le mieux les ambiances.
+    pub fn swatch(self, dark: bool) -> [u32; 3] {
+        let tones = self.tones(dark, false);
+        [tones.warm, tones.deep, tones.deep]
+    }
+}
+
+/// Fonds dessinés par Ferrite : une ambiance, en sombre ou en clair.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Builtin {
+    pub mood: Mood,
+    pub dark: bool,
+}
+
+impl Builtin {
+    /// Fond par défaut : Fusion sombre, celui de la maquette du bureau.
+    pub const DEFAULT: Builtin = Builtin::new(Mood::Fusion, true);
+
+    pub const ALL: [Builtin; 8] = [
+        Builtin::new(Mood::Fusion, true),
+        Builtin::new(Mood::Fusion, false),
+        Builtin::new(Mood::Ember, true),
+        Builtin::new(Mood::Ember, false),
+        Builtin::new(Mood::Amethyst, true),
+        Builtin::new(Mood::Amethyst, false),
+        Builtin::new(Mood::Lagoon, true),
+        Builtin::new(Mood::Lagoon, false),
+    ];
+
+    pub const fn new(mood: Mood, dark: bool) -> Builtin {
+        Builtin { mood, dark }
+    }
+
+    /// Nom dans les réglages : `fusion`, `fusion-claire`…
+    pub fn key(self) -> String {
+        if self.dark {
+            self.mood.key().to_owned()
+        } else {
+            format!("{}-claire", self.mood.key())
+        }
+    }
+
+    /// Nom affiché : « Fusion », « Fusion claire »…
+    pub fn label(self) -> String {
+        if self.dark {
+            self.mood.label().to_owned()
+        } else {
+            format!("{} claire", self.mood.label())
         }
     }
 }
 
-type Segment = ((f32, f32), (f32, f32));
-
-/// Contour d'un hexagone, à partir de ses sommets.
-fn outline<const N: usize>(points: [(f32, f32); N]) -> [Segment; N] {
-    std::array::from_fn(|index| (points[index], points[(index + 1) % N]))
+/// Lueur ronde, comme un `radial-gradient(circle r at cx cy, couleur, transparent reach)` :
+/// centre en fractions de l'écran, rayon en fraction de son petit côté (un vrai cercle,
+/// pas étiré sur un écran large), opacité au centre.
+#[derive(Clone, Copy)]
+struct Spot {
+    center: (f32, f32),
+    radius: f32,
+    color: u32,
+    alpha: f32,
+    reach: f32,
 }
 
-/// Traits blancs du fond sur l'écran de référence de 1600 × 1000 : un grand hexagone à
-/// droite et deux petits en bas (opacité, segments).
-fn white_outlines() -> [(f32, Vec<Segment>); 3] {
-    [
-        (
-            0.06,
-            outline([
-                (1180.0, 120.0),
-                (1420.0, 258.0),
-                (1420.0, 534.0),
-                (1180.0, 672.0),
-                (940.0, 534.0),
-                (940.0, 258.0),
-            ])
-            .to_vec(),
-        ),
-        (
-            0.05,
-            outline([
-                (300.0, 560.0),
-                (470.0, 658.0),
-                (470.0, 854.0),
-                (300.0, 952.0),
-                (130.0, 854.0),
-                (130.0, 658.0),
-            ])
-            .to_vec(),
-        ),
-        (
-            0.05,
-            outline([
-                (1460.0, 700.0),
-                (1560.0, 758.0),
-                (1560.0, 874.0),
-                (1460.0, 932.0),
-                (1360.0, 874.0),
-                (1360.0, 758.0),
-            ])
-            .to_vec(),
-        ),
-    ]
+/// Anneau centré : rayon intérieur et extérieur sur un écran de 900 pixels de haut.
+#[derive(Clone, Copy)]
+struct Ring {
+    inner: f32,
+    outer: f32,
+    color: u32,
+    alpha: f32,
 }
 
-/// Arêtes intérieures du grand hexagone, qui en font un cube, dans la couleur du fond.
-const CUBE_EDGES: [Segment; 3] = [
-    ((1180.0, 120.0), (1180.0, 396.0)),
-    ((1180.0, 396.0), (1420.0, 534.0)),
-    ((1180.0, 396.0), (940.0, 534.0)),
-];
-const CUBE_OPACITY: f32 = 0.16;
+/// Tout ce qu'il faut pour dessiner un fond : base, lueurs (de la plus basse à la plus
+/// haute) et anneaux éventuels.
+struct Scene {
+    base: [u32; 3],
+    spots: [Spot; 3],
+    rings: Vec<Ring>,
+}
+
+impl Scene {
+    /// Bureau : `Main.dc.html` de la maquette « Fusion », lueurs rondes.
+    fn desktop(builtin: Builtin) -> Scene {
+        let tones = builtin.mood.tones(builtin.dark, !builtin.dark);
+        let (warm, deep, glow) = if builtin.dark {
+            (0.50, 0.70, 0.14)
+        } else {
+            (0.40, 0.49, 0.14)
+        };
+        Scene {
+            base: tones.base,
+            spots: [
+                spot((0.48, 0.60), 0.35, tones.glow, glow, 0.70),
+                spot((0.10, 0.90), 0.60, tones.deep, deep, 0.62),
+                spot((0.80, 0.20), 0.50, tones.warm, warm, 0.62),
+            ],
+            rings: Vec::new(),
+        }
+    }
+
+    /// Écran de verrouillage : `Lock.dc.html`, lueurs plus franches et deux anneaux.
+    fn lock(mood: Mood, dark: bool) -> Scene {
+        let tones = mood.tones(dark, false);
+        let deep = if dark { 0.80 } else { 0.56 };
+        Scene {
+            base: tones.base,
+            spots: [
+                spot((0.50, 0.50), 0.30, tones.glow, 0.18, 0.70),
+                spot((0.12, 0.88), 0.60, tones.deep, deep, 0.62),
+                spot((0.78, 0.22), 0.55, tones.warm, 0.60, 0.62),
+            ],
+            rings: vec![
+                Ring {
+                    inner: 460.0,
+                    outer: 550.0,
+                    color: tones.warm,
+                    alpha: 0.08,
+                },
+                Ring {
+                    inner: 409.0,
+                    outer: 410.0,
+                    color: tones.line,
+                    alpha: 0.18,
+                },
+            ],
+        }
+    }
+}
+
+const fn spot(center: (f32, f32), radius: f32, color: u32, alpha: f32, reach: f32) -> Spot {
+    Spot {
+        center,
+        radius,
+        color,
+        alpha,
+        reach,
+    }
+}
 
 /// Image RVBA 8 bits, non prémultipliée.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -169,70 +340,92 @@ impl Image {
     }
 }
 
-/// Fond dessiné à `width` × `height` pixels : les hexagones gardent leurs proportions et
-/// couvrent l'écran, comme une image recadrée. Dessiné par bandes, sur plusieurs cœurs.
+/// Fond du bureau dessiné à `width` × `height` pixels. Dessiné par bandes, sur plusieurs
+/// cœurs.
 pub fn paint(builtin: Builtin, width: u32, height: u32) -> Image {
-    paint_with(builtin, width, height, threads())
+    paint_scene(&Scene::desktop(builtin), width, height, threads())
 }
 
-fn paint_with(builtin: Builtin, width: u32, height: u32, threads: usize) -> Image {
+/// Fond de l'écran de verrouillage : la même ambiance, avec ses deux anneaux.
+pub fn paint_lock(mood: Mood, dark: bool, width: u32, height: u32) -> Image {
+    paint_scene(&Scene::lock(mood, dark), width, height, threads())
+}
+
+/// Seuils de tramage (matrice de Bayer 4 × 4) : évite les bandes dans les dégradés.
+const BAYER: [f32; 16] = [
+    0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0,
+];
+
+fn paint_scene(scene: &Scene, width: u32, height: u32, threads: usize) -> Image {
     let (width, height) = (width.max(1), height.max(1));
-    let (background, stroke) = builtin.colors();
-    let scale = (width as f32 / 1600.0).max(height as f32 / 1000.0);
-    let origin = (
-        (width as f32 - 1600.0 * scale) / 2.0,
-        (height as f32 - 1000.0 * scale) / 2.0,
-    );
-    let place = |(x, y): (f32, f32)| (origin.0 + x * scale, origin.1 + y * scale);
-    // Sur le fond clair, le blanc ne se verrait pas : tout prend la couleur du trait.
-    let white = if builtin == Builtin::Light {
-        stroke
-    } else {
-        Color::WHITE
-    };
-    let half_width = scale.max(0.5);
-    let mut strokes = Vec::new();
-    for (opacity, segments) in white_outlines() {
-        for (start, end) in segments {
-            strokes.push((place(start), place(end), white, opacity));
-        }
-    }
-    for (start, end) in CUBE_EDGES {
-        strokes.push((place(start), place(end), stroke, CUBE_OPACITY));
-    }
+    let (w, h) = (width as f32, height as f32);
+    // `linear-gradient(160deg, …)` : direction et longueur de la ligne du dégradé.
+    let angle = 160f32.to_radians();
+    let direction = (angle.sin(), -angle.cos());
+    let length = (w * direction.0).abs() + (h * direction.1).abs();
+    let base = scene.base.map(rgb);
+    let spots = scene.spots.map(|spot| (spot, rgb(spot.color)));
+    // Les anneaux ont la taille de la maquette (900 pixels de haut), à l'échelle.
+    let scale = (w / 1440.0).min(h / 900.0);
+    let rings: Vec<(Ring, [f32; 3])> = scene
+        .rings
+        .iter()
+        .map(|ring| {
+            let mut scaled = *ring;
+            scaled.inner *= scale;
+            scaled.outer = (ring.outer * scale).max(scaled.inner + 1.0);
+            (scaled, rgb(ring.color))
+        })
+        .collect();
     let mut rgba = vec![0; (width * height * 4) as usize];
-    in_bands(&mut rgba, width, threads, |first, rows, band| {
-        let mut pixels = vec![
-            [
-                f32::from(background.r),
-                f32::from(background.g),
-                f32::from(background.b)
-            ];
-            (width * rows) as usize
-        ];
-        let mut lines = Lines {
-            width,
-            first,
-            rows,
-            pixels: &mut pixels,
-        };
-        for &(start, end, color, opacity) in &strokes {
-            stroke_segment(&mut lines, start, end, half_width, color, opacity);
-        }
-        for (pixel, out) in pixels.iter().zip(band.chunks_exact_mut(4)) {
-            let [r, g, b] = pixel.map(|channel| channel.round().clamp(0.0, 255.0) as u8);
+    in_bands(&mut rgba, width, threads, |first, _rows, band| {
+        for (index, out) in band.chunks_exact_mut(4).enumerate() {
+            let x = (index as u32 % width) as f32 + 0.5;
+            let row = first + index as u32 / width;
+            let y = row as f32 + 0.5;
+            let t = 0.5 + ((x - w / 2.0) * direction.0 + (y - h / 2.0) * direction.1) / length;
+            let mut pixel = if t < 0.55 {
+                mix(base[0], base[1], (t / 0.55).clamp(0.0, 1.0))
+            } else {
+                mix(base[1], base[2], ((t - 0.55) / 0.45).clamp(0.0, 1.0))
+            };
+            for (spot, tone) in &spots {
+                let radius = spot.radius * w.min(h);
+                let distance = (x - spot.center.0 * w).hypot(y - spot.center.1 * h) / radius;
+                if distance < spot.reach {
+                    over(&mut pixel, *tone, spot.alpha * (1.0 - distance / spot.reach));
+                }
+            }
+            if !rings.is_empty() {
+                let distance = (x - w / 2.0).hypot(y - h / 2.0);
+                for (ring, tone) in &rings {
+                    let coverage = (distance - ring.inner + 0.5).clamp(0.0, 1.0)
+                        * (ring.outer - distance + 0.5).clamp(0.0, 1.0);
+                    if coverage > 0.0 {
+                        over(&mut pixel, *tone, ring.alpha * coverage);
+                    }
+                }
+            }
+            let dither = (BAYER[((row % 4) * 4 + (index as u32 % width) % 4) as usize] + 0.5) / 16.0 - 0.5;
+            let [r, g, b] = pixel.map(|channel| (channel + dither).round().clamp(0.0, 255.0) as u8);
             out.copy_from_slice(&[r, g, b, 255]);
         }
     });
     Image { width, height, rgba }
 }
 
-/// Lignes `first` à `first + rows` d'une image de `width` pixels de large.
-struct Lines<'a> {
-    width: u32,
-    first: u32,
-    rows: u32,
-    pixels: &'a mut [[f32; 3]],
+fn rgb(hex: u32) -> [f32; 3] {
+    let color = Color::rgb(hex);
+    [color.r, color.g, color.b].map(f32::from)
+}
+
+fn mix(from: [f32; 3], to: [f32; 3], amount: f32) -> [f32; 3] {
+    std::array::from_fn(|channel| from[channel] + (to[channel] - from[channel]) * amount)
+}
+
+/// Pose `tone` à l'opacité `amount` sur `pixel`.
+fn over(pixel: &mut [f32; 3], tone: [f32; 3], amount: f32) {
+    *pixel = mix(*pixel, tone, amount);
 }
 
 /// Nombre de cœurs utilisés pour dessiner un fond (au plus 8).
@@ -277,60 +470,6 @@ fn in_bands(rgba: &mut [u8], width: u32, threads: usize, work: impl Fn(u32, u32,
             run(slot);
         }
     });
-}
-
-/// Trait anticrénelé : seuls les pixels autour du segment sont parcourus, et seulement
-/// ceux des lignes de `lines`.
-fn stroke_segment(
-    lines: &mut Lines,
-    a: (f32, f32),
-    b: (f32, f32),
-    half_width: f32,
-    color: Color,
-    opacity: f32,
-) {
-    let (width, first, last_row) = (
-        lines.width as i32,
-        lines.first as i32,
-        (lines.first + lines.rows) as i32,
-    );
-    let (dx, dy) = (b.0 - a.0, b.1 - a.1);
-    let length_squared = (dx * dx + dy * dy).max(f32::EPSILON);
-    let steps = dx.abs().max(dy.abs()).ceil() as i32;
-    let reach = half_width.ceil() as i32 + 1;
-    // Le long de l'axe principal, chaque rangée ne touche que quelques pixels.
-    let mut last = None;
-    for step in 0..=steps {
-        let t = step as f32 / steps.max(1) as f32;
-        let (cx, cy) = ((a.0 + dx * t).floor() as i32, (a.1 + dy * t).floor() as i32);
-        for y in (cy - reach).max(first)..=(cy + reach).min(last_row - 1) {
-            for x in (cx - reach)..=(cx + reach) {
-                if x < 0 || x >= width {
-                    continue;
-                }
-                let index = (y - first) as usize * width as usize + x as usize;
-                let visited = last
-                    .is_some_and(|(px, py): (i32, i32)| (x - px).abs() <= reach && (y - py).abs() <= reach);
-                if visited {
-                    continue;
-                }
-                let (qx, qy) = (x as f32 + 0.5 - a.0, y as f32 + 0.5 - a.1);
-                let along = ((qx * dx + qy * dy) / length_squared).clamp(0.0, 1.0);
-                let distance = (qx - dx * along).hypot(qy - dy * along);
-                let coverage = (half_width + 0.5 - distance).clamp(0.0, 1.0);
-                if coverage > 0.0 {
-                    blend(&mut lines.pixels[index], color, opacity * coverage);
-                }
-            }
-        }
-        last = Some((cx, cy));
-    }
-}
-
-fn blend(color: &mut [f32; 3], over: Color, amount: f32) {
-    for (channel, value) in color.iter_mut().zip([over.r, over.g, over.b]) {
-        *channel += (f32::from(value) - *channel) * amount;
-    }
 }
 
 /// Lit une image PNG ou JPEG (reconnue à son contenu, pas à son extension).
@@ -519,13 +658,13 @@ pub fn blur(image: &Image, radius: u32) -> Image {
 }
 
 /// Fond prêt à poser, à `width` × `height` pixels ; une image illisible donne le fond
-/// Ferrite, et l'erreur.
+/// par défaut, et l'erreur.
 pub fn render(source: &Source, width: u32, height: u32) -> (Image, Option<String>) {
     match source {
         Source::Builtin(builtin) => (paint(*builtin, width, height), None),
         Source::File(path) => match decode(path) {
             Ok(image) => (cover(&image, width, height), None),
-            Err(error) => (paint(Builtin::Ferrite, width, height), Some(error)),
+            Err(error) => (paint(Builtin::DEFAULT, width, height), Some(error)),
         },
     }
 }
@@ -536,13 +675,17 @@ mod tests {
 
     #[test]
     fn fond_dessine_par_bandes_identique_a_une_seule_bande() {
-        for builtin in [Builtin::Ferrite, Builtin::Light] {
+        for scene in [
+            Scene::desktop(Builtin::DEFAULT),
+            Scene::desktop(Builtin::new(Mood::Lagoon, false)),
+            Scene::lock(Mood::Fusion, true),
+        ] {
             // Hauteur qui ne tombe pas juste : la dernière bande est plus courte.
-            let alone = paint_with(builtin, 401, 253, 1);
+            let alone = paint_scene(&scene, 401, 253, 1);
             for threads in [2, 7, 64] {
                 assert!(
-                    paint_with(builtin, 401, 253, threads) == alone,
-                    "{builtin:?} en {threads} bandes"
+                    paint_scene(&scene, 401, 253, threads) == alone,
+                    "{threads} bandes"
                 );
             }
         }
@@ -568,8 +711,11 @@ mod tests {
 
     #[test]
     fn choix_du_fond_dans_les_reglages() {
-        assert_eq!(Source::parse(""), Source::Builtin(Builtin::Ferrite));
-        assert_eq!(Source::parse("ardoise"), Source::Builtin(Builtin::Slate));
+        assert_eq!(Source::parse(""), Source::Builtin(Builtin::DEFAULT));
+        assert_eq!(
+            Source::parse("lagune-claire"),
+            Source::Builtin(Builtin::new(Mood::Lagoon, false))
+        );
         assert_eq!(
             Source::parse("/home/a/b.jpg"),
             Source::File("/home/a/b.jpg".into())
@@ -580,29 +726,59 @@ mod tests {
                 Source::Builtin(builtin)
             );
         }
+        assert_eq!(Builtin::new(Mood::Amethyst, false).label(), "Améthyste claire");
+    }
+
+    /// Couleur du pixel (x, y), sans le tramage (au plus un cran d'écart).
+    fn near(image: &Image, x: u32, y: u32, expected: [u8; 3]) -> bool {
+        let i = ((y * image.width + x) * 4) as usize;
+        (0..3).all(|c| image.rgba[i + c].abs_diff(expected[c]) <= 1)
     }
 
     #[test]
-    fn fond_uni_et_hexagones() {
-        let image = paint(Builtin::Ferrite, 1600, 1000);
-        assert_eq!(image.rgba.len(), 1600 * 1000 * 4);
+    fn fusion_comme_sur_la_maquette() {
+        let image = paint(Builtin::DEFAULT, 1440, 900);
+        assert_eq!(image.rgba.len(), 1440 * 900 * 4);
         assert!(image.rgba.chunks_exact(4).all(|pixel| pixel[3] == 255));
-        let at = |x: usize, y: usize| {
-            let i = (y * 1600 + x) * 4;
-            [image.rgba[i], image.rgba[i + 1], image.rgba[i + 2]]
-        };
-        // Loin des traits : la couleur du fond, #141416.
-        assert_eq!(at(10, 10), [0x14, 0x14, 0x16]);
-        // Sur le côté du grand hexagone : un peu plus clair.
-        let side = at(1420, 400);
-        assert!(side[0] > 0x14 && side[0] < 0x40, "{side:?}");
+        // Coin haut gauche : la base #1C1016, hors des lueurs.
+        assert!(near(&image, 0, 0, [0x1C, 0x10, 0x16]));
+        // Centre de la lueur orange (80 %, 20 %) : la base mêlée à moitié de #FF7A45,
+        // puis du halo central, déjà presque éteint là.
+        let i = ((180 * 1440 + 1152) * 4) as usize;
+        let [r, g, b] = [image.rgba[i], image.rgba[i + 1], image.rgba[i + 2]];
+        assert!(r > 0x80 && g > 0x38 && g < 0x50 && b < 0x40, "{r} {g} {b}");
         assert!(image.top_is_dark(20));
-        assert!(!paint(Builtin::Light, 160, 100).top_is_dark(5));
+        assert!(!paint(Builtin::new(Mood::Fusion, false), 160, 100).top_is_dark(5));
     }
 
     #[test]
-    fn un_ancien_fond_revient_au_fond_ferrite() {
-        assert_eq!(Source::parse("crepuscule"), Source::Builtin(Builtin::Ferrite));
+    fn anneaux_de_l_ecran_de_verrouillage() {
+        let lock = paint_lock(Mood::Fusion, true, 1440, 900);
+        let plain = paint_scene(
+            &Scene {
+                rings: Vec::new(),
+                ..Scene::lock(Mood::Fusion, true)
+            },
+            1440,
+            900,
+            1,
+        );
+        // Dans le grand anneau (rayon 460 à 550, ici à gauche du centre) : plus orange.
+        let i = ((450 * 1440 + 720 - 500) * 4) as usize;
+        assert!(lock.rgba[i] > plain.rgba[i]);
+        // Au centre, hors des anneaux : identique.
+        let i = ((450 * 1440 + 720) * 4) as usize;
+        assert_eq!(lock.rgba[i..i + 4], plain.rgba[i..i + 4]);
+    }
+
+    #[test]
+    fn un_ancien_fond_revient_a_fusion() {
+        assert_eq!(Source::parse("crepuscule"), Source::Builtin(Builtin::DEFAULT));
+        assert_eq!(Source::parse("ardoise"), Source::Builtin(Builtin::DEFAULT));
+        assert_eq!(
+            Source::parse("clair"),
+            Source::Builtin(Builtin::new(Mood::Fusion, false))
+        );
     }
 
     #[test]

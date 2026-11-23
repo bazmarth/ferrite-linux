@@ -2650,32 +2650,27 @@ impl Panels {
 
     fn draw_bar(&self, canvas: &mut Canvas, layout: &Layout, state: &VisualState) {
         let view = &state.view;
-        // Barre du haut (thème « Fusion ») : voile sur toute la largeur et filet en bas ;
-        // à gauche, une pastille (symbole et bureaux) et le nom de l'application active ;
-        // au centre, l'heure, avec un point d'accent s'il y a des notifications ; à droite,
-        // une pastille des indicateurs (centre de contrôle). Une fenêtre agrandie la rend
-        // opaque, de la teinte des barres de titre.
-        let light = if view.bar_opaque {
-            palette().text.r < 128
+        // Barre du haut (thème « Fusion ») : voile fumé sur toute la largeur, plus dense en
+        // haut, et filet en bas ; à gauche, une pastille (symbole et bureaux) et le nom de
+        // l'application active ; au centre, l'heure, avec un point d'accent s'il y a des
+        // notifications ; à droite, une pastille des indicateurs (centre de contrôle). Le
+        // voile est sombre dans les deux thèmes (un voile blanc délave le fond d'écran) ;
+        // une fenêtre agrandie rend la barre opaque, de la teinte des barres de titre.
+        let light = view.bar_opaque && palette().text.r < 128;
+        let (ink, pill, line) = if view.bar_opaque {
+            (primary_text(), tint(16), tint(18))
         } else {
-            !view.dark_theme
+            (
+                Color::WHITE,
+                Color::WHITE.with_alpha(28),
+                Color::WHITE.with_alpha(14),
+            )
         };
-        let (veil, ink, pill, line) = match (view.bar_opaque, light) {
-            (true, _) => (palette().titlebar, primary_text(), tint(16), tint(18)),
-            (false, false) => (
-                Color::rgb(0x0B0B0D).with_alpha(140),
-                Color::rgb(0xF2F2F5),
-                Color::WHITE.with_alpha(26),
-                Color::WHITE.with_alpha(15),
-            ),
-            (false, true) => (
-                Color::rgb(0xFAFAFC).with_alpha(153),
-                Color::rgb(0x1B1B1F),
-                Color::BLACK.with_alpha(18),
-                Color::BLACK.with_alpha(11),
-            ),
-        };
-        canvas.fill(Rect::new(0.0, 0.0, layout.w, layout.bar), 0.0, veil);
+        if view.bar_opaque {
+            canvas.fill(Rect::new(0.0, 0.0, layout.w, layout.bar), 0.0, palette().titlebar);
+        } else {
+            canvas.vertical_veil(Rect::new(0.0, 0.0, layout.w, layout.bar), Color::BLACK, (150, 95));
+        }
         canvas.fill(Rect::new(0.0, layout.bar - 1.0, layout.w, 1.0), 0.0, line);
         let open = view.popover.and_then(|popover| match popover {
             Popover::Launcher => Some(BarIsland::Start),
@@ -7169,6 +7164,24 @@ impl Canvas<'_> {
         let width = self.text_width(font, text, size);
         let y = rect.y + (rect.h - 13.0) / 2.0 - 2.0;
         self.label(font, text, rect.x + (rect.w - width) / 2.0, y, size, ink);
+    }
+
+    /// Voile de `color` dont l'opacité passe de `alpha.0` en haut à `alpha.1` en bas, tracé
+    /// ligne de pixels par ligne de pixels pour un dégradé sans marches.
+    fn vertical_veil(&mut self, rect: Rect, color: Color, alpha: (u8, u8)) {
+        let s = f64::from(self.scale);
+        let rows = (rect.h * s).ceil().max(1.0) as u32;
+        for row in 0..rows {
+            let t = (f64::from(row) + 0.5) / f64::from(rows);
+            let a = f64::from(alpha.0) + (f64::from(alpha.1) - f64::from(alpha.0)) * t;
+            let y = rect.y + f64::from(row) / s;
+            let h = (1.0 / s).min(rect.bottom() - y);
+            self.fill(
+                Rect::new(rect.x, y, rect.w, h),
+                0.0,
+                color.with_alpha(a.round() as u8),
+            );
+        }
     }
 
     /// Texte de la barre, de la couleur `ink`.

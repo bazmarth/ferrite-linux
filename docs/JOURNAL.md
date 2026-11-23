@@ -4551,6 +4551,42 @@ maquette (refonte du déroulé, à part) ; panneau calendrier et notifications e
 colonnes ; aperçus des bureaux au-dessus du lanceur ; widgets de l'écran de
 verrouillage (agenda, messages). Non vérifié : vrai bureau, applications GTK réelles.
 
+
+## 2026-11-23 — Barre du haut fumée, points du Dock sans contour
+
+Demande : la barre au voile blanc n'est pas jolie ; les points noirs cerclés du Dock non plus.
+- Barre transparente : voile sombre dans les deux thèmes, en dégradé (opacité 150 en haut,
+  95 en bas, `Canvas::vertical_veil`), texte et icônes blancs. Le voile blanc du thème clair
+  délavait le fond d'écran.
+- Barre opaque aussi dès qu'une fenêtre passe sous sa bande (`window_under_bar`) : en
+  masquage intelligent, la barre rappelée par la souris se mêlait au contenu d'une fenêtre
+  plein écran non « agrandie » (Claude Desktop).
+- Dock : point d'accent plein de 5 px, sans le contour noir (il est posé sur le fond du Dock).
+Vérifié : `tools/ci.sh` ; capture du bureau d'essai (barre sur le fond d'écran, Dock).
+Non vérifié : la barre rappelée au-dessus d'une fenêtre plein écran, le vrai bureau.
+
+## 2026-11-23 — Fonds d'écran « Fusion » (bureau et verrouillage)
+
+Demande : des fonds d'écran exactement comme la maquette « Fusion », et d'autres dans le
+même thème, pour remplacer les fonds par défaut du bureau et de l'écran de verrouillage.
+- `ui/src/wallpaper.rs` : les fonds aux hexagones sont remplacés par les fonds « Fusion »
+  dessinés comme la maquette (dégradé à 160°, trois lueurs, tramage contre les bandes).
+  Quatre ambiances (`Mood`) : Fusion, Braise, Améthyste, Lagune, chacune sombre ou claire,
+  soit 8 fonds du bureau ; défaut : Fusion sombre. Anciens noms (`ferrite`, `nuit`,
+  `ardoise`, `clair`) repris en Fusion sombre ou claire.
+- Lueurs rondes (vrais cercles, rayon pris sur le petit côté de l'écran) à la demande de
+  l'utilisateur, au lieu des ellipses de la maquette, trop étalées sur un écran large.
+- Écran de verrouillage : même ambiance, lueurs plus franches et les deux anneaux de la
+  maquette (`paint_lock`) ; pastilles Fusion, Braise, Améthyste, Lagune (le réglage
+  `verrouillage_fond` garde leur nom ; un ancien nom revient à Fusion).
+- Paramètres › Apparence : les cases des fonds montrent la vraie vignette.
+Vérifié : avant le passage aux cercles, rendu identique à Chromium à 1 niveau près
+(bureau) ; tests de `ferrite-ui` et `ferrite-shell`, clippy, couleurs ; captures du
+bureau, du verrouillage sombre (Fusion) et clair (Lagune), de Paramètres › Apparence
+(compilée dans une copie propre). `tools/ci.sh` complet non passé : le Moniteur système
+était en chantier dans une autre session (fichiers non formatés, module `perf` absent).
+Non vérifié : vrai bureau.
+
 ## 2026-11-23 — Moniteur d'activité détaillé, pour tous les PC
 
 Demande : un moniteur système plus détaillé, plus moderne, qui s'adapte à tous les PC

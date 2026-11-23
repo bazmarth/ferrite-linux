@@ -122,12 +122,12 @@ fn texture(pixels: &[u8], size: (i32, i32)) -> MemoryRenderBuffer {
     MemoryRenderBuffer::from_slice(pixels, Fourcc::Argb8888, size, 1, Transform::Normal, Some(opaque))
 }
 
-/// Fond choisi à `width` × `height` pixels ; une image illisible donne le fond Ferrite.
+/// Fond choisi à `width` × `height` pixels ; une image illisible donne le fond par défaut.
 fn pixels(choice: &WallpaperChoice, width: u32, height: u32) -> Image {
     match (&choice.source, &choice.image) {
         (Source::Builtin(builtin), _) => wallpaper::paint(*builtin, width, height),
         (Source::File(_), Some(image)) => wallpaper::cover(image, width, height),
-        (Source::File(_), None) => wallpaper::paint(Builtin::Ferrite, width, height),
+        (Source::File(_), None) => wallpaper::paint(Builtin::DEFAULT, width, height),
     }
 }
 
@@ -186,7 +186,7 @@ mod tests {
         };
         assert_eq!(
             pixels(&missing, 32, 20),
-            wallpaper::paint(Builtin::Ferrite, 32, 20)
+            wallpaper::paint(Builtin::DEFAULT, 32, 20)
         );
     }
 }

@@ -1512,19 +1512,23 @@ impl Ferrite {
         match self.dock_config.bar {
             DockHiding::Never => true,
             DockHiding::Always => false,
-            DockHiding::Smart => {
-                let Some(output) = self
-                    .space
-                    .outputs()
-                    .next()
-                    .and_then(|output| self.space.output_geometry(output))
-                else {
-                    return true;
-                };
-                let strip = Rectangle::new(output.loc, (output.size.w, height as i32).into());
-                !self.window_frames().iter().any(|frame| frame.overlaps(strip))
-            }
+            DockHiding::Smart => !self.window_under_bar(),
         }
+    }
+
+    /// Une fenêtre passe-t-elle sous la bande de la barre du haut (écran principal) ?
+    pub fn window_under_bar(&self) -> bool {
+        let Some(output) = self
+            .space
+            .outputs()
+            .next()
+            .and_then(|output| self.space.output_geometry(output))
+        else {
+            return false;
+        };
+        let height = self.dock_config.bar_height as i32;
+        let strip = Rectangle::new(output.loc, (output.size.w, height).into());
+        self.window_frames().iter().any(|frame| frame.overlaps(strip))
     }
 }
 
@@ -1575,7 +1579,11 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
         power_apps: state.open_app_count(),
         error: state.system_error.clone(),
         bar_visible: state.bar_visible(),
-        bar_opaque: !state.dock_config.bar_translucent || state.space.elements().any(wm::is_maximized),
+        // Opaque aussi quand elle est rappelée au-dessus d'une fenêtre (masquage
+        // intelligent) : transparente, elle se mêlerait au contenu de la fenêtre.
+        bar_opaque: !state.dock_config.bar_translucent
+            || state.space.elements().any(wm::is_maximized)
+            || state.window_under_bar(),
         active_app: state
             .active_window()
             .and_then(|window| app_id(&window))

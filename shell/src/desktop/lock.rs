@@ -88,7 +88,7 @@ impl Lock {
                 if name.starts_with('/') {
                     Some(LOCK_WALLS.len())
                 } else {
-                    LOCK_WALLS.iter().position(|wall| wall.0 == name)
+                    LOCK_WALLS.iter().position(|mood| mood.label() == name)
                 }
             })
             .unwrap_or(0);
@@ -896,7 +896,7 @@ impl Ferrite {
 
     pub fn lock_set_wall(&mut self, wall: usize) {
         let name = match LOCK_WALLS.get(wall) {
-            Some((name, _, _)) => Some((*name).to_owned()),
+            Some(mood) => Some(mood.label().to_owned()),
             None => self
                 .lock_picture
                 .as_ref()

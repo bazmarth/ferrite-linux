@@ -2958,7 +2958,8 @@ impl SettingsState {
                 ui.spacing_mut().item_spacing = egui::vec2(14.0, 14.0);
                 for builtin in Builtin::ALL {
                     let source = Source::Builtin(builtin);
-                    if builtin_wallpaper_tile(ui, builtin, current == source).clicked() {
+                    let thumbnail = self.thumbnails.get(&source);
+                    if builtin_wallpaper_tile(ui, builtin, thumbnail, current == source).clicked() {
                         wallpaper_choice = source;
                     }
                 }
@@ -3168,7 +3169,7 @@ impl SettingsState {
                 .entry(Source::Builtin(builtin))
                 .or_insert_with(|| {
                     let image = wallpaper::paint(builtin, THUMBNAIL.0, THUMBNAIL.1);
-                    Some(thumbnail_texture(ctx, builtin.key(), &image))
+                    Some(thumbnail_texture(ctx, &builtin.key(), &image))
                 });
         }
         let mut missing: Vec<PathBuf> = self.wallpaper_files.clone().unwrap_or_default();
@@ -3847,31 +3848,22 @@ fn balance_label(balance: u8) -> String {
     }
 }
 
-/// Fond de Ferrite : sa couleur et son hexagone.
-fn builtin_wallpaper_tile(ui: &mut egui::Ui, builtin: Builtin, selected: bool) -> egui::Response {
+/// Fond de Ferrite : sa vignette, avec le cadre d’accent s’il est choisi.
+fn builtin_wallpaper_tile(
+    ui: &mut egui::Ui,
+    builtin: Builtin,
+    thumbnail: Option<&Option<egui::TextureHandle>>,
+    selected: bool,
+) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(WALLPAPER_TILE, egui::Sense::click());
     let response = response
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(builtin.label());
-    let (background, stroke) = builtin.colors();
-    let color = |c: ferrite_ui::theme::Color| Color32::from_rgb(c.r, c.g, c.b);
+    match thumbnail {
+        Some(Some(texture)) => egui::Image::new(texture).corner_radius(10).paint_at(ui, rect),
+        _ => paint_thumbnail(ui, rect, thumbnail),
+    }
     let painter = ui.painter();
-    painter.rect_filled(rect, 10.0, color(background));
-    let center = rect.center();
-    let at = |x: f32, y: f32| center + egui::vec2(x - 22.0, y - 22.0);
-    let points = [
-        at(22.0, 4.0),
-        at(38.0, 13.0),
-        at(38.0, 31.0),
-        at(22.0, 40.0),
-        at(6.0, 31.0),
-        at(6.0, 13.0),
-        at(22.0, 4.0),
-    ];
-    painter.add(egui::Shape::line(
-        points.to_vec(),
-        Stroke::new(2.0, color(stroke)),
-    ));
     let ring = if selected {
         Stroke::new(2.0, style::accent())
     } else {
@@ -4179,7 +4171,7 @@ fn is_image(path: &Path) -> bool {
 /// Nom affiché d'un fond : celui du fond Ferrite, ou le nom du fichier sans extension.
 fn source_label(source: &Source) -> String {
     match source {
-        Source::Builtin(builtin) => builtin.label().to_owned(),
+        Source::Builtin(builtin) => builtin.label(),
         Source::File(path) => path.file_stem().map_or_else(
             || path.display().to_string(),
             |stem| stem.to_string_lossy().into_owned(),

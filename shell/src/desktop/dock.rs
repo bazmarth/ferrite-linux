@@ -55,8 +55,6 @@ const PAD_Y: f64 = 9.0;
 const DOT_BOTTOM: f64 = 3.0;
 const BOTTOM_MARGIN: i32 = 12;
 const RUNNING_DOT: f64 = 5.0;
-/// Contour sombre du point d'accent, qui le garde lisible sur un fond d'écran clair.
-const DOT_HALO: f64 = 1.0;
 /// Place ajoutée pour chaque trait (applications ouvertes non épinglées, corbeille).
 const SEPARATOR: f64 = 9.0;
 const SEPARATOR_HEIGHT: f64 = 40.0;
@@ -647,16 +645,13 @@ impl Dock {
         let mut dots = 0;
         for (index, (item, rect)) in items.iter().zip(&geometry.icons).enumerate() {
             if item.running && config.dots {
-                let size = RUNNING_DOT + 2.0 * DOT_HALO;
+                let size = RUNNING_DOT;
                 let center = rect.loc.x + rect.size.w / 2.0;
                 let bottom = geometry.plate.loc.y + geometry.plate.size.h;
                 let offsets: &[f64] = if item.several { &[-4.5, 4.5] } else { &[0.0] };
                 for offset in offsets {
                     let mark = Rectangle::new(
-                        Point::from((
-                            center + offset - size / 2.0,
-                            bottom - DOT_BOTTOM - RUNNING_DOT - DOT_HALO,
-                        )),
+                        Point::from((center + offset - size / 2.0, bottom - DOT_BOTTOM - RUNNING_DOT)),
                         Size::from((size, size)),
                     );
                     let physical = (size * scale).round().max(1.0);
@@ -772,34 +767,11 @@ impl Dock {
             .borrow_mut()
             .entry(key)
             .or_insert_with(|| {
-                // Point d'accent cerclé de noir : visible sur un fond clair comme sombre.
-                let side = ((RUNNING_DOT + 2.0 * DOT_HALO) * scale).round().max(1.0) as u32;
+                // Point d'accent plein, sans contour : il est posé sur le fond du Dock.
+                let side = (RUNNING_DOT * scale).round().max(1.0) as u32;
                 let mut pixels = vec![0u8; side as usize * side as usize * 4];
                 let s = side as f32;
-                let halo = (DOT_HALO * scale) as f32;
-                fill_rounded(
-                    &mut pixels,
-                    side,
-                    side,
-                    0.0,
-                    0.0,
-                    s,
-                    s,
-                    s / 2.0,
-                    Color::BLACK.with_alpha(115),
-                );
-                let inner = s - 2.0 * halo;
-                fill_rounded(
-                    &mut pixels,
-                    side,
-                    side,
-                    halo,
-                    halo,
-                    inner,
-                    inner,
-                    inner / 2.0,
-                    accent,
-                );
+                fill_rounded(&mut pixels, side, side, 0.0, 0.0, s, s, s / 2.0, accent);
                 let dot = MemoryRenderBuffer::from_slice(
                     &pixels,
                     Fourcc::Argb8888,

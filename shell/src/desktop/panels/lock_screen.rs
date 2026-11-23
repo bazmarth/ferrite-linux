@@ -3,9 +3,8 @@
 //! 1600 × 1000, mise à l'échelle de l'écran.
 
 use super::*;
+use ferrite_ui::wallpaper::Mood;
 
-/// Fonds proposés : nom, puis fond et trois taches de couleur, en sombre et en clair.
-type WallColors = [u32; 4];
 /// Photo choisie comme fond de l'écran de verrouillage (Visionneuse) : image décodée et
 /// vignette de sa pastille. Comparée par adresse : l'image entière ne l'est jamais.
 #[derive(Clone)]
@@ -171,28 +170,9 @@ fn paint_lock_picture(width: u32, height: u32, dark: bool, blur: u8, picture: &L
         .collect()
 }
 
-pub const LOCK_WALLS: [(&str, WallColors, WallColors); 4] = [
-    (
-        "Ferrite",
-        [0x141416, 0xB83A0A, 0xFF7A45, 0x5A2312],
-        [0xF4F4F6, 0xFFB38F, 0xFDE8DD, 0xFFCDB4],
-    ),
-    (
-        "Savane",
-        [0x1C140E, 0xE5571A, 0xFFB547, 0xC2410C],
-        [0xFBF2E6, 0xFFC98A, 0xFFB4A0, 0xFFE3A3],
-    ),
-    (
-        "Océan",
-        [0x0A1826, 0x1E6FD9, 0x0E9AA7, 0x3CC7D1],
-        [0xE8F1FB, 0x9CC7FF, 0xA6E8EE, 0xC5D8FF],
-    ),
-    (
-        "Lavande",
-        [0x16122A, 0x7C4DE8, 0xDB2C57, 0x2779E0],
-        [0xF3EFFB, 0xC9B6FF, 0xFFB8CC, 0xB9D3FF],
-    ),
-];
+/// Fonds dessinés proposés (thème « Fusion »), chacun en sombre et en clair ; le réglage
+/// `verrouillage_fond` garde leur nom.
+pub const LOCK_WALLS: [Mood; 4] = Mood::ALL;
 
 /// Part de la transition du repos à la saisie, à chaque extrémité.
 const CLOCK_TOP: (f64, f64) = (170.0, 90.0);
@@ -723,105 +703,14 @@ fn draw_face_ring(canvas: &mut Canvas, frame: u16, track: Color) {
     );
 }
 
-/// Trait de l'hexagone : ses extrémités, son opacité et sa couleur.
-type HexagonEdge = ((f32, f32), (f32, f32), f32, [f32; 3]);
-
-/// Fond de l'écran en pixels BGRA : taches de couleur très floues et hexagone du logo.
+/// Fond de l'écran en pixels BGRA : celui de la maquette « Fusion » (dégradé, lueurs et
+/// anneaux), dans l'ambiance choisie.
 pub(super) fn paint_lock_wall(width: u32, height: u32, dark: bool, wall: usize) -> Vec<u8> {
-    let (_, night, day) = LOCK_WALLS[wall.min(LOCK_WALLS.len() - 1)];
-    let colors = if dark { night } else { day };
-    let opacity = if dark { 0.38_f32 } else { 0.85 };
-    // Centre, rayon et flou de chaque tache, sur la toile de 1600 × 1000.
-    let blobs = [
-        (220.0_f32, 800.0_f32, 380.0_f32, 110.0_f32),
-        (910.0, 130.0, 350.0, 120.0),
-        (1360.0, 780.0, 380.0, 130.0),
-    ];
-    let hexagon: [HexagonEdge; 9] = {
-        let (edge, inner, edge_tone, inner_tone) = if dark {
-            (0.07, 0.18, [255.0, 255.0, 255.0], rgb(0xFFB38F))
-        } else {
-            (0.08, 0.25, rgb(0x1B1B1F), rgb(0xB83A0A))
-        };
-        let e = (edge, edge_tone);
-        let i = (inner, inner_tone);
-        let top = (800.0, 230.0);
-        let (right_up, right_down) = ((1060.0, 380.0), (1060.0, 680.0));
-        let bottom = (800.0, 830.0);
-        let (left_down, left_up) = ((540.0, 680.0), (540.0, 380.0));
-        let middle = (800.0, 530.0);
-        [
-            (top, right_up, e.0, e.1),
-            (right_up, right_down, e.0, e.1),
-            (right_down, bottom, e.0, e.1),
-            (bottom, left_down, e.0, e.1),
-            (left_down, left_up, e.0, e.1),
-            (left_up, top, e.0, e.1),
-            (top, middle, i.0, i.1),
-            (middle, right_down, i.0, i.1),
-            (middle, left_down, i.0, i.1),
-        ]
-    };
-    // Tout est flou : le calcul se fait au huitième, puis s'agrandit sans se voir.
-    const STEP: u32 = 8;
-    let (cols, rows) = (width / STEP + 2, height / STEP + 2);
-    let mut coarse = Vec::with_capacity((cols * rows) as usize);
-    for row in 0..rows {
-        for col in 0..cols {
-            let x = (col * STEP) as f32 * 1600.0 / width as f32;
-            let y = (row * STEP) as f32 * 1000.0 / height as f32;
-            let mut pixel = rgb(colors[0]);
-            for (index, (cx, cy, radius, blur)) in blobs.into_iter().enumerate() {
-                let distance = (x - cx).hypot(y - cy);
-                let part = opacity / (1.0 + ((distance - radius) / (blur * 0.7)).exp());
-                let tone = rgb(colors[index + 1]);
-                for channel in 0..3 {
-                    pixel[channel] += (tone[channel] - pixel[channel]) * part;
-                }
-            }
-            // Le trait le plus proche seul : additionnés, ils feraient des taches aux sommets.
-            let mut nearest = (0.0_f32, [0.0_f32; 3]);
-            for (from, to, alpha, tone) in hexagon {
-                let (dx, dy) = (to.0 - from.0, to.1 - from.1);
-                let along = (((x - from.0) * dx + (y - from.1) * dy) / (dx * dx + dy * dy)).clamp(0.0, 1.0);
-                let distance = (x - from.0 - along * dx).hypot(y - from.1 - along * dy);
-                let part = alpha * 0.1 * (-distance * distance / 288.0).exp();
-                if part > nearest.0 {
-                    nearest = (part, tone);
-                }
-            }
-            for (value, tone) in pixel.iter_mut().zip(nearest.1) {
-                *value += (tone - *value) * nearest.0;
-            }
-            coarse.push(pixel);
-        }
-    }
-    // Tramage léger, pour éviter les bandes dans les dégradés.
-    const BAYER: [f32; 16] = [
-        0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0,
-    ];
-    let mut pixels = vec![0_u8; width as usize * height as usize * 4];
-    for py in 0..height {
-        let (row, fy) = ((py / STEP) as usize, (py % STEP) as f32 / STEP as f32);
-        for px in 0..width {
-            let (col, fx) = ((px / STEP) as usize, (px % STEP) as f32 / STEP as f32);
-            let at = |c: usize, r: usize| coarse[r * cols as usize + c];
-            let (a, b, c, d) = (
-                at(col, row),
-                at(col + 1, row),
-                at(col, row + 1),
-                at(col + 1, row + 1),
-            );
-            let dither = BAYER[((py % 4) * 4 + px % 4) as usize] / 16.0;
-            let offset = (py as usize * width as usize + px as usize) * 4;
-            for channel in 0..3 {
-                let top = a[channel] + (b[channel] - a[channel]) * fx;
-                let bottom = c[channel] + (d[channel] - c[channel]) * fx;
-                // BGRA : le rouge en dernier.
-                pixels[offset + 2 - channel] = (top + (bottom - top) * fy + dither).min(255.0) as u8;
-            }
-            pixels[offset + 3] = 255;
-        }
+    let mood = LOCK_WALLS[wall.min(LOCK_WALLS.len() - 1)];
+    let mut pixels = ferrite_ui::wallpaper::paint_lock(mood, dark, width, height).rgba;
+    // RVBA vers BGRA.
+    for pixel in pixels.chunks_exact_mut(4) {
+        pixel.swap(0, 2);
     }
     pixels
 }
@@ -1472,9 +1361,9 @@ impl Panels {
         // Personnaliser : thème et fond de cet écran.
         let group = places.customize();
         let name = match LOCK_WALLS.get(lock.wall) {
-            Some(wall) => wall.0,
+            Some(mood) => mood.label(),
             None if lock.picture.is_some() => "Photo",
-            None => LOCK_WALLS[0].0,
+            None => LOCK_WALLS[0].label(),
         };
         let name_x = places.swatch(wall_count(lock) - 1).right() + 10.0;
         let name_width = canvas.css_width(&self.regular, name, 12.0);
@@ -1510,8 +1399,8 @@ impl Panels {
             0.0,
             tokens.border,
         );
-        for (index, (_, night, day)) in LOCK_WALLS.into_iter().enumerate() {
-            let colors = if lock.dark { night } else { day };
+        for (index, mood) in LOCK_WALLS.into_iter().enumerate() {
+            let colors = mood.swatch(lock.dark);
             let swatch = places.swatch(index);
             if index == lock.wall {
                 canvas.fill(swatch.expand(4.0), 19.0, ACCENT);
@@ -1520,7 +1409,7 @@ impl Panels {
             canvas.gradient(
                 swatch,
                 15.0,
-                &[(0.0, colors[1]), (0.55, colors[2]), (1.0, colors[3])],
+                &[(0.0, colors[0]), (0.55, colors[1]), (1.0, colors[2])],
             );
         }
         if let Some(picture) = &lock.picture {

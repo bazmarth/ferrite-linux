@@ -340,8 +340,8 @@ Elle prime sur la charte §3.4 de `PLAN.md` (voir `DECISIONS.md`, 2026-11-02).
   (réduire, agrandir, fermer au bord, 22 px entre deux centres) de rayon 7, « fermer » en
   accent au repos ; Dock : icônes 58 px, écart 10, marge 12.
 - Accent « Oxyde » `#B83A0A` (clair) / `#FF7A45` (sombre) ; danger `#C62828` / `#F87171` ;
-  succès `#137333` / `#4ADE80` ; attention `#8F5200` / `#FBBF24`. Fond uni `#141416` à
-  hexagones par défaut. Charte détaillée : `docs/CHARTE.md`.
+  succès `#137333` / `#4ADE80` ; attention `#8F5200` / `#FBBF24`. Fond « Fusion » sombre par
+  défaut (dégradé et lueurs rondes, `ui/src/wallpaper.rs` ; 4 ambiances × sombre/clair). Charte détaillée : `docs/CHARTE.md`.
 - Ombres : active `0 28 70` noir 38 % ; inactive `0 6 14` noir 22 %.
 - Rayons : contrôles 7, panneaux/menus 10, dialogues 20. Contrôles de 32 px.
 - Polices embarquées : Inter Medium/SemiBold (interface), InterDisplay Light (grande horloge),

@@ -132,7 +132,7 @@ impl WallpaperChoice {
             Source::File(path) => match wallpaper::decode(path) {
                 Ok(image) => Some(Arc::new(image)),
                 Err(error) => {
-                    warn!(%error, "fond d'écran illisible ; fond Ferrite utilisé");
+                    warn!(%error, "fond d'écran illisible ; fond par défaut utilisé");
                     None
                 }
             },
@@ -144,7 +144,7 @@ impl WallpaperChoice {
         let preview = match (&source, &image) {
             (Source::Builtin(builtin), _) => wallpaper::paint(*builtin, 320, 200),
             (Source::File(_), Some(image)) => wallpaper::cover(image, 320, 200),
-            (Source::File(_), None) => wallpaper::paint(Builtin::Ferrite, 320, 200),
+            (Source::File(_), None) => wallpaper::paint(Builtin::DEFAULT, 320, 200),
         };
         let bar_dark = preview.top_is_dark(24);
         let backdrop = Some(Arc::new(wallpaper::blur(&preview, 10)));

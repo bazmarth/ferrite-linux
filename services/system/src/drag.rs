@@ -74,17 +74,35 @@ pub fn request_window_menu() -> bool {
     send_to_shell(&format!("{WINDOW_MENU_HEADER}\n"))
 }
 
+const ZOOM_HOVER_HEADER: &str = "survol-agrandir";
+
+/// Le pointeur entre sur le bouton agrandir d'une application Ferrite, centré en (`x`, `y`)
+/// dans sa fenêtre (pixels logiques) : ferrite-shell ouvre le panneau « Ancrer la fenêtre »
+/// s'il s'y attarde. Faux s'il n'écoute pas.
+pub fn announce_zoom_hover(x: f32, y: f32) -> bool {
+    send_to_shell(&format!("{ZOOM_HOVER_HEADER}\n{x} {y}\n"))
+}
+
 /// Ce qu'une application Ferrite envoie sur la prise de ferrite-shell.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Request {
     Drag(Drag),
     WindowMenu,
+    /// Survol du bouton agrandir, centré en (x, y) dans la fenêtre.
+    ZoomHover(f64, f64),
 }
 
 impl Request {
     pub fn decode(text: &str) -> Option<Request> {
-        if text.lines().next() == Some(WINDOW_MENU_HEADER) {
-            return Some(Request::WindowMenu);
+        let mut lines = text.lines();
+        match lines.next() {
+            Some(WINDOW_MENU_HEADER) => return Some(Request::WindowMenu),
+            Some(ZOOM_HOVER_HEADER) => {
+                let mut numbers = lines.next()?.split(' ').map(str::parse::<f64>);
+                let (x, y) = (numbers.next()?.ok()?, numbers.next()?.ok()?);
+                return (x.is_finite() && y.is_finite()).then_some(Request::ZoomHover(x, y));
+            }
+            _ => {}
         }
         Drag::decode(text).map(Request::Drag)
     }
@@ -234,6 +252,17 @@ mod tests {
         assert_eq!(Drag::decode(&drag.encode()), Some(drag));
         assert_eq!(Drag::decode("autre\nx\n/tmp"), None);
         assert_eq!(Drag::decode("glisser\nicone\n"), None);
+    }
+
+    #[test]
+    fn survol_du_bouton_agrandir() {
+        assert_eq!(
+            Request::decode("survol-agrandir\n512.5 22\n"),
+            Some(Request::ZoomHover(512.5, 22.0))
+        );
+        assert_eq!(Request::decode("survol-agrandir\n512\n"), None);
+        assert_eq!(Request::decode("survol-agrandir\nNaN 3\n"), None);
+        assert_eq!(Request::decode("menu-fenetre\n"), Some(Request::WindowMenu));
     }
 
     #[test]

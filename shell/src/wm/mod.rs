@@ -6,6 +6,7 @@ pub mod decoration;
 pub mod keep_above;
 mod move_grab;
 mod resize_grab;
+pub mod snap_menu;
 pub mod switcher;
 pub mod window_menu;
 pub mod workspaces;

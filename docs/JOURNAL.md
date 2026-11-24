@@ -4576,12 +4576,14 @@ même thème, pour remplacer les fonds par défaut du bureau et de l'écran de v
   `ardoise`, `clair`) repris en Fusion sombre ou claire.
 - Lueurs rondes (vrais cercles, rayon pris sur le petit côté de l'écran) à la demande de
   l'utilisateur, au lieu des ellipses de la maquette, trop étalées sur un écran large.
-- Écran de verrouillage : même ambiance, lueurs plus franches et les deux anneaux de la
-  maquette (`paint_lock`) ; pastilles Fusion, Braise, Améthyste, Lagune (le réglage
+- Bureau : les deux anneaux de la maquette, décalés à droite (centre 1240 × 560 sur
+  1440 × 900 ; grand anneau de 760 px à bord de 64, fin anneau de 560), sur les 8 fonds.
+- Écran de verrouillage : même ambiance, lueurs plus franches et les deux anneaux centrés
+  de la maquette (`paint_lock`) ; pastilles Fusion, Braise, Améthyste, Lagune (le réglage
   `verrouillage_fond` garde leur nom ; un ancien nom revient à Fusion).
 - Paramètres › Apparence : les cases des fonds montrent la vraie vignette.
 Vérifié : avant le passage aux cercles, rendu identique à Chromium à 1 niveau près
-(bureau) ; tests de `ferrite-ui` et `ferrite-shell`, clippy, couleurs ; captures du
+(bureau) ; captures du bureau avec anneaux (Fusion sombre et claire) ; tests de `ferrite-ui` et `ferrite-shell`, clippy, couleurs ; captures du
 bureau, du verrouillage sombre (Fusion) et clair (Lagune), de Paramètres › Apparence
 (compilée dans une copie propre). `tools/ci.sh` complet non passé : le Moniteur système
 était en chantier dans une autre session (fichiers non formatés, module `perf` absent).
@@ -4632,3 +4634,71 @@ Demande : afficher le débit de la connexion en temps réel.
 Vérifié : `tools/ci.sh` (shellcheck absent du PC) ; captures du bureau d'essai au repos
 (0 Ko/s) et pendant un téléchargement (8,4 Mo/s, puis 4,0 Mo/s), thèmes sombre et clair.
 Non vérifié : l'interrupteur de Paramètres en capture, le vrai bureau.
+
+## 2026-11-23 — Écran de connexion resté à l'ancien thème au démarrage
+
+Demande : au démarrage, le thème et l'écran de verrouillage ne sont pas les bons.
+- Cause : le premier écran est l'écran de connexion (greetd, compte `_greetd`), qui lance
+  `/usr/local/bin/ferrite-shell`, copié le 9 novembre ; `tools/dev-on.sh` ne met à jour que
+  le dossier personnel, utilisé seulement après la connexion. Il garde aussi ses propres
+  réglages (`/var/lib/greetd/.config/ferrite/reglages` : ancien fond « Lavande »).
+- `tools/installer-systeme.sh` copie en plus, vers l'écran de connexion, les choix du
+  verrouillage du compte (fond, y compris une photo personnelle copiée à côté, thème,
+  accent, accessibilité, clavier, curseur) ; les autres réglages du greeter sont gardés.
+Vérifié : `sh -n` ; fusion des réglages essayée à blanc (sans root) ; captures
+`--greeter` : ancienne version (fond violet sans anneaux), nouvelle avec les réglages
+copiés (Améthyste, anneaux Fusion). Shellcheck absent du PC.
+Non vérifié : le script lancé avec sudo, le vrai démarrage.
+
+## 2026-11-23 — Assistant de bienvenue au premier démarrage (et en live)
+
+Demande : l'écran « Configurons FerriteOS ensemble » de la maquette (sept étapes) doit
+s'afficher après une installation, et aussi sur la clé live.
+- `apps/core/src/welcome.rs` : application « Bienvenue » (`ferrite-apps bienvenue`, hors
+  du menu). Colonne à gauche (marque, « Étape n sur N », grand anneau d'accent avec le
+  symbole de l'étape, liste des étapes cliquable, « Facultatif », pastilles Accessibilité
+  et clavier) ; à droite carte avec barre d'avancement, surtitre, titre, pied Retour /
+  Suivant. Chaque choix agit tout de suite :
+  - Langue et région : français (autres langues grisées), clavier (réglage `clavier`, champ
+    pour l'essayer), fuseau (`timedatectl`), aperçu des formats ;
+  - Réseau : Wi-Fi à portée, connexion avec mot de passe (NetworkManager) ;
+  - Compte (installé) : nom, identifiant, ordinateur ; ouvre Paramètres › Comptes ou Visage ;
+  - Confidentialité (installé) : texte des notifications, applications récentes du Dock,
+    liste de ce qui passe par Internet ;
+  - Apparence : thème, accent, les 8 fonds avec leur vraie vignette ;
+  - Applications (installé) : Firefox, LibreOffice, Thunderbird, VLC, GIMP, Telegram depuis
+    Flathub, installées en arrière-plan ;
+  - Fin : résumé ; en live, « Installer Ferrite » ou « Continuer l'essai ».
+- Bureau : `App::start_welcome` à l'ouverture de session (pas en bureau imbriqué ni sur
+  l'écran de connexion), décidé par `catalog::welcome_due` (testé).
+- `ferrite-installation` écrit `bienvenue = a_faire` dans `/etc/skel` ; l'installateur
+  reprend le clavier choisi dans la session (`Keyboard::setting`).
+- `FERRITE_BIENVENUE_DEMO=reseau|compte|confidentialite|apparence|applications|fin` pour
+  les captures.
+Vérifié : captures des 7 étapes (sombre), réseau en clair avec accent bleu, fin en live
+(`FERRITE_DEMO_LIVE=1`) ; tests de `welcome.rs` et `catalog.rs`.
+Non vérifié : installation réelle d'une application Flathub, connexion à un nouveau Wi-Fi,
+changement de fuseau (demande le mot de passe administrateur), ouverture automatique dans
+une vraie session (ISO à reconstruire), vrai bureau. Le fichier de la maquette n'est pas
+dans le dépôt : mise en page reprise de la capture.
+Incident : le disque NTFS refuse d'écrire `target/debug/deps/ferrite_apps-634f212db2a10042`
+(entrée abîmée, « Argument invalide ») ; `tools/ci.sh` passé avec
+`CARGO_TARGET_DIR=target/ci` (shellcheck absent du PC).
+
+## 2026-11-24 — Panneau « Ancrer la fenêtre » (survol du bouton agrandir)
+
+Travail resté hors journal (session du 23/11), repris et vérifié.
+- `shell/src/wm/snap_menu.rs` : comme sous Windows 11, le pointeur qui reste 450 ms sur le
+  bouton agrandir ouvre sous lui quatre dispositions (moitiés, deux tiers et un tiers,
+  trois tiers, quarts) ; un clic sur une case range la fenêtre à cette place. Dernière
+  ligne : « Envoyer vers l'espace de travail N » (le suivant, sinon le précédent).
+  Clic droit sur le bouton agrandir : le panneau s'ouvre tout de suite. Ouvert au survol,
+  il se referme quand le pointeur s'en va ; un clic sur le bouton agrandit comme avant.
+- Applications Ferrite (boutons dessinés par egui) : `style::zoom_button` annonce le
+  survol à ferrite-shell sur sa prise (`drag::announce_zoom_hover`, message
+  `survol-agrandir`, testé).
+- `--demo-snap` ouvre le panneau sur la fenêtre du dessus, pour les captures.
+Vérifié : `tools/ci.sh` (shellcheck absent du PC) ; captures du panneau sur `foot`
+(barre de titre du bureau) et sur la Calculatrice (boutons de l'application).
+Non vérifié : le survol réel à la souris et le rangement après un clic sur une case
+(seulement l'ouverture en démonstration), le vrai bureau.

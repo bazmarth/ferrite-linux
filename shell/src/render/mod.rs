@@ -1719,6 +1719,15 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
                 )
             }),
         },
+        snap_menu: state
+            .snap_menu
+            .as_ref()
+            .filter(|_| state.popover == Some(Popover::SnapLayouts))
+            .map(|menu| crate::desktop::panels::SnapMenuView {
+                x: menu.anchor.x,
+                y: menu.anchor.y,
+                target: menu.target,
+            }),
         desktop_menu: state.desktop_menu,
         desktop_menu_entries: state
             .desktop_menu_items()
@@ -1726,8 +1735,14 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
             .map(|item| item.label().to_owned())
             .collect(),
         menu_pointer: state
-            .pointer_location()
-            .filter(|_| matches!(state.popover, Some(Popover::DockMenu | Popover::DesktopMenu)))
+            .demo_pointer
+            .or_else(|| state.pointer_location())
+            .filter(|_| {
+                matches!(
+                    state.popover,
+                    Some(Popover::DockMenu | Popover::DesktopMenu | Popover::SnapLayouts)
+                )
+            })
             .map(|location| (location.x as i32, location.y as i32)),
         osd: state.osd_view(),
         capture: crate::desktop::panels::CaptureView {

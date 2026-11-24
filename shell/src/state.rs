@@ -158,6 +158,12 @@ pub struct Ferrite {
         Vec<crate::wm::window_menu::WindowMenuAction>,
         smithay::utils::Point<f64, smithay::utils::Logical>,
     )>,
+    /// Panneau « Ancrer la fenêtre », sous le bouton agrandir d'une fenêtre.
+    pub snap_menu: Option<crate::wm::snap_menu::SnapMenu>,
+    /// Fenêtre décorée par ferrite-shell dont le bouton agrandir est survolé.
+    pub snap_hover: Option<Window>,
+    /// Numéro du dernier survol programmé : seul le dernier minuteur ouvre le panneau.
+    pub snap_hover_serial: u64,
     /// Position du clic qui a ouvert ce menu : l'agrandissement y reste figé.
     pub dock_menu_pointer: Option<smithay::utils::Point<f64, smithay::utils::Logical>>,
     /// Fenêtres en train d'être réduites ou rappelées.
@@ -353,6 +359,7 @@ pub struct Ferrite {
     pub demo_switcher: bool,
     /// Première fenêtre à garder au-dessus des autres dès qu'elle existe (`--demo-keep-above`).
     pub demo_keep_above: bool,
+    pub demo_snap: bool,
     pub demo_screenshot: bool,
 
     pub compositor_state: CompositorState,
@@ -605,6 +612,9 @@ impl Ferrite {
             desktop_pinch: None,
             icon_zoom_scroll: 0.0,
             dock_menu_pointer: None,
+            snap_menu: None,
+            snap_hover: None,
+            snap_hover_serial: 0,
             last_titlebar_click: None,
             pressed_light: None,
             cursor_status: CursorImageStatus::default_named(),
@@ -641,6 +651,7 @@ impl Ferrite {
             swap_demo: None,
             demo_switcher: false,
             demo_keep_above: false,
+            demo_snap: false,
             demo_screenshot: false,
         })
     }
@@ -872,6 +883,20 @@ impl Ferrite {
                 if let Some(first) = first {
                     self.set_keep_above(&first, true);
                 }
+            }
+            // Rouvert à chaque image : la fenêtre se place et prend sa taille après son
+            // apparition.
+            if self.demo_snap
+                && let Some(window) = self.top_window()
+                && let Some(mut content) = self.space.element_geometry(&window)
+            {
+                // Une application Ferrite dessine ses boutons dans le haut de sa fenêtre.
+                if crate::wm::is_unified(&window) {
+                    content.loc.y += ferrite_ui::theme::TITLEBAR_HEIGHT as i32;
+                }
+                let center =
+                    crate::wm::decoration::button_center(content, crate::wm::decoration::WindowButton::Zoom);
+                self.open_snap_menu(window, center, false);
             }
             if std::mem::take(&mut self.demo_screenshot) {
                 self.screenshot_request = Some(crate::render::capture::Request {

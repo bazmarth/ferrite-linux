@@ -973,9 +973,21 @@ pub fn close_button(ui: &mut egui::Ui, center: egui::Pos2) {
     }
 }
 
-/// Bouton « agrandir », à gauche de « fermer ».
+/// Bouton « agrandir », à gauche de « fermer ». Dans Ferrite, le pointeur qui s'y attarde
+/// ouvre le panneau « Ancrer la fenêtre » de ferrite-shell : on lui signale l'entrée.
 pub fn zoom_button(ui: &mut egui::Ui, center: egui::Pos2) {
-    if window_button(ui, center, WindowButton::Zoom).clicked() {
+    let response = window_button(ui, center, WindowButton::Zoom);
+    let id = response.id.with("survol");
+    let hovered = response.hovered();
+    let was = ui.data(|data| data.get_temp::<bool>(id)).unwrap_or(false);
+    if hovered != was {
+        ui.data_mut(|data| data.insert_temp(id, hovered));
+        if hovered && inside_ferrite() {
+            let zoom = ui.ctx().zoom_factor();
+            ferrite_system::drag::announce_zoom_hover(center.x * zoom, center.y * zoom);
+        }
+    }
+    if response.clicked() {
         let maximized = ui.input(|input| input.viewport().maximized.unwrap_or(false));
         ui.ctx()
             .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));

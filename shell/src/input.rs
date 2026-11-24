@@ -1206,6 +1206,9 @@ impl Ferrite {
         self.drag_lasso(location);
         self.dock_drag_motion(location);
         self.file_drag_motion(location);
+        if !pointer.is_grabbed() {
+            self.snap_menu_track(location);
+        }
         if let Some(adjust) = self.region_adjust.as_mut()
             && let Some((grip, start, origin)) = adjust.grip
         {
@@ -1422,6 +1425,16 @@ impl Ferrite {
             }
             // Le clic qui vient de replier l'îlot ne touche pas ses bulles, invisibles tant
             // qu'il était déplié : sinon il dépliait aussitôt un autre lecteur.
+            // Panneau d'ancrage ouvert : un clic sur le bouton agrandir le referme et agit
+            // comme d'habitude (la fenêtre est agrandie).
+            if button.state == ButtonState::Pressed
+                && self.popover == Some(Popover::SnapLayouts)
+                && self.snap_menu.as_ref().is_some_and(|menu| {
+                    (menu.anchor.x - location.x).hypot(menu.anchor.y - location.y) <= 16.0
+                })
+            {
+                self.close_snap_menu();
+            }
             let desktop_action = self
                 .desktop_action_at(location)
                 .filter(|action| !(self.island_click_folded && matches!(action, DesktopAction::Island(_))));
@@ -1525,6 +1538,19 @@ impl Ferrite {
                     // Clic droit sur la barre de titre : menu de la fenêtre.
                     if button.button == BTN_RIGHT && part == Part::Titlebar {
                         self.open_window_menu(window, location);
+                        return;
+                    }
+                    // Clic droit sur le bouton agrandir : le panneau d'ancrage, tout de suite.
+                    if button.button == BTN_RIGHT
+                        && part == Part::Button(crate::wm::decoration::WindowButton::Zoom)
+                    {
+                        if let Some(content) = self.space.element_geometry(&window) {
+                            let center = crate::wm::decoration::button_center(
+                                content,
+                                crate::wm::decoration::WindowButton::Zoom,
+                            );
+                            self.open_snap_menu(window, center, false);
+                        }
                         return;
                     }
                     if button.button == BTN_LEFT
@@ -1784,6 +1810,8 @@ impl Ferrite {
             DesktopAction::ClosePopover => self.popover = None,
             DesktopAction::StopRecording => self.stop_recording(),
             DesktopAction::Island(hit) => self.island_press(hit),
+            DesktopAction::SnapZone(layout, zone) => self.snap_menu_choose(layout, zone),
+            DesktopAction::SnapSend => self.snap_menu_send(),
             DesktopAction::DockMenu(index) => {
                 if self.window_menu_action(index) {
                     // Menu d'une fenêtre, dessiné comme celui du Dock.

@@ -242,6 +242,8 @@ pub enum Popover {
     DesktopMenu,
     /// Historique des notifications, ouvert depuis l'horloge ou Super+N.
     Notifications,
+    /// Panneau « Ancrer la fenêtre », sous le bouton agrandir d'une fenêtre.
+    SnapLayouts,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -353,6 +355,10 @@ pub enum DesktopAction {
     DockMenu(usize),
     /// Choix `index` du menu du bureau.
     DesktopMenu(usize),
+    /// Panneau d'ancrage : case `zone` de la disposition `layout`.
+    SnapZone(usize, usize),
+    /// Panneau d'ancrage : « Envoyer vers l'espace de travail N ».
+    SnapSend,
     /// Raccourci `index` du bureau.
     Shortcut(usize),
     /// Clic absorbé par un panneau, sans effet.
@@ -394,6 +400,18 @@ pub struct DockMenuView {
 }
 
 impl Eq for DockMenuView {}
+
+/// Panneau « Ancrer la fenêtre », posé sous le bouton agrandir.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct SnapMenuView {
+    /// Centre du bouton agrandir, en pixels logiques de l'écran.
+    pub x: f64,
+    pub y: f64,
+    /// Numéro de l'espace de travail proposé par la dernière ligne, s'il y en a un.
+    pub target: Option<usize>,
+}
+
+impl Eq for SnapMenuView {}
 impl Eq for ClipRow {}
 impl Eq for ClipboardView {}
 
@@ -811,6 +829,7 @@ pub struct DesktopView {
     pub clipboard: ClipboardView,
     pub dashboard: DashboardView,
     pub dock_menu: Option<DockMenuView>,
+    pub snap_menu: Option<SnapMenuView>,
     /// Coin du menu du bureau, et ses lignes.
     pub desktop_menu: Option<(i32, i32)>,
     pub desktop_menu_entries: Vec<String>,
@@ -2441,6 +2460,11 @@ impl Panels {
                     self.draw_dock_menu(&mut canvas, &layout, menu, view.menu_pointer);
                 }
             }
+            Some(Popover::SnapLayouts) => {
+                if let Some(menu) = &view.snap_menu {
+                    self.draw_snap_menu(&mut canvas, &layout, menu, view.menu_pointer);
+                }
+            }
             Some(Popover::DesktopMenu) => {
                 if let Some(anchor) = view.desktop_menu {
                     self.draw_desktop_menu(
@@ -2682,7 +2706,11 @@ impl Panels {
             Popover::Launcher => Some(BarIsland::Start),
             Popover::Controls => Some(BarIsland::Indicators),
             Popover::Notifications => Some(BarIsland::Clock),
-            Popover::Clipboard | Popover::DockMenu | Popover::DesktopMenu | Popover::Screenshot => None,
+            Popover::Clipboard
+            | Popover::DockMenu
+            | Popover::DesktopMenu
+            | Popover::SnapLayouts
+            | Popover::Screenshot => None,
         });
         let clock = clock_text(view.clock_style, clock_label(SystemTime::now(), local_offset()));
         let clock_width = canvas.text_width(&self.bold, &clock, px(13.0));
@@ -3892,6 +3920,73 @@ impl Panels {
         }
     }
 
+    /// Panneau « Ancrer la fenêtre » : quatre dispositions en miniature, la case sous le
+    /// pointeur à la couleur d'accent, puis l'envoi vers l'espace de travail voisin.
+    fn draw_snap_menu(
+        &self,
+        canvas: &mut Canvas,
+        layout: &Layout,
+        menu: &SnapMenuView,
+        pointer: Option<(i32, i32)>,
+    ) {
+        let screen = (layout.w, layout.h);
+        let anchor = Point::from((menu.x, menu.y));
+        let card = snap_menu_rect(screen, anchor, menu.target.is_some());
+        let pointer = pointer.map(|(x, y)| Point::from((f64::from(x), f64::from(y))));
+        let under = |rect: Rect| pointer.is_some_and(|at| rect.contains(at));
+        // Opaque : il se pose sur la fenêtre, dont le texte ne doit pas transparaître.
+        canvas.panel_shadow(card, 12.0);
+        canvas.fill(card, 12.0, panel_fill().with_alpha(255));
+        canvas.label(
+            &self.regular,
+            "Ancrer la fenêtre",
+            card.x + SNAP_PAD,
+            card.y + 14.0,
+            px(12.5),
+            text_secondary(),
+        );
+        for (index, zones) in crate::wm::snap_menu::LAYOUTS.iter().enumerate() {
+            let tile = snap_tile(card, index);
+            canvas.fill(tile, 9.0, tint(if under(tile) { 22 } else { 12 }));
+            for zone in 0..zones.len() {
+                let rect = snap_zone_rect(card, index, zone);
+                let fill = if under(rect) { accent() } else { tint(40) };
+                canvas.fill(rect, 5.0, fill);
+            }
+        }
+        let Some(target) = menu.target else {
+            return;
+        };
+        canvas.fill(
+            Rect::new(
+                card.x + SNAP_PAD,
+                card.y + SNAP_SEPARATOR,
+                card.w - 2.0 * SNAP_PAD,
+                1.0,
+            ),
+            0.0,
+            tint(24),
+        );
+        let row = snap_send_row(card);
+        let hovered = under(row);
+        if hovered {
+            canvas.fill(row, 7.0, accent());
+        }
+        let ink = if hovered { accent_ink() } else { primary_text() };
+        // Petite fenêtre : cadre arrondi et sa barre de titre.
+        let glyph = Rect::new(row.x + 10.0, row.y + 12.0, 16.0, 14.0);
+        canvas.stroke(glyph, 3.0, ink, 1.4);
+        canvas.line((glyph.x, glyph.y + 4.5), (glyph.right(), glyph.y + 4.5), 1.4, ink);
+        canvas.label(
+            &self.regular,
+            &format!("Envoyer vers l'espace de travail {target}"),
+            row.x + 36.0,
+            row.y + 11.0,
+            px(13.0),
+            ink,
+        );
+    }
+
     /// Ligne de menu de 32 : surlignée sous le pointeur.
     fn menu_row(&self, canvas: &mut Canvas, row: Rect, text: &str, pointer: Option<(i32, i32)>) {
         let hovered = pointer.is_some_and(|(x, y)| row.contains(Point::from((f64::from(x), f64::from(y)))));
@@ -5084,6 +5179,10 @@ pub fn action_at(
                 .map_or(DesktopAction::Consume, DesktopAction::DockMenu),
             _ => DesktopAction::ClosePopover,
         },
+        Popover::SnapLayouts => match &view.snap_menu {
+            Some(menu) => snap_menu_action((layout.w, layout.h), menu, pos),
+            None => DesktopAction::ClosePopover,
+        },
         Popover::DesktopMenu => match view.desktop_menu {
             Some(anchor)
                 if layout
@@ -5585,6 +5684,108 @@ struct Layout {
     /// Décalage retiré de la place du centre de contrôle (et donc de tout ce qui en
     /// dépend) : il est dessiné sur une toile de sa taille, pas de celle de l'écran.
     controls_shift: (f64, f64),
+}
+
+/// Largeur du panneau « Ancrer la fenêtre », marge intérieure, et taille d'une miniature.
+const SNAP_WIDTH: f64 = 300.0;
+const SNAP_PAD: f64 = 14.0;
+const SNAP_TILE: (f64, f64) = (130.0, 64.0);
+const SNAP_GAP: f64 = 12.0;
+/// Haut de la première rangée de miniatures, et du filet sous la seconde.
+const SNAP_TILES_TOP: f64 = 40.0;
+const SNAP_SEPARATOR: f64 = SNAP_TILES_TOP + 2.0 * SNAP_TILE.1 + SNAP_GAP + 12.0;
+/// Écart entre le centre du bouton agrandir et le panneau.
+const SNAP_BELOW: f64 = 22.0;
+
+/// Cadre du panneau d'ancrage, sous le bouton agrandir centré en `anchor` (au-dessus s'il
+/// n'y a pas la place), sans sortir de l'écran de taille `screen`.
+fn snap_menu_rect(screen: (f64, f64), anchor: Point<f64, Logical>, send: bool) -> Rect {
+    let h = if send {
+        SNAP_SEPARATOR + 7.0 + 38.0 + 7.0
+    } else {
+        SNAP_SEPARATOR
+    };
+    // Bord droit un peu au-delà du bouton fermer, comme un menu de la barre de titre.
+    let x = (anchor.x + 92.0 - SNAP_WIDTH).clamp(
+        POPOVER_MARGIN,
+        (screen.0 - SNAP_WIDTH - POPOVER_MARGIN).max(POPOVER_MARGIN),
+    );
+    let below = anchor.y + SNAP_BELOW;
+    let y = if below + h + POPOVER_MARGIN > screen.1 {
+        (anchor.y - SNAP_BELOW - h).max(POPOVER_MARGIN)
+    } else {
+        below
+    };
+    Rect::new(x, y, SNAP_WIDTH, h)
+}
+
+/// Miniature `index` (0 à 3 : de gauche à droite, puis de haut en bas).
+fn snap_tile(card: Rect, index: usize) -> Rect {
+    let (column, row) = ((index % 2) as f64, (index / 2) as f64);
+    Rect::new(
+        card.x + SNAP_PAD + column * (SNAP_TILE.0 + SNAP_GAP),
+        card.y + SNAP_TILES_TOP + row * (SNAP_TILE.1 + SNAP_GAP),
+        SNAP_TILE.0,
+        SNAP_TILE.1,
+    )
+}
+
+/// Case `zone` de la disposition `layout`, à la place qu'elle aura sur l'écran.
+fn snap_zone_rect(card: Rect, layout: usize, zone: usize) -> Rect {
+    let inner = snap_tile(card, layout).expand(-4.0);
+    let Some(snap) = crate::wm::snap_menu::LAYOUTS
+        .get(layout)
+        .and_then(|zones| zones.get(zone))
+    else {
+        return Rect::new(inner.x, inner.y, 0.0, 0.0);
+    };
+    let [x, y, w, h] = snap.part().map(|value| f64::from(value) / 1000.0);
+    Rect::new(
+        inner.x + x * inner.w,
+        inner.y + y * inner.h,
+        w * inner.w,
+        h * inner.h,
+    )
+    .expand(-2.0)
+}
+
+/// Ligne « Envoyer vers l'espace de travail N ».
+fn snap_send_row(card: Rect) -> Rect {
+    Rect::new(card.x + 6.0, card.y + SNAP_SEPARATOR + 7.0, card.w - 12.0, 38.0)
+}
+
+fn snap_menu_action(screen: (f64, f64), menu: &SnapMenuView, pos: Point<f64, Logical>) -> DesktopAction {
+    let card = snap_menu_rect(screen, Point::from((menu.x, menu.y)), menu.target.is_some());
+    if !card.contains(pos) {
+        return DesktopAction::ClosePopover;
+    }
+    for (layout, zones) in crate::wm::snap_menu::LAYOUTS.iter().enumerate() {
+        if let Some(zone) = (0..zones.len()).find(|&zone| snap_zone_rect(card, layout, zone).contains(pos)) {
+            return DesktopAction::SnapZone(layout, zone);
+        }
+    }
+    if menu.target.is_some() && snap_send_row(card).contains(pos) {
+        return DesktopAction::SnapSend;
+    }
+    DesktopAction::Consume
+}
+
+/// Le panneau ouvert au survol reste tant que le pointeur est dessus, sur le bouton, ou
+/// entre les deux (coordonnées de l'écran principal, de taille `screen`).
+pub fn snap_menu_keeps(
+    screen: (f64, f64),
+    anchor: Point<f64, Logical>,
+    send: bool,
+    pos: Point<f64, Logical>,
+) -> bool {
+    let card = snap_menu_rect(screen, anchor, send);
+    let (top, bottom) = if card.y > anchor.y {
+        (anchor.y - 18.0, card.y)
+    } else {
+        (card.bottom(), anchor.y + 18.0)
+    };
+    let bridge = Rect::new(anchor.x - 18.0, top, 36.0, bottom - top);
+    card.expand(12.0).contains(pos) || bridge.contains(pos)
 }
 
 impl Layout {

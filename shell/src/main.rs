@@ -73,6 +73,7 @@ fn run(options: Options) -> Result<u8, Box<dyn std::error::Error>> {
     state.demo_pointer = options.demo_pointer.map(Into::into);
     state.demo_switcher = options.demo_switcher;
     state.demo_keep_above = options.demo_keep_above;
+    state.demo_snap = options.demo_snap;
     state.demo_screenshot = options.demo_screenshot;
     // Après la création de l'écran : la zone proposée en dépend.
     state.screenshot_video = options.demo_video;

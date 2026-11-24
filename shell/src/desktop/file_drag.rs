@@ -96,6 +96,7 @@ pub fn listen(handle: &LoopHandle<'static, Ferrite>, display: &str) {
             match request {
                 Request::Drag(drag) => state.offer_file_drag(drag),
                 Request::WindowMenu => state.open_window_menu_at_pointer(),
+                Request::ZoomHover(x, y) => state.app_zoom_hovered(x, y),
             }
             state.request_redraw();
         }

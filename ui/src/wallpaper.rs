@@ -240,9 +240,11 @@ struct Spot {
     reach: f32,
 }
 
-/// Anneau centré : rayon intérieur et extérieur sur un écran de 900 pixels de haut.
+/// Anneau : centre en fractions de l'écran, rayons intérieur et extérieur sur l'écran
+/// de la maquette (1440 × 900), mis à l'échelle.
 #[derive(Clone, Copy)]
 struct Ring {
+    center: (f32, f32),
     inner: f32,
     outer: f32,
     color: u32,
@@ -258,7 +260,7 @@ struct Scene {
 }
 
 impl Scene {
-    /// Bureau : `Main.dc.html` de la maquette « Fusion », lueurs rondes.
+    /// Bureau : `Main.dc.html` de la maquette « Fusion », lueurs rondes et deux anneaux.
     fn desktop(builtin: Builtin) -> Scene {
         let tones = builtin.mood.tones(builtin.dark, !builtin.dark);
         let (warm, deep, glow) = if builtin.dark {
@@ -273,7 +275,23 @@ impl Scene {
                 spot((0.10, 0.90), 0.60, tones.deep, deep, 0.62),
                 spot((0.80, 0.20), 0.50, tones.warm, warm, 0.62),
             ],
-            rings: Vec::new(),
+            // Deux anneaux décalés à droite, centrés à (1240, 560) sur la maquette.
+            rings: vec![
+                Ring {
+                    center: (1240.0 / 1440.0, 560.0 / 900.0),
+                    inner: 316.0,
+                    outer: 380.0,
+                    color: tones.warm,
+                    alpha: 0.10,
+                },
+                Ring {
+                    center: (1240.0 / 1440.0, 560.0 / 900.0),
+                    inner: 279.0,
+                    outer: 280.0,
+                    color: tones.line,
+                    alpha: 0.16,
+                },
+            ],
         }
     }
 
@@ -290,12 +308,14 @@ impl Scene {
             ],
             rings: vec![
                 Ring {
+                    center: (0.5, 0.5),
                     inner: 460.0,
                     outer: 550.0,
                     color: tones.warm,
                     alpha: 0.08,
                 },
                 Ring {
+                    center: (0.5, 0.5),
                     inner: 409.0,
                     outer: 410.0,
                     color: tones.line,
@@ -396,14 +416,12 @@ fn paint_scene(scene: &Scene, width: u32, height: u32, threads: usize) -> Image 
                     over(&mut pixel, *tone, spot.alpha * (1.0 - distance / spot.reach));
                 }
             }
-            if !rings.is_empty() {
-                let distance = (x - w / 2.0).hypot(y - h / 2.0);
-                for (ring, tone) in &rings {
-                    let coverage = (distance - ring.inner + 0.5).clamp(0.0, 1.0)
-                        * (ring.outer - distance + 0.5).clamp(0.0, 1.0);
-                    if coverage > 0.0 {
-                        over(&mut pixel, *tone, ring.alpha * coverage);
-                    }
+            for (ring, tone) in &rings {
+                let distance = (x - ring.center.0 * w).hypot(y - ring.center.1 * h);
+                let coverage = (distance - ring.inner + 0.5).clamp(0.0, 1.0)
+                    * (ring.outer - distance + 0.5).clamp(0.0, 1.0);
+                if coverage > 0.0 {
+                    over(&mut pixel, *tone, ring.alpha * coverage);
                 }
             }
             let dither = (BAYER[((row % 4) * 4 + (index as u32 % width) % 4) as usize] + 0.5) / 16.0 - 0.5;
@@ -769,6 +787,26 @@ mod tests {
         // Au centre, hors des anneaux : identique.
         let i = ((450 * 1440 + 720) * 4) as usize;
         assert_eq!(lock.rgba[i..i + 4], plain.rgba[i..i + 4]);
+    }
+
+    #[test]
+    fn anneaux_du_bureau_decales_a_droite() {
+        let desktop = paint(Builtin::DEFAULT, 1440, 900);
+        let plain = paint_scene(
+            &Scene {
+                rings: Vec::new(),
+                ..Scene::desktop(Builtin::DEFAULT)
+            },
+            1440,
+            900,
+            1,
+        );
+        let red = |image: &Image, x: u32, y: u32| image.rgba[((y * 1440 + x) * 4) as usize];
+        // Dans le grand anneau (centre 1240 × 560, rayons 316 à 380), à gauche du centre.
+        assert!(red(&desktop, 1240 - 350, 560) > red(&plain, 1240 - 350, 560));
+        // Au centre des anneaux et en haut à gauche : rien.
+        assert_eq!(red(&desktop, 1240, 560), red(&plain, 1240, 560));
+        assert_eq!(red(&desktop, 100, 100), red(&plain, 100, 100));
     }
 
     #[test]

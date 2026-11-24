@@ -53,6 +53,18 @@ pub fn is_live() -> bool {
     std::path::Path::new("/run/live/medium").exists()
 }
 
+/// L'assistant de bienvenue doit-il s'ouvrir à l'ouverture de session ? `value` est le
+/// réglage `bienvenue` : `faite` une fois parcouru, `a_faire` écrit par l'installation pour
+/// le nouveau compte. Sans réglage, seulement sur la clé live (un Ferrite déjà en service
+/// ne le voit pas apparaître après une mise à jour).
+pub fn welcome_due(value: Option<&str>, live: bool) -> bool {
+    match value.map(str::trim) {
+        Some("faite") => false,
+        Some("a_faire") => true,
+        _ => live,
+    }
+}
+
 impl AppInfo {
     /// L'application est-elle proposée sur ce système (menu, Dock) ?
     pub fn available(&self) -> bool {
@@ -205,6 +217,20 @@ pub const APPS: &[AppInfo] = &[
             false,
         )
     },
+    // Assistant du premier démarrage, ouvert par le bureau à l'ouverture de session
+    // (réglage `bienvenue`), hors du menu.
+    AppInfo {
+        menu: false,
+        ..app(
+            "bienvenue",
+            "ferrite-welcome",
+            "Bienvenue",
+            "app-settings",
+            (1180, 760),
+            (860, 600),
+            false,
+        )
+    },
     // Pièces communes en démonstration, pour qui développe une application.
     AppInfo {
         menu: false,
@@ -233,6 +259,14 @@ pub fn by_app_id(app_id: &str) -> Option<&'static AppInfo> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bienvenue_a_l_ouverture() {
+        assert!(welcome_due(None, true));
+        assert!(!welcome_due(None, false));
+        assert!(welcome_due(Some("a_faire"), false));
+        assert!(!welcome_due(Some("faite"), true));
+    }
 
     #[test]
     fn identifiants_uniques_et_coherents() {

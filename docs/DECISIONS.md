@@ -553,3 +553,12 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
   « Ferrite » / « Ferrite-dark » généré depuis la charte (`ferrite-theme/gtk/generer.py`),
   choisi par ferrite-shell avec le mode clair ou sombre. Dock et barre du haut inchangés.
 
+- **2026-11-23 — Assistant de bienvenue : sept étapes après l'installation, quatre en live.**
+  Après l'installation : langue et région, réseau, compte, confidentialité, apparence,
+  applications, fin. Sur la clé : langue et région, réseau, apparence, fin (avec
+  « Installer Ferrite »). Le compte se crée pendant l'installation, et une application
+  installée dans l'essai disparaîtrait à l'arrêt. Il ne s'ouvre que sur la clé ou quand
+  l'installation a écrit `bienvenue = a_faire` : un Ferrite déjà en service ne le voit pas
+  surgir après une mise à jour. Fermer la fenêtre compte comme « fait ». Seul le français
+  est proposé (les autres langues sont grisées « Traduction à venir ») : l'interface n'est
+  pas traduite.

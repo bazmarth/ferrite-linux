@@ -573,6 +573,17 @@ pub struct Keyboard {
     pub variant: &'static str,
 }
 
+impl Keyboard {
+    /// Valeur du réglage `clavier` : « fr », ou « ch(fr) » avec une variante.
+    pub fn setting(&self) -> String {
+        if self.variant.is_empty() {
+            self.layout.to_owned()
+        } else {
+            format!("{}({})", self.layout, self.variant)
+        }
+    }
+}
+
 pub const KEYBOARDS: &[Keyboard] = &[
     Keyboard {
         name: "Français (AZERTY)",
@@ -651,10 +662,15 @@ impl Default for Locale {
             .iter()
             .find(|(_, zone)| *zone == current.trim())
             .map_or(TIMEZONES[0].1, |(_, zone)| zone);
-        Self {
-            keyboard: &KEYBOARDS[0],
-            timezone,
-        }
+        // Le clavier choisi dans la session (assistant de bienvenue, Paramètres), s'il est
+        // dans la liste.
+        let settings = ferrite_system::config::Settings::load();
+        let current = settings.keyboard_layout();
+        let keyboard = KEYBOARDS
+            .iter()
+            .find(|keyboard| keyboard.setting() == current)
+            .unwrap_or(&KEYBOARDS[0]);
+        Self { keyboard, timezone }
     }
 }
 

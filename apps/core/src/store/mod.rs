@@ -8,7 +8,7 @@
 
 mod appstream;
 pub mod drivers;
-mod flatpak;
+pub(crate) mod flatpak;
 mod media;
 pub mod notifier;
 

@@ -26,6 +26,7 @@ mod style;
 mod terminal;
 mod video;
 mod viewer;
+mod welcome;
 
 use std::{
     env,
@@ -92,6 +93,7 @@ fn create(
         "logitheque" => opened(Box::new(store::StoreState::new(context))),
         "galerie" => Box::new(gallery::GalleryState::default()),
         "installer" => Box::new(installer::InstallerState::new(context)),
+        "bienvenue" => Box::new(welcome::WelcomeState::new(context)),
         // Arguments de la demande du portail, après `choisir`.
         "choisir" => {
             let args: Vec<String> = env::args().skip(2).collect();
@@ -119,6 +121,12 @@ impl AppView for store::StoreState {
 impl AppView for installer::InstallerState {
     fn update(&mut self, ui: &mut egui::Ui) {
         installer::InstallerState::update(self, ui);
+    }
+}
+
+impl AppView for welcome::WelcomeState {
+    fn update(&mut self, ui: &mut egui::Ui) {
+        welcome::WelcomeState::update(self, ui);
     }
 }
 

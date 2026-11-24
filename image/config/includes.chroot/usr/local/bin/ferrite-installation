@@ -352,7 +352,8 @@ fi
 keyboard=$layout
 [ -z "$variant" ] || keyboard="$layout($variant)"
 mkdir -p "$target/etc/skel/.config/ferrite"
-echo "clavier = $keyboard" >"$target/etc/skel/.config/ferrite/reglages"
+# « bienvenue = a_faire » : le bureau ouvre l'assistant de bienvenue à la première session.
+printf 'clavier = %s\nbienvenue = a_faire\n' "$keyboard" >"$target/etc/skel/.config/ferrite/reglages"
 greeter_home=$(in_target getent passwd _greetd | cut -d: -f6)
 if [ -n "$greeter_home" ] && [ "$greeter_home" != / ]; then
     mkdir -p "$target$greeter_home/.config/ferrite"

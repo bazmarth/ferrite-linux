@@ -368,6 +368,25 @@ impl App {
         }
     }
 
+    /// Assistant de bienvenue (`ferrite-apps bienvenue`) à l'ouverture de session : sur la
+    /// clé live, et au premier démarrage d'un Ferrite installé (réglage `bienvenue`).
+    pub fn start_welcome(env: &[(String, String)]) {
+        let settings = ferrite_system::config::Settings::load();
+        let due = ferrite_system::catalog::welcome_due(
+            settings.get("bienvenue"),
+            ferrite_system::catalog::is_live(),
+        );
+        if !due {
+            return;
+        }
+        let mut command = ferrite_command("ferrite-apps");
+        command.arg("bienvenue");
+        command.envs(env.iter().map(|(key, value)| (key, value)));
+        if let Err(err) = spawn_detached(command) {
+            tracing::warn!(%err, "assistant de bienvenue indisponible");
+        }
+    }
+
     /// Lance l'application comme client du compositeur.
     pub fn launch(self, env: &[(String, String)]) {
         self.launch_with(env, &[]);

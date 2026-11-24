@@ -10,7 +10,7 @@
 
 mod disks;
 mod job;
-mod plan;
+pub(crate) mod plan;
 
 use eframe::egui::{self, Color32, FontId, Frame, Margin, RichText, Sense, Stroke};
 use ferrite_ui::tokens::typography;

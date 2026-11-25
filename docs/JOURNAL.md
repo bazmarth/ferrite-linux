@@ -4702,3 +4702,17 @@ Vérifié : `tools/ci.sh` (shellcheck absent du PC) ; captures du panneau sur `f
 (barre de titre du bureau) et sur la Calculatrice (boutons de l'application).
 Non vérifié : le survol réel à la souris et le rangement après un clic sur une case
 (seulement l'ouverture en démonstration), le vrai bureau.
+
+## 2026-11-24 — ISO reconstruite et essayée en VM (live, installation, premier démarrage)
+
+ISO `build/ferrite-live.iso` (1,35 Go, empreinte vérifiée) construite par l'utilisateur
+avec `tools/usb.sh` depuis l'arbre commité (`92b9913`), après `apt clean` (4,5 Go libres
+seulement sur `/` avant).
+- Live : bureau en moins de 20 s ; l'assistant de bienvenue s'ouvre seul (4 étapes).
+- Installation (`tools/scenarios/installation.txt`, disque d'essai recréé) : « Ferrite est
+  installé », « Installation finished. No error reported. » ; partition « Windows »
+  réduite à 11 Go et gardée, EFI de 512 Mo, ext4 de 36,5 Go.
+- Premier démarrage sans la clé : écran de connexion Fusion (anneaux, compte « Test
+  Ferrite »), puis l'assistant de bienvenue en 7 étapes (`bienvenue = a_faire` lu).
+Non vérifié : écran Plymouth (le bureau est déjà là à 20 s), contenu NTFS après la
+réduction, parcours des étapes de l'assistant, clé USB sur le ThinkBook.

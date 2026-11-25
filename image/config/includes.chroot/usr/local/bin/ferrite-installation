@@ -72,10 +72,10 @@ if [ "${1:-}" = sonder ]; then
     probe 2>>"$log"
     exit 0
 fi
-[ "${1:-}" = installer ] && [ -f "${2:-}" ] || {
+if [ "${1:-}" != installer ] || [ ! -f "${2:-}" ]; then
     echo "erreur usage : ferrite-installation installer PLAN"
     exit 2
-}
+fi
 
 # --- Installation --------------------------------------------------------------------------
 plan=$2
@@ -299,6 +299,8 @@ version=$(find "$target/boot" -name 'vmlinuz-*' -printf '%f\n' | sed 's/^vmlinuz
 # Plus de système live : il démarrerait comme une clé.
 live=""
 for name in live-boot live-boot-initramfs-tools live-config live-config-systemd live-tools user-setup; do
+    # ${Status} est un champ de dpkg-query, pas une variable du shell.
+    # shellcheck disable=SC2016
     if in_target dpkg-query -W -f '${Status}' "$name" 2>/dev/null | grep -q installed; then
         live="$live $name"
     fi

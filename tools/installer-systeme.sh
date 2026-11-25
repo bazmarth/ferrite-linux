@@ -17,7 +17,9 @@ set -eu
 
 [ "$(id -u)" = 0 ] || die "à lancer avec sudo"
 user=${SUDO_USER:-}
-[ -n "$user" ] && [ "$user" != root ] || die "lancer avec sudo depuis son compte (SUDO_USER absent)"
+if [ -z "$user" ] || [ "$user" = root ]; then
+    die "lancer avec sudo depuis son compte (SUDO_USER absent)"
+fi
 includes="$REPO/image/config/includes.chroot"
 home=$(getent passwd "$user" | cut -d: -f6)
 

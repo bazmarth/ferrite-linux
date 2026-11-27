@@ -167,12 +167,44 @@ pub fn parse_wifi_list(output: &str) -> Vec<WifiNetwork> {
     networks
 }
 
+/// Rejoint un réseau. Avec un mot de passe, un réseau déjà enregistré (dont le mot de
+/// passe a changé, ou a été mal tapé) reçoit le nouveau au lieu d'être enregistré deux fois.
 pub fn connect_wifi(ssid: &str, password: Option<&str>) -> Result<(), Error> {
+    let password = password.filter(|password| !password.is_empty());
+    if let Some(password) = password
+        && known_wifi().is_ok_and(|known| known.iter().any(|entry| entry.name == ssid))
+    {
+        command::run(
+            "nmcli",
+            &[
+                "connection",
+                "modify",
+                "id",
+                ssid,
+                "802-11-wireless-security.psk",
+                password,
+            ],
+        )?;
+        return command::run_with_timeout(
+            "nmcli",
+            &["connection", "up", "id", ssid],
+            Duration::from_secs(30),
+        )
+        .map(drop);
+    }
     let mut args = vec!["device", "wifi", "connect", ssid];
-    if let Some(password) = password.filter(|password| !password.is_empty()) {
+    if let Some(password) = password {
         args.extend(["password", password]);
     }
     command::run_with_timeout("nmcli", &args, Duration::from_secs(30)).map(drop)
+}
+
+/// L'échec d'une connexion vient-il du mot de passe (refusé, trop court, ou absent pour un
+/// réseau enregistré) ? On peut alors le redemander.
+pub fn wrong_password(error: &str) -> bool {
+    error.contains("Secrets were required")
+        || error.contains("802-11-wireless-security.psk")
+        || error.contains("psk: property is invalid")
 }
 
 pub fn disconnect_wifi(ssid: &str) -> Result<(), Error> {
@@ -592,6 +624,17 @@ pub fn split_terse(line: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reconnait_un_mot_de_passe_refuse() {
+        assert!(wrong_password(
+            "nmcli : Error: Connection activation failed: Secrets were required, but not provided."
+        ));
+        assert!(wrong_password(
+            "nmcli : Error: 802-11-wireless-security.psk: property is invalid."
+        ));
+        assert!(!wrong_password("nmcli : Error: No network with SSID 'X' found."));
+    }
 
     #[test]
     fn mot_de_passe_wifi_et_qr_code() {

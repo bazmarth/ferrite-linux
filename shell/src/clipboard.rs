@@ -867,6 +867,7 @@ impl Ferrite {
         self.clipboard_selected = 0;
         self.clipboard_scroll = 0.0;
         self.clipboard_query.clear();
+        self.clipboard_cursor = 0;
         self.clipboard_filter = Filter::All;
         self.clipboard_undo = None;
     }
@@ -901,12 +902,14 @@ impl Ferrite {
 
     /// Recherche tapée : la liste repart du haut.
     pub fn type_clipboard_query(&mut self, character: Option<char>) {
+        use crate::desktop::text_field;
         match character {
-            Some(character) => self.clipboard_query.push(character),
-            None => {
-                self.clipboard_query.pop();
+            Some(character) => {
+                text_field::insert(&mut self.clipboard_query, &mut self.clipboard_cursor, character)
             }
+            None => text_field::erase(&mut self.clipboard_query, &mut self.clipboard_cursor),
         }
+        self.restart_caret();
         self.clipboard_selected = 0;
         self.clipboard_scroll = 0.0;
     }

@@ -4716,3 +4716,66 @@ seulement sur `/` avant).
   Ferrite »), puis l'assistant de bienvenue en 7 étapes (`bienvenue = a_faire` lu).
 Non vérifié : écran Plymouth (le bureau est déjà là à 20 s), contenu NTFS après la
 réduction, parcours des étapes de l'assistant, clé USB sur le ThinkBook.
+
+## 2026-11-26 — Veille : ce qui consomme pendant la nuit
+
+Mesure de la nuit du 25 au 26 (historique UPower) : 76 % à 23 h 43, 52 % à 8 h 10, soit
+~2,8 %/h en `s2idle` ; le réveil marche. Nouveau `tools/veille-diagnostic.sh` (sudo) :
+veilles de 40 s par `rtcwake -m freeze`, résidence S0ix lue dans `pmc_core`, exigences
+non remplies (`substate_requirements`), rapport dans `build/veille-diagnostic.txt`.
+- Résultat : 0 s de S0ix dans tous les cas (réglages actuels ; latence du port Sud B
+  ignorée ; + SATA `med_power_with_dipm` ; + `power/control = auto` sur tout le PCI).
+- Toujours bloquants : `SATA_PG`, `SATAPLL_OFF`, `SPB_PG` (ports 5 à 8 : Wi-Fi
+  RTL8852BE et lecteur SD O2 Micro), `MPHY_Core_DL`, horloges principales.
+- Cause principale : le SSD système iCoolax (SATA) n'annonce ni DIPM, ni HIPM, ni
+  DevSleep (mots IDENTIFY 76, 78, 79) : son lien ne s'endort jamais, le contrôleur SATA
+  ne peut pas s'éteindre, et le processeur ne peut pas entrer en S0ix. Limite du disque,
+  pas d'un réglage. Le port Sud B bloque aussi, cause non isolée.
+- Le PC peut hiberner (verrouillage du noyau : aucun ; partition d'échange `sda6` de
+  12,3 Go pour 15 Go de mémoire), mais rien n'est configuré (`resume`).
+Non fait : aucune correction appliquée ; décision demandée à l'utilisateur.
+
+## 2026-11-27 — Clé USB : « error: invalid magic number » au démarrage
+
+Sur le ThinkBook, la clé Ventoy (1.1.12, « Flash Disk » de 3,8 Go) affiche dans GRUB
+« invalid magic number » puis « you need to load the kernel first ».
+- L'ISO n'est pas en cause : empreinte juste, noyau de l'ISO intact (en-tête `HdrS`,
+  identique à `/boot/vmlinuz-6.12.118+deb13-amd64` qui démarre ce PC).
+- Le fichier sur la clé a la bonne taille mais une autre empreinte (`1599daaa…`) : à partir
+  de 57 Mo tout diffère, puis la lecture de la clé échoue (erreur d'entrée/sortie vers
+  287 Mo). Clé défectueuse ou copie ratée ; GRUB lit donc un noyau illisible.
+Conseil donné : une autre clé, et vérifier l'empreinte de la copie avant de démarrer.
+
+## 2026-11-27 — Mot de passe Wi-Fi : curseur, et nouvel essai après un refus
+
+- Centre de contrôle : le champ a un vrai curseur qui clignote (530 ms, fixe si les
+  animations sont réduites), déplaçable par ← → Début Fin, Suppr, et par un clic dans le
+  champ ; le texte défile pour garder le curseur visible. La ligne du réseau dit
+  « Connexion… » pendant l'essai.
+- Mot de passe refusé (nmcli : « Secrets were required », ou clé `psk` invalide,
+  `network::wrong_password`) : le centre de contrôle se rouvre sur le réseau, message rouge,
+  le mot de passe tapé déjà rempli. Même chose dans Paramètres (fenêtre rouverte, curseur
+  au bout) ; un réseau enregistré dont le mot de passe a changé le redemande aussi.
+- `connect_wifi` : avec un mot de passe, un réseau déjà enregistré reçoit le nouveau
+  (`connection modify` puis `up`) au lieu d'un doublon.
+- Paramètres : le champ « Nom du réseau » (réseau masqué) prend le clavier à l'ouverture ;
+  le curseur d'egui clignotait déjà ailleurs (vérifié par captures).
+- Captures : `--demo-controls wifi-refuse`, `ferrite-apps settings wifi-refuse`.
+- `target/debug/deps/ferrite_apps-634f212db2a10042` est abîmé sur le NTFS (illisible) :
+  les tests de `ferrite-apps` passent par un autre `CARGO_TARGET_DIR` en attendant un
+  `ntfsfix`/`chkdsk`.
+Suite, mêmes défauts ailleurs :
+- Nouveau `desktop/text_field.rs` : édition autour du curseur (insérer, effacer, Suppr,
+  ← → Début Fin), fenêtre de texte qui garde le curseur visible, et clignotement commun
+  (`Caret`, minuteur arrêté dès qu'aucun champ n'a le clavier).
+- Le curseur n'est plus dessiné dans les panneaux : `Panels::push_caret` pose un pixel
+  d'accent étiré à sa place, devant eux. Il clignote sans redessiner (vérifié : entre deux
+  captures, seul le trait du curseur change), y compris sur le lanceur plein écran.
+- Champs concernés : recherche du lanceur, recherche du presse-papiers (Suppr y garde son
+  rôle), mot de passe administrateur (polkit), mot de passe Wi-Fi du centre de contrôle.
+- Assistant de bienvenue : message clair si le mot de passe Wi-Fi est refusé, le champ
+  reprend le clavier (curseur au bout), et le prend aussi dès qu'un réseau est choisi.
+Non vérifié : un vrai mauvais mot de passe sur un vrai réseau (texte exact de nmcli sur le
+ThinkBook), l'assistant de bienvenue à l'image. Restent sans curseur déplaçable : notes et
+tâches du tableau de bord (texte sur plusieurs lignes) ; l'écran de verrouillage a un
+curseur déplaçable mais fixe (ses couches bougent à part).

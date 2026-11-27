@@ -13,7 +13,7 @@ use std::{
 use smithay::reexports::calloop::{LoopHandle, channel};
 use zbus::{interface, zvariant::OwnedValue};
 
-use crate::state::Ferrite;
+use crate::{desktop::text_field, state::Ferrite};
 
 const AGENT_PATH: &str = "/org/ferrite/PolicyKit1/AuthenticationAgent";
 const HELPERS: [&str; 2] = [
@@ -46,6 +46,8 @@ pub struct Auth {
     pub user: String,
     cookie: String,
     pub password: String,
+    /// Place du curseur dans le mot de passe, en caractères.
+    pub cursor: usize,
     pub checking: bool,
     pub refused: bool,
     reply: async_channel::Sender<bool>,
@@ -61,6 +63,7 @@ impl Auth {
             user: std::env::var("USER").unwrap_or_else(|_| "ferrite".to_owned()),
             cookie: String::new(),
             password: "secret".to_owned(),
+            cursor: 6,
             checking: false,
             refused: false,
             reply: async_channel::bounded(1).0,
@@ -273,10 +276,12 @@ impl Ferrite {
                     user,
                     cookie,
                     password: String::new(),
+                    cursor: 0,
                     checking: false,
                     refused: false,
                     reply,
                 });
+                self.restart_caret();
             }
             Event::Cancel(cookie) => {
                 if let Some(index) = self.auth.iter().position(|auth| auth.cookie == cookie)
@@ -297,22 +302,41 @@ impl Ferrite {
                 } else if let Some(auth) = self.auth.get_mut(index) {
                     auth.checking = false;
                     auth.refused = true;
+                    self.restart_caret();
                 }
             }
         }
     }
 
-    pub fn auth_type(&mut self, character: char) {
+    /// Change le mot de passe demandé (pas pendant sa vérification), puis remet le curseur
+    /// visible.
+    fn auth_edit(&mut self, change: impl FnOnce(&mut String, &mut usize)) {
         if let Some(auth) = self.auth.front_mut().filter(|auth| !auth.checking) {
-            auth.refused = false;
-            auth.password.push(character);
+            change(&mut auth.password, &mut auth.cursor);
+            self.restart_caret();
         }
     }
 
-    pub fn auth_erase(&mut self) {
+    pub fn auth_type(&mut self, character: char) {
+        self.auth_edit(|password, cursor| text_field::insert(password, cursor, character));
         if let Some(auth) = self.auth.front_mut().filter(|auth| !auth.checking) {
-            auth.password.pop();
+            auth.refused = false;
         }
+    }
+
+    /// Retour arrière : le caractère avant le curseur.
+    pub fn auth_erase(&mut self) {
+        self.auth_edit(text_field::erase);
+    }
+
+    /// Suppr : le caractère après le curseur.
+    pub fn auth_delete(&mut self) {
+        self.auth_edit(text_field::delete);
+    }
+
+    /// ← → Début Fin.
+    pub fn auth_move(&mut self, step: isize) {
+        self.auth_edit(|password, cursor| text_field::step(password, cursor, step));
     }
 
     pub fn auth_submit(&mut self) {

@@ -56,6 +56,7 @@ pub use island::{IslandHit, IslandKind, IslandView, island_contains};
 
 use crate::clipboard::{self, Filter as ClipFilter, Kind as ClipKind, Thumbnail};
 use crate::desktop::svg::{self, IconCache, Style};
+use crate::desktop::text_field;
 use crate::state::PowerAction;
 
 const FONT_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/Inter-Medium.ttf");
@@ -288,6 +289,8 @@ pub enum DesktopAction {
     NetworkPassword(usize),
     /// L'œil du champ de mot de passe.
     PasswordReveal,
+    /// Clic dans le champ : le curseur va avant ce caractère.
+    PasswordPlace(usize),
     PasswordCancel,
     PasswordSubmit,
     DeviceAction(usize),
@@ -424,6 +427,8 @@ pub struct ClipboardView {
     /// Éléments de l'historique, filtrés ou non.
     pub count: usize,
     pub query: String,
+    /// Place du curseur dans la recherche, en caractères.
+    pub cursor: usize,
     pub filter: ClipFilter,
     /// Liste vide : titre et explication.
     pub empty: Option<(&'static str, &'static str)>,
@@ -463,6 +468,8 @@ pub struct LauncherSection {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct LauncherView {
     pub query: String,
+    /// Place du curseur dans la recherche, en caractères.
+    pub cursor: usize,
     /// Pastilles des rubriques (« Tout » d'abord) ; vide pendant une recherche.
     pub rubrics: Vec<String>,
     /// Pastille choisie (0 : Tout).
@@ -542,7 +549,45 @@ pub struct NetworkRow {
 pub struct PasswordRow {
     pub ssid: String,
     pub length: usize,
+    /// Place du curseur, en caractères.
+    pub cursor: usize,
+    /// Le mot de passe précédent a été refusé.
+    pub wrong: bool,
     pub shown: Option<String>,
+}
+
+/// Écart entre deux points du mot de passe masqué.
+const PASSWORD_DOT: f64 = 9.0;
+/// Taille du texte du mot de passe affiché en clair.
+const PASSWORD_TEXT: f64 = 14.0;
+
+/// Police du texte, pour mesurer hors du dessin (clic dans le champ de mot de passe).
+fn measure_font() -> Option<&'static Font> {
+    static FONT: OnceLock<Option<Font>> = OnceLock::new();
+    FONT.get_or_init(|| Font::from_bytes(FONT_REGULAR, FontSettings::default()).ok())
+        .as_ref()
+}
+
+/// Largeur de chaque caractère d'un texte de `css` pixels, pour les calculs faits hors du
+/// dessin.
+fn char_widths(text: &str, css: f64) -> Vec<f64> {
+    match measure_font() {
+        Some(font) => text
+            .chars()
+            .map(|character| f64::from(font.metrics(character, css as f32).advance_width))
+            .collect(),
+        None => vec![css * 0.55; text.chars().count()],
+    }
+}
+
+/// Partie visible du mot de passe dans un champ de `room` pixels de large (voir
+/// `text_field::window`) : points du mot de passe masqué, ou texte en clair.
+fn password_window(row: &PasswordRow, room: f64) -> (usize, Vec<f64>) {
+    let widths = match &row.shown {
+        Some(text) => char_widths(text, PASSWORD_TEXT),
+        None => vec![PASSWORD_DOT; row.length],
+    };
+    text_field::window(&widths, row.cursor, room)
 }
 
 /// Appareil de la liste Bluetooth.
@@ -641,6 +686,8 @@ pub struct AuthView {
     pub message: String,
     pub user: String,
     pub length: usize,
+    /// Place du curseur, en caractères.
+    pub cursor: usize,
     pub checking: bool,
     pub refused: bool,
 }
@@ -1155,6 +1202,8 @@ pub struct Panels {
     lock_layers: RefCell<lock_screen::LockLayers>,
     /// Page principale du centre de contrôle sans ses curseurs (`controls_pixels`).
     controls_main: RefCell<Option<ControlsMain>>,
+    /// Curseur des champs : un pixel de sa couleur, étiré à sa place (`push_caret`).
+    caret: RefCell<Option<(Color, MemoryRenderBuffer)>>,
 }
 
 /// Durées de l'apparition et de la disparition d'un panneau, et sa taille de départ.
@@ -1345,6 +1394,7 @@ impl Panels {
             lock_wall: RefCell::new(None),
             lock_layers: RefCell::new(lock_screen::LockLayers::default()),
             controls_main: RefCell::new(None),
+            caret: RefCell::new(None),
         })
     }
 
@@ -1539,8 +1589,11 @@ impl Panels {
         scale: f64,
         view: &DesktopView,
         panel_shader: &GlesPixelProgram,
+        caret: bool,
         out: &mut Vec<super::super::render::OutputElement>,
     ) {
+        // Le curseur du champ actif passe devant tout ce que les panneaux posent.
+        let top = out.len();
         let state = self.visual_state(output_geo, scale, view);
         // La barre a sa propre image ; le reste ne dépend ni de son opacité ni de sa
         // présence, qui changent quand une fenêtre est agrandie.
@@ -1619,6 +1672,10 @@ impl Panels {
             (0.0, LAYER_OUT)
         };
         let shown = super::dock::ease(super::dock::DockMotion::step(&self.layer_shown, target, duration));
+        // Le centre de contrôle grandit encore : son curseur attend qu'il soit en place.
+        if caret && (view.popover != Some(Popover::Controls) || shown >= 1.0) {
+            self.push_caret(renderer, output_geo, scale, view, top, out);
+        }
         if shown > 0.0
             && let Some(layer) = self.layer.borrow().as_ref()
         {
@@ -2617,6 +2674,59 @@ impl Panels {
         Some((rect, card, (w, h), canvas.pixels))
     }
 
+    /// Curseur du champ qui a le clavier (`caret_rect`), inséré en `at` dans `out`.
+    fn push_caret(
+        &self,
+        renderer: &mut GlesRenderer,
+        output_geo: Rectangle<i32, Logical>,
+        scale: f64,
+        view: &DesktopView,
+        at: usize,
+        out: &mut Vec<super::super::render::OutputElement>,
+    ) {
+        let layout = Layout::new(output_geo.size.w as f64, output_geo.size.h as f64, view);
+        let Some(rect) = caret_rect(&layout, view) else {
+            return;
+        };
+        let color = accent();
+        let mut cache = self.caret.borrow_mut();
+        if !cache.as_ref().is_some_and(|(known, _)| *known == color) {
+            let pixel = color.to_argb8888_premultiplied().to_le_bytes();
+            let buffer = MemoryRenderBuffer::from_slice(
+                &pixel,
+                Fourcc::Argb8888,
+                (1, 1),
+                1,
+                smithay::utils::Transform::Normal,
+                None,
+            );
+            *cache = Some((color, buffer));
+        }
+        let Some((_, buffer)) = cache.as_ref() else {
+            return;
+        };
+        // Bords sur des pixels entiers de l'écran, pour un trait net.
+        let x = (rect.x * scale).round();
+        let y = (rect.y * scale).round();
+        let w = (rect.w * scale).round().max(1.0);
+        let h = (rect.h * scale).round().max(1.0);
+        match MemoryRenderBufferRenderElement::from_buffer(
+            renderer,
+            Point::from((x, y)),
+            buffer,
+            None,
+            Some(Rectangle::from_size((1.0, 1.0).into())),
+            Some(Size::from((
+                (w / scale).round().max(1.0) as i32,
+                (h / scale).round().max(1.0) as i32,
+            ))),
+            Kind::Unspecified,
+        ) {
+            Ok(element) => out.insert(at, super::super::render::OutputElement::Memory(element)),
+            Err(err) => tracing::warn!(?err, "curseur du champ non importé"),
+        }
+    }
+
     /// Soleil : rayons proportionnels au disque, comme sur la maquette.
     fn sun(&self, canvas: &mut Canvas, center: (f64, f64), radius: f64, color: Color) {
         canvas.fill(
@@ -2864,7 +2974,8 @@ impl Panels {
         );
         let text_x = field.x + 42.0;
         let text_y = field.y + (field.h - 14.0 - 4.0) / 2.0;
-        let caret = if launcher.query.is_empty() {
+        // Le curseur est posé à part, au-dessus (`caret_rect`).
+        if launcher.query.is_empty() {
             canvas.label(
                 &self.regular,
                 "Rechercher des applications, fichiers, paramètres",
@@ -2873,19 +2984,20 @@ impl Panels {
                 px(14.0),
                 text_secondary(),
             );
-            text_x
         } else {
-            canvas.label(
-                &self.regular,
-                &launcher.query,
-                text_x,
-                text_y,
-                px(14.0),
-                text_strong(),
+            let (first, offsets) = text_field::window(
+                &char_widths(&launcher.query, 14.0),
+                launcher.cursor,
+                layout.launcher_room(),
             );
-            text_x + 2.0 + canvas.text_width(&self.regular, &launcher.query, px(14.0))
-        };
-        canvas.fill(Rect::new(caret, field.y + 10.0, 2.0, 20.0), 1.0, accent());
+            let visible: String = launcher
+                .query
+                .chars()
+                .skip(first)
+                .take(offsets.len() - 1)
+                .collect();
+            canvas.label(&self.regular, &visible, text_x, text_y, px(14.0), text_strong());
+        }
         let key_width = canvas.text_width(&self.regular, "Super", px(12.0)) + 12.0;
         let key = Rect::new(field.right() - 12.0 - key_width, field.y + 10.0, key_width, 20.0);
         canvas.stroke(key, 4.0, tint(themed(36, 36)), 1.0);
@@ -3725,18 +3837,23 @@ impl Panels {
             return;
         };
         let field = layout.password_field();
-        let label = format!("Mot de passe de « {} »", entry.ssid);
+        let (label, ink, edge) = if entry.wrong {
+            (
+                "Mot de passe incorrect : corrigez-le et réessayez".to_owned(),
+                destructive(),
+                destructive(),
+            )
+        } else {
+            (
+                format!("Mot de passe de « {} »", entry.ssid),
+                text_secondary(),
+                accent(),
+            )
+        };
         let label = canvas.fit_text(&self.regular, &label, px(12.0), field.w);
-        canvas.label(
-            &self.regular,
-            &label,
-            field.x,
-            field.y - 20.0,
-            px(12.0),
-            text_secondary(),
-        );
+        canvas.label(&self.regular, &label, field.x, field.y - 20.0, px(12.0), ink);
         canvas.fill(field, 10.0, palette().window_background);
-        canvas.stroke(field, 10.0, accent(), 2.0);
+        canvas.stroke(field, 10.0, edge, 2.0);
         let eye = layout.password_eye();
         let (name, ink) = if entry.shown.is_some() {
             ("cc-eye-off", accent())
@@ -3749,34 +3866,32 @@ impl Panels {
             18.0,
             Style::Symbolic(ink),
         );
-        if let Some(text) = entry.shown.as_deref().filter(|text| !text.is_empty()) {
-            let text = canvas.fit_text(&self.regular, text, px(14.0), field.w - 24.0 - eye.w);
-            canvas.label(
-                &self.regular,
-                &text,
-                field.x + 14.0,
-                field.y + 11.0,
-                px(14.0),
-                primary_text(),
-            );
-        } else if entry.length == 0 {
-            canvas.fill(
-                Rect::new(field.x + 12.0, field.y + 10.0, 2.0, 20.0),
-                1.0,
-                accent(),
-            );
+        let x = layout.password_text_x();
+        let (first, offsets) = password_window(entry, layout.password_room());
+        let shown = offsets.len() - 1;
+        // Le curseur est posé à part, au-dessus (`Layout::password_caret`).
+        if entry.length == 0 {
             canvas.label(
                 &self.regular,
                 "Mot de passe",
-                field.x + 18.0,
+                x + 4.0,
                 field.y + 11.0,
                 px(13.0),
                 text_secondary(),
             );
+        } else if let Some(text) = entry.shown.as_deref() {
+            let visible: String = text.chars().skip(first).take(shown).collect();
+            canvas.label(
+                &self.regular,
+                &visible,
+                x,
+                field.y + 11.0,
+                px(PASSWORD_TEXT as f32),
+                primary_text(),
+            );
         } else {
-            let room = ((field.w - 28.0 - eye.w) / 9.0).max(1.0) as usize;
-            for index in 0..entry.length.min(room) {
-                let dot = Rect::new(field.x + 14.0 + index as f64 * 9.0, field.y + 17.0, 6.0, 6.0);
+            for index in 0..shown {
+                let dot = Rect::new(x + index as f64 * PASSWORD_DOT, field.y + 17.0, 6.0, 6.0);
                 canvas.fill(dot, 3.0, primary_text());
             }
         }
@@ -4081,14 +4196,14 @@ impl Panels {
                 t.fg3,
             );
         }
-        let query = ellipsize_to(canvas, &self.regular, &view.query, px(14.0), search.w - 48.0);
-        canvas.text(&self.regular, &query, text_x, text_top, 14.0, t.fg);
-        let caret = text_x + canvas.css_width(&self.regular, &query, 14.0) + 1.0;
-        canvas.fill(
-            Rect::new(caret, search.center().1 - 9.0, 1.5, 18.0),
-            0.75,
-            accent(),
+        // Le curseur est posé à part, au-dessus (`caret_rect`).
+        let (first, offsets) = text_field::window(
+            &char_widths(&view.query, 14.0),
+            view.cursor,
+            layout.clipboard_room(),
         );
+        let query: String = view.query.chars().skip(first).take(offsets.len() - 1).collect();
+        canvas.text(&self.regular, &query, text_x, text_top, 14.0, t.fg);
 
         for (slot, filter) in ClipFilter::ALL.into_iter().enumerate() {
             let pill = layout.clipboard_filter(slot);
@@ -5075,6 +5190,49 @@ pub fn shortcuts_in_rect(
         .collect()
 }
 
+/// Curseur du champ qui a le clavier (mot de passe administrateur, recherche du lanceur ou
+/// du presse-papiers, mot de passe Wi-Fi) : il est posé par la carte graphique au-dessus
+/// du panneau déjà dessiné, pour clignoter sans rien redessiner.
+fn caret_rect(layout: &Layout, view: &DesktopView) -> Option<Rect> {
+    if view.lock.is_some() {
+        return None;
+    }
+    if let Some(auth) = &view.auth {
+        return (!auth.checking).then(|| layout.auth_caret(auth));
+    }
+    match view.popover {
+        Some(Popover::Launcher) => {
+            let field = layout.launcher_field();
+            let text_x = field.x + 42.0;
+            let x = if view.launcher.query.is_empty() {
+                text_x
+            } else {
+                let (first, offsets) = text_field::window(
+                    &char_widths(&view.launcher.query, 14.0),
+                    view.launcher.cursor,
+                    layout.launcher_room(),
+                );
+                let index = view.launcher.cursor.saturating_sub(first).min(offsets.len() - 1);
+                text_x + offsets[index] + 1.0
+            };
+            Some(Rect::new(x, field.y + 10.0, 2.0, 20.0))
+        }
+        Some(Popover::Clipboard) => {
+            let search = layout.clipboard_search();
+            let (first, offsets) = text_field::window(
+                &char_widths(&view.clipboard.query, 14.0),
+                view.clipboard.cursor,
+                layout.clipboard_room(),
+            );
+            let index = view.clipboard.cursor.saturating_sub(first).min(offsets.len() - 1);
+            let x = search.x + 34.0 + offsets[index] + 1.0;
+            Some(Rect::new(x, search.center().1 - 9.0, 1.5, 18.0))
+        }
+        Some(Popover::Controls) if view.controls.page == ControlsPage::Wifi => layout.password_caret(),
+        _ => None,
+    }
+}
+
 /// Hit-test du bureau ; les panneaux interceptent leurs propres surfaces pour que le clic
 /// ne tombe jamais sur une fenêtre située derrière eux.
 pub fn action_at(
@@ -5287,6 +5445,11 @@ pub fn action_at(
                     DesktopAction::ToggleWifi
                 } else if view.controls.password.is_some() && layout.password_eye().contains(pos) {
                     DesktopAction::PasswordReveal
+                } else if view.controls.password.is_some()
+                    && layout.password_field().contains(pos)
+                    && let Some(index) = layout.password_index_at(pos.x)
+                {
+                    DesktopAction::PasswordPlace(index)
                 } else if view.controls.password.is_some() && layout.password_cancel().contains(pos) {
                     DesktopAction::PasswordCancel
                 } else if view.controls.password.is_some() && layout.password_submit().contains(pos) {
@@ -6114,6 +6277,50 @@ impl Layout {
         Rect::new(row.x + 48.0, row.bottom() + 24.0, row.w - 48.0 - 14.0, 40.0)
     }
 
+    /// Début du texte dans le champ de mot de passe.
+    fn password_text_x(&self) -> f64 {
+        self.password_field().x + 14.0
+    }
+
+    /// Largeur laissée au texte, jusqu'à l'œil.
+    fn password_room(&self) -> f64 {
+        (self.password_field().w - 28.0 - self.password_eye().w).max(PASSWORD_DOT)
+    }
+
+    /// Caractère avant lequel un clic dans le champ pose le curseur.
+    fn password_index_at(&self, x: f64) -> Option<usize> {
+        let entry = self.controls_view.password.as_ref()?;
+        let (first, offsets) = password_window(entry, self.password_room());
+        let at = x - self.password_text_x();
+        let nearest = offsets
+            .iter()
+            .enumerate()
+            .min_by(|a, b| (a.1 - at).abs().total_cmp(&(b.1 - at).abs()))
+            .map_or(0, |(index, _)| index);
+        Some(first + nearest)
+    }
+
+    /// Curseur du champ de mot de passe Wi-Fi.
+    fn password_caret(&self) -> Option<Rect> {
+        let entry = self.controls_view.password.as_ref()?;
+        // Sa ligne doit être affichée.
+        self.password_slot()?;
+        let field = self.password_field();
+        let x = self.password_text_x();
+        let (first, offsets) = password_window(entry, self.password_room());
+        let offset = offsets[entry
+            .cursor
+            .min(entry.length)
+            .saturating_sub(first)
+            .min(offsets.len() - 1)];
+        let x = match (entry.length, &entry.shown) {
+            (0, _) => x - 2.0,
+            (_, Some(_)) => x + offset - 1.0,
+            (_, None) => x + offset - 2.5,
+        };
+        Some(Rect::new(x, field.y + 10.0, 2.0, 20.0))
+    }
+
     /// L'œil, au bout du champ de mot de passe.
     fn password_eye(&self) -> Rect {
         let field = self.password_field();
@@ -6634,6 +6841,16 @@ impl Layout {
             CLIPBOARD_CLEAR,
             32.0,
         )
+    }
+
+    /// Largeur laissée au texte de la recherche du lanceur, jusqu'à la touche « Super ».
+    fn launcher_room(&self) -> f64 {
+        (self.launcher_field().w - 42.0 - 80.0).max(40.0)
+    }
+
+    /// Largeur laissée au texte de la recherche du presse-papiers.
+    fn clipboard_room(&self) -> f64 {
+        (self.clipboard_search().w - 48.0).max(40.0)
     }
 
     fn clipboard_search(&self) -> Rect {
@@ -9553,6 +9770,8 @@ mod tests {
         desktop.controls.password = Some(PasswordRow {
             ssid: "Voisin".to_owned(),
             length: 4,
+            cursor: 4,
+            wrong: false,
             shown: None,
         });
         let layout = Layout::new(1280.0, 720.0, &desktop);
@@ -9575,6 +9794,37 @@ mod tests {
         assert_eq!(at(layout.wifi_eye(2, false)), Some(DesktopAction::NetworkJoin(2)));
         assert_eq!(at(layout.password_eye()), Some(DesktopAction::PasswordReveal));
         assert_eq!(at(layout.password_submit()), Some(DesktopAction::PasswordSubmit));
+        // Clic dans le champ : le curseur va entre les points les plus proches.
+        let field = layout.password_field();
+        let click = |x: f64| action_at(output(), point(x, field.y + field.h / 2.0), &desktop);
+        assert_eq!(click(field.x + 2.0), Some(DesktopAction::PasswordPlace(0)));
+        assert_eq!(
+            click(layout.password_text_x() + 2.0 * PASSWORD_DOT),
+            Some(DesktopAction::PasswordPlace(2))
+        );
+        assert_eq!(
+            click(layout.password_eye().x - 4.0),
+            Some(DesktopAction::PasswordPlace(4))
+        );
+    }
+
+    #[test]
+    fn le_curseur_du_mot_de_passe_reste_visible() {
+        let row = PasswordRow {
+            ssid: "Voisin".to_owned(),
+            length: 100,
+            cursor: 0,
+            wrong: false,
+            shown: None,
+        };
+        // Au début d'un long mot de passe : les premiers points.
+        let (first, offsets) = password_window(&row, 90.0);
+        assert_eq!((first, offsets.len() - 1), (0, 10));
+        // À la fin : les derniers, le curseur après le dernier.
+        let row = PasswordRow { cursor: 100, ..row };
+        let (first, offsets) = password_window(&row, 90.0);
+        assert_eq!(first + offsets.len() - 1, 100);
+        assert!(offsets.last().is_some_and(|&end| end <= 90.0));
     }
 
     #[test]

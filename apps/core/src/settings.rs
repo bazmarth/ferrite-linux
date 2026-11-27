@@ -264,6 +264,8 @@ enum Update {
     About(Box<About>),
     /// Fin d'une action : message de réussite (vide : rien à dire) ou erreur.
     Done(Result<String, String>),
+    /// Mot de passe Wi-Fi refusé : réseau, masqué ou non, et mot de passe tapé, redemandé.
+    WifiRefused(String, bool, String),
     /// Une tâche de fond est terminée.
     Finished,
     /// Images trouvées pour le fond d'écran, puis la vignette de chacune.
@@ -318,6 +320,10 @@ pub struct SettingsState {
     password_for: Option<String>,
     password: String,
     password_visible: bool,
+    /// Le mot de passe précédent a été refusé : la fenêtre le redemande, déjà rempli.
+    password_wrong: bool,
+    /// Mot de passe redemandé : son champ reprend le clavier une fois, curseur au bout.
+    password_refocus: bool,
     /// Réseau masqué : le nom se tape dans la même fenêtre que le mot de passe.
     hidden_network: bool,
     known: Vec<KnownWifi>,
@@ -414,6 +420,8 @@ impl Default for SettingsState {
             password_for: None,
             password: String::new(),
             password_visible: false,
+            password_wrong: false,
+            password_refocus: false,
             hidden_network: false,
             known: Vec::new(),
             wifi_options: None,
@@ -475,6 +483,13 @@ impl SettingsState {
             // Pour les captures : le dialogue « Réseau masqué » ouvert.
             self.hidden_network = true;
             self.password_for = Some(String::new());
+            "wifi"
+        } else if name == "wifi-refuse" {
+            // Pour les captures : mot de passe refusé, redemandé déjà rempli.
+            self.password_for = Some("Réseau de démonstration".to_owned());
+            self.password = "motdepasse".to_owned();
+            self.password_wrong = true;
+            self.password_refocus = true;
             "wifi"
         } else {
             name
@@ -619,6 +634,14 @@ impl SettingsState {
                         }
                         Err(error) => self.fail(error),
                     }
+                }
+                Update::WifiRefused(ssid, hidden, password) => {
+                    self.password_for = Some(ssid);
+                    self.hidden_network = hidden;
+                    self.password = password;
+                    self.password_visible = false;
+                    self.password_wrong = true;
+                    self.password_refocus = true;
                 }
                 Update::Finished => self.running = self.running.saturating_sub(1),
                 Update::Done(Ok(message)) if message.is_empty() => {}
@@ -1242,7 +1265,17 @@ impl SettingsState {
                     self.password_visible = false;
                 } else {
                     self.wifi_scanned = None;
-                    self.act(ctx, "", move || network::connect_wifi(&chosen.ssid, None));
+                    self.message = None;
+                    // Réseau enregistré dont le mot de passe a changé : il est redemandé.
+                    self.spawn(ctx, move || {
+                        let first = match network::connect_wifi(&chosen.ssid, None) {
+                            Err(error) if network::wrong_password(&error) => {
+                                Update::WifiRefused(chosen.ssid, false, String::new())
+                            }
+                            result => Update::Done(result.map(|()| String::new())),
+                        };
+                        vec![first, Update::Snapshot(Snapshot::read())]
+                    });
                 }
             }
             Some(Choice::Other) => {
@@ -1440,6 +1473,7 @@ impl SettingsState {
             return;
         };
         let hidden = self.hidden_network;
+        let wrong = self.password_wrong;
         let mut connect = false;
         let mut cancel = false;
         // Même cadre que les détails d'un réseau (charte « Forge ») : en-tête, champs,
@@ -1447,6 +1481,7 @@ impl SettingsState {
         let icons = &mut self.icons;
         let password = &mut self.password;
         let visible = &mut self.password_visible;
+        let refocus = &mut self.password_refocus;
         let escape = details::show(ctx, "joindre-wifi", |ui, t| {
             let title = if hidden {
                 "Réseau masqué".to_owned()
@@ -1475,13 +1510,15 @@ impl SettingsState {
                         ui,
                         rect.left_top() + egui::vec2(0.0, 27.0),
                         egui::Align2::LEFT_TOP,
-                        if hidden {
+                        if wrong {
+                            "Mot de passe incorrect : corrigez-le et réessayez"
+                        } else if hidden {
                             "Nom et mot de passe du réseau"
                         } else {
                             "Ce réseau demande un mot de passe"
                         },
                         details::font(13.0, false),
-                        t.fg2,
+                        if wrong { style::error() } else { t.fg2 },
                         width,
                     );
                 },
@@ -1505,10 +1542,14 @@ impl SettingsState {
                         };
                         if hidden {
                             caption(ui, "Nom du réseau");
-                            ui.add_sized(
+                            let name = ui.add_sized(
                                 [width, 40.0],
                                 egui::TextEdit::singleline(&mut ssid).margin(egui::vec2(12.0, 10.0)),
                             );
+                            // Le nom d'abord : son champ reçoit le clavier à l'ouverture.
+                            if ssid.is_empty() && !name.has_focus() && password.is_empty() {
+                                name.request_focus();
+                            }
                             ui.add_space(10.0);
                         }
                         caption(ui, "Mot de passe");
@@ -1523,8 +1564,18 @@ impl SettingsState {
                             );
                             if hidden && ssid.is_empty() {
                                 // Le nom d'abord.
-                            } else if !field.has_focus() && password.is_empty() {
+                            } else if !field.has_focus() && (password.is_empty() || *refocus) {
                                 field.request_focus();
+                                // Mot de passe redemandé : le curseur au bout du texte gardé.
+                                if std::mem::take(refocus) {
+                                    let mut state = egui::text_edit::TextEditState::load(ui.ctx(), field.id)
+                                        .unwrap_or_default();
+                                    let end = egui::text::CCursor::new(password.chars().count());
+                                    state
+                                        .cursor
+                                        .set_char_range(Some(egui::text::CCursorRange::one(end)));
+                                    state.store(ui.ctx(), field.id);
+                                }
                             }
                             let (eye, response) =
                                 ui.allocate_exact_size(egui::vec2(40.0, 40.0), egui::Sense::click());
@@ -1571,17 +1622,27 @@ impl SettingsState {
             self.password_for = None;
             self.password.clear();
             self.password_visible = false;
+            self.password_wrong = false;
         } else if connect && !ssid.trim().is_empty() {
             let password = std::mem::take(&mut self.password);
             self.password_for = None;
             self.password_visible = false;
+            self.password_wrong = false;
             self.wifi_scanned = None;
-            self.act(ctx, "Connecté", move || {
-                if hidden {
+            self.message = None;
+            self.spawn(ctx, move || {
+                let result = if hidden {
                     network::connect_hidden_wifi(&ssid, Some(&password))
                 } else {
                     network::connect_wifi(&ssid, Some(&password))
-                }
+                };
+                let first = match result {
+                    Err(error) if network::wrong_password(&error) => {
+                        Update::WifiRefused(ssid, hidden, password)
+                    }
+                    result => Update::Done(result.map(|()| "Connecté".to_owned())),
+                };
+                vec![first, Update::Snapshot(Snapshot::read())]
             });
         } else {
             self.password_for = Some(ssid);

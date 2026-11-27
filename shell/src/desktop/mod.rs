@@ -22,5 +22,6 @@ pub mod polkit;
 pub mod recording;
 pub mod shortcuts;
 pub mod svg;
+pub mod text_field;
 pub mod throughput;
 pub mod widgets;

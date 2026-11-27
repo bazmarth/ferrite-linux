@@ -221,6 +221,8 @@ pub struct WelcomeState {
     /// Réseau protégé choisi, dont on attend le mot de passe.
     chosen: Option<String>,
     password: String,
+    /// Le champ du mot de passe reprend le clavier (réseau choisi, ou mot de passe refusé).
+    password_focus: bool,
     connect_job: Option<Receiver<Result<String, String>>>,
     wifi_message: Option<Result<String, String>>,
     account: AccountInfo,
@@ -253,6 +255,7 @@ impl WelcomeState {
             wifi_job: None,
             chosen: None,
             password: String::new(),
+            password_focus: false,
             connect_job: None,
             wifi_message: None,
             account: AccountInfo::read(),
@@ -368,6 +371,15 @@ impl WelcomeState {
                     self.password.clear();
                     self.scan();
                 }
+                // Mot de passe refusé : il reste dans le champ, à corriger.
+                let result = result.map_err(|error| {
+                    if network::wrong_password(&error) {
+                        self.password_focus = true;
+                        "Mot de passe incorrect : corrigez-le et réessayez.".to_owned()
+                    } else {
+                        error
+                    }
+                });
                 self.wifi_message = Some(result);
             }
         }
@@ -802,6 +814,7 @@ impl WelcomeState {
                     if net.secured {
                         self.chosen = Some(net.ssid.clone());
                         self.password.clear();
+                        self.password_focus = true;
                         self.wifi_message = None;
                     } else {
                         connect = Some((net.ssid.clone(), None));
@@ -816,6 +829,16 @@ impl WelcomeState {
                                 .hint_text("Mot de passe du Wi-Fi")
                                 .desired_width(ui.available_width() - 130.0),
                         );
+                        if !connecting && std::mem::take(&mut self.password_focus) {
+                            field.request_focus();
+                            let mut state =
+                                egui::text_edit::TextEditState::load(ui.ctx(), field.id).unwrap_or_default();
+                            let end = egui::text::CCursor::new(self.password.chars().count());
+                            state
+                                .cursor
+                                .set_char_range(Some(egui::text::CCursorRange::one(end)));
+                            state.store(ui.ctx(), field.id);
+                        }
                         let enter =
                             field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
                         if connecting {

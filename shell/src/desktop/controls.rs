@@ -9,7 +9,10 @@ use ferrite_system::{
 };
 
 use crate::{
-    desktop::panels::{ControlsPage, DeviceRow, NetworkRow, Osd, PasswordRow},
+    desktop::{
+        panels::{ControlsPage, DeviceRow, NetworkRow, Osd, PasswordRow},
+        text_field,
+    },
     state::Ferrite,
     system::Event,
 };
@@ -24,8 +27,24 @@ const MAX_ROWS: usize = 8;
 pub struct PasswordEntry {
     pub ssid: String,
     pub text: String,
+    /// Place du curseur, en caractères.
+    pub cursor: usize,
     /// L'œil du champ : le texte tapé s'affiche en clair.
     pub revealed: bool,
+    /// Le mot de passe précédent a été refusé : il est redemandé, déjà rempli.
+    pub wrong: bool,
+}
+
+impl PasswordEntry {
+    fn new(ssid: String, text: String, wrong: bool) -> Self {
+        Self {
+            ssid,
+            cursor: text.chars().count(),
+            text,
+            revealed: false,
+            wrong,
+        }
+    }
 }
 
 /// État des listes du centre de contrôle.
@@ -37,6 +56,8 @@ pub struct Controls {
     pub known: Vec<String>,
     pub devices: Vec<Device>,
     pub password: Option<PasswordEntry>,
+    /// Réseau en cours de connexion, et le mot de passe donné (redemandé s'il est refusé).
+    pub joining: Option<(String, Option<String>)>,
     /// Mot de passe enregistré affiché en clair : réseau et mot de passe.
     pub saved_password: Option<(String, String)>,
     /// Appareil en cours de connexion ou de déconnexion.
@@ -76,6 +97,13 @@ impl Controls {
         {
             return format!("Mot de passe : {password}");
         }
+        if self
+            .joining
+            .as_ref()
+            .is_some_and(|(ssid, _)| *ssid == network.ssid)
+        {
+            return "Connexion…".to_owned();
+        }
         if network.connected {
             let summary = network.summary();
             // « Connecté · 5 GHz » : la sécurité se voit au cadenas, le débit dans Paramètres.
@@ -95,6 +123,8 @@ impl Controls {
         self.password.as_ref().map(|entry| PasswordRow {
             ssid: entry.ssid.clone(),
             length: entry.text.chars().count(),
+            cursor: entry.cursor,
+            wrong: entry.wrong,
             shown: entry.revealed.then(|| entry.text.clone()),
         })
     }
@@ -242,11 +272,7 @@ impl Ferrite {
             return;
         }
         if network.secured && !self.controls.known.contains(&network.ssid) {
-            self.controls.password = Some(PasswordEntry {
-                ssid: network.ssid,
-                text: String::new(),
-                revealed: false,
-            });
+            self.open_password(PasswordEntry::new(network.ssid, String::new(), false));
             return;
         }
         self.connect_network(network.ssid, None);
@@ -255,27 +281,106 @@ impl Ferrite {
     fn connect_network(&mut self, ssid: String, password: Option<String>) {
         self.system_error = None;
         if let Some(link) = &self.system_link {
+            self.controls.joining = Some((ssid.clone(), password.clone()));
             link.run(move || {
                 let result = network::connect_wifi(&ssid, password.as_deref());
                 let mut events = wifi_lists();
-                if let Err(error) = result {
-                    events.push(Event::Failed(error));
+                match result {
+                    Ok(()) => events.push(Event::WifiJoined(ssid, None)),
+                    Err(error) if network::wrong_password(&error) => {
+                        events.push(Event::WifiJoined(ssid, Some(error)));
+                    }
+                    Err(error) => {
+                        events.push(Event::WifiJoined(ssid, None));
+                        events.push(Event::Failed(error));
+                    }
                 }
                 events
             });
         }
     }
 
-    pub fn password_type(&mut self, character: char) {
+    /// Fin d'une connexion. Mot de passe refusé (`wrong`) : le centre de contrôle se
+    /// rouvre sur la ligne du réseau, le mot de passe tapé déjà rempli, pour le corriger.
+    pub fn network_joined(&mut self, ssid: String, wrong: Option<String>) {
+        use crate::desktop::panels::Popover;
+        let given = match self.controls.joining.take() {
+            Some((joining, given)) if joining == ssid => given,
+            other => {
+                self.controls.joining = other;
+                None
+            }
+        };
+        if wrong.is_none() {
+            return;
+        }
+        if self.popover != Some(Popover::Controls) {
+            self.popover = Some(Popover::Controls);
+            self.controls_opened();
+        }
+        self.controls.page = ControlsPage::Wifi;
+        self.controls.saved_password = None;
+        self.open_password(PasswordEntry::new(ssid, given.unwrap_or_default(), true));
+        self.request_redraw();
+    }
+
+    /// Captures (`--demo-controls wifi-refuse`) : un réseau protégé dont le mot de passe
+    /// vient d'être refusé, redemandé déjà rempli, curseur au milieu.
+    pub fn demo_wrong_password(&mut self) {
+        let ssid = "Réseau de démonstration".to_owned();
+        self.controls.networks = vec![WifiNetwork {
+            ssid: ssid.clone(),
+            signal: 80,
+            secured: true,
+            connected: false,
+            security: "WPA2".to_owned(),
+            frequency: String::new(),
+            rate: String::new(),
+        }];
+        // Pas de vraie analyse : la liste resterait vide dans un bureau imbriqué.
+        self.controls.scanned = Some(Instant::now() + Duration::from_secs(3600));
+        let mut entry = PasswordEntry::new(ssid, "motdepasse".to_owned(), true);
+        entry.cursor = 4;
+        self.open_password(entry);
+    }
+
+    /// Ouvre le champ de mot de passe et fait clignoter son curseur.
+    fn open_password(&mut self, entry: PasswordEntry) {
+        self.controls.password = Some(entry);
+        self.restart_caret();
+    }
+
+    /// Change le champ de mot de passe, puis remet le curseur visible.
+    fn edit_password(&mut self, change: impl FnOnce(&mut String, &mut usize)) {
         if let Some(entry) = self.controls.password.as_mut() {
-            entry.text.push(character);
+            change(&mut entry.text, &mut entry.cursor);
+            self.restart_caret();
         }
     }
 
+    /// Caractère tapé, à la place du curseur.
+    pub fn password_type(&mut self, character: char) {
+        self.edit_password(|text, cursor| text_field::insert(text, cursor, character));
+    }
+
+    /// Retour arrière : le caractère avant le curseur.
     pub fn password_erase(&mut self) {
-        if let Some(entry) = self.controls.password.as_mut() {
-            entry.text.pop();
-        }
+        self.edit_password(text_field::erase);
+    }
+
+    /// Suppr : le caractère après le curseur.
+    pub fn password_delete(&mut self) {
+        self.edit_password(text_field::delete);
+    }
+
+    /// ← et → (`step` de -1 ou 1), Début et Fin (`isize::MIN` ou `isize::MAX`).
+    pub fn password_move(&mut self, step: isize) {
+        self.edit_password(|text, cursor| text_field::step(text, cursor, step));
+    }
+
+    /// Clic dans le champ : le curseur va au caractère `index` (borné à la fin).
+    pub fn password_place(&mut self, index: usize) {
+        self.edit_password(|text, cursor| *cursor = index.min(text.chars().count()));
     }
 
     pub fn password_cancel(&mut self) {

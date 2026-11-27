@@ -78,6 +78,9 @@ pub enum Event {
     BluetoothDone,
     /// Mot de passe enregistré d'un réseau, demandé par l'œil de sa ligne.
     WifiPassword(String, Result<String, String>),
+    /// Fin d'une connexion Wi-Fi demandée dans le centre de contrôle ; avec le message de
+    /// nmcli si le mot de passe a été refusé.
+    WifiJoined(String, Option<String>),
     Dock(DockConfig),
     Theme(Appearance, Accent),
     ScrollInverted(bool),
@@ -578,6 +581,7 @@ impl Ferrite {
             Event::BluetoothList(devices) => self.controls.devices = devices,
             Event::BluetoothScanDone => self.controls.scanning = false,
             Event::BluetoothDone => self.controls.busy = None,
+            Event::WifiJoined(ssid, wrong) => self.network_joined(ssid, wrong),
             Event::WifiPassword(ssid, result) => match result {
                 Ok(password) => self.controls.saved_password = Some((ssid, password)),
                 Err(message) => self.system_error = Some(message),

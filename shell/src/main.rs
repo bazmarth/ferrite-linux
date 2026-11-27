@@ -133,10 +133,15 @@ fn run(options: Options) -> Result<u8, Box<dyn std::error::Error>> {
     if let Some(page) = options.demo_controls {
         state.popover = Some(desktop::panels::Popover::Controls);
         state.controls.page = page;
+        if options.demo_wrong_password {
+            state.demo_wrong_password();
+        }
     }
     if options.demo_auth {
         state.auth.push_back(desktop::polkit::Auth::demo());
     }
+    // Menu ou demande ouverts dès le départ : le curseur de leur champ clignote.
+    state.restart_caret();
     if options.demo_power {
         state.open_power_dialog(crate::state::PowerAction::Sleep);
     }

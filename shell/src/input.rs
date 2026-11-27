@@ -22,7 +22,10 @@ use smithay::reexports::calloop::timer::{TimeoutAction, Timer};
 use tracing::info;
 
 use crate::{
-    desktop::panels::{self, DesktopAction, LAUNCHER_SCROLL_STEP, LockAction, Popover, Slider},
+    desktop::{
+        panels::{self, DesktopAction, LAUNCHER_SCROLL_STEP, LockAction, Popover, Slider},
+        text_field,
+    },
     state::Ferrite,
     system::Change,
     wm::{BTN_LEFT, BTN_RIGHT, Hit, decoration::Part},
@@ -89,12 +92,17 @@ pub(crate) enum Action {
     ClipboardPasteSelected,
     ClipboardDeleteSelected,
     ClipboardType(Option<char>),
+    /// ← → Début Fin dans la recherche.
+    ClipboardCursor(isize),
     ClipboardClearQuery,
     ClipboardNextFilter,
     ClipboardPasteNth(usize),
     /// Recherche dans le menu Applications ouvert.
     LauncherType(char),
     LauncherErase,
+    /// Suppr, et déplacement du curseur dans la recherche du lanceur.
+    LauncherDelete,
+    LauncherMove(isize),
     LauncherLaunchFirst,
     DashboardType(char),
     DashboardErase,
@@ -137,6 +145,9 @@ pub(crate) enum Action {
     /// Mot de passe Wi-Fi demandé dans le centre de contrôle.
     PasswordType(char),
     PasswordErase,
+    /// Suppr, et déplacement du curseur (voir `password_move`).
+    PasswordDelete,
+    PasswordMove(isize),
     PasswordSubmit,
     PasswordCancel,
     /// Écran de verrouillage : caractère, effacer, valider, ou autre touche.
@@ -155,6 +166,8 @@ pub(crate) enum Action {
     /// Fenêtre d'authentification (polkit) : caractère, effacer, valider, annuler.
     AuthType(char),
     AuthErase,
+    AuthDelete,
+    AuthMove(isize),
     AuthSubmit,
     AuthCancel,
     LockCancel,
@@ -192,14 +205,21 @@ impl Action {
             self,
             Action::LauncherType(_)
                 | Action::LauncherErase
+                | Action::LauncherDelete
+                | Action::LauncherMove(_)
+                | Action::ClipboardCursor(_)
                 | Action::DashboardType(_)
                 | Action::DashboardErase
                 | Action::PasswordType(_)
                 | Action::PasswordErase
+                | Action::PasswordDelete
+                | Action::PasswordMove(_)
                 | Action::LockType(_)
                 | Action::LockErase
                 | Action::AuthType(_)
                 | Action::AuthErase
+                | Action::AuthDelete
+                | Action::AuthMove(_)
                 | Action::LockDelete
                 | Action::LockMove(_)
                 | Action::ClipboardType(_)
@@ -576,6 +596,11 @@ impl Ferrite {
                     return FilterResult::Intercept(match sym {
                         Keysym::Escape => Action::AuthCancel,
                         Keysym::BackSpace => Action::AuthErase,
+                        Keysym::Delete | Keysym::KP_Delete => Action::AuthDelete,
+                        Keysym::Left | Keysym::KP_Left => Action::AuthMove(-1),
+                        Keysym::Right | Keysym::KP_Right => Action::AuthMove(1),
+                        Keysym::Home | Keysym::KP_Home => Action::AuthMove(isize::MIN),
+                        Keysym::End | Keysym::KP_End => Action::AuthMove(isize::MAX),
                         Keysym::Return | Keysym::KP_Enter => Action::AuthSubmit,
                         sym => match sym.key_char().filter(|c| !c.is_control()) {
                             Some(character) if !modifiers.ctrl && !modifiers.alt && !modifiers.logo => {
@@ -585,10 +610,26 @@ impl Ferrite {
                         },
                     });
                 }
-                if pressed && state.controls.password.is_some() {
+                if pressed
+                    && state.controls.password.is_some()
+                    && state.popover == Some(crate::desktop::panels::Popover::Controls)
+                {
+                    let step = match sym {
+                        Keysym::Left | Keysym::KP_Left => Some(-1),
+                        Keysym::Right | Keysym::KP_Right => Some(1),
+                        Keysym::Home | Keysym::KP_Home => Some(isize::MIN),
+                        Keysym::End | Keysym::KP_End => Some(isize::MAX),
+                        _ => None,
+                    };
+                    if let Some(step) = step {
+                        return FilterResult::Intercept(Action::PasswordMove(step));
+                    }
                     match sym {
                         Keysym::Escape => return FilterResult::Intercept(Action::PasswordCancel),
                         Keysym::BackSpace => return FilterResult::Intercept(Action::PasswordErase),
+                        Keysym::Delete | Keysym::KP_Delete => {
+                            return FilterResult::Intercept(Action::PasswordDelete);
+                        }
                         Keysym::Return | Keysym::KP_Enter => {
                             return FilterResult::Intercept(Action::PasswordSubmit);
                         }
@@ -672,6 +713,19 @@ impl Ferrite {
                         Keysym::Escape if searching => {
                             return FilterResult::Intercept(Action::ClipboardClearQuery);
                         }
+                        // Curseur de la recherche (Suppr, lui, efface la ligne choisie).
+                        Keysym::Left | Keysym::KP_Left if searching => {
+                            return FilterResult::Intercept(Action::ClipboardCursor(-1));
+                        }
+                        Keysym::Right | Keysym::KP_Right if searching => {
+                            return FilterResult::Intercept(Action::ClipboardCursor(1));
+                        }
+                        Keysym::Home | Keysym::KP_Home if searching => {
+                            return FilterResult::Intercept(Action::ClipboardCursor(isize::MIN));
+                        }
+                        Keysym::End | Keysym::KP_End if searching => {
+                            return FilterResult::Intercept(Action::ClipboardCursor(isize::MAX));
+                        }
                         Keysym::BackSpace => return FilterResult::Intercept(Action::ClipboardType(None)),
                         sym if !modifiers.ctrl && !modifiers.alt && !modifiers.logo => {
                             if let Some(character) = sym.key_char().filter(|c| !c.is_control()) {
@@ -696,6 +750,21 @@ impl Ferrite {
                     if state.popover == Some(Popover::Launcher) {
                         match keysym.modified_sym() {
                             Keysym::BackSpace => return FilterResult::Intercept(Action::LauncherErase),
+                            Keysym::Delete | Keysym::KP_Delete => {
+                                return FilterResult::Intercept(Action::LauncherDelete);
+                            }
+                            Keysym::Left | Keysym::KP_Left => {
+                                return FilterResult::Intercept(Action::LauncherMove(-1));
+                            }
+                            Keysym::Right | Keysym::KP_Right => {
+                                return FilterResult::Intercept(Action::LauncherMove(1));
+                            }
+                            Keysym::Home | Keysym::KP_Home => {
+                                return FilterResult::Intercept(Action::LauncherMove(isize::MIN));
+                            }
+                            Keysym::End | Keysym::KP_End => {
+                                return FilterResult::Intercept(Action::LauncherMove(isize::MAX));
+                            }
                             Keysym::Return | Keysym::KP_Enter => {
                                 return FilterResult::Intercept(Action::LauncherLaunchFirst);
                             }
@@ -790,12 +859,23 @@ impl Ferrite {
                 self.close_overview();
             }
             Some(Action::LauncherType(character)) => {
-                self.launcher_query.push(character);
+                text_field::insert(&mut self.launcher_query, &mut self.launcher_cursor, character);
                 self.reset_launcher_view();
+                self.restart_caret();
             }
             Some(Action::LauncherErase) => {
-                self.launcher_query.pop();
+                text_field::erase(&mut self.launcher_query, &mut self.launcher_cursor);
                 self.reset_launcher_view();
+                self.restart_caret();
+            }
+            Some(Action::LauncherDelete) => {
+                text_field::delete(&mut self.launcher_query, &mut self.launcher_cursor);
+                self.reset_launcher_view();
+                self.restart_caret();
+            }
+            Some(Action::LauncherMove(step)) => {
+                text_field::step(&self.launcher_query, &mut self.launcher_cursor, step);
+                self.restart_caret();
             }
             Some(Action::DashboardType(character)) => {
                 if self.dashboard.type_char(
@@ -879,8 +959,13 @@ impl Ferrite {
                 }
             }
             Some(Action::ClipboardType(character)) => self.type_clipboard_query(character),
+            Some(Action::ClipboardCursor(step)) => {
+                text_field::step(&self.clipboard_query, &mut self.clipboard_cursor, step);
+                self.restart_caret();
+            }
             Some(Action::ClipboardClearQuery) => {
                 self.clipboard_query.clear();
+                self.clipboard_cursor = 0;
                 self.clamp_clipboard_view();
             }
             Some(Action::ClipboardNextFilter) => self.next_clipboard_filter(),
@@ -925,6 +1010,8 @@ impl Ferrite {
             Some(Action::SendToSpace(space)) => self.send_active_to_space(space),
             Some(Action::PasswordType(character)) => self.password_type(character),
             Some(Action::PasswordErase) => self.password_erase(),
+            Some(Action::PasswordDelete) => self.password_delete(),
+            Some(Action::PasswordMove(step)) => self.password_move(step),
             Some(Action::PasswordSubmit) => self.password_submit(),
             Some(Action::PasswordCancel) => self.password_cancel(),
             Some(Action::LockType(character)) => self.lock_type(character),
@@ -937,6 +1024,8 @@ impl Ferrite {
             Some(Action::LockIgnore) => {}
             Some(Action::AuthType(character)) => self.auth_type(character),
             Some(Action::AuthErase) => self.auth_erase(),
+            Some(Action::AuthDelete) => self.auth_delete(),
+            Some(Action::AuthMove(step)) => self.auth_move(step),
             Some(Action::AuthSubmit) => self.auth_submit(),
             Some(Action::AuthCancel) => self.auth_cancel(),
             Some(Action::LockCancel) => {
@@ -1634,7 +1723,10 @@ impl Ferrite {
                 }
                 self.controls.password = None;
                 self.launcher_query.clear();
+                self.launcher_cursor = 0;
                 self.reset_launcher_view();
+                // Champ ouvert (lanceur, presse-papiers) : son curseur clignote.
+                self.restart_caret();
                 if opening_clipboard {
                     self.reset_clipboard_view();
                     self.place_clipboard_near_pointer();
@@ -1903,6 +1995,7 @@ impl Ferrite {
             DesktopAction::NetworkJoin(index) => self.join_network(index),
             DesktopAction::NetworkPassword(index) => self.show_network_password(index),
             DesktopAction::PasswordReveal => self.password_reveal(),
+            DesktopAction::PasswordPlace(index) => self.password_place(index),
             DesktopAction::PasswordCancel => self.password_cancel(),
             DesktopAction::PasswordSubmit => self.password_submit(),
             DesktopAction::DeviceAction(index) => self.device_action(index),

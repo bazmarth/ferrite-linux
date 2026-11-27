@@ -5,6 +5,14 @@ use super::*;
 
 /// Taille de la fenêtre.
 const AUTH: (f64, f64) = (440.0, 292.0);
+/// Écart entre deux points du mot de passe.
+const AUTH_DOT: f64 = 10.0;
+
+/// Points visibles du mot de passe : le curseur reste dans le champ (`text_field::window`).
+fn auth_window(layout: &Layout, auth: &AuthView) -> (usize, Vec<f64>) {
+    let room = layout.auth_field().w - 28.0;
+    text_field::window(&vec![AUTH_DOT; auth.length], auth.cursor, room)
+}
 
 impl Layout {
     fn auth(&self) -> Rect {
@@ -19,6 +27,19 @@ impl Layout {
     fn auth_field(&self) -> Rect {
         let dialog = self.auth();
         Rect::new(dialog.x + 24.0, dialog.y + 150.0, dialog.w - 48.0, 42.0)
+    }
+
+    /// Curseur du champ du mot de passe.
+    pub(super) fn auth_caret(&self, auth: &AuthView) -> Rect {
+        let rect = self.auth_field();
+        let (first, offsets) = auth_window(self, auth);
+        let index = auth
+            .cursor
+            .min(auth.length)
+            .saturating_sub(first)
+            .min(offsets.len() - 1);
+        let x = rect.x + 14.0 + offsets[index] - if auth.length == 0 { 0.0 } else { 1.0 };
+        Rect::new(x, rect.y + 11.0, 1.6, 20.0)
     }
 
     fn auth_confirm(&self) -> Rect {
@@ -114,7 +135,7 @@ impl Panels {
         if auth.checking {
             canvas.text(&self.regular, "Vérification…", text_x, rect.y + 12.0, 14.0, fg3);
         } else if auth.length == 0 {
-            canvas.fill(Rect::new(text_x, rect.y + 11.0, 1.6, 20.0), 0.8, blue);
+            // Le curseur est posé à part, au-dessus (`Layout::auth_caret`).
             canvas.text(
                 &self.regular,
                 "Mot de passe",
@@ -124,14 +145,11 @@ impl Panels {
                 fg3,
             );
         } else {
-            let visible = (((rect.w - 28.0) / 10.0) as usize).max(1);
-            let count = auth.length.min(visible);
-            for index in 0..count {
-                let dot = Rect::new(text_x + index as f64 * 10.0, rect.y + 17.0, 8.0, 8.0);
+            let (_, offsets) = auth_window(layout, auth);
+            for index in 0..offsets.len() - 1 {
+                let dot = Rect::new(text_x + index as f64 * AUTH_DOT, rect.y + 17.0, 8.0, 8.0);
                 canvas.fill(dot, 4.0, fg);
             }
-            let caret = text_x + count as f64 * 10.0 - 1.0;
-            canvas.fill(Rect::new(caret, rect.y + 11.0, 1.6, 20.0), 0.8, blue);
         }
         if auth.refused {
             let text = if auth.length == 0 {

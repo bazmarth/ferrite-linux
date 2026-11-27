@@ -28,7 +28,8 @@ Options :
   --demo-switcher       ouvre le sélecteur Alt+Tab dès qu'une fenêtre existe (pour les captures)
   --demo-keep-above     garde la première fenêtre ouverte au-dessus des autres (pour les captures)
   --demo-snap           ouvre le panneau « Ancrer la fenêtre » de la première fenêtre (captures)
-  --demo-controls LISTE ouvre le centre de contrôle sur sa liste (principal, wifi ou bluetooth)
+  --demo-controls LISTE ouvre le centre de contrôle sur sa liste (principal, wifi ou bluetooth ;
+                        wifi-refuse : mot de passe refusé, redemandé sur le premier réseau protégé)
   --greeter             écran de connexion (lancé par greetd : choix du compte, mot de passe)
   --demo-lock           affiche l'écran de verrouillage au démarrage (pour les captures)
   --demo-face ÉTAT      avec --demo-lock : visage en cours (scan), reconnu ou echec
@@ -114,6 +115,8 @@ pub struct Options {
     /// Sélection des icônes du bureau figée (`--demo-selection groupe|rectangle`).
     pub demo_selection: Option<String>,
     pub demo_controls: Option<ControlsPage>,
+    /// `--demo-controls wifi-refuse`.
+    pub demo_wrong_password: bool,
     pub demo_screenshot: bool,
     /// Ouvre le panneau de capture au démarrage (`--demo-capture`).
     pub demo_capture: bool,
@@ -152,6 +155,7 @@ impl Default for Options {
             demo_screens: false,
             demo_selection: None,
             demo_controls: None,
+            demo_wrong_password: false,
             demo_screenshot: false,
             demo_capture: false,
             demo_video: false,
@@ -259,6 +263,10 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
                 options.demo_controls = Some(match value("--demo-controls")?.as_str() {
                     "principal" => ControlsPage::Main,
                     "wifi" => ControlsPage::Wifi,
+                    "wifi-refuse" => {
+                        options.demo_wrong_password = true;
+                        ControlsPage::Wifi
+                    }
                     "bluetooth" => ControlsPage::Bluetooth,
                     other => return Err(format!("liste inconnue : {other}")),
                 });

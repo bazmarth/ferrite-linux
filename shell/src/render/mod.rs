@@ -310,6 +310,7 @@ fn build_output_elements(
             scale,
             &view,
             &assets.decorations.shaders.panel,
+            state.caret.on && state.caret_wanted(),
             &mut elements,
         )
     });
@@ -1566,6 +1567,7 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
                 message: auth.message.clone(),
                 user: auth.user.clone(),
                 length: auth.password.chars().count(),
+                cursor: auth.cursor,
                 checking: auth.checking,
                 refused: auth.refused,
             }
@@ -2321,6 +2323,7 @@ fn clipboard_view(state: &Ferrite) -> ClipboardView {
             .collect(),
         count: total,
         query: state.clipboard_query.clone(),
+        cursor: state.clipboard_cursor,
         filter: state.clipboard_filter,
         empty: shown.is_empty().then_some({
             if total == 0 {
@@ -2426,6 +2429,7 @@ pub(crate) fn launcher_view(state: &Ferrite) -> LauncherView {
     };
     LauncherView {
         query: state.launcher_query.clone(),
+        cursor: state.launcher_cursor,
         rubrics,
         rubric,
         user: launcher_user(),

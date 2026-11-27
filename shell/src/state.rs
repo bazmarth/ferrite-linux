@@ -88,6 +88,8 @@ pub struct Ferrite {
     pub nested: bool,
     /// Recherche tapée dans le menu Applications.
     pub launcher_query: String,
+    /// Place du curseur dans la recherche du lanceur, en caractères.
+    pub launcher_cursor: usize,
     pub launcher_scroll: u32,
     /// Pastille de rubrique choisie dans le lanceur (0 : Tout).
     pub launcher_rubric: usize,
@@ -108,6 +110,8 @@ pub struct Ferrite {
     pub clipboard_selected: usize,
     pub clipboard_scroll: f64,
     pub clipboard_query: String,
+    /// Place du curseur dans la recherche du presse-papiers, en caractères.
+    pub clipboard_cursor: usize,
     pub clipboard_filter: crate::clipboard::Filter,
     pub clipboard_undo: Option<crate::clipboard::Undo>,
     pub clipboard_position: Option<(i32, i32)>,
@@ -222,6 +226,8 @@ pub struct Ferrite {
     pub overview: bool,
     /// Listes Wi-Fi et Bluetooth du centre de contrôle.
     pub controls: crate::desktop::controls::Controls,
+    /// Clignotement du curseur des champs du bureau.
+    pub caret: crate::desktop::text_field::Caret,
     /// Écran de verrouillage affiché, et canal de ses réponses.
     pub lock: Option<crate::desktop::lock::Lock>,
     pub lock_events: Option<smithay::reexports::calloop::channel::Sender<crate::desktop::lock::Event>>,
@@ -474,6 +480,7 @@ impl Ferrite {
             applications: Vec::new(),
             nested: false,
             launcher_query: String::new(),
+            launcher_cursor: 0,
             launcher_scroll: 0,
             launcher_rubric: 0,
             slider_drag: None,
@@ -485,6 +492,7 @@ impl Ferrite {
             clipboard_selected: 0,
             clipboard_scroll: 0.0,
             clipboard_query: String::new(),
+            clipboard_cursor: 0,
             clipboard_filter: crate::clipboard::Filter::All,
             clipboard_undo: None,
             clipboard_position: None,
@@ -541,6 +549,7 @@ impl Ferrite {
             pinching: false,
             overview: false,
             controls: Default::default(),
+            caret: Default::default(),
             lock: None,
             lock_events: None,
             media_link: None,

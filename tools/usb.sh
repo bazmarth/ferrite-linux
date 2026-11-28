@@ -1,6 +1,7 @@
 #!/bin/sh
-# Construit l'image live hybride BIOS/UEFI : build/ferrite-live.iso, avec ferrite-shell,
-# ferrite-apps, ferrite-visage et les modèles du déverrouillage par visage.
+# Construit l'image live hybride BIOS/UEFI : build/ferrite-live.iso, avec le bureau Ferrite
+# installé par ses paquets .deb (tools/paquets.sh : ferrite-desktop et les autres), comme
+# il le sera ensuite par les mises à jour du dépôt apt.
 #
 #   tools/usb.sh            compile le compositeur et les applications (release), puis construit l'image
 #   tools/usb.sh --complet  reconstruit aussi le système de l'image (paquets réinstallés)
@@ -18,42 +19,19 @@ set -eu
 . "$(dirname -- "$0")/lib.sh"
 priorite_basse
 
-# Étape 1, en utilisateur normal : compilation de ferrite-shell (Rust est installé pour
-# l'utilisateur, pas pour root), puis relance du script en root.
+# Étape 1, en utilisateur normal : compilation (release) et paquets .deb (Rust est installé
+# pour l'utilisateur, pas pour root), puis relance du script en root.
 if [ "$(id -u)" -ne 0 ]; then
-    info "Compilation de ferrite-shell, ferrite-apps et ferrite-visage (release)"
-    (cd "$REPO" && cargo build --release --locked -p ferrite-shell -p ferrite-apps -p ferrite-visage \
-        -p xdg-desktop-portal-ferrite)
-    # Modèles du visage : téléchargés une fois (empreintes vérifiées), hors de git.
-    "$REPO/tools/visage-modeles.sh"
-    target="${CARGO_TARGET_DIR:-$REPO/target}/release"
-    exec sudo FERRITE_SHELL_BIN="$target/ferrite-shell" FERRITE_APPS_BIN="$target/ferrite-apps" \
-        FERRITE_VISAGE_BIN="$target/ferrite-visage" \
-        FERRITE_PORTAL_BIN="$target/xdg-desktop-portal-ferrite" "$0" "$@"
+    "$REPO/tools/paquets.sh"
+    exec sudo FERRITE_PAQUETS="$BUILD/paquets" "$0" "$@"
 fi
 
 # Étape 2, en root : construction de l'image.
 command -v lb >/dev/null 2>&1 || die "live-build absent (sudo tools/setup-wsl.sh)"
-bin=${FERRITE_SHELL_BIN:-}
-apps_bin=${FERRITE_APPS_BIN:-}
-if [ -z "$bin" ] || [ ! -x "$bin" ]; then
-    die "binaire ferrite-shell introuvable (lance tools/usb.sh sans sudo)"
+paquets=${FERRITE_PAQUETS:-}
+if [ -z "$paquets" ] || ! ls "$paquets"/ferrite-desktop_*.deb >/dev/null 2>&1; then
+    die "paquets Ferrite introuvables (lance tools/usb.sh sans sudo)"
 fi
-if [ -z "$apps_bin" ] || [ ! -x "$apps_bin" ]; then
-    die "binaire ferrite-apps introuvable (lance tools/usb.sh sans sudo)"
-fi
-visage_bin=${FERRITE_VISAGE_BIN:-}
-if [ -z "$visage_bin" ] || [ ! -x "$visage_bin" ]; then
-    die "binaire ferrite-visage introuvable (lance tools/usb.sh sans sudo)"
-fi
-portal_bin=${FERRITE_PORTAL_BIN:-}
-if [ -z "$portal_bin" ] || [ ! -x "$portal_bin" ]; then
-    die "binaire xdg-desktop-portal-ferrite introuvable (lance tools/usb.sh sans sudo)"
-fi
-models="$REPO/assets/visage"
-for model in face_detection_yunet_2023mar.onnx face_recognition_sface_2021dec.onnx; do
-    [ -f "$models/$model" ] || die "modèle $model absent (tools/visage-modeles.sh)"
-done
 
 work=${FERRITE_WORK:-/var/tmp/ferrite-image}
 mkdir -p "$work"
@@ -92,19 +70,27 @@ fi
 info "Copie de la configuration dans $work"
 rm -rf auto config
 cp -r "$REPO/image/auto" "$REPO/image/config" .
-install -D -m 0755 "$bin" config/includes.chroot/usr/local/bin/ferrite-shell
-install -D -m 0755 "$apps_bin" config/includes.chroot/usr/local/bin/ferrite-apps
-install -D -m 0755 "$visage_bin" config/includes.chroot/usr/local/bin/ferrite-visage
-install -D -m 0755 "$portal_bin" config/includes.chroot/usr/local/bin/xdg-desktop-portal-ferrite
-# Modèles du visage, là où ferrite-visage les cherche une fois installé.
-install -d config/includes.chroot/usr/share/ferrite/visage
-install -m 0644 "$models"/*.onnx config/includes.chroot/usr/share/ferrite/visage/
+# Paquets Ferrite : installés par live-build (packages.chroot). Les fichiers qu'ils
+# apportent sont retirés de includes.chroot, qui ne garde que le reste (réglages de /etc,
+# installateur, thème de démarrage).
+install -d config/packages.chroot
+cp "$paquets"/*.deb config/packages.chroot/
+for deb in "$paquets"/*.deb; do
+    dpkg-deb -c "$deb" | awk '$1 !~ /^d/ { sub(/^\./, "", $6); print $6 }'
+done | while read -r file; do
+    rm -f "config/includes.chroot$file"
+done
 chmod +x auto/config config/hooks/live/*.hook.chroot config/includes.chroot/usr/local/bin/*
 
 if [ "$fast" = 1 ]; then
     info "Système de l'image inchangé : mise à jour des fichiers de Ferrite seulement"
     lb config
     cp -a config/includes.chroot/. chroot/
+    # Paquets Ferrite : dpkg remplace la version déjà installée (pas de scripts à lancer).
+    mkdir -p chroot/tmp/ferrite-paquets
+    cp "$paquets"/*.deb chroot/tmp/ferrite-paquets/
+    chroot chroot sh -c 'dpkg -i /tmp/ferrite-paquets/*.deb' >/dev/null
+    rm -rf chroot/tmp/ferrite-paquets
     lb clean --binary
     lb binary
 else

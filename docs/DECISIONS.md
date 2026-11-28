@@ -182,6 +182,23 @@ Choix non imposés par le plan, avec leur raison. Format : date — choix — ra
   rouvre la session à l'appui sur Entrée (« console » pour rester sur la console). 0 reste
   Ctrl+Alt+Retour arrière et 1 un plantage. Pas de gestionnaire de connexion avant la phase 8 :
   la session tourne sur tty1 en connexion automatique, un code de sortie suffit.
+- **2026-11-28 — Paquets .deb : programmes gardés dans /usr/local/bin, dépôt sur GitHub Pages.**
+  Déplacer les programmes vers `/usr/bin` toucherait la session, greetd, le portail,
+  l'installateur et les outils de développement, et une ancienne copie de `/usr/local/bin`
+  passerait devant dans le PATH ; dpkg sait gérer `/usr/local` et remplace sans rien
+  demander les copies faites à la main. À revoir si Ferrite entre un jour dans Debian. Les
+  réglages de `/etc` restent dans l'image (le greetd du live est modifié à l'installation :
+  pas un conffile). Dépôt apt sur GitHub Pages (gratuit, `bazmarth/ferrite-paquets`
+  public, code source toujours privé), un seul commit remplacé à chaque publication pour
+  que les paquets ne s'accumulent pas. Version = date de fabrication (toujours croissante).
+  Modèles du visage dans un paquet à version fixe : 35 Mo pas retéléchargés à chaque mise à
+  jour. Clé ed25519 sans phrase de passe, hors du dépôt (une phrase devrait être tapée à
+  chaque publication).
+- **2026-11-27 — « Relancer le bureau » seulement en développement, clé live en « ferrite ».**
+  Relancer rouvre la session sans verrouillage : utile pour essayer une copie de
+  `tools/dev-on.sh`, mais un contournement du mot de passe dans l'image livrée, où le bouton
+  disparaît (`FERRITE_DEV`). Sur la clé live, le mot de passe « ferrite » remplace « live »
+  de live-config et est affiché à l'utilisateur (bienvenue, verrouillage, console).
 - **2026-11-03 — Bureau 0 réservé aux widgets.** À la demande, on revient sur « widgets sur
   chaque bureau » : le bureau 0 ne porte que les widgets et ne disparaît jamais. Une fenêtre
   qui s'ouvre pendant qu'on y est fait d'abord passer au bureau 1, où elle s'ouvre ; une

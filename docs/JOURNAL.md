@@ -4779,3 +4779,57 @@ Non vérifié : un vrai mauvais mot de passe sur un vrai réseau (texte exact de
 ThinkBook), l'assistant de bienvenue à l'image. Restent sans curseur déplaçable : notes et
 tâches du tableau de bord (texte sur plusieurs lignes) ; l'écran de verrouillage a un
 curseur déplaçable mais fixe (ses couches bougent à part).
+
+## 2026-11-27 — Tableau de bord : curseur dans les notes, tâches et listes
+
+- La note en saisie s'affiche telle qu'elle est tapée (titre, puis ses lignes coupées à la
+  largeur, lignes vides comprises : `wrap_keeping`), au lieu de l'aperçu recollé sur une
+  ligne ; hors saisie, rien ne change.
+- Le « | » collé au bout du texte est remplacé par un vrai curseur : ← → Début Fin, ↑ ↓
+  (même colonne, ligne d'avant ou d'après), Suppr ; Entrée coupe la ligne au curseur. Même
+  chose pour la nouvelle tâche et le nom d'une liste (texte qui défile).
+- Curseur posé par la carte graphique devant les widgets (place trouvée au dessin,
+  `Panels::dashboard_caret`), qui clignote sans redessiner ; dès le clic qui commence la
+  saisie. Un simple déplacement du curseur n'enregistre rien et ne change pas la date.
+- Captures : `--demo-note`.
+Non vérifié : sur le vrai bureau au clavier ; une note plus longue que la carte (la ligne
+du curseur reste visible, testé seulement par le calcul).
+
+## 2026-11-27 — « Relancer le bureau » réservé au développement, mot de passe de la clé live
+
+- Le dialogue d'arrêt ne propose plus « Relancer le bureau » dans l'image livrée : ce
+  bouton rouvrait la session sans l'écran de verrouillage. `ferrite-session` passe
+  `FERRITE_DEV=1` au bureau seulement avec une copie de développement (`tools/dev-on.sh`
+  ou partage de la VM) ; sans elle, le bouton n'est ni dessiné ni cliquable, et un code 3
+  reçu quand même repart verrouillé. Captures avec et sans `FERRITE_DEV=1` vérifiées.
+- Clé live : le compte `ferrite` a le mot de passe « ferrite » (au lieu de « live », codé
+  en dur dans live-config) : crochet `0150-ferrite-live-password`, qui remplace
+  l'empreinte dans `/usr/lib/live/config/0030-user-setup` et fait échouer la construction
+  s'il ne la trouve pas (essayé sur le script de live-config 11.0.5).
+- Annoncé : résumé de la fin de l'assistant de bienvenue (« Mot de passe de l'essai :
+  ferrite », vérifié par capture), champ vide de l'écran de verrouillage (« Mot de passe :
+  ferrite », seulement sur la clé), et liste de la console.
+Non vérifié : l'ISO reconstruite (mot de passe réellement accepté au verrouillage et par
+sudo/polkit), l'écran de verrouillage sur la clé.
+
+## 2026-11-28 — Paquets .deb et dépôt apt (phase 9, première partie)
+
+- `tools/paquets.sh` : six paquets dans `build/paquets` (`ferrite-shell`, `ferrite-apps`,
+  `ferrite-visage`, `ferrite-visage-modeles`, `xdg-desktop-portal-ferrite`, métapaquet
+  `ferrite-desktop`), dépendances des bibliothèques calculées par `dpkg-shlibdeps`,
+  version `0.1.0+AAAAMMJJHHMM`. Choix (garder `/usr/local/bin`, `/etc` dans l'image,
+  GitHub Pages) : voir DECISIONS.
+- `tools/cle-depot.sh` (clé de signature, une fois), `tools/depot.sh` (dépôt signé dans
+  `build/depot`), `tools/publier-paquets.sh` (refuse un arbre non commité, crée
+  `bazmarth/ferrite-paquets` et Pages, un seul commit remplacé à chaque fois).
+- `tools/usb.sh` : l'image installe le bureau par ses paquets (`packages.chroot`, et
+  `dpkg -i` dans le chemin rapide) ; les fichiers qu'ils apportent sont retirés de
+  `includes.chroot` (il n'y reste que `/etc`, l'installateur et le thème Plymouth).
+Vérifié sans root, avec une clé d'essai jetable et un apt isolé (`APT_CONFIG`) : `apt-get
+update` accepte la signature ; installation simulée de `ferrite-desktop` (les six
+paquets) ; mise à jour simulée essai1 → essai2 (cinq paquets, les modèles ne bougent pas) ;
+un dépôt signé par une autre clé est refusé. Retrait des fichiers de `includes.chroot`
+essayé sur une copie. `publier-paquets.sh` refuse bien l'arbre actuel (non commité).
+Non fait (attend l'accord) : création de la vraie clé, premier commit, publication.
+Non vérifié : construction de l'ISO avec les paquets (sudo), installation réelle par dpkg,
+mise à jour par la Logithèque.

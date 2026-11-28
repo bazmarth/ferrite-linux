@@ -1503,14 +1503,13 @@ impl Panels {
             // Place du texte, jusqu'à l'œil ; au-delà, la partie qui garde le curseur visible.
             let room = eye.x - 4.0 - x;
             let caret = if lock.length == 0 {
-                canvas.text(
-                    &self.regular,
-                    "Mot de passe",
-                    x + 6.0,
-                    field.y + 14.5,
-                    15.0,
-                    tokens.fg3,
-                );
+                // Clé live : le mot de passe de la session d'essai est rappelé dans le champ.
+                let hint = if ferrite_system::catalog::is_live() {
+                    "Mot de passe : ferrite"
+                } else {
+                    "Mot de passe"
+                };
+                canvas.text(&self.regular, hint, x + 6.0, field.y + 14.5, 15.0, tokens.fg3);
                 x
             } else if let Some(text) = lock.shown.as_deref() {
                 let chars: Vec<char> = text.chars().collect();

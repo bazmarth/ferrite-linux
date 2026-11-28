@@ -10,8 +10,9 @@ vt = 7
 command = "/usr/local/bin/ferrite-greeter"
 user = "_greetd"
 
-# Système live : la session de l'utilisateur live s'ouvre seule au démarrage (son mot de
-# passe n'est pas connu de qui démarre la clé). Retiré à l'installation.
+# Système live : la session de l'utilisateur live s'ouvre seule au démarrage (mot de
+# passe « ferrite », rappelé par l'assistant de bienvenue et l'écran de verrouillage).
+# Retiré à l'installation.
 [initial_session]
 command = "/usr/local/bin/ferrite-session --greetd"
 user = "ferrite"

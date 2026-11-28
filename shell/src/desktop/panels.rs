@@ -4861,7 +4861,7 @@ impl Panels {
     /// Dialogue système : 420 px, centré, voile de 40 % sur tout l'écran.
     /// Dialogue d'arrêt (planches « Dialogue d’arrêt ») : trois tuiles (Éteindre,
     /// Redémarrer, Veille), compte à rebours, Annuler et l'action choisie, puis la session
-    /// (Se déconnecter, Verrouiller, Relancer le bureau).
+    /// (Se déconnecter, Verrouiller, et Relancer le bureau en mode développement).
     fn draw_dialog(&self, canvas: &mut Canvas, layout: &Layout, power: PowerAction, view: &DesktopView) {
         let dark = palette().text.r > 128;
         let pick = |light: u32, dark_value: u32| Color::rgb(if dark { dark_value } else { light });
@@ -4998,11 +4998,16 @@ impl Panels {
         );
 
         // Session : petits boutons discrets.
+        let relaunch = layout
+            .relaunch
+            .then(|| (layout.dialog_relaunch(), "Relancer le bureau", None, fg3));
         for (rect, label, glyph, ink) in [
             (layout.dialog_logout(), "Se déconnecter", Some("cc-logout"), fg2),
             (layout.dialog_lock(), "Verrouiller", Some("cc-lock"), fg2),
-            (layout.dialog_relaunch(), "Relancer le bureau", None, fg3),
-        ] {
+        ]
+        .into_iter()
+        .chain(relaunch)
+        {
             let mut text_x = rect.x + 10.0;
             if let Some(glyph) = glyph {
                 canvas.icon(
@@ -5328,7 +5333,7 @@ pub fn action_at(
             DesktopAction::ConfirmPower(PowerAction::LogOut)
         } else if layout.dialog_lock().contains(pos) {
             DesktopAction::Lock
-        } else if layout.dialog_relaunch().contains(pos) {
+        } else if layout.relaunch && layout.dialog_relaunch().contains(pos) {
             DesktopAction::ConfirmPower(PowerAction::RelaunchDesktop)
         } else if layout.dialog().contains(pos) {
             DesktopAction::Consume
@@ -5875,6 +5880,17 @@ struct Layout {
     /// Décalage retiré de la place du centre de contrôle (et donc de tout ce qui en
     /// dépend) : il est dessiné sur une toile de sa taille, pas de celle de l'écran.
     controls_shift: (f64, f64),
+    /// « Relancer le bureau » dans le dialogue d'arrêt : seulement en mode développement
+    /// (voir `relaunch_offered`).
+    relaunch: bool,
+}
+
+/// « Relancer le bureau » rouvre la session sans l'écran de verrouillage : il ne sert qu'à
+/// essayer une version de développement (`FERRITE_DEV=1`, posé par `ferrite-session`).
+/// Absent de l'image livrée.
+fn relaunch_offered() -> bool {
+    static OFFERED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *OFFERED.get_or_init(|| std::env::var_os("FERRITE_DEV").is_some_and(|value| value == "1"))
 }
 
 /// Largeur du panneau « Ancrer la fenêtre », marge intérieure, et taille d'une miniature.
@@ -6675,6 +6691,7 @@ impl Layout {
             error: view.error.is_some(),
             second_screen: view.second_screen.is_some(),
             controls_shift: (0.0, 0.0),
+            relaunch: relaunch_offered(),
         }
     }
 
@@ -9904,9 +9921,12 @@ mod tests {
             Some(DesktopAction::ConfirmPower(PowerAction::LogOut))
         );
         assert_eq!(click(layout.dialog_lock(), &pending), Some(DesktopAction::Lock));
+        // Hors mode développement (FERRITE_DEV absent), pas de « Relancer le bureau » :
+        // il rouvrirait la session sans l'écran de verrouillage.
+        assert!(!layout.relaunch);
         assert_eq!(
             click(layout.dialog_relaunch(), &pending),
-            Some(DesktopAction::ConfirmPower(PowerAction::RelaunchDesktop))
+            Some(DesktopAction::Consume)
         );
         // Tout tient dans le dialogue, sans chevauchement.
         let dialog = layout.dialog();

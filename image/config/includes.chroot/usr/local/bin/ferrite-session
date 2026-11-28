@@ -67,8 +67,9 @@ dev_crashes=0
 window_start=$(date +%s)
 first=1
 # Le bureau démarre sur l'écran de verrouillage (la connexion sur tty1 est automatique),
-# sauf quand on le relance soi-même depuis le bureau. Pas sur le système live de l'ISO :
-# son utilisateur n'a pas de mot de passe connu de qui le démarre.
+# sauf quand on le relance soi-même en mode développement. Pas au démarrage de la clé live
+# (elle s'ouvre seule) ; son mot de passe, « ferrite », sert au verrouillage et aux droits
+# d'administrateur (voir le crochet 0150-ferrite-live-password).
 if [ "$greetd" = 1 ] || grep -qw "boot=live" /proc/cmdline 2>/dev/null; then
     lock_default=0
 else
@@ -92,14 +93,16 @@ while [ -x "$bin/ferrite-shell" ]; do
     first=0
     [ -f "$log" ] && mv -f "$log" "$log.precedent"
     # shellcheck disable=SC2086 # $bus est vide ou « dbus-run-session -- ».
-    FERRITE_LOCK=$lock $bus "$bin/ferrite-shell" --drm >"$log" 2>&1
+    # FERRITE_DEV=1 : le dialogue d'arrêt propose « Relancer le bureau » (sans verrouillage).
+    FERRITE_DEV=$dev FERRITE_LOCK=$lock $bus "$bin/ferrite-shell" --drm >"$log" 2>&1
     status=$?
     # Après un arrêt imprévu, on repart verrouillé : planter ne doit pas ouvrir la session.
     lock=$lock_default
     # Codes choisis dans le dialogue d'arrêt du bureau (voir PowerAction::exit_code).
     if [ "$status" -eq 3 ]; then
-        # « Relancer le bureau » : prend aussi la dernière copie de tools/dev-on.sh.
-        lock=0
+        # « Relancer le bureau » (mode développement seulement) : prend aussi la dernière
+        # copie de tools/dev-on.sh. Hors développement, on repart verrouillé.
+        [ "$dev" = 1 ] && lock=0
         crashes=0
         dev_crashes=0
         choose_bin
@@ -167,6 +170,10 @@ printf '  Bureau     ferrite-session       (relance le bureau Ferrite)\n'
 printf '  Wi-Fi      nmcli dev wifi list   ·   nmcli dev wifi connect NOM --ask\n'
 printf '  Son        wpctl status          ·   speaker-test -c 2 -t wav -l 1\n'
 printf '  Matériel   ferrite-check         (vérifications de la phase 1)\n'
-printf '  Éteindre   systemctl poweroff\n\n'
+printf '  Éteindre   systemctl poweroff\n'
+if grep -qw "boot=live" /proc/cmdline 2>/dev/null; then
+    printf '  Compte     ferrite, mot de passe ferrite\n'
+fi
+printf '\n'
 
 exec bash -l

@@ -1256,6 +1256,11 @@ impl WelcomeState {
                 }
             );
             summary_row(ui, "Apparence", &look);
+            if self.live {
+                // Demandé par l'écran de verrouillage et pour les droits d'administrateur.
+                kit::separator(ui);
+                summary_row(ui, "Mot de passe de l'essai", "ferrite");
+            }
             if !self.live {
                 kit::separator(ui);
                 let installing = self

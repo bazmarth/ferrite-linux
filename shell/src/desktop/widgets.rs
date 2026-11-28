@@ -951,49 +951,41 @@ impl Dashboard {
         None
     }
 
-    /// Ajoute `character` à la saisie en cours ; renvoie vrai s'il faut enregistrer.
-    pub fn type_char(&mut self, editing: Option<DashboardEdit>, character: char, now: u64) -> bool {
+    /// Texte en cours de saisie : note, nouvelle tâche ou nom de liste.
+    pub fn edited_text(&self, editing: Option<DashboardEdit>) -> Option<&str> {
+        match editing? {
+            DashboardEdit::Note(index) => self.notes.get(index).map(|note| note.text.as_str()),
+            DashboardEdit::NewTask => Some(&self.draft),
+            DashboardEdit::ListName(index) => self.lists.get(index).map(|list| list.name.as_str()),
+        }
+    }
+
+    /// Change le texte en cours de saisie (voir `text_field`) ; renvoie vrai s'il faut
+    /// enregistrer les notes. Un nom de liste ne dépasse pas `LIST_NAME_MAX` caractères.
+    pub fn edit_text(
+        &mut self,
+        editing: Option<DashboardEdit>,
+        now: u64,
+        change: impl FnOnce(&mut String),
+    ) -> bool {
         match editing {
             Some(DashboardEdit::Note(index)) => self.notes.get_mut(index).is_some_and(|note| {
-                note.text.push(character);
+                change(&mut note.text);
                 note.updated = now;
                 true
             }),
             Some(DashboardEdit::NewTask) => {
-                self.draft.push(character);
+                change(&mut self.draft);
                 false
             }
             // La liste est enregistrée dans l'agenda : rien de plus à enregistrer.
             Some(DashboardEdit::ListName(index)) => {
-                if let Some(list) = self.lists.get(index)
-                    && list.name.chars().count() < LIST_NAME_MAX
-                {
-                    let name = format!("{}{character}", list.name);
-                    self.rename_list(index, name);
-                }
-                false
-            }
-            None => false,
-        }
-    }
-
-    /// Efface le dernier caractère ; renvoie vrai s'il faut enregistrer.
-    pub fn erase_char(&mut self, editing: Option<DashboardEdit>, now: u64) -> bool {
-        match editing {
-            Some(DashboardEdit::Note(index)) => self.notes.get_mut(index).is_some_and(|note| {
-                note.text.pop();
-                note.updated = now;
-                true
-            }),
-            Some(DashboardEdit::NewTask) => {
-                self.draft.pop();
-                false
-            }
-            Some(DashboardEdit::ListName(index)) => {
                 if let Some(list) = self.lists.get(index) {
                     let mut name = list.name.clone();
-                    name.pop();
-                    self.rename_list(index, name);
+                    change(&mut name);
+                    if name != list.name && name.chars().count() <= LIST_NAME_MAX {
+                        self.rename_list(index, name);
+                    }
                 }
                 false
             }
@@ -1456,7 +1448,7 @@ mod tests {
         assert!(dashboard.notes.is_empty());
 
         let editing = dashboard.add_note(5);
-        assert!(dashboard.type_char(editing, 'a', 9));
+        assert!(dashboard.edit_text(editing, 9, |text| text.push('a')));
         assert_eq!(dashboard.notes[0].updated, 9);
         assert_eq!(dashboard.finish_editing(editing), None);
         assert_eq!(dashboard.notes[0].text, "a");
@@ -1497,9 +1489,14 @@ mod tests {
         assert_eq!(editing, Some(DashboardEdit::ListName(0)));
         assert!(dashboard.tasks().is_empty());
         for character in "Courses".chars() {
-            dashboard.type_char(editing, character, 0);
+            dashboard.edit_text(editing, 0, |name| name.push(character));
         }
-        dashboard.erase_char(editing, 0);
+        dashboard.edit_text(editing, 0, |name| {
+            name.pop();
+        });
+        // Un nom trop long n'est pas pris.
+        dashboard.edit_text(editing, 0, |name| name.push_str(&"x".repeat(LIST_NAME_MAX)));
+        assert_eq!(dashboard.edited_text(editing), Some("Course"));
         dashboard.finish_editing(editing);
         assert_eq!(dashboard.agenda.lists[0].name, "Course");
         let unnamed = dashboard.add_list();

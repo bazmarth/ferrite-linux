@@ -763,6 +763,10 @@ pub struct DashboardView {
     pub busy_today: u32,
     pub draft: String,
     pub editing: Option<crate::desktop::widgets::DashboardEdit>,
+    /// Place du curseur dans le texte en saisie, en caractères.
+    pub cursor: usize,
+    /// Texte entier de la note en saisie (vide sinon).
+    pub note_text: String,
     pub month_offset: i32,
     pub weather: Option<ferrite_system::weather::Weather>,
     pub place: String,
@@ -1204,6 +1208,8 @@ pub struct Panels {
     controls_main: RefCell<Option<ControlsMain>>,
     /// Curseur des champs : un pixel de sa couleur, étiré à sa place (`push_caret`).
     caret: RefCell<Option<(Color, MemoryRenderBuffer)>>,
+    /// Curseur du texte en saisie sur le tableau de bord et sa couleur, trouvés au dessin.
+    dashboard_caret: Cell<Option<(Rect, Color)>>,
 }
 
 /// Durées de l'apparition et de la disparition d'un panneau, et sa taille de départ.
@@ -1395,6 +1401,7 @@ impl Panels {
             lock_layers: RefCell::new(lock_screen::LockLayers::default()),
             controls_main: RefCell::new(None),
             caret: RefCell::new(None),
+            dashboard_caret: Cell::new(None),
         })
     }
 
@@ -1816,8 +1823,10 @@ impl Panels {
         scale: f64,
         view: &DesktopView,
         alpha: f32,
+        caret: bool,
         out: &mut Vec<super::super::render::OutputElement>,
     ) {
+        let top = out.len();
         let state = VisualState {
             width: output_geo.size.w.max(1) as u32,
             height: output_geo.size.h.max(1) as u32,
@@ -1905,6 +1914,14 @@ impl Panels {
         ) {
             Ok(element) => out.push(super::super::render::OutputElement::Memory(element)),
             Err(err) => tracing::warn!(?err, output = output.name(), "widgets non importés"),
+        }
+        // Curseur du texte en saisie, devant les widgets une fois ceux-ci en place.
+        if caret
+            && alpha >= 1.0
+            && state.view.dashboard.editing.is_some()
+            && let Some((rect, color)) = self.dashboard_caret.get()
+        {
+            self.push_caret_rect(renderer, scale, rect, color, top, out);
         }
     }
 
@@ -2685,10 +2702,21 @@ impl Panels {
         out: &mut Vec<super::super::render::OutputElement>,
     ) {
         let layout = Layout::new(output_geo.size.w as f64, output_geo.size.h as f64, view);
-        let Some(rect) = caret_rect(&layout, view) else {
-            return;
-        };
-        let color = accent();
+        if let Some(rect) = caret_rect(&layout, view) {
+            self.push_caret_rect(renderer, scale, rect, accent(), at, out);
+        }
+    }
+
+    /// Trait de `color` posé sur `rect`, inséré en `at` dans `out`.
+    fn push_caret_rect(
+        &self,
+        renderer: &mut GlesRenderer,
+        scale: f64,
+        rect: Rect,
+        color: Color,
+        at: usize,
+        out: &mut Vec<super::super::render::OutputElement>,
+    ) {
         let mut cache = self.caret.borrow_mut();
         if !cache.as_ref().is_some_and(|(known, _)| *known == color) {
             let pixel = color.to_argb8888_premultiplied().to_le_bytes();

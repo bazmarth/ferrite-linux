@@ -65,6 +65,7 @@ sans redémarrer. L'écran s'assombrit progressivement avant le verrouillage et 
 | Zoom de l'écran : plus gros / moins gros | Super + Alt + = / Super + Alt + ) (les deux touches à gauche de Retour arrière), ou Super + Alt + molette |
 | Écran de connexion : compte précédent / suivant | ↑ / ↓ ou Tab |
 | Champs du bureau (recherche du lanceur, mot de passe Wi-Fi ou administrateur, verrouillage) : déplacer le curseur / effacer après lui | ← → Début Fin / Suppr (presse-papiers : ← → Début Fin pendant une recherche, Suppr efface la ligne choisie) |
+| Notes, tâches et noms de listes du tableau de bord : déplacer le curseur / ligne d'avant ou d'après (notes) / effacer après lui | ← → Début Fin / ↑ ↓ / Suppr |
 | Quitter le bureau | Ctrl + Alt + Retour arrière |
 | Terminal virtuel | Ctrl + Alt + F1…F12 |
 

@@ -67,6 +67,31 @@ pub fn step(text: &str, cursor: &mut usize, step: isize) {
     *cursor = (*cursor).min(length).saturating_add_signed(step).min(length);
 }
 
+/// ↑ et ↓ (`step` de -1 ou 1) dans un texte sur plusieurs lignes : même colonne sur la
+/// ligne d'avant ou d'après (au bout de celle-ci si elle est plus courte). Sur la
+/// première ou la dernière ligne, le curseur va au début ou à la fin.
+pub fn line_step(text: &str, cursor: &mut usize, step: isize) {
+    let chars: Vec<char> = text.chars().collect();
+    let at = (*cursor).min(chars.len());
+    // Début de chaque ligne, en caractères.
+    let mut starts = vec![0];
+    starts.extend(
+        chars
+            .iter()
+            .enumerate()
+            .filter(|(_, character)| **character == '\n')
+            .map(|(index, _)| index + 1),
+    );
+    let line = starts.iter().rposition(|&start| start <= at).unwrap_or(0);
+    let column = at - starts[line];
+    let end_of = |line: usize| starts.get(line + 1).map_or(chars.len(), |next| next - 1);
+    *cursor = match line.checked_add_signed(step) {
+        Some(target) if target < starts.len() => (starts[target] + column).min(end_of(target)),
+        _ if step < 0 => 0,
+        _ => chars.len(),
+    };
+}
+
 /// Partie visible d'un texte dont les caractères ont ces largeurs, dans `room` pixels :
 /// premier caractère montré, puis la place de chaque limite entre caractères depuis le
 /// début du texte montré (la première vaut 0). Le curseur reste toujours visible.
@@ -89,10 +114,53 @@ pub fn window(widths: &[f64], cursor: usize, room: f64) -> (usize, Vec<f64>) {
 }
 
 impl Ferrite {
+    /// Place du curseur dans le texte du tableau de bord en cours de saisie : au bout du
+    /// texte quand la saisie commence.
+    pub fn dashboard_cursor(&self) -> usize {
+        let length = self
+            .dashboard
+            .edited_text(self.dashboard_editing)
+            .map_or(0, |text| text.chars().count());
+        match self.dashboard_cursor {
+            Some((editing, cursor)) if Some(editing) == self.dashboard_editing => cursor.min(length),
+            _ => length,
+        }
+    }
+
+    /// Change le texte du tableau de bord en cours de saisie, ou la place du curseur.
+    pub fn dashboard_edit(&mut self, change: impl FnOnce(&mut String, &mut usize)) {
+        let Some(editing) = self.dashboard_editing else {
+            return;
+        };
+        let Some(before) = self.dashboard.edited_text(Some(editing)).map(str::to_owned) else {
+            return;
+        };
+        let mut cursor = self.dashboard_cursor();
+        let mut after = before.clone();
+        change(&mut after, &mut cursor);
+        self.dashboard_cursor = Some((editing, cursor));
+        self.restart_caret();
+        // Un simple déplacement du curseur ne touche ni à la note ni à sa date.
+        if after == before {
+            return;
+        }
+        let save = self
+            .dashboard
+            .edit_text(Some(editing), crate::desktop::widgets::now_seconds(), |text| {
+                *text = after;
+            });
+        if save && let Err(error) = self.dashboard.save() {
+            tracing::warn!(%error, "notes du tableau de bord non enregistrées");
+        }
+    }
+
     /// Un champ du bureau a-t-il le clavier ?
     pub fn caret_wanted(&self) -> bool {
         if self.lock.is_some() {
             return false;
+        }
+        if self.dashboard_editing.is_some() {
+            return true;
         }
         if let Some(auth) = self.auth.front() {
             return !auth.checking;
@@ -156,6 +224,23 @@ mod tests {
         let mut cursor = 7;
         insert(&mut text, &mut cursor, 'a');
         assert_eq!((text.as_str(), cursor), ("a", 1));
+    }
+
+    #[test]
+    fn haut_et_bas_gardent_la_colonne() {
+        let text = "Titre long\nab\nligne trois";
+        let mut cursor = 7; // « Titre l|ong »
+        line_step(text, &mut cursor, 1);
+        assert_eq!(cursor, 13); // bout de « ab »
+        line_step(text, &mut cursor, 1);
+        assert_eq!(cursor, 16); // « li|gne trois »
+        line_step(text, &mut cursor, 1);
+        assert_eq!(cursor, text.chars().count());
+        line_step(text, &mut cursor, -1);
+        assert_eq!(cursor, 13);
+        line_step(text, &mut cursor, -1);
+        line_step(text, &mut cursor, -1);
+        assert_eq!(cursor, 0);
     }
 
     #[test]

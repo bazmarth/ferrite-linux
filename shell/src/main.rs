@@ -140,6 +140,16 @@ fn run(options: Options) -> Result<u8, Box<dyn std::error::Error>> {
     if options.demo_auth {
         state.auth.push_back(desktop::polkit::Auth::demo());
     }
+    if options.demo_note {
+        state.toggle_widgets_front();
+        state.dashboard_editing = state.dashboard.add_note(desktop::widgets::now_seconds());
+        let text = "Courses de la semaine\nPain, lait, œufs, et un peu de fromage pour \
+                    ce soir avec les amis\n\nAppeler le garage";
+        state.dashboard_edit(|note, cursor| {
+            *note = text.to_owned();
+            *cursor = 30;
+        });
+    }
     // Menu ou demande ouverts dès le départ : le curseur de leur champ clignote.
     state.restart_caret();
     if options.demo_power {

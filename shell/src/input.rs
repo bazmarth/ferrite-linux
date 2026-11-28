@@ -106,6 +106,10 @@ pub(crate) enum Action {
     LauncherLaunchFirst,
     DashboardType(char),
     DashboardErase,
+    /// Suppr, et curseur : ← → (`Left`/`Right`), ↑ ↓, Début, Fin.
+    DashboardDelete,
+    DashboardMove(isize),
+    DashboardLine(isize),
     DashboardEnter,
     DashboardStopEditing,
     /// Alt+Tab, Alt+Maj+Tab ou flèches : avance ou recule dans le sélecteur de fenêtres.
@@ -210,6 +214,9 @@ impl Action {
                 | Action::ClipboardCursor(_)
                 | Action::DashboardType(_)
                 | Action::DashboardErase
+                | Action::DashboardDelete
+                | Action::DashboardMove(_)
+                | Action::DashboardLine(_)
                 | Action::PasswordType(_)
                 | Action::PasswordErase
                 | Action::PasswordDelete
@@ -681,6 +688,27 @@ impl Ferrite {
                     match sym {
                         Keysym::Escape => return FilterResult::Intercept(Action::DashboardStopEditing),
                         Keysym::BackSpace => return FilterResult::Intercept(Action::DashboardErase),
+                        Keysym::Delete | Keysym::KP_Delete => {
+                            return FilterResult::Intercept(Action::DashboardDelete);
+                        }
+                        Keysym::Left | Keysym::KP_Left => {
+                            return FilterResult::Intercept(Action::DashboardMove(-1));
+                        }
+                        Keysym::Right | Keysym::KP_Right => {
+                            return FilterResult::Intercept(Action::DashboardMove(1));
+                        }
+                        Keysym::Up | Keysym::KP_Up => {
+                            return FilterResult::Intercept(Action::DashboardLine(-1));
+                        }
+                        Keysym::Down | Keysym::KP_Down => {
+                            return FilterResult::Intercept(Action::DashboardLine(1));
+                        }
+                        Keysym::Home | Keysym::KP_Home => {
+                            return FilterResult::Intercept(Action::DashboardMove(isize::MIN));
+                        }
+                        Keysym::End | Keysym::KP_End => {
+                            return FilterResult::Intercept(Action::DashboardMove(isize::MAX));
+                        }
                         Keysym::Return | Keysym::KP_Enter => {
                             return FilterResult::Intercept(Action::DashboardEnter);
                         }
@@ -878,34 +906,19 @@ impl Ferrite {
                 self.restart_caret();
             }
             Some(Action::DashboardType(character)) => {
-                if self.dashboard.type_char(
-                    self.dashboard_editing,
-                    character,
-                    crate::desktop::widgets::now_seconds(),
-                ) && let Err(error) = self.dashboard.save()
-                {
-                    tracing::warn!(%error, "notes du tableau de bord non enregistrées");
-                }
+                self.dashboard_edit(|text, cursor| text_field::insert(text, cursor, character));
             }
-            Some(Action::DashboardErase) => {
-                if self
-                    .dashboard
-                    .erase_char(self.dashboard_editing, crate::desktop::widgets::now_seconds())
-                    && let Err(error) = self.dashboard.save()
-                {
-                    tracing::warn!(%error, "notes du tableau de bord non enregistrées");
-                }
+            Some(Action::DashboardErase) => self.dashboard_edit(text_field::erase),
+            Some(Action::DashboardDelete) => self.dashboard_edit(text_field::delete),
+            Some(Action::DashboardMove(step)) => {
+                self.dashboard_edit(|text, cursor| text_field::step(text, cursor, step));
+            }
+            Some(Action::DashboardLine(step)) => {
+                self.dashboard_edit(|text, cursor| text_field::line_step(text, cursor, step));
             }
             Some(Action::DashboardEnter) => match self.dashboard_editing {
                 Some(crate::desktop::widgets::DashboardEdit::Note(_)) => {
-                    if self.dashboard.type_char(
-                        self.dashboard_editing,
-                        '\n',
-                        crate::desktop::widgets::now_seconds(),
-                    ) && let Err(error) = self.dashboard.save()
-                    {
-                        tracing::warn!(%error, "notes du tableau de bord non enregistrées");
-                    }
+                    self.dashboard_edit(|text, cursor| text_field::insert(text, cursor, '\n'));
                 }
                 Some(crate::desktop::widgets::DashboardEdit::NewTask) => {
                     self.dashboard.commit_draft();
@@ -1713,6 +1726,15 @@ impl Ferrite {
     }
 
     pub(crate) fn handle_desktop_action(&mut self, action: DesktopAction) {
+        let editing = self.dashboard_editing;
+        self.run_desktop_action(action);
+        // Saisie commencée au clic (note, tâche, liste) : son curseur clignote.
+        if self.dashboard_editing.is_some() && self.dashboard_editing != editing {
+            self.restart_caret();
+        }
+    }
+
+    fn run_desktop_action(&mut self, action: DesktopAction) {
         match action {
             DesktopAction::TogglePopover(popover) => {
                 let opening_clipboard =
@@ -2333,7 +2355,7 @@ impl Ferrite {
     }
 
     /// Super+W : va au bureau des widgets (le 0), puis revient au bureau quitté.
-    fn toggle_widgets_front(&mut self) {
+    pub(crate) fn toggle_widgets_front(&mut self) {
         if self.widgets_edit {
             return;
         }

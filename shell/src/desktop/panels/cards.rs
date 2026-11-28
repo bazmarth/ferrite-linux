@@ -844,6 +844,8 @@ impl Panels {
         glass_drawn: bool,
         skip: Option<usize>,
     ) {
+        // Le curseur est retrouvé en dessinant le champ en saisie.
+        self.dashboard_caret.set(None);
         let view = &state.view.dashboard;
         let cards = layout.dashboard_cards(&view.layout);
         // Case de la grille visée par le widget déplacé, en creux sous lui.
@@ -1224,17 +1226,24 @@ impl Panels {
             canvas.fill(tab, (TAB_H / 2.0) as f32, fill);
             let naming = view.editing == Some(DashboardEdit::ListName(index));
             let name = view.lists.get(index).map_or("", String::as_str);
-            let name = if naming {
-                format!("{name}|")
-            } else {
-                name.to_owned()
-            };
             // Une liste du Calendrier se supprime (ses tâches restent, sans liste).
             let closable = current && !view.loose_list;
             let room = tab.w - 20.0 - if closable { 20.0 } else { 0.0 };
-            let name = canvas.fit_text(&self.bold, &name, px(12.5), room);
             let ink = if current { Color::WHITE } else { SOFT };
-            canvas.text(&self.bold, &name, tab.x + 11.0, tab.y + 6.0, 12.5, ink);
+            if naming {
+                let line = EditedLine {
+                    font: &self.bold,
+                    x: tab.x + 11.0,
+                    top: tab.y + 6.0,
+                    css: 12.5,
+                    room,
+                };
+                let caret = self.edited_line(canvas, &line, name, view.cursor, ink);
+                self.dashboard_caret.set(Some((caret, ink)));
+            } else {
+                let name = canvas.fit_text(&self.bold, name, px(12.5), room);
+                canvas.text(&self.bold, &name, tab.x + 11.0, tab.y + 6.0, 12.5, ink);
+            }
             if closable {
                 let (cx, cy) = tab_close(tab).center();
                 canvas.line(
@@ -1257,13 +1266,26 @@ impl Panels {
             let row = task_row(card, 0);
             let ring = Rect::new(row.x, row.y + 6.0, 18.0, 18.0);
             canvas.stroke(ring, 9.0, TEAL, 1.6);
-            let (text, ink) = if view.draft.is_empty() {
-                ("Saisir une tâche puis Entrée…".to_owned(), FAINT)
-            } else {
-                (format!("{}|", view.draft), INK)
+            let line = EditedLine {
+                font: &self.regular,
+                x: row.x + 28.0,
+                top: row.y + 6.0,
+                css: 14.0,
+                room: row.w - 28.0,
             };
-            let text = canvas.fit_text(&self.regular, &text, px(14.0), row.w - 28.0);
-            canvas.text(&self.regular, &text, row.x + 28.0, row.y + 6.0, 14.0, ink);
+            let caret = if view.draft.is_empty() {
+                let hint = canvas.fit_text(
+                    &self.regular,
+                    "Saisir une tâche puis Entrée…",
+                    px(14.0),
+                    line.room,
+                );
+                canvas.text(&self.regular, &hint, line.x + 4.0, line.top, 14.0, FAINT);
+                Rect::new(line.x, line.top - 1.0, 1.6, 19.0)
+            } else {
+                self.edited_line(canvas, &line, &view.draft, view.cursor, INK)
+            };
+            self.dashboard_caret.set(Some((caret, INK)));
         }
         if view.tasks.is_empty() && !editing {
             let hint = canvas.fit_text(
@@ -1357,22 +1379,17 @@ impl Panels {
             self.round_button(canvas, next, fill, NOTE_INK, Glyph::Next);
         }
         let editing = matches!(view.editing, Some(DashboardEdit::Note(index)) if index == view.note_shown);
-        let title = if editing && note.title.is_empty() {
-            "Écrire une note…".to_owned()
-        } else if editing && note.preview.is_empty() {
-            format!("{}|", note.title)
-        } else {
-            note.title.clone()
-        };
-        let title = canvas.fit_text(&self.bold, &title, px(17.0), width);
-        canvas.text(&self.bold, &title, x, card.y + 49.0, 17.0, NOTE_INK);
-        let body = if editing && !note.preview.is_empty() {
-            format!("{}|", note.preview)
-        } else {
-            note.preview.clone()
-        };
-        let lines = wrap_dashboard_text(&self.regular, &body, px(13.0), width);
         let room = ((card.bottom() - 14.0 - (card.y + 76.0)) / 19.5).floor().max(0.0) as usize;
+        if editing {
+            // En saisie, la note telle qu'elle est tapée, lignes vides comprises.
+            let caret = self.edited_note(canvas, card, (x, width), room, view);
+            self.dashboard_caret.set(Some((caret, NOTE_INK)));
+            return;
+        }
+        let title = canvas.fit_text(&self.bold, &note.title, px(17.0), width);
+        canvas.text(&self.bold, &title, x, card.y + 49.0, 17.0, NOTE_INK);
+        let body = note.preview.clone();
+        let lines = wrap_dashboard_text(&self.regular, &body, px(13.0), width);
         for (index, line) in lines.iter().take(room).enumerate() {
             let mut line = line.clone();
             if index + 1 == room && lines.len() > room {
@@ -1387,6 +1404,91 @@ impl Panels {
                 NOTE_BODY,
             );
         }
+    }
+
+    /// Texte d'une ligne en saisie (`EditedLine`), qui défile pour garder le curseur
+    /// visible ; renvoie la place du curseur.
+    fn edited_line(
+        &self,
+        canvas: &mut Canvas,
+        line: &EditedLine<'_>,
+        text: &str,
+        cursor: usize,
+        ink: Color,
+    ) -> Rect {
+        let widths: Vec<f64> = text
+            .chars()
+            .map(|character| canvas.css_width(line.font, character.encode_utf8(&mut [0; 4]), line.css))
+            .collect();
+        let cursor = cursor.min(widths.len());
+        let (first, offsets) = text_field::window(&widths, cursor, line.room);
+        let visible: String = text.chars().skip(first).take(offsets.len() - 1).collect();
+        canvas.text(line.font, &visible, line.x, line.top, line.css, ink);
+        let index = (cursor - first).min(offsets.len() - 1);
+        Rect::new(line.x + offsets[index] - 1.0, line.top - 1.0, 1.6, line.css + 5.0)
+    }
+
+    /// Note en saisie : titre (première ligne) puis lignes du texte coupées à la largeur,
+    /// celle du curseur toujours visible ; renvoie la place du curseur.
+    fn edited_note(
+        &self,
+        canvas: &mut Canvas,
+        card: Rect,
+        (x, width): (f64, f64),
+        room: usize,
+        view: &DashboardView,
+    ) -> Rect {
+        let text = view.note_text.as_str();
+        let cursor = view.cursor.min(text.chars().count());
+        let (title, body) = text.split_once('\n').unwrap_or((text, ""));
+        let title_length = title.chars().count();
+        let title_line = EditedLine {
+            font: &self.bold,
+            x,
+            top: card.y + 49.0,
+            css: 17.0,
+            room: width,
+        };
+        let mut caret = if text.is_empty() {
+            canvas.text(
+                &self.bold,
+                "Écrire une note…",
+                x + 4.0,
+                title_line.top,
+                17.0,
+                NOTE_LABEL,
+            );
+            Rect::new(x, title_line.top - 1.0, 2.0, 22.0)
+        } else {
+            let mut caret = self.edited_line(canvas, &title_line, title, cursor.min(title_length), NOTE_INK);
+            caret.w = 2.0;
+            caret
+        };
+        if !text.contains('\n') {
+            return caret;
+        }
+        let lines = wrap_keeping(canvas, &self.regular, body, 13.0, width);
+        // Place du curseur dans le corps (après le retour à la ligne du titre).
+        let in_body = cursor.checked_sub(title_length + 1);
+        let caret_line = in_body.map(|at| {
+            lines
+                .iter()
+                .rposition(|(start, _)| *start <= at)
+                .unwrap_or_default()
+        });
+        let first = caret_line.map_or(0, |line| (line + 1).saturating_sub(room.max(1)));
+        for (slot, (start, line)) in lines.iter().enumerate().skip(first).take(room) {
+            let top = card.y + 76.0 + (slot - first) as f64 * 19.5;
+            canvas.text(&self.regular, line, x, top, 13.0, NOTE_BODY);
+            if caret_line == Some(slot)
+                && let Some(at) = in_body
+            {
+                let before: String = line.chars().take(at - start).collect();
+                let offset = canvas.css_width(&self.regular, &before, 13.0);
+                caret = Rect::new(x + offset - 1.0, top - 1.0, 1.6, 18.0);
+            }
+        }
+        caret
     }
 
     /// Mini-Dock : les applications récemment utilisées, un point sous celles ouvertes.
@@ -1829,4 +1931,51 @@ pub(super) fn calendar_day(card: Rect, year: i64, month: u32, day: u32) -> Rect 
         cell,
         row - 1.0,
     )
+}
+
+/// Ligne de texte en saisie : police, début du texte, haut de la ligne, taille, largeur.
+struct EditedLine<'a> {
+    font: &'a Font,
+    x: f64,
+    top: f64,
+    css: f64,
+    room: f64,
+}
+
+/// Lignes d'un texte coupé à `width` sans perdre un caractère (les espaces restent au bout
+/// des lignes) : début de chaque ligne en caractères depuis le début du texte, et son
+/// contenu sans retour à la ligne.
+fn wrap_keeping(canvas: &Canvas, font: &Font, text: &str, css: f64, width: f64) -> Vec<(usize, String)> {
+    let mut lines = Vec::new();
+    let mut start = 0;
+    for paragraph in text.split('\n') {
+        let chars: Vec<char> = paragraph.chars().collect();
+        if chars.is_empty() {
+            lines.push((start, String::new()));
+        }
+        let mut from = 0;
+        while from < chars.len() {
+            let mut to = from;
+            let mut used = 0.0;
+            while to < chars.len() {
+                let advance = canvas.css_width(font, chars[to].encode_utf8(&mut [0; 4]), css);
+                if to > from && used + advance > width {
+                    break;
+                }
+                used += advance;
+                to += 1;
+            }
+            // Coupure au dernier espace de la ligne, s'il y en a un.
+            if to < chars.len()
+                && let Some(space) = chars[from..to].iter().rposition(|character| *character == ' ')
+                && space > 0
+            {
+                to = from + space + 1;
+            }
+            lines.push((start + from, chars[from..to].iter().collect()));
+            from = to;
+        }
+        start += chars.len() + 1;
+    }
+    lines
 }

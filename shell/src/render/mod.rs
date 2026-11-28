@@ -334,6 +334,7 @@ fn build_output_elements(
                 scale,
                 &view,
                 widgets_page,
+                state.caret.on && state.caret_wanted(),
                 &mut elements,
             )
         });
@@ -521,9 +522,16 @@ fn build_output_elements(
         let alpha =
             (1.0 - (1.0 - WIDGETS_FADED_ALPHA) * crate::desktop::dock::ease(faded) as f32) * widgets_page;
         profile::timed("widgets", || {
-            assets
-                .panels
-                .push_dashboard(renderer, output, output_geo, scale, &view, alpha, &mut elements)
+            assets.panels.push_dashboard(
+                renderer,
+                output,
+                output_geo,
+                scale,
+                &view,
+                alpha,
+                state.caret.on && state.caret_wanted(),
+                &mut elements,
+            )
         });
     }
 
@@ -1672,6 +1680,16 @@ pub fn desktop_view(state: &Ferrite) -> DesktopView {
                 })
                 .collect(),
             draft: state.dashboard.draft.clone(),
+            cursor: state.dashboard_cursor(),
+            note_text: match state.dashboard_editing {
+                Some(crate::desktop::widgets::DashboardEdit::Note(index)) => state
+                    .dashboard
+                    .notes
+                    .get(index)
+                    .map(|note| note.text.clone())
+                    .unwrap_or_default(),
+                _ => String::new(),
+            },
             editing: state.dashboard_editing,
             month_offset: state.dashboard.month_offset,
             weather: state.dashboard.weather.clone(),

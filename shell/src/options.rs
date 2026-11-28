@@ -34,6 +34,7 @@ Options :
   --demo-lock           affiche l'écran de verrouillage au démarrage (pour les captures)
   --demo-face ÉTAT      avec --demo-lock : visage en cours (scan), reconnu ou echec
   --demo-power          ouvre le dialogue d'arrêt au démarrage (pour les captures)
+  --demo-note           widgets devant, une note en saisie, curseur au milieu (pour les captures)
   --demo-auth           affiche une demande de mot de passe administrateur (pour les captures)
   --demo-osd            affiche la bulle du volume au démarrage (pour les captures)
   --demo-screens        simule un second écran branché (pour les captures)
@@ -107,6 +108,8 @@ pub struct Options {
     pub demo_auth: bool,
     /// Ouvre le dialogue d'arrêt au démarrage (`--demo-power`).
     pub demo_power: bool,
+    /// `--demo-note` : widgets devant, une note en saisie.
+    pub demo_note: bool,
     /// Bulle du volume affichée au démarrage (`--demo-osd`).
     pub demo_osd: bool,
     /// Simule un second écran branché (`--demo-screens`) : tuile du centre de contrôle et
@@ -151,6 +154,7 @@ impl Default for Options {
             demo_face: None,
             demo_auth: false,
             demo_power: false,
+            demo_note: false,
             demo_osd: false,
             demo_screens: false,
             demo_selection: None,
@@ -255,6 +259,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
                 });
             }
             "--demo-power" => options.demo_power = true,
+            "--demo-note" => options.demo_note = true,
             "--demo-auth" => options.demo_auth = true,
             "--demo-osd" => options.demo_osd = true,
             "--demo-screens" => options.demo_screens = true,

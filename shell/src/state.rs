@@ -314,6 +314,8 @@ pub struct Ferrite {
     pub minimized: Vec<Minimized>,
     pub dashboard: Dashboard,
     pub dashboard_editing: Option<DashboardEdit>,
+    /// Curseur dans le texte en cours de saisie, et la saisie à laquelle il appartient.
+    pub dashboard_cursor: Option<(DashboardEdit, usize)>,
     /// Super+W : widgets ramenés devant les fenêtres.
     pub widgets_front: bool,
     /// Mode d'édition des widgets, et widget en train d'être déplacé ou redimensionné.
@@ -606,6 +608,7 @@ impl Ferrite {
             minimized: Vec::new(),
             dashboard: Dashboard::load(),
             dashboard_editing: None,
+            dashboard_cursor: None,
             widgets_front: false,
             widgets_edit: false,
             widget_drag: None,

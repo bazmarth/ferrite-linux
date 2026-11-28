@@ -4851,3 +4851,17 @@ mise à jour par la Logithèque.
   `ferrite-apps` passent par `build/cible-tests` tant que le NTFS n'est pas réparé.
 Non vérifié : l'ISO construite avec les paquets (lancée par l'utilisateur pendant la
 publication, paquets 00:25), installation réelle, mise à jour par la Logithèque.
+
+## 2026-11-28 — Terminal : fish en couleurs, complétion facile
+
+- Terminal (`apps/core/src/terminal/session.rs`) : sans programme demandé, il ouvre fish
+  quand `$SHELL` est vide, sh, bash ou dash et que `/usr/bin/fish` existe (même règle que
+  `ferrite-session`, qui ne s'appliquait qu'au bureau lancé par la session).
+- `image/config/includes.chroot/etc/fish/conf.d/ferrite.fish` : couleurs de syntaxe et de
+  la liste de complétion (noms ANSI, adaptées au thème par le Terminal), posées une fois
+  en universelles (changeables ensuite par `fish_config`) ; accueil en français avec les
+  astuces ; Tab accepte la suggestion grise en fin de ligne, sinon complète.
+Vérifié : capture du Terminal (`SHELL=/bin/bash`, fish ouvert, couleurs et accueil) ; Tab
+essayé dans un faux terminal (suggestion acceptée, chemin complété) ; tests (ceux de
+`ferrite-apps` par `build/cible-tests`, édition de liens impossible dans `target`).
+Non vérifié : dans l'ISO et sur le vrai bureau.

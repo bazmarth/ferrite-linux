@@ -35,6 +35,21 @@ pub struct Launch {
     pub command: Option<(String, Vec<String>)>,
 }
 
+/// Interpréteur ouvert quand aucun programme n'est demandé : celui de l'utilisateur
+/// (`$SHELL`), sauf sh, bash ou dash, remplacés par fish quand il est installé
+/// (complétion par Tab, suggestions au fil de la frappe, couleurs). Même règle que
+/// `ferrite-session` ; rien : celui du compte (choix d'alacritty).
+fn default_shell(shell: Option<&str>, fish: &str, fish_installed: bool) -> Option<String> {
+    let plain = match shell {
+        None => true,
+        Some(path) => {
+            let name = path.rsplit('/').next().unwrap_or(path);
+            path.is_empty() || matches!(name, "sh" | "bash" | "dash")
+        }
+    };
+    (plain && fish_installed).then(|| fish.to_owned())
+}
+
 /// Taille de la grille, en cellules.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GridSize {
@@ -133,6 +148,12 @@ impl Session {
             shell: launch
                 .command
                 .clone()
+                .or_else(|| {
+                    const FISH: &str = "/usr/bin/fish";
+                    let shell = std::env::var("SHELL").ok();
+                    default_shell(shell.as_deref(), FISH, std::path::Path::new(FISH).exists())
+                        .map(|fish| (fish, Vec::new()))
+                })
                 .map(|(program, arguments)| tty::Shell::new(program, arguments)),
             working_directory: launch.directory.clone(),
             drain_on_exit: true,
@@ -545,6 +566,22 @@ mod tests {
         columns: 80,
         lines: 24,
     };
+
+    #[test]
+    fn fish_remplace_les_shells_simples() {
+        let fish = "/usr/bin/fish";
+        for shell in [
+            None,
+            Some(""),
+            Some("/bin/bash"),
+            Some("/usr/bin/sh"),
+            Some("/bin/dash"),
+        ] {
+            assert_eq!(default_shell(shell, fish, true).as_deref(), Some(fish));
+        }
+        assert_eq!(default_shell(Some("/usr/bin/zsh"), fish, true), None);
+        assert_eq!(default_shell(Some("/bin/bash"), fish, false), None);
+    }
 
     #[test]
     fn le_programme_ecrit_a_l_ecran() {

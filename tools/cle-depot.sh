@@ -28,4 +28,4 @@ gpg --batch --quiet --passphrase '' --quick-generate-key \
 gpg --export >"$public"
 ok "Clé secrète : $GNUPGHOME (à sauvegarder, jamais dans git)"
 ok "Clé publique : $public"
-gpg --fingerprint | sed -n '/^ /p' | sed 's/^ */  empreinte : /'
+printf '  empreinte : %s\n' "$(gpg --with-colons --fingerprint | awk -F: '/^fpr/ { print $10; exit }')"

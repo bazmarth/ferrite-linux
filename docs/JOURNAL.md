@@ -4833,3 +4833,21 @@ essayé sur une copie. `publier-paquets.sh` refuse bien l'arbre actuel (non comm
 Non fait (attend l'accord) : création de la vraie clé, premier commit, publication.
 Non vérifié : construction de l'ISO avec les paquets (sudo), installation réelle par dpkg,
 mise à jour par la Logithèque.
+
+## 2026-11-28 — Dépôt apt publié
+
+- Clé de signature créée (`~/.local/share/ferrite/cle-depot`, empreinte
+  EB3D41C701C4E385E332049C4AD5A73D90B8F4CF), clé publique dans `packaging/ferrite-depot.pgp`.
+- `tools/publier-paquets.sh` : dépôt public `bazmarth/ferrite-paquets` créé, Pages actif,
+  version 0.1.0+202611280023 (commit e40966c) en ligne sur
+  https://bazmarth.github.io/ferrite-paquets.
+- Vérifié depuis ce PC avec un apt isolé (sans root) : `apt-get update` accepte la
+  signature du dépôt en ligne, `ferrite-desktop` s'installe (simulation, six paquets) et se
+  télécharge, avec la bonne source apt.
+- Constaté : le dépôt du code `bazmarth/ferrite-linux` est **public** depuis le 2026-10-28
+  (la doc le dit privé) ; rien changé, signalé à l'utilisateur.
+- Arrêt en cours de route : la partition système (58 Go) était pleine à 100 % à cause d'un
+  dossier de compilation d'essai dans `~/.cache` (9,8 Go), supprimé. Les tests de
+  `ferrite-apps` passent par `build/cible-tests` tant que le NTFS n'est pas réparé.
+Non vérifié : l'ISO construite avec les paquets (lancée par l'utilisateur pendant la
+publication, paquets 00:25), installation réelle, mise à jour par la Logithèque.
